@@ -621,11 +621,17 @@ const getAuthRevision = (user: UserAccount) => createHash('sha256')
   .update(JSON.stringify([user.id, user.email.toLowerCase(), user.role, user.passwordHash]))
   .digest('hex');
 
-const createAuthToken = (user: { email: string; name: string; role: Role; scopedShopId?: string; allowedShopIds?: string[]; fixedShopId?: string }) => {
+const createAuthToken = async (user: { email: string; name: string; role: Role; scopedShopId?: string; allowedShopIds?: string[]; fixedShopId?: string }) => {
   const currentAccount = db.users.find((account) => account.email.toLowerCase() === user.email.toLowerCase());
   if (!currentAccount) throw new Error('Cannot create session for an unknown account.');
+  const sessionId = randomUUID();
+  await pool.query(
+    "INSERT INTO auth_sessions (id, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '8 hours')",
+    [sessionId, currentAccount.id]
+  );
   return jwt.sign(
     {
+      jti: sessionId,
       authRevision: getAuthRevision(currentAccount),
       email: user.email,
       name: user.name,
@@ -1508,6 +1514,13 @@ const initPostgres = async () => {
       password_hash TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS products (
@@ -2487,9 +2500,9 @@ const saveDb = async () => {
   }
 };
 
-type AppRequest = express.Request & { authUser?: AuthUser };
+type AppRequest = express.Request & { authUser?: AuthUser; authSessionId?: string };
 
-const requireAuth: express.RequestHandler = (req, res, next) => {
+const requireAuth: express.RequestHandler = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing bearer token' });
@@ -2497,16 +2510,32 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
 
   const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser & { authRevision?: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser & { authRevision?: string; jti?: string };
     const currentAccount = db.users.find((account) => account.email.toLowerCase() === String(decoded.email || '').toLowerCase());
     if (!currentAccount || decoded.authRevision !== getAuthRevision(currentAccount) ||
         decoded.role !== currentAccount.role) {
       return res.status(401).json({ error: 'Session no longer valid. Please sign in again.' });
     }
+    if (typeof decoded.jti !== 'string' || !decoded.jti) {
+      return res.status(401).json({ error: 'Session has been revoked or is no longer valid.' });
+    }
+    let activeSession;
+    try {
+      activeSession = await pool.query(
+        'SELECT id FROM auth_sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW()',
+        [decoded.jti, currentAccount.id]
+      );
+    } catch {
+      return res.status(503).json({ error: 'Cannot verify account session. Please try again.' });
+    }
+    if (!activeSession.rowCount) {
+      return res.status(401).json({ error: 'Session expired or signed out. Please sign in again.' });
+    }
     const access = resolveUserShopAccess(toAuthRecordFromUser(currentAccount), decoded.scopedShopId || '');
     if ('error' in access) {
       return res.status(401).json({ error: 'Shop access changed. Please sign in again.' });
     }
+    (req as AppRequest).authSessionId = decoded.jti;
     (req as AppRequest).authUser = {
       email: currentAccount.email,
       name: currentAccount.name,
@@ -2656,7 +2685,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     return res.status(access.status).json({ error: access.error });
   }
 
-  const token = createAuthToken({
+  const token = await createAuthToken({
     email: user.email,
     name: user.name,
     role: user.role,
@@ -2697,6 +2726,17 @@ app.get('/api/public/shops', (_req, res) => {
 });
 
 app.use('/api', requireAuth);
+
+app.post('/api/auth/logout', async (req, res) => {
+  const sessionId = (req as AppRequest).authSessionId;
+  if (!sessionId) return res.status(401).json({ error: 'No authenticated session.' });
+  try {
+    await pool.query('UPDATE auth_sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL', [sessionId]);
+    return res.json({ success: true });
+  } catch {
+    return res.status(503).json({ error: 'Unable to revoke session. Please try again.' });
+  }
+});
 
 app.get('/api/profile', (req, res) => {
   const authUser = (req as AppRequest).authUser;
@@ -2781,7 +2821,7 @@ app.put('/api/profile', async (req, res) => {
     return res.status(access.status).json({ error: access.error });
   }
 
-  const token = createAuthToken({
+  const token = await createAuthToken({
     email: user.email,
     name: user.name,
     role: user.role,
