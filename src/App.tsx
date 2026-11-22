@@ -600,35 +600,6 @@ export default function App() {
     sessionStorage.setItem(SHOP_SESSION_KEY, shopId);
   };
 
-  const applyQuickLoginPreset = (preset: 'admin' | 'main-manager' | 'wholesale-manager' | 'cashier' | 'inventory') => {
-    if (preset === 'admin') {
-      setLoginEmail('admin@hardwarepos.local');
-      setLoginShopId('shop-1');
-      return;
-    }
-
-    if (preset === 'main-manager') {
-      setLoginEmail('manager@hardwarepos.local');
-      setLoginShopId('shop-1');
-      return;
-    }
-
-    if (preset === 'wholesale-manager') {
-      setLoginEmail('wholesale.manager@hardwarepos.local');
-      setLoginShopId('shop-2');
-      return;
-    }
-
-    if (preset === 'cashier') {
-      setLoginEmail('cashier@hardwarepos.local');
-      setLoginShopId('shop-2');
-      return;
-    }
-
-    setLoginEmail('inventory@hardwarepos.local');
-    setLoginShopId('shop-2');
-  };
-
   const openLoginResetModal = () => {
     setResetEmail(loginEmail);
     setResetShopId(loginShopId);
