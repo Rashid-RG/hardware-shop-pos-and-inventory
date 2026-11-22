@@ -888,6 +888,59 @@ export const seedDatabase = async (initialState: any) => {
 };
 
 // Incremental Write Helpers
+// Product intake is a single transaction: catalog row, stock ledger and audit
+// either all commit or all roll back. No other normalized tables are rewritten.
+export const createProductWithIntake = async (
+  product: Product, createdBy: string, role: string, shopName: string
+) => {
+  if (!product.shopId) throw new Error('Product must belong to a shop.');
+  if (!Number.isSafeInteger(product.quantity) || product.quantity < 0) {
+    throw new Error('Initial stock must be a nonnegative whole number.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO products
+       (id, shop_id, name, sku, barcode, qr_code, internal_code, image_url,
+        images_json, brand, category, cost_price, selling_price, wholesale_price,
+        dealer_price, quantity, reorder_level, warranty, description,
+        long_description, location, status, variants_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb)`,
+      [product.id, product.shopId, product.name, product.sku, product.barcode || null,
+       product.qrCode || null, product.internalCode || null, product.imageUrl || null,
+       JSON.stringify(product.images || []), product.brand, product.category,
+       product.costPrice, product.sellingPrice, product.wholesalePrice || 0,
+       product.dealerPrice || 0, product.quantity, product.reorderLevel,
+       product.warranty, product.description, product.longDescription || null,
+       product.location || null, product.status || 'Active',
+       JSON.stringify(product.variants || [])]
+    );
+    if (product.quantity > 0) {
+      await client.query(
+        `INSERT INTO stock_logs
+         (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name)
+         VALUES ($1,$2,NOW(),$3,$4,'Stock In',$5,'Initial Product Registration Intake',$6)`,
+        ['initial-stock-' + product.id, product.shopId, product.id,
+         product.name, product.quantity, createdBy]
+      );
+    }
+    await client.query(
+      `INSERT INTO activity_logs
+       (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1,$2,NOW(),$3,$4,'Added Product',$5)`,
+      ['product-created-' + product.id, product.shopId, createdBy, role,
+       `Added ${product.name} (SKU: ${product.sku}) to ${shopName}.`]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const insertProduct = async (product: Omit<Product, 'id'> & { id: string }) => {
   await pool.query(
     `INSERT INTO products (id, shop_id, name, sku, barcode, qr_code, internal_code, image_url, images_json, brand, category, cost_price, selling_price, wholesale_price, dealer_price, quantity, reorder_level, warranty, description, long_description, location, status, variants_json)
