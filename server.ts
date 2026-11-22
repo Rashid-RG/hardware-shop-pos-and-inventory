@@ -2752,8 +2752,8 @@ app.put('/api/profile', async (req, res) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Current password and new password are required' });
     }
-    if (newPassword.length < 8) {
-      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    if (newPassword.length < 12 || newPassword === DEFAULT_DEMO_PASSWORD) {
+      return res.status(400).json({ error: 'New password must be at least 12 characters and not be the default password' });
     }
     const isCurrentValid = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!isCurrentValid) {
@@ -2761,23 +2761,22 @@ app.put('/api/profile', async (req, res) => {
     }
   }
 
-  if (requestedName) {
-    user.name = requestedName;
+  const nextUser: UserAccount = {
+    ...user,
+    name: requestedName || user.name,
+    passwordHash: wantsPasswordChange ? bcrypt.hashSync(newPassword, 10) : user.passwordHash,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    const persisted = await pool.query(
+      'UPDATE users SET name = $1, password_hash = $2, updated_at = NOW() WHERE id = $3 RETURNING id',
+      [nextUser.name, nextUser.passwordHash, nextUser.id]
+    );
+    if (!persisted.rowCount) return res.status(404).json({ error: 'User account no longer exists.' });
+  } catch (error) {
+    return res.status(409).json({ error: 'Unable to update account profile.' });
   }
-  if (wantsPasswordChange) {
-    user.passwordHash = bcrypt.hashSync(newPassword, 10);
-  }
-
-  await pool.query(
-    `
-    UPDATE users
-    SET name = $1, password_hash = $2, updated_at = NOW()
-    WHERE email = $3
-    `,
-    [user.name, user.passwordHash, user.email]
-  );
-
-  await syncNormalizedFromState(db);
+  db.users = db.users.map((account) => account.id === nextUser.id ? nextUser : account);
 
   const access = resolveUserShopAccess(toAuthRecordFromUser(user), authUser.scopedShopId || '');
   if ('error' in access) {
@@ -2837,8 +2836,8 @@ app.post('/api/users', requireRole(['Super Admin']), async (req, res) => {
   if (!['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (password.length < 12 || password === DEFAULT_DEMO_PASSWORD) {
+    return res.status(400).json({ error: 'Password must be at least 12 characters and not be the default password' });
   }
   if (db.users.some((user) => user.email.toLowerCase() === email)) {
     return res.status(409).json({ error: 'A user with this email already exists' });
@@ -2854,8 +2853,15 @@ app.post('/api/users', requireRole(['Super Admin']), async (req, res) => {
     updatedAt: new Date().toISOString(),
   };
 
+  try {
+    await pool.query(
+      'INSERT INTO users (id, email, name, role, password_hash, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,NOW(),NOW())',
+      [newUser.id, newUser.email, newUser.name, newUser.role, newUser.passwordHash]
+    );
+  } catch {
+    return res.status(409).json({ error: 'Could not create the account. Check whether the email is already registered.' });
+  }
   db.users = [...db.users, newUser];
-  await syncNormalizedFromState(db);
 
   const access = resolveUserShopAccess(toAuthRecordFromUser(newUser), '');
   return res.status(201).json({
@@ -2891,8 +2897,8 @@ app.put('/api/users/:id', requireRole(['Super Admin']), async (req, res) => {
   if (!['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'].includes(nextRole)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
-  if (nextPassword.length > 0 && nextPassword.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (nextPassword && (nextPassword.length < 12 || nextPassword === DEFAULT_DEMO_PASSWORD)) {
+    return res.status(400).json({ error: 'Password must be at least 12 characters and not be the default password' });
   }
   if (db.users.some((user) => user.email.toLowerCase() === nextEmail && user.id !== id)) {
     return res.status(409).json({ error: 'A user with this email already exists' });
@@ -2907,8 +2913,20 @@ app.put('/api/users/:id', requireRole(['Super Admin']), async (req, res) => {
     updatedAt: new Date().toISOString(),
   };
 
-  db.users = db.users.map((user) => (user.id === id ? updatedUser : user));
-  await syncNormalizedFromState(db);
+  if (existing.role === 'Super Admin' && nextRole !== 'Super Admin' &&
+      db.users.filter((account) => account.role === 'Super Admin').length <= 1) {
+    return res.status(409).json({ error: 'Cannot demote the last System Administrator.' });
+  }
+  try {
+    const persisted = await pool.query(
+      'UPDATE users SET email = $1, name = $2, role = $3, password_hash = $4, updated_at = NOW() WHERE id = $5 RETURNING id',
+      [updatedUser.email, updatedUser.name, updatedUser.role, updatedUser.passwordHash, id]
+    );
+    if (!persisted.rowCount) return res.status(404).json({ error: 'Account not found in database.' });
+  } catch {
+    return res.status(409).json({ error: 'Could not update account. Check whether the email is already registered.' });
+  }
+  db.users = db.users.map((account) => account.id === id ? updatedUser : account);
 
   const access = resolveUserShopAccess(toAuthRecordFromUser(updatedUser), '');
   return res.json({
@@ -2938,8 +2956,17 @@ app.delete('/api/users/:id', requireRole(['Super Admin']), async (req, res) => {
     return res.status(400).json({ error: 'You cannot delete your own account while signed in' });
   }
 
-  db.users = db.users.filter((user) => user.id !== id);
-  await syncNormalizedFromState(db);
+  if (existing.role === 'Super Admin' &&
+      db.users.filter((account) => account.role === 'Super Admin').length <= 1) {
+    return res.status(409).json({ error: 'Cannot delete the last System Administrator.' });
+  }
+  try {
+    const deleted = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
+    if (!deleted.rowCount) return res.status(404).json({ error: 'Account not found in database.' });
+  } catch {
+    return res.status(409).json({ error: 'Could not delete account.' });
+  }
+  db.users = db.users.filter((account) => account.id !== id);
   return res.json({ ok: true });
 });
 
