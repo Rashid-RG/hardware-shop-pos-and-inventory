@@ -34,3 +34,14 @@ test('ARS UI supports collapsing the sidebar and omits AI controls', () => {
   assert.doesNotMatch(app, /AIRecommendationsView|isChatOpen|handleSendChatMessage|ai-insights/);
   assert.doesNotMatch(sidebar, /AI Insights|ai-insights/);
 });
+
+test('sidebar groups stay compact and customer and staff modules are distinct', () => {
+  const customerView = readFileSync(new URL('../src/components/CustomerEmployeeView.tsx', import.meta.url), 'utf8');
+  assert.match(sidebar, /aria-expanded=\{expanded\}/);
+  assert.match(sidebar, /pinnedItems/);
+  assert.match(sidebar, /id: 'customers', label: 'Customers'/);
+  assert.match(sidebar, /id: 'staff', label: 'Staff'/);
+  assert.doesNotMatch(sidebar, /Customers & Staff', icon/);
+  assert.match(app, /viewMode=\{activeTab === 'customers' \? 'customers' : 'employees'\}/);
+  assert.match(customerView, /viewMode: 'customers' \| 'employees'/);
+});
