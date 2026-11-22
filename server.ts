@@ -178,41 +178,13 @@ if (!fs.existsSync(SHOP_UPLOADS_DIR)) {
 }
 app.use('/uploads', express.static(UPLOADS_ROOT_DIR));
 
-const DEFAULT_DEMO_PASSWORD = 'ChangeMe123!';
-
 const requireConfiguredSecret = (name: string, value?: string, minimumLength = 32) => {
   const normalized = String(value || '').trim();
-  if (!normalized) {
-    throw new Error(`${name} is required. Refusing to start without a configured secret.`);
+  const weakSecretPattern = /(change[_-]?me|replace[_-]?with|example|password)/i;
+  if (normalized.length < minimumLength || weakSecretPattern.test(normalized)) {
+    throw new Error(`${name} must be a non-placeholder secret at least ${minimumLength} characters long.`);
   }
-
-  if (IS_PRODUCTION) {
-    const weakSecretPattern = /(change[_-]?me|replace[_-]?with|example|password)/i;
-    if (normalized.length < minimumLength || weakSecretPattern.test(normalized)) {
-      throw new Error(`${name} must be a strong, non-placeholder secret in production.`);
-    }
-  }
-
   return normalized;
-};
-
-const resolveDemoPassword = (name: string) => {
-  const configuredValue = String(process.env[name] || '').trim();
-  if (!configuredValue) {
-    if (IS_PRODUCTION) {
-      throw new Error(`${name} is required in production. Demo logins must use explicit passwords.`);
-    }
-    return DEFAULT_DEMO_PASSWORD;
-  }
-
-  if (IS_PRODUCTION) {
-    const weakPasswordPattern = /(change[_-]?me|password|example)/i;
-    if (configuredValue === DEFAULT_DEMO_PASSWORD || configuredValue.length < 12 || weakPasswordPattern.test(configuredValue)) {
-      throw new Error(`${name} must be set to a unique, non-default password in production.`);
-    }
-  }
-
-  return configuredValue;
 };
 
 const JWT_SECRET = requireConfiguredSecret('JWT_SECRET', process.env.JWT_SECRET);
@@ -278,15 +250,8 @@ const INVOICE_COPY_TYPES: InvoiceCopyType[] = [
   'Reprinted Invoice',
 ];
 
-const seedUsers = (): UserAccount[] => AUTH_USERS.map((user) => ({
-  id: getUserRecordId(user.email),
-  email: user.email,
-  name: user.name,
-  role: user.role,
-  passwordHash: user.passwordHash,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-}));
+// New databases start without login accounts. The first owner is created via secure setup.
+const seedUsers = (): UserAccount[] => [];
 
 const normalizeInvoiceCopyType = (value?: string): InvoiceCopyType | undefined => {
   const normalized = String(value || '').trim();
@@ -528,45 +493,8 @@ const getUserAllowedShops = (user: AuthUser): string[] | undefined => {
 
 const getUserRecordId = (email: string) => `usr-${email.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 
-const AUTH_USERS: Array<AuthUser & { passwordHash: string; allowedShopIds?: string[]; fixedShopId?: string }> = [
-  {
-    email: 'admin@hardwarepos.local',
-    name: 'Sarah Miller',
-    role: 'Super Admin',
-    passwordHash: bcrypt.hashSync(resolveDemoPassword('ADMIN_PASSWORD'), 10),
-    fixedShopId: getUserFixedShop('admin@hardwarepos.local'),
-  },
-  {
-    email: 'manager@hardwarepos.local',
-    name: 'Robert Hernandez',
-    role: 'Store Manager',
-    passwordHash: bcrypt.hashSync(resolveDemoPassword('MANAGER_PASSWORD'), 10),
-    fixedShopId: getUserFixedShop('manager@hardwarepos.local'),
-  },
-  {
-    email: 'wholesale.manager@hardwarepos.local',
-    name: 'Wholesale Manager',
-    role: 'Store Manager',
-    passwordHash: bcrypt.hashSync(resolveDemoPassword('WHOLESALE_MANAGER_PASSWORD'), 10),
-    fixedShopId: getUserFixedShop('wholesale.manager@hardwarepos.local'),
-  },
-  {
-    email: 'cashier@hardwarepos.local',
-    name: 'David Lee',
-    role: 'Cashier',
-    passwordHash: bcrypt.hashSync(resolveDemoPassword('CASHIER_PASSWORD'), 10),
-    fixedShopId: getUserFixedShop('cashier@hardwarepos.local'),
-  },
-  {
-    email: 'inventory@hardwarepos.local',
-    name: 'Marcus Vance',
-    role: 'Inventory Staff',
-    passwordHash: bcrypt.hashSync(resolveDemoPassword('INVENTORY_PASSWORD'), 10),
-    fixedShopId: getUserFixedShop('inventory@hardwarepos.local'),
-  },
-];
-
-type AuthRecord = (typeof AUTH_USERS)[number];
+// Users are administered through PostgreSQL. No environment-derived demo users.
+type AuthRecord = AuthUser & { passwordHash: string; allowedShopIds?: string[]; fixedShopId?: string };
 
 const resolveUserShopAccess = (user: AuthRecord, requestedShopIdRaw?: string) => {
   const requestedShopId = String(requestedShopIdRaw || '').trim();
@@ -1859,7 +1787,7 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
     RESTART IDENTITY CASCADE;
   `);
 
-  const users = Array.isArray(state.users) && state.users.length > 0 ? state.users : seedUsers();
+  const users = Array.isArray(state.users) ? state.users : seedUsers();
   for (let i = 0; i < users.length; i += 1) {
     const user = users[i];
     const userId = getUserRecordId(user.email);
@@ -2637,6 +2565,72 @@ app.get('/api/ready', async (_req, res) => {
       status: 'degraded',
       database: 'unreachable',
     });
+  }
+});
+
+// One-time setup is only available on a machine's loopback connection.
+// PostgreSQL is checked directly rather than trusting the in-memory mirror.
+const requireLocalSetup: express.RequestHandler = (req, res, next) => {
+  const remote = req.socket.remoteAddress || '';
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+    return res.status(403).json({ error: 'Initial administrator setup is only available on localhost.' });
+  }
+  next();
+};
+
+app.get('/api/auth/setup-status', requireLocalSetup, async (_req, res) => {
+  try {
+    const users = await pool.query('SELECT EXISTS(SELECT 1 FROM users) AS has_users');
+    return res.json({ setupRequired: users.rows[0]?.has_users === false });
+  } catch {
+    return res.status(503).json({ error: 'Could not verify administrator setup state.' });
+  }
+});
+
+app.post('/api/auth/setup-admin', requireLocalSetup, loginLimiter, async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const password = String(req.body?.password || '');
+  const confirmPassword = String(req.body?.confirmPassword || '');
+  if (name.length < 2 || name.length > 100 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ error: 'Enter a valid administrator name and email address.' });
+  }
+  if (password.length < 12 || password.length > 128 || password !== confirmPassword) {
+    return res.status(400).json({ error: 'Use a matching administrator password between 12 and 128 characters.' });
+  }
+  if (/(change.?me|password|example)/i.test(password)) {
+    return res.status(400).json({ error: 'Choose a unique password without placeholder words.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize all attempts at first-account creation.
+    await client.query('SELECT pg_advisory_xact_lock($1)', [5412927]);
+    const exists = await client.query('SELECT 1 FROM users LIMIT 1');
+    if (exists.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Setup is closed because user accounts already exist. Sign in with an existing administrator.' });
+    }
+    const user: UserAccount = {
+      id: getUserRecordId(email),
+      email, name, role: 'Super Admin',
+      passwordHash: await bcrypt.hash(password, 12),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await client.query(
+      'INSERT INTO users (id, email, name, role, password_hash) VALUES ($1,$2,$3,$4,$5)',
+      [user.id, user.email, user.name, user.role, user.passwordHash]
+    );
+    await client.query('COMMIT');
+    db.users = [user];
+    return res.status(201).json({ success: true, message: 'Administrator account created. Please sign in.' });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    return res.status(503).json({ error: 'Administrator setup could not be completed; existing data was not reset.' });
+  } finally {
+    client.release();
   }
 });
 
