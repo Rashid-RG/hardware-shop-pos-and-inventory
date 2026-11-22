@@ -769,8 +769,6 @@ export default function AccountingSettingsView({
                 />
               </div>
             </div>
-
-            </div>
             </details>
 
             <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-slate-700 leading-snug">
