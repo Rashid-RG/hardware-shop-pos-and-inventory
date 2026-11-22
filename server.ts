@@ -5186,8 +5186,8 @@ app.post('/api/shifts/open', requireRole(['Super Admin', 'Store Manager', 'Cashi
 app.post('/api/shifts/:id/close', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
   const { activeShopId } = getActiveShopContext(db, req);
-  const idx = db.cashShifts.findIndex((s) => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Shift not found' });
+  const idx = db.cashShifts.findIndex((s) => s.id === req.params.id && s.shopId === activeShopId);
+  if (idx === -1) return res.status(404).json({ error: 'Shift not found in this shop' });
   if (db.cashShifts[idx].status === 'Closed') return res.status(400).json({ error: 'Shift already closed' });
   const { closingCash, notes } = req.body;
   const shift = db.cashShifts[idx];
