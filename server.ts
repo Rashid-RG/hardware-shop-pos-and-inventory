@@ -5432,7 +5432,7 @@ app.get('/api/reports/sales', (req, res) => {
       : 0;
     return { invoiceNumber: t.invoiceNumber, date: t.date.split('T')[0], customer: t.customerName, salesRepresentative: t.salesRepName || 'Not recorded', items: t.items.length, subtotal: t.subtotal, tax: t.tax, discount: t.discountAmount, total: t.total, profit: Math.round(profit * 100) / 100, paymentMethod: t.paymentMethod, status: t.status || 'Completed' };
   });
-  const totals = { revenue: rows.reduce((s, r) => s + r.total, 0), profit: rows.reduce((s, r) => s + r.profit, 0), transactions: rows.length };
+  const totals = { revenue: rows.filter((r) => r.status !== 'Refunded').reduce((sum, r) => sum + r.total, 0), profit: rows.reduce((sum, r) => sum + r.profit, 0), transactions: rows.length, refunds: rows.filter((r) => r.status === 'Refunded').length };
   res.json({ rows, totals, from: fromDate, to: toDate });
 });
 
