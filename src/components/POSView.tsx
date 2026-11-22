@@ -1542,6 +1542,8 @@ export default function POSView({
           printReceiptInvoice(txWithQr, printWindow);
           alert('Sale saved, but print audit log failed. Printed without tracked copy label.');
         }
+        // Require an explicit representative for each new invoice; another rep may handle the next sale.
+        setSelectedSalesRepId('');
         // Clear active cart states
         setCart([]);
         setCashDiscount(0);
