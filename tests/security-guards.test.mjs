@@ -48,6 +48,8 @@ test('legacy database enforces single server writer with PostgreSQL advisory lea
 
 test('cash shift closing is scoped to the authenticated active shop', () => {
   const route = server.split("app.post('/api/shifts/:id/close'")[1]?.split('// ── Reports Route')[0] || '';
-  assert.match(route, /s\.id === req\.params\.id && s\.shopId === activeShopId/);
-  assert.match(route, /Shift not found in this shop/);
+  assert.match(route, /SELECT \* FROM cash_shifts WHERE id=\$1 AND shop_id=\$2 FOR UPDATE/);
+  assert.match(route, /\[req\.params\.id,activeShopId\]/);
+  assert.match(route, /Shift not found in this branch/);
+  assert.match(route, /pg_advisory_xact_lock/);
 });
