@@ -76,6 +76,9 @@ export default function SupplierPurchaseView({
 
   // Search parameters
   const [searchTerm, setSearchTerm] = useState('');
+  const [purchaseSearch, setPurchaseSearch] = useState('');
+  const [visiblePurchaseCount, setVisiblePurchaseCount] = useState(12);
+  const [visibleSupplierCount, setVisibleSupplierCount] = useState(12);
 
   // Suppliers validation
   const canModify = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
@@ -240,10 +243,12 @@ export default function SupplierPurchaseView({
     }
   };
 
+  const visiblePurchaseOrders=purchaseOrders.filter(po=>[po.poNumber,po.supplierName,po.status]
+    .some(value=>String(value||'').toLowerCase().includes(purchaseSearch.trim().toLowerCase())));
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
+    <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
       {/* View Header with Toggle navigation tabs */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
             Procurement & Wholesalers Hub
@@ -282,7 +287,13 @@ export default function SupplierPurchaseView({
       {/* RENDER TAB 1: PURCHASE ORDER RECORDS */}
       {activeTab === 'purchases' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-100 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-white px-3 py-2 rounded-xl border border-slate-100 shadow-2xs">
+            <label className="flex-1 min-w-44">
+              <span className="sr-only">Find purchase orders</span>
+              <input type="search" aria-label="Find purchase orders" value={purchaseSearch}
+                onChange={event=>{setPurchaseSearch(event.target.value);setVisiblePurchaseCount(12);}}
+                placeholder="Find PO, supplier or status..." className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
+            </label>
             <span className="text-xs font-mono font-medium text-slate-500 uppercase">
               {purchaseOrders.length} Procurement Tracks Logged
             </span>
@@ -300,8 +311,8 @@ export default function SupplierPurchaseView({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {purchaseOrders.map((po) => {
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {visiblePurchaseOrders.slice(0,visiblePurchaseCount).map((po) => {
               const totalItems = po.items.reduce((acc, i) => acc + i.quantity, 0);
               const isReceived = po.status === 'Received';
               const paidForPo = supplierPayments
@@ -313,7 +324,7 @@ export default function SupplierPurchaseView({
                 <div
                   key={po.id}
                   id={`po-card-${po.id}`}
-                  className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs hover:shadow-xs transition duration-150 flex flex-col justify-between space-y-4"
+                  className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs hover:shadow-xs transition duration-150 flex flex-col justify-between space-y-2"
                 >
                   <div className="flex items-start justify-between">
                     <div>
@@ -340,8 +351,9 @@ export default function SupplierPurchaseView({
                   </div>
 
                   {/* PO details list */}
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 space-y-2 text-[11px]">
-                    <div className="grid grid-cols-3 text-slate-500 font-medium">
+                  <details className="rounded-lg border border-slate-100 bg-slate-50 p-2 text-[11px]">
+                    <summary className="cursor-pointer font-semibold text-slate-700">{po.items.length} product lines · view PO details</summary>
+                    <div className="mt-2 grid grid-cols-3 text-slate-500 font-medium">
                       <span className="col-span-2">Target Product Unit</span>
                       <span className="text-right">Qty @ Cost</span>
                     </div>
@@ -353,7 +365,7 @@ export default function SupplierPurchaseView({
                         </span>
                       </div>
                     ))}
-                  </div>
+                  </details>
 
                   {/* receipt trigger */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
@@ -389,7 +401,13 @@ export default function SupplierPurchaseView({
               );
             })}
 
-            {purchaseOrders.length === 0 && (
+            {visiblePurchaseOrders.length > visiblePurchaseCount && (
+              <button type="button" onClick={()=>setVisiblePurchaseCount(value=>value+12)}
+                className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold">
+                Show more purchase orders ({visiblePurchaseOrders.length-visiblePurchaseCount} remaining)
+              </button>
+            )}
+            {visiblePurchaseOrders.length === 0 && (
               <div className="col-span-full py-16 text-center bg-white border border-dashed border-slate-200 rounded-xl text-slate-400">
                 <ShoppingCart className="w-9 h-9 mx-auto opacity-40 text-slate-500" />
                 <p className="text-xs font-semibold mt-2">Zero active purchase contracts logged</p>
@@ -411,7 +429,7 @@ export default function SupplierPurchaseView({
                 type="text"
                 placeholder="Search Wholesale Suppliers brand or tax ID..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {setSearchTerm(e.target.value);setVisibleSupplierCount(12);}}
                 className="w-full pl-9 pr-4 py-1.5 bg-slate-50 text-slate-800 text-xs rounded-lg border border-slate-250 focus:outline-none focus:border-amber-500 font-sans"
               />
             </div>
@@ -427,12 +445,12 @@ export default function SupplierPurchaseView({
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredSuppliers.map((sup) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filteredSuppliers.slice(0,visibleSupplierCount).map((sup) => (
               <div
                 key={sup.id}
                 id={`supplier-card-${sup.id}`}
-                className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
+                className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
               >
                 {(() => {
                   const stats = getSupplierStats(sup.id);
@@ -472,8 +490,8 @@ export default function SupplierPurchaseView({
                   </div>
 
                   {recentPayments.length > 0 && (
-                    <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50/70 p-3">
-                      <p className="text-[10px] uppercase font-semibold text-slate-500 mb-2">Recent Payments</p>
+                    <details className="mt-2 rounded-lg border border-slate-100 bg-slate-50/70 p-2">
+                      <summary className="cursor-pointer text-[10px] uppercase font-semibold text-slate-500 mb-2">Recent Payments</summary>
                       <div className="space-y-1.5 text-[10px] font-mono">
                         {recentPayments.map((payment) => (
                           <div key={payment.id} className="flex items-center justify-between gap-2 text-slate-600">
@@ -482,7 +500,7 @@ export default function SupplierPurchaseView({
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </details>
                   )}
                 </div>
 
@@ -500,13 +518,19 @@ export default function SupplierPurchaseView({
                 })()}
               </div>
             ))}
+            {filteredSuppliers.length > visibleSupplierCount && (
+              <button type="button" onClick={()=>setVisibleSupplierCount(value=>value+12)}
+                className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold">
+                Show more suppliers ({filteredSuppliers.length-visibleSupplierCount} remaining)
+              </button>
+            )}
           </div>
         </div>
       )}
 
       {paymentDraft && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
+          <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-sm border border-slate-250 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button onClick={() => setPaymentDraft(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X className="w-5 h-5" />
             </button>
@@ -673,7 +697,7 @@ export default function SupplierPurchaseView({
       {/* DIALOG 2: DYNAMIC PO COMPOSER MODAL */}
       {isPOOpen && (
         <div id="po-modal-backdrop" className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-45 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg border border-slate-200 max-h-[90vh] overflow-y-auto font-sans relative">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 max-h-[90dvh] flex flex-col font-sans relative overflow-hidden">
             <button
               onClick={() => setIsPOOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -681,12 +705,12 @@ export default function SupplierPurchaseView({
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="font-heading font-medium text-slate-900 text-lg mb-4 flex items-center gap-2">
+            <h3 className="shrink-0 px-4 py-3 border-b border-slate-100 font-heading font-medium text-slate-900 text-lg flex items-center gap-2">
               <ShoppingCart className="w-5 h-5 text-amber-500" /> Procurement Purchase Order Composer
             </h3>
 
             {/* Step 1: Supplier Selector */}
-            <div className="space-y-4 text-xs font-sans">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 space-y-3 text-xs font-sans">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Designated Wholesale Vendor *</label>
                 <select
@@ -816,7 +840,7 @@ export default function SupplierPurchaseView({
               </div>
 
               {/* Step 4: Submission */}
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <div className="sticky bottom-0 z-10 bg-white pt-3 border-t border-slate-100 flex items-center justify-between">
                 <div>
                   <span className="text-slate-400 text-[10px] block font-mono">Estimated Order Cost:</span>
                   <strong className="text-slate-900 text-lg font-mono">
