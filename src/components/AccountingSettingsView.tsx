@@ -507,12 +507,14 @@ export default function AccountingSettingsView({
 
       {/* RENDER TAB 2: STORE SETTINGS PANEL */}
       {activeTab === 'settings' && (
-        <div className="bg-white p-6 rounded-xl border border-slate-150 shadow-xs max-w-lg mx-auto">
+        <div className="bg-white p-4 sm:p-5 rounded-xl border border-slate-150 shadow-xs max-w-5xl mx-auto">
           <h3 className="font-heading font-medium text-slate-900 text-base mb-4 flex items-center gap-1.5">
             <Settings className="w-5 h-5 text-amber-500 animate-spin-slow" /> Company Profile · Legal & Billing Details
           </h3>
 
-          <form onSubmit={handleSaveSettings} className="space-y-5 text-xs font-sans">
+          <form onSubmit={handleSaveSettings} className="space-y-3 text-xs font-sans">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Active Shop / Branch</label>
@@ -588,7 +590,9 @@ export default function AccountingSettingsView({
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              </div>
+              <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Registered / Trading Address</label>
                 <textarea
@@ -614,7 +618,7 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-slate-500 font-semibold mb-1 flex items-center gap-1">
                   <Percent className="w-4 h-4 text-slate-400" /> State VAT/GST Tax Rate (%)
@@ -647,7 +651,7 @@ export default function AccountingSettingsView({
 
             <div>
               <label className="text-slate-500 font-semibold mb-1 flex items-center gap-1">
-                <Receipt className="w-4 h-4 text-slate-400" /> Cashier Invoice Series Prefix
+                <Receipt className="w-4 h-4 text-slate-400" /> Invoice Series Prefix
               </label>
               <input
                 id="settings-invoice-prefix"
@@ -675,7 +679,12 @@ export default function AccountingSettingsView({
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              </div>
+            </div>
+
+            <details className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-slate-800">Legal registration, support contacts and additional invoice details</summary>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Company Legal Name</label>
                 <input
@@ -761,11 +770,14 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-lg text-slate-700 leading-snug">
+            </div>
+            </details>
+
+            <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-slate-700 leading-snug">
               <strong>Caution:</strong> Changes configured in settings will propagate instantly into checkout receipts generated inside POS and reports summaries. Ensure tax ratios map actual legislative mandates.
             </div>
 
-            <div className="pt-2">
+            <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white/95 py-3 backdrop-blur-sm">
               <button
                 id="btn-save-settings"
                 type="submit"
