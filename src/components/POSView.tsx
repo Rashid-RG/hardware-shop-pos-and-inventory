@@ -1972,7 +1972,7 @@ export default function POSView({
           </div>
 
           {/* Cart Scroll list */}
-          <div id="pos-cart-scroller" className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
+          <div id="pos-cart-scroller" className="space-y-2.5 pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
               const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
