@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4515,29 +4515,72 @@ app.put('/api/purchases/:id/status', requireRole(['Super Admin', 'Store Manager'
 // Suppliers Routes
 app.post('/api/suppliers', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
-  const newSupplier: Supplier = {
-    ...req.body,
-    id: 'sup-' + Date.now(),
+  const name = String(req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Supplier name is required.' });
+  const supplier: Supplier = {
+    id: 'sup-' + randomUUID(),
     shopId: activeShopId,
+    name,
+    companyName: String(req.body?.companyName || '').trim(),
+    phone: String(req.body?.phone || '').trim(),
+    email: String(req.body?.email || '').trim(),
+    address: String(req.body?.address || '').trim(),
+    taxNumber: String(req.body?.taxNumber || '').trim(),
   };
-  db.suppliers.push(newSupplier);
-  await saveDb();
-  res.json(newSupplier);
+  try {
+    await insertSupplier(supplier);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload committed supplier');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Supplier saved but cache refresh failed; writes disabled', error);
+  }
+  res.json(supplier);
 });
 
 // Customers Routes
 app.post('/api/customers', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
-  const newCustomer: Customer = {
-    ...req.body,
-    id: 'cust-' + Date.now(),
+  const name = String(req.body?.name || '').trim();
+  const creditLimit = Number(req.body?.creditLimit ?? 0);
+  if (!name) return res.status(400).json({ error: 'Customer name is required.' });
+  if (!Number.isFinite(creditLimit) || creditLimit < 0 ||
+      Math.abs(creditLimit * 100 - Math.round(creditLimit * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Invalid customer credit limit.' });
+  }
+  const customer: Customer = {
+    id: 'cust-' + randomUUID(),
     shopId: activeShopId,
-    loyaltyBalance: Number(req.body.loyaltyBalance) || 0,
-    purchaseCount: 0
+    name,
+    phone: String(req.body?.phone || '').trim(),
+    email: String(req.body?.email || '').trim(),
+    address: String(req.body?.address || '').trim(),
+    loyaltyBalance: 0,
+    purchaseCount: 0,
+    creditLimit: (req as AppRequest).authUser?.role === 'Cashier' ? 0 : creditLimit,
+    // Starting debts must be entered through a separately audited migration,
+    // not trusted from the customer-creation request.
+    creditBalance: 0,
   };
-  db.customers.push(newCustomer);
-  await saveDb();
-  res.json(newCustomer);
+  try {
+    await insertCustomer(customer);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload committed customer');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Customer saved but cache refresh failed; writes disabled', error);
+  }
+  res.json(customer);
 });
 
 // Employees Routes
