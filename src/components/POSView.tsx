@@ -124,9 +124,9 @@ export default function POSView({
 
   // Customer & Cart states
   const [selectedCustomer, setSelectedCustomer] = useState<Customer>(
-    customers.find((c) => c.id === 'cust-walkin') || {
-      id: 'cust-walkin',
-      name: 'Walk-in Customer',
+    customers.find((c) => c.id !== 'cust-walkin') || {
+      id: '',
+      name: '',
       phone: '-',
       email: '-',
       address: '-',
@@ -134,7 +134,8 @@ export default function POSView({
       purchaseCount: 0,
     }
   );
-  const [billingCustomerName, setBillingCustomerName] = useState<string>((customers.find((c) => c.id === 'cust-walkin')?.name || 'Walk-in Customer'));
+  const [billingCustomerName, setBillingCustomerName] = useState<string>(customers.find((c) => c.id !== 'cust-walkin')?.name || '');
+  const [customerSearch, setCustomerSearch] = useState('');
   const [billingCustomerPhone, setBillingCustomerPhone] = useState<string>('');
   const [billingCustomerAddress, setBillingCustomerAddress] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -196,10 +197,12 @@ export default function POSView({
       const text = String(value || '').trim();
       return text === '-' ? '' : text;
     };
-    setBillingCustomerName(normalize(selectedCustomer.name) || 'Walk-in Customer');
+    setBillingCustomerName(normalize(selectedCustomer.name));
     setBillingCustomerPhone(normalize(selectedCustomer.phone));
     setBillingCustomerAddress(normalize(selectedCustomer.address));
   }, [selectedCustomer.id]);
+
+  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && (c.name + ' ' + c.phone + ' ' + c.address).toLowerCase().includes(customerSearch.trim().toLowerCase()));
 
   const categories = [
     'All',
@@ -1447,6 +1450,10 @@ export default function POSView({
   // Process core checkout
   const handleCheckout = async () => {
     if (cart.length === 0) return;
+    if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin')) {
+      alert('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
+      return;
+    }
     if (paymentMethod === 'Cash' && numericCashReceived < total) {
       alert(`Cash received must be at least ${formatMoney(total)}.`);
       return;
@@ -1820,39 +1827,49 @@ export default function POSView({
             </div>
           )}
 
-          {/* Customer Selector dropdown & Balance */}
-          <div className="bg-slate-50 p-3 rounded-lg border border-slate-150 mb-4 grid grid-cols-1 gap-2.5 text-xs font-sans">
-            <div>
-              <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">
-                Link Customer profile
-              </label>
-              <select
-                id="pos-customer-select"
-                value={selectedCustomer.id}
+          {/* Registered wholesale buyer lookup. Never bill an unknown walk-in account. */}
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl border border-amber-200 bg-amber-50/50 p-4 font-sans text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Bill to · Registered shop</p>
+                <p className="mt-1 text-[11px] text-slate-500">Select a saved wholesale customer; contact details fill automatically.</p>
+              </div>
+            </div>
+            <label htmlFor="pos-customer-search" className="block text-xs font-semibold text-slate-700">
+              Find shop by name, phone or address
+              <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search registered wholesale shops..."
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400" />
+            </label>
+            <label htmlFor="pos-customer-select" className="block text-xs font-semibold text-slate-700">
+              Select customer shop *
+              <select id="pos-customer-select" required value={selectedCustomer.id}
                 onChange={(e) => {
                   const cust = customers.find((c) => c.id === e.target.value);
                   if (cust) setSelectedCustomer(cust);
                 }}
-                className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.phone && `(${c.phone})`}
-                  </option>
+                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400">
+                <option value="" disabled>Choose a registered shop...</option>
+                {availableWholesaleCustomers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}{c.phone && c.phone !== '-' ? ` · ${c.phone}` : ''}</option>
                 ))}
+                {selectedCustomer.id && !availableWholesaleCustomers.some((c) => c.id === selectedCustomer.id) && (
+                  <option value={selectedCustomer.id}>{selectedCustomer.name} · selected</option>
+                )}
               </select>
-            </div>
-
+            </label>
+            {customers.filter((c) => c.id !== 'cust-walkin').length === 0 && (
+              <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No wholesale shops registered yet. Open Customers in the sidebar to add your first buyer.</p>
+            )}
             <div className="grid grid-cols-1 gap-2">
               <div>
-                <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Customer Name</label>
+                <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Customer shop name</label>
                 <input
                   id="pos-billing-customer-name"
                   type="text"
                   value={billingCustomerName}
                   onChange={(e) => setBillingCustomerName(e.target.value)}
                   placeholder="Enter customer name"
-                  className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  className="w-full bg-white border border-slate-200 p-2 rounded-lg focus:outline-none focus:border-amber-500"
                 />
               </div>
 
@@ -1870,13 +1887,13 @@ export default function POSView({
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Home Address</label>
+                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Business address</label>
                   <input
                     id="pos-billing-customer-address"
                     type="text"
                     value={billingCustomerAddress}
                     onChange={(e) => setBillingCustomerAddress(e.target.value)}
-                    placeholder="Customer home address"
+                    placeholder="Shop / delivery address"
                     className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
