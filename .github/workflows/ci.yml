@@ -15,6 +15,20 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hardware_pos_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hardware_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,5 +41,10 @@ jobs:
         run: npm run lint
       - name: Regression tests
         run: npm test
+      - name: Real PostgreSQL checkout integration
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+          JWT_SECRET: ci-secret-not-for-production-long-random-placeholder
+        run: node --import tsx --test tests/postgres-checkout.integration.mjs
       - name: Frontend and server production build
         run: npm run build
