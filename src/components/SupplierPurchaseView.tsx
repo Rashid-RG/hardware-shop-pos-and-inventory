@@ -100,6 +100,7 @@ export default function SupplierPurchaseView({
         address: supAddress,
         taxNumber: supTax,
       });
+      notify.success('Supplier registered successfully.');
       setIsSupOpen(false);
       setSupName('');
       setSupCompany('');
@@ -173,6 +174,7 @@ export default function SupplierPurchaseView({
         items: poItems,
         orderUser: currentUser,
       });
+      notify.success('Purchase order created successfully.');
       setIsPOOpen(false);
       setPoSupplierId('');
       setPoItems([]);
@@ -236,6 +238,7 @@ export default function SupplierPurchaseView({
         date: paymentDate,
         note: paymentNote || undefined,
       });
+      notify.success('Supplier payment recorded.');
       setPaymentDraft(null);
     } catch (err) {
       notify.error('Failed to record supplier payment: ' + err);
