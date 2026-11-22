@@ -28,13 +28,21 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState<string>('');
   const [selectedShopId, setSelectedShopId] = useState<string>('');
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [loginEmail, setLoginEmail] = useState('admin@hardwarepos.local');
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginShopId, setLoginShopId] = useState('');
   const [loginShops, setLoginShops] = useState<Array<{ id: string; name: string; address?: string; phone?: string }>>([]);
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [setupName, setSetupName] = useState('');
+  const [setupEmail, setSetupEmail] = useState('');
+  const [setupPassword, setSetupPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+  const [isCreatingAdmin, setIsCreatingAdmin] = useState(false);
+  const [setupError, setSetupError] = useState('');
+  const [setupStatus, setSetupStatus] = useState('');
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [resetShopId, setResetShopId] = useState('');
@@ -147,6 +155,49 @@ export default function App() {
       setChatHistory([...newHistory, { role: 'model', content: `Error: ${err.message || 'Network error occurred'}` }]);
     } finally {
       setIsChatSending(false);
+    }
+  };
+
+  useEffect(() => {
+    // Status only enables setup when PostgreSQL has no accounts.
+    // If the endpoint is unreachable or access is denied, show normal login.
+    let cancelled = false;
+    fetch('/api/auth/setup-status')
+      .then(async (response) => {
+        if (!response.ok) return { setupRequired: false };
+        return response.json();
+      })
+      .then((result) => { if (!cancelled) setSetupRequired(result.setupRequired === true); })
+      .catch(() => { if (!cancelled) setSetupRequired(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleCreateAdmin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSetupError('');
+    if (setupPassword.length < 12 || setupPassword !== setupConfirmPassword) {
+      setSetupError('Choose a matching password of at least 12 characters.');
+      return;
+    }
+    setIsCreatingAdmin(true);
+    try {
+      const response = await fetch('/api/auth/setup-admin', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: setupName, email: setupEmail, password: setupPassword, confirmPassword: setupConfirmPassword,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to create administrator');
+      setSetupPassword('');
+      setSetupConfirmPassword('');
+      setLoginEmail(setupEmail.trim().toLowerCase());
+      setSetupStatus('Administrator account created. Sign in using your new password.');
+      setSetupRequired(false);
+    } catch (error: any) {
+      setSetupError(error.message || 'Setup failed.');
+    } finally {
+      setIsCreatingAdmin(false);
     }
   };
 
@@ -607,8 +658,8 @@ export default function App() {
       return;
     }
 
-    if (resetNewPassword.length < 8) {
-      setResetError('New password must be at least 8 characters');
+    if (resetNewPassword.length < 12) {
+      setResetError('New password must be at least 12 characters');
       return;
     }
 
@@ -719,6 +770,34 @@ export default function App() {
     }
   };
 
+  if (!authUser && setupRequired) {
+    return (
+      <div className="min-h-screen bg-slate-950 p-4 flex items-center justify-center text-slate-100">
+        <form onSubmit={handleCreateAdmin} className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
+          <div className="text-xs uppercase tracking-wider text-amber-400">ARS Hardware POS • First-time setup</div>
+          <h1 className="text-2xl font-bold">Create your administrator account</h1>
+          <p className="text-sm text-slate-400">Your login is stored securely in PostgreSQL, not in .env.local. This screen closes permanently when the first user is created.</p>
+          <label className="block text-sm">Full name
+            <input value={setupName} onChange={(e) => setSetupName(e.target.value)} required minLength={2} maxLength={100} autoComplete="name" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+          </label>
+          <label className="block text-sm">Email address
+            <input type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required autoComplete="username" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+          </label>
+          <label className="block text-sm">Password (12 characters minimum)
+            <input type="password" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+          </label>
+          <label className="block text-sm">Confirm password
+            <input type="password" value={setupConfirmPassword} onChange={(e) => setSetupConfirmPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+          </label>
+          {setupError && <p role="alert" className="text-sm text-rose-400">{setupError}</p>}
+          <button disabled={isCreatingAdmin} type="submit" className="w-full rounded-lg bg-amber-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50">
+            {isCreatingAdmin ? 'Creating administrator...' : 'Create Administrator'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   if (!authUser) {
     return (
       <div
@@ -731,46 +810,7 @@ export default function App() {
           <h1 className="text-xl font-semibold tracking-tight">Hardware Shop POS Login</h1>
           <p className="text-xs text-slate-400">Use your staff credentials to continue.</p>
 
-          <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-wider text-slate-400">Role Login Options</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => applyQuickLoginPreset('admin')}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-              >
-                Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickLoginPreset('main-manager')}
-                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-              >
-                Retail Shop Manager
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickLoginPreset('wholesale-manager')}
-                className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
-              >
-                ARS PVT.LTE Manager
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickLoginPreset('cashier')}
-                className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
-              >
-                Cashier
-              </button>
-              <button
-                type="button"
-                onClick={() => applyQuickLoginPreset('inventory')}
-                className="col-span-2 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
-              >
-                Inventory Staff
-              </button>
-            </div>
-          </div>
+          {setupStatus && <p className="rounded-lg bg-emerald-900/40 border border-emerald-600 px-3 py-2 text-xs text-emerald-300">{setupStatus}</p>}
 
           <div className="space-y-2">
             <label className="text-xs text-slate-300">Email</label>
