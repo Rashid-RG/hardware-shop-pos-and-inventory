@@ -179,20 +179,6 @@ export default function SupplierPurchaseView({
     }
   };
 
-  const handleReceivePurchaseOrder = async (id: string) => {
-    if (!canModify) {
-      alert('Clearance restriction: Active operator role lacks receive check in clearances.');
-      return;
-    }
-    if (window.confirm('Mark this Purchase Order as RECEIVED? This immediately restocks corresponding inventories.')) {
-      try {
-        await onReceivePO(id, currentUser);
-      } catch (err) {
-        alert('Verification failed: ' + err);
-      }
-    }
-  };
-
   // Filter supplier listings
   const filteredSuppliers = suppliers.filter(
     (s) =>
@@ -386,14 +372,10 @@ export default function SupplierPurchaseView({
                       >
                         <Wallet className="w-3.5 h-3.5" /> Record Payment
                       </button>
-                      {(po.status === 'Pending' || po.status === 'Ordered') && canModify ? (
-                        <button
-                          id={`btn-receive-po-${po.id}`}
-                          onClick={() => handleReceivePurchaseOrder(po.id)}
-                          className="bg-emerald-100 hover:bg-emerald-200 text-emerald-700 font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 leading-none shadow-3xs transition"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Confirm Delivery Receipt
-                        </button>
+                      {(['Pending', 'Ordered', 'Partially Received'].includes(po.status)) && canModify ? (
+                        <span className="rounded-lg bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-900">
+                          Use Warehouse Receiving to record checked quantities
+                        </span>
                       ) : isReceived ? (
                         <span className="text-emerald-600 font-semibold flex items-center gap-1 font-mono text-[10px]">
                           <CheckCircle className="w-4 h-4" /> REPLENISHED INTO SHELF
