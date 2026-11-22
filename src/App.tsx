@@ -84,7 +84,7 @@ export default function App() {
   // Local Tax and Brand configuration parameters
   const [taxConfig, setTaxConfig] = useState<StoreSettings>({
     taxRate: 0,
-    storeName: 'Lanka Smart Hardware',
+    storeName: 'ARS Hardware',
     currency: 'LKR',
     invoicePrefix: 'SL-INV',
     logoUrl: '',
@@ -100,7 +100,7 @@ export default function App() {
     shopProfiles: [
       {
         id: 'shop-main',
-        name: 'Lanka Smart Hardware',
+        name: 'ARS Hardware',
         logoUrl: '',
         address: '',
         phone: '',
@@ -735,19 +735,19 @@ export default function App() {
           <section className="hidden lg:flex flex-col justify-between min-h-[560px] border-r border-white/10 p-9 xl:p-12 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
             <div>
               <div className="inline-flex items-center gap-3">
-                <ARSBrand featured subtitle="Hardware • Wholesale • Retail" className="ars-login-brand" />
+                <ARSBrand featured subtitle="Imports • Wholesale • Distribution" className="ars-login-brand" />
               </div>
               <div className="mt-14 max-w-xl">
-                <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for hardware commerce</p>
+                <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for import and distribution</p>
                 <h1 className="font-heading text-5xl font-bold tracking-tight leading-[1.14] xl:text-[56px]">Your business.<br/><span className="text-amber-300">One powerful</span><br/>workspace.</h1>
-                <p className="mt-6 max-w-md text-[15px] leading-7 text-slate-300">Manage counter sales, inventory, purchasing and financial reporting from one organized, secure platform.</p>
+                <p className="mt-6 max-w-md text-[15px] leading-7 text-slate-300">Manage international purchasing, warehouse inventory, wholesale distribution and financial reporting in one secure workspace.</p>
               </div>
             </div>
             <div className="flex items-center gap-3 border-t border-white/15 pt-5 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
           </section>
           <div className="bg-white p-6 text-slate-900 sm:p-8 lg:p-9 xl:p-11 flex flex-col justify-center">
             <div className="mb-6">
-              <div className="mb-6 lg:hidden"><ARSBrand dark featured subtitle="Hardware • Wholesale • Retail" /></div>
+              <div className="mb-6 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
               <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
               <p className="mt-3 text-sm text-slate-500">Sign in securely. Your authorized branch will load after verification.</p>
@@ -1007,7 +1007,7 @@ export default function App() {
               <div className="min-w-0">
               <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Hardware · Business workspace</p>
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
-                dashboard: 'Business Overview', pos: 'Point of Sale', products: 'Product Catalog',
+                dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing',
                 customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
                 quotations: 'Quotations', shifts: 'Cash Shifts', 
@@ -1019,7 +1019,7 @@ export default function App() {
               <span className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
               {(['Super Admin', 'Store Manager', 'Cashier'] as Role[]).includes(currentRole) && (
                 <button type="button" onClick={() => setActiveTab('pos')} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
-                  <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">New Sale</span><span className="sm:hidden">Sale</span>
+                  <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">New Invoice</span><span className="sm:hidden">Invoice</span>
                 </button>
               )}
             </div>
