@@ -5243,6 +5243,10 @@ app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager
   if(q.status!=='Accepted'||q.convertedToTxId)return res.status(409).json({error:'Accept the quotation before invoicing, and do not invoice it twice.'});
   const customer=db.customers.find(row=>row.id===q.customerId&&row.shopId===activeShopId);
   if(!customer)return res.status(409).json({error:'Quotation customer is no longer available.'});
+  const salesRep=db.employees.find(employee =>
+    employee.id===String(req.body?.salesRepId||'') && employee.shopId===activeShopId);
+  if(!salesRep||!salesRep.name?.trim())
+    return res.status(400).json({error:'Select a registered Sales Representative before invoicing.'});
   const paymentMethod=String(req.body?.paymentMethod||'Bank Transfer');
   if(!['Cash','Bank Transfer','Credit Account'].includes(paymentMethod))
     return res.status(400).json({error:'Unsupported quotation payment method.'});
@@ -5262,7 +5266,7 @@ app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager
     invoiceNumber:`${db.settings.invoicePrefix}-${Date.now()}-${randomUUID().slice(0,6).toUpperCase()}`,
     date:new Date().toISOString(),customerId:customer.id,customerName:customer.name,
     customerPhone:customer.phone||undefined,customerAddress:customer.address||undefined,
-    cashierName:auth?.name||'Cashier',items,subtotal:q.subtotal,tax:q.tax,
+    cashierName:auth?.name||'System',salesRepId:salesRep.id,salesRepName:salesRep.name,items,subtotal:q.subtotal,tax:q.tax,
     discountAmount:q.discountAmount,total:q.total,
     paymentMethod:paymentMethod as SalesTransaction['paymentMethod'],
     cashReceived:paymentMethod==='Cash'?q.total:undefined,
