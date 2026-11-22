@@ -755,7 +755,7 @@ export default function App() {
           <section className="hidden lg:flex flex-col justify-between min-h-[560px] border-r border-white/10 p-9 xl:p-12 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
             <div>
               <div className="inline-flex items-center gap-3">
-                <ARSBrand subtitle="Hardware • Wholesale • Retail" className="ars-login-brand" />
+                <ARSBrand featured subtitle="Hardware • Wholesale • Retail" className="ars-login-brand" />
               </div>
               <div className="mt-14 max-w-xl">
                 <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for hardware commerce</p>
@@ -767,7 +767,7 @@ export default function App() {
           </section>
           <div className="bg-white p-6 text-slate-900 sm:p-8 lg:p-9 xl:p-11 flex flex-col justify-center">
             <div className="mb-6">
-              <div className="mb-6 lg:hidden"><ARSBrand dark subtitle="Hardware • Wholesale • Retail" /></div>
+              <div className="mb-6 lg:hidden"><ARSBrand dark featured subtitle="Hardware • Wholesale • Retail" /></div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
               <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
               <p className="mt-3 text-sm text-slate-500">Sign in securely. Your authorized branch will load after verification.</p>
