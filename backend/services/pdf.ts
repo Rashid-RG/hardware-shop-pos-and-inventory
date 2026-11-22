@@ -183,13 +183,41 @@ export const buildInvoicePdfBuffer = async (
     doc.font('Helvetica-Bold').fontSize(14).fillColor('#1d4ed8');
     doc.text(`Total: Rs.${Number(tx.total || 0).toFixed(2)}`, 360, doc.y + 4, { width: 195, align: 'right' });
 
-    doc.moveDown(2);
-    doc.font('Helvetica').fontSize(9).fillColor('#64748b');
-    doc.text(invoiceFooter.goods, 40, doc.y, { width: 515, align: 'center' });
-    doc.text(invoiceFooter.thanks, 40, doc.y, { width: 515, align: 'center' });
-    doc.fontSize(8).text(invoiceFooter.credit, 40, doc.y + 2, { width: 515, align: 'center' });
-    const supportLine = `Support: ${String(invoiceCompanyMeta?.supportPhone || '-')} | ${String(invoiceCompanyMeta?.supportEmail || '-')}`;
-    doc.text(supportLine, 40, doc.y + 24, { width: 515, align: 'center' });
+    // Reserve a complete acceptance panel; never split signatures between A4 pages.
+    const proofHeight = 164;
+    if (doc.y + proofHeight > doc.page.height - 40) {
+      doc.addPage();
+    }
+    const proofTop = doc.y + 15;
+    doc.moveTo(40, proofTop).lineTo(555, proofTop).strokeColor('#cbd5e1').stroke();
+    doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(10)
+      .text('GOODS VERIFICATION & RECEIPT', 40, proofTop + 8, { width: 515, align: 'center' });
+    const signatureY = proofTop + 55;
+    const columns = [
+      { x: 40, label: 'Prepared By' },
+      { x: 172, label: 'Checked By' },
+      { x: 304, label: 'Authorized By' },
+      { x: 436, label: 'Received By' },
+    ];
+    columns.forEach(({ x, label }) => {
+      doc.moveTo(x, signatureY).lineTo(x + 117, signatureY).strokeColor('#94a3b8').stroke();
+      doc.font('Helvetica').fontSize(8).fillColor('#475569')
+        .text(label + ' / Signature', x, signatureY + 7, { width: 117, align: 'center' });
+    });
+    doc.font('Helvetica').fontSize(8).fillColor('#475569')
+      .text('Receiving Date / Time: ____________________', 40, signatureY + 33)
+      .text('Customer Stamp (if applicable): ____________________', 278, signatureY + 33);
+    doc.fontSize(8).fillColor('#334155')
+      .text(invoiceFooter.acknowledgement, 40, signatureY + 55, { width: 515, align: 'center' });
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#0f172a')
+      .text(invoiceFooter.goods, 40, doc.y + 5, { width: 515, align: 'center' });
+    doc.font('Helvetica').fontSize(8).fillColor('#475569')
+      .text(invoiceFooter.thanks, 40, doc.y + 2, { width: 515, align: 'center' });
+    doc.fontSize(8).text(invoiceFooter.credit, 40, doc.y + 5, { width: 515, align: 'center' });
+    const supportParts = [invoiceCompanyMeta?.supportPhone, invoiceCompanyMeta?.supportEmail].filter(Boolean);
+    if (supportParts.length) {
+      doc.fontSize(7).text(`Support: ${supportParts.join(' | ')}`, 40, doc.y + 3, { width: 515, align: 'center' });
+    }
 
     doc.end();
   });
