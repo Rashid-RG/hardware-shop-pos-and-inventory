@@ -1292,6 +1292,50 @@ const getInitialDbState = () => {
   };
 };
 
+// Fresh business databases must not inherit demonstration products, people,
+// invoices, expenses or old shop branding. Existing databases are never reset
+// by this initializer: loadDb invokes it only if no normalized/app_state data exists.
+const getCleanBusinessState = () => {
+  const demo = getInitialDbState();
+  return {
+    ...demo,
+    users: [],
+    products: [],
+    suppliers: [],
+    customers: [],
+    employees: [],
+    transactions: [],
+    purchaseOrders: [],
+    stockLogs: [],
+    activityLogs: [],
+    manualExpenses: [],
+    supplierPayments: [],
+    quotations: [],
+    cashShifts: [],
+    customerCreditPayments: [],
+    invoicePrintLogs: [],
+    settings: {
+      ...demo.settings,
+      storeName: 'ARS Hardware',
+      logoUrl: '',
+      address: '',
+      phone: '',
+      taxRate: 0,
+      invoicePrefix: 'ARS-INV',
+      shopProfiles: [{
+        id: 'shop-main',
+        name: 'ARS Hardware',
+        logoUrl: '',
+        address: '',
+        phone: '',
+        taxRate: 0,
+        invoicePrefix: 'ARS-INV',
+        printFormat: 'a4' as const,
+      }],
+    },
+  };
+};
+
 // Database state accessor
 let db: DBState;
 
@@ -2400,7 +2444,7 @@ const loadDb = async () => {
     return;
   }
 
-  db = normalizeState(getInitialDbState());
+  db = normalizeState(getCleanBusinessState());
   await syncNormalizedFromState(db);
 };
 
