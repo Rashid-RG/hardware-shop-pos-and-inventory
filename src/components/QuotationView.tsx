@@ -50,7 +50,13 @@ export default function QuotationView({
     const headers = new Headers(init?.headers || {});
     headers.set('Authorization', `Bearer ${authToken}`);
     if (!headers.has('Content-Type') && init?.body) headers.set('Content-Type', 'application/json');
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers }).then(async response => {
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Quotation action was not completed.');
+      }
+      return response;
+    });
   };
 
   const [isComposing, setIsComposing] = useState(false);
@@ -103,6 +109,7 @@ export default function QuotationView({
   }, [quoteItems, quoteDiscount, taxRate]);
 
   const handleSave = async () => {
+    if (!selectedCustomer?.id) return alert('Select a registered wholesale customer shop first.');
     if (quoteItems.length === 0) return alert('Add at least one product to the quote.');
     setIsSaving(true);
     try {
@@ -126,14 +133,21 @@ export default function QuotationView({
       setQuoteDiscount(0);
       setValidUntil('');
       onRefreshDb();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Quotation was not saved.');
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleUpdateStatus = async (id: string, status: string) => {
-    await authFetch(`/api/quotations/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
-    onRefreshDb();
+    try {
+      await authFetch(`/api/quotations/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+      onRefreshDb();
+    } catch(error) {
+      alert(error instanceof Error ? error.message : 'Quotation status could not be updated.');
+      onRefreshDb();
+    }
   };
 
   const handleConvert = async (q: Quotation) => {
@@ -142,6 +156,8 @@ export default function QuotationView({
     try {
       await authFetch(`/api/quotations/${q.id}/convert`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'Cash' }) });
       onRefreshDb();
+    } catch(error) {
+      alert(error instanceof Error ? error.message : 'Quotation could not be converted.');
     } finally {
       setConvertingId(null);
     }
@@ -149,8 +165,10 @@ export default function QuotationView({
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this quotation?')) return;
-    await authFetch(`/api/quotations/${id}`, { method: 'DELETE' });
-    onRefreshDb();
+    try {
+      await authFetch(`/api/quotations/${id}`, { method: 'DELETE' });
+      onRefreshDb();
+    } catch(error) { alert(error instanceof Error ? error.message : 'Could not delete quotation.'); }
   };
 
   const printQuote = (q: Quotation) => {
@@ -265,7 +283,7 @@ export default function QuotationView({
                       disabled={q.status === 'Converted'}
                       className={`text-[10px] font-semibold px-2 py-1 rounded-full border-0 outline-none cursor-pointer ${STATUS_COLORS[q.status] || 'bg-slate-100 text-slate-600'}`}
                     >
-                      {['Draft', 'Sent', 'Accepted', 'Expired'].map((s) => <option key={s}>{s}</option>)}
+                      {[q.status, ...(({Draft:['Sent'],Sent:['Accepted','Expired'],Accepted:['Expired'],Expired:[],Converted:[]} as Record<string,string[]>)[q.status] || [])].map((status) => <option key={status} value={status}>{status}</option>)}
                       {q.status === 'Converted' && <option>Converted</option>}
                     </select>
                   </td>
@@ -274,7 +292,7 @@ export default function QuotationView({
                       <button onClick={() => printQuote(q)} title="Print" className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition">
                         <Printer className="w-3.5 h-3.5" />
                       </button>
-                      {q.status !== 'Converted' && (
+                      {q.status === 'Accepted' && (
                         <button
                           onClick={() => handleConvert(q)}
                           disabled={convertingId === q.id}
@@ -315,7 +333,7 @@ export default function QuotationView({
                   onChange={(e) => setSelectedCustomer(customers.find((c) => c.id === e.target.value) || null)}
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-200"
                 >
-                  <option value="">Walk-in Customer</option>
+                  <option value="">Select registered customer shop</option>
                   {customers.filter((c) => c.id !== 'cust-walkin').map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
