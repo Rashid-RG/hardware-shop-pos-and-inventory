@@ -178,6 +178,9 @@ if (!fs.existsSync(SHOP_UPLOADS_DIR)) {
 }
 app.use('/uploads', express.static(UPLOADS_ROOT_DIR));
 
+// Never accept the historical example password for a real account.
+const DEFAULT_DEMO_PASSWORD = 'ChangeMe123!';
+
 const requireConfiguredSecret = (name: string, value?: string, minimumLength = 32) => {
   const normalized = String(value || '').trim();
   const weakSecretPattern = /(change[_-]?me|replace[_-]?with|example|password)/i;
