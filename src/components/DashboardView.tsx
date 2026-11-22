@@ -52,8 +52,8 @@ export default function DashboardView({
   // Metric Calculations
   const totalRevenue = transactions.reduce((sum, t) => sum + t.total, 0);
 
-  // Today is simulated as 2026-05-31 based on the system clock
-  const todayStr = '2026-05-31';
+  // Compute the current Sri Lanka business date rather than a demo date.
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const todayTransactions = transactions.filter((t) => t.date.startsWith(todayStr));
   const todayRevenue = todayTransactions.reduce((sum, t) => sum + t.total, 0);
 
@@ -106,9 +106,7 @@ export default function DashboardView({
   // Trend line mapping - past 14 days
   const dateRecord: Record<string, { revenue: number; profit: number }> = {};
   for (let i = 13; i >= 0; i--) {
-    const d = new Date('2026-05-31T08:00:00Z');
-    d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().split('T')[0];
+    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - i * 86400000));
     dateRecord[dateStr] = { revenue: 0, profit: 0 };
   }
   transactions.forEach((t) => {
@@ -136,7 +134,7 @@ export default function DashboardView({
   });
 
   // Recent transactions
-  const recentTransactions = transactions.slice(0, 5);
+  const recentTransactions = [...transactions].sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 5);
 
   // Low stock listing
   const criticalLowStock = products.filter((p) => p.quantity <= p.reorderLevel).slice(0, 4);
@@ -144,32 +142,32 @@ export default function DashboardView({
   return (
     <div className="space-y-6 motion-safe:animate-fade-in">
       {/* Title block */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-6 rounded-xl border border-slate-100 shadow-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gradient-to-r from-[#152945] to-[#294664] text-white p-6 sm:p-7 rounded-2xl border border-slate-800 shadow-lg shadow-slate-950/10">
         <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            Intel Engine Dashboard
+          <h2 className="text-2xl font-heading font-bold tracking-tight text-white">
+            Business Overview
           </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Real-time business summary and inventory statistics.
+          <p className="text-sm text-slate-200 mt-1">
+            Sales activity, inventory health and the numbers that matter to your business.
           </p>
         </div>
-        <div id="timestamp-tag" className="flex items-center gap-2 text-xs font-mono bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg border border-slate-200">
+        <div id="timestamp-tag" className="flex items-center gap-2 text-xs font-semibold bg-white/10 text-slate-100 px-3 py-2 rounded-xl border border-white/15">
           <Calendar className="w-3.5 h-3.5 text-slate-400" />
-          <span>Session: 2026-05-31 08:31 UTC</span>
+          <span>{new Intl.DateTimeFormat('en-LK', { timeZone: 'Asia/Colombo', dateStyle: 'medium', timeStyle: 'short' }).format(new Date())}</span>
         </div>
       </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4">
         {/* Total Revenue */}
-        <div id="kpi-total-revenue" className="min-w-0 bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-start justify-between gap-3">
+        <div id="kpi-total-revenue" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Sales</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
               {currencySymbol}{totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </h3>
             <p className="text-[10px] text-emerald-600 mt-1 flex items-center gap-1 font-mono">
-              <span className="font-bold">▲ +12.4%</span> vs prior fortnight
+              <span className="font-bold">Based on recorded sales</span>
             </p>
           </div>
           <div className="shrink-0 p-3 bg-indigo-50 rounded-lg text-indigo-500">
@@ -178,7 +176,7 @@ export default function DashboardView({
         </div>
 
         {/* Today's Sales */}
-        <div id="kpi-today-revenue" className="min-w-0 bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-start justify-between gap-3">
+        <div id="kpi-today-revenue" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Today's Billing</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
@@ -226,7 +224,7 @@ export default function DashboardView({
         </div>
 
         {/* Inventory capital value */}
-        <div id="kpi-inventory-value" className="min-w-0 bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-start justify-between gap-3">
+        <div id="kpi-inventory-value" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Stock Capital</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
@@ -290,7 +288,7 @@ export default function DashboardView({
       {/* Recharts visualizations */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Trend Area Chart */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm lg:col-span-2">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h4 className="font-medium text-slate-900 text-sm">Revenue Sales Trend</h4>
@@ -327,7 +325,7 @@ export default function DashboardView({
         </div>
 
         {/* Pie Chart Department Distribution */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm flex flex-col justify-between">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Department Sales Breakdown</h4>
             <p className="text-[11px] text-slate-400">Sales volume percentage across hardware categories.</p>
@@ -377,7 +375,7 @@ export default function DashboardView({
       {/* Lower Details Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Checkout Invoice Feed */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm lg:col-span-2 space-y-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="font-medium text-slate-900 text-sm">Recent Invoices</h4>
@@ -439,7 +437,7 @@ export default function DashboardView({
         </div>
 
         {/* Low Stock Watchlist */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm space-y-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Critical Inventory Alerts</h4>
             <p className="text-[11px] text-slate-400">Items immediately requiring restock.</p>
@@ -475,7 +473,7 @@ export default function DashboardView({
       {/* Business Employee Performance & Activity Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Activity Logs */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm space-y-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Active Audit Feed</h4>
             <p className="text-[11px] text-slate-400">Chronological system operations timeline.</p>
@@ -500,7 +498,7 @@ export default function DashboardView({
         </div>
 
         {/* Staff Shift tracker */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm space-y-4">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="font-medium text-slate-900 text-sm">Staff Attendance & Scorecard</h4>
