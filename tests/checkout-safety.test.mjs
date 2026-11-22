@@ -38,3 +38,9 @@ test('credit limit check runs before any stock mutation and rejects invalid amou
   assert.match(checkout, /Credit limit exceeded/);
   assert.match(checkout, /!Number\.isFinite\(cashPaid\)/);
 });
+
+test('unsupported payment methods are rejected before checkout mutations', () => {
+  assert.match(checkout, /allowedPaymentMethods = new Set/);
+  assert.match(checkout, /!allowedPaymentMethods\.has\(paymentMethod\)/);
+  assert.ok(checkout.indexOf('Unsupported payment method') < checkout.indexOf('for (const update of pendingStockUpdates)'));
+});
