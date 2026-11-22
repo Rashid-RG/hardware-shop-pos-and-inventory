@@ -1815,10 +1815,10 @@ export default function POSView({
       </div>
 
       {/* RIGHT: Register Cart panel & Checkout Checkout (5 Cols) */}
-      <div className={`lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-lg p-4 flex flex-col justify-between min-h-[550px] ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-        <div>
+      <div className={`lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-lg p-3 sm:p-4 flex flex-col min-h-[550px] lg:h-[calc(100dvh-150px)] lg:min-h-[560px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1">
           {/* Active Operator Banner */}
-          <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4 text-xs font-sans">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
             <div>
               <p className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Terminal Register 01</p>
               <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
@@ -1836,7 +1836,7 @@ export default function POSView({
           )}
 
           {/* Registered wholesale buyer lookup. Never bill an unknown walk-in account. */}
-          <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl border border-amber-200 bg-amber-50/50 p-4 font-sans text-xs">
+          <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3 font-sans text-xs">
             <div className="flex items-center justify-between gap-2">
               <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Bill to · Registered shop</p>
                 <p className="mt-1 text-[11px] text-slate-500">Select a saved wholesale customer; contact details fill automatically.</p>
@@ -1868,7 +1868,11 @@ export default function POSView({
             {customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId).length === 0 && (
               <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No wholesale shops registered yet. Open Customers in the sidebar to add your first buyer.</p>
             )}
-            <div className="grid grid-cols-1 gap-2">
+            <details className="rounded-lg border border-amber-100 bg-white/80 px-3 py-2" id="pos-customer-details">
+              <summary className="cursor-pointer select-none text-[11px] font-semibold text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+                Customer contact details (view)
+              </summary>
+              <div className="mt-2 grid grid-cols-1 gap-2">
               <div>
                 <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Customer shop name</label>
                 <input
@@ -1911,8 +1915,24 @@ export default function POSView({
               </div>
             </div>
 
+            </details>
+
+            <label htmlFor="pos-sales-representative" className="block text-[11px] font-semibold text-slate-800">
+              Sales Representative <span className="text-rose-600">*</span>
+              <select id="pos-sales-representative" required aria-label="Select Sales Representative"
+                value={selectedSalesRepId} onChange={(event) => setSelectedSalesRepId(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500">
+                <option value="">Select Sales Representative</option>
+                {activeSalesReps.map(rep => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
+              </select>
+              {activeSalesReps.length === 0 &&
+                <span className="mt-1 block text-[11px] text-rose-700">Register Sales Representatives in Staff before billing.</span>}
+            </label>
+
             {selectedCustomer.id !== 'cust-walkin' && (
-              <div className="space-y-2 bg-slate-100 p-2 rounded text-[11px] text-slate-700">
+              <details className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700">
+                <summary className="cursor-pointer font-semibold text-slate-600">Customer credit and purchase history</summary>
+                <div className="mt-2 space-y-2 bg-slate-100 p-2 rounded text-[11px] text-slate-700">
                 <div className="flex justify-between items-center">
                   <span>Loyalty Balance: <strong className="font-mono text-indigo-600">{selectedCustomer.loyaltyBalance} pts</strong></span>
                   <span>Prior Transactions: <strong>{selectedCustomer.purchaseCount}</strong></span>
@@ -1925,7 +1945,8 @@ export default function POSView({
                     Balance: {formatMoney(currentCreditBalance)}
                   </span>
                 </div>
-              </div>
+                </div>
+              </details>
             )}
 
             {paymentMethod === 'Credit Account' && (
@@ -1951,7 +1972,7 @@ export default function POSView({
           </div>
 
           {/* Cart Scroll list */}
-          <div id="pos-cart-scroller" className="space-y-3.5 max-h-[290px] overflow-y-auto pr-1">
+          <div id="pos-cart-scroller" className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
               const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
@@ -2051,7 +2072,7 @@ export default function POSView({
         </div>
 
         {/* Ledger Bottom checkout math */}
-        <div className="border-t border-slate-100 pt-4 space-y-3 mt-4">
+        <div className="shrink-0 border-t border-slate-200 bg-white pt-3 space-y-2 mt-2 lg:max-h-[48%] lg:overflow-y-auto">
           <div className="space-y-1.5 text-xs text-slate-600 font-sans">
             <div className="flex justify-between">
               <span>Items Total</span>
@@ -2118,17 +2139,6 @@ export default function POSView({
             )}
           </div>
 
-          <label className="block rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-slate-800">
-            Sales Representative <span className="text-rose-600">*</span>
-            <select required aria-label="Select Sales Representative" value={selectedSalesRepId}
-              onChange={(event) => setSelectedSalesRepId(event.target.value)}
-              className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900">
-              <option value="">Select Sales Representative</option>
-              {activeSalesReps.map(rep => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
-            </select>
-            {activeSalesReps.length === 0 && <p className="mt-2 text-rose-700">No Sales Representatives registered for this shop. Add representatives in Staff.</p>}
-          </label>
-
           {/* Payment Method Selector Grid */}
           <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
             {[
@@ -2163,8 +2173,11 @@ export default function POSView({
           </div>
 
           {isWholesaleShop && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Hardware Business Information (Optional)</p>
+            <details className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+              <summary className="cursor-pointer text-[11px] font-semibold text-amber-800">
+                Delivery, transport and warranty details (optional)
+              </summary>
+              <div className="mt-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="number"
@@ -2234,7 +2247,8 @@ export default function POSView({
                   className="col-span-2 w-full rounded border border-amber-200 bg-white px-2 py-1.5 text-[11px]"
                 />
               </div>
-            </div>
+              </div>
+            </details>
           )}
 
           {/* Checkout Submit Trigger */}
