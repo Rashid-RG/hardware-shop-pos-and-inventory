@@ -734,8 +734,8 @@ export default function App() {
     return (
       <div
         className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-3 sm:p-6 lg:p-7"
-      <NotificationCenter />
       >
+        <NotificationCenter />
         <div className="pointer-events-none absolute inset-0 opacity-30 bg-cover bg-center" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#101d32]/95 via-[#101d32]/85 to-[#243b5c]/90" />
         <div className="relative z-10 w-full max-w-6xl overflow-hidden rounded-[30px] border border-white/15 bg-white/5 shadow-[0_25px_100px_rgba(0,0,0,0.38)] lg:grid lg:grid-cols-[1.12fr_0.88fr]">
