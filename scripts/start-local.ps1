@@ -6,7 +6,7 @@ Set-Location (Join-Path $scriptDir '..')
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
   Copy-Item '.env.example' '.env.local'
-  Write-Host '.env.local created. Configure strong passwords and JWT_SECRET before shop use.'
+  Write-Host '.env.local created. Configure JWT_SECRET before shop use. Create administrator through first-time setup.'
 }
 
 function Get-DatabaseUrlFromEnvFile {
@@ -116,21 +116,7 @@ $jwtValue = if ($jwtLine) { (($jwtLine -replace '^\s*JWT_SECRET\s*=\s*', '').Tri
 if ($jwtValue.Length -lt 32 -or $jwtValue -match '(?i)replace.with|change.?me|example|password') {
   throw 'Set a strong random JWT_SECRET of at least 32 characters in .env.local before starting.'
 }
-$requiredPasswords = @('ADMIN_PASSWORD', 'MANAGER_PASSWORD', 'WHOLESALE_MANAGER_PASSWORD', 'CASHIER_PASSWORD', 'INVENTORY_PASSWORD')
-foreach ($key in $requiredPasswords) {
-  $line = $envLines | Where-Object { $_ -match ("^\s*" + $key + "\s*=") } | Select-Object -First 1
-  $value = if ($line) { (($line -replace '^\s*[^=]+=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
-  if ($value.Length -lt 12 -or $value -eq 'ChangeMe123!' -or $value -match '(?i)change.?me|example') {
-    throw "Configure a unique password of at least 12 characters for $key in .env.local."
-  }
-}
-if (($requiredPasswords | ForEach-Object {
-  $key = $_
-  $line = $envLines | Where-Object { $_ -match ("^\s*" + $key + "\s*=") } | Select-Object -First 1
-  (($line -replace '^\s*[^=]+=\s*', '').Trim().Trim('"').Trim("'"))
-} | Select-Object -Unique).Count -ne $requiredPasswords.Count) {
-  throw 'Every role must have a different password.'
-}
+Write-Host 'Employee credentials are managed in PostgreSQL; no role passwords are required in .env.local.'
 
 Write-Host 'Checking database configuration...'
 $dockerAvailable = $false
