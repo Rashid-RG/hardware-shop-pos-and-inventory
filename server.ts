@@ -4,6 +4,7 @@ import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
@@ -3759,8 +3760,19 @@ app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) =
 // POS Transaction Checkout Route
 app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const { cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
-  const txId = `tx-${Date.now()}`;
+  const txId = `tx-${randomUUID()}`;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
+
+  // Checkout is always tied to the signed-in operator's active shop.
+  const checkoutCustomer = customerId && customerId !== 'cust-walkin'
+    ? db.customers.find((c) => c.id === customerId && c.shopId === activeShopId)
+    : undefined;
+  if (customerId && customerId !== 'cust-walkin' && !checkoutCustomer) {
+    return res.status(400).json({ error: 'Customer is not available in this shop' });
+  }
+  if (paymentMethod === 'Credit Account' && !checkoutCustomer) {
+    return res.status(400).json({ error: 'A registered customer is required for credit sales' });
+  }
 
   const checkoutError = validateCheckoutPayload(cartItems || []);
   if (checkoutError) {
@@ -3855,7 +3867,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   const { tax, total } = invoiceTotals(subtotal, shopProfile?.taxRate ?? db.settings.taxRate, discountAmount);
   const cashPaid = paymentMethod === 'Cash' ? Math.round(Number(cashReceived ?? total) * 100) / 100 : undefined;
   const cashChange = paymentMethod === 'Cash' ? Math.round(Math.max(0, (cashPaid ?? 0) - total) * 100) / 100 : undefined;
-  const normalizedPaymentStatus = normalizePaymentStatus(paymentStatus)
+  const normalizedPaymentStatus = (paymentMethod === 'Credit Account' ? 'CREDIT SALE' : normalizePaymentStatus(paymentStatus))
     || (paymentMethod === 'Credit Account'
       ? 'CREDIT SALE'
       : ((cashPaid ?? total) <= 0
@@ -3879,7 +3891,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   }
   db.stockLogs.unshift(...pendingStockLogs);
 
-  const invoiceNum = `${db.settings.invoicePrefix}-${Date.now()}`;
+  const invoicePrefix = String(shopProfile?.invoicePrefix || db.settings.invoicePrefix || 'INV').trim();
+  const invoiceNum = `${invoicePrefix}-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
   const tx: SalesTransaction = {
     id: txId,
@@ -3908,7 +3921,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
 
   // Update customer loyalty points if a valid customer
   if (customerId && customerId !== 'cust-walkin') {
-    const custIndex = db.customers.findIndex((c) => c.id === customerId);
+    const custIndex = db.customers.findIndex((c) => c.id === customerId && c.shopId === activeShopId);
     if (custIndex !== -1) {
       db.customers[custIndex].purchaseCount += 1;
       const gainedPoints = Math.floor(tx.total / 10);
