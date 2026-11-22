@@ -11,11 +11,12 @@ import {
   Check,
   Clock,
 } from 'lucide-react';
-import { Product, Customer, Quotation, QuotationItem, StoreSettings } from '../types';
+import { Product, Customer, Employee, Quotation, QuotationItem, StoreSettings } from '../types';
 
 interface QuotationViewProps {
   products: Product[];
   customers: Customer[];
+  employees: Employee[];
   quotations: Quotation[];
   taxConfig: StoreSettings;
   cashierName: string;
@@ -34,6 +35,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function QuotationView({
   products,
   customers,
+  employees,
   quotations,
   taxConfig,
   cashierName,
@@ -72,6 +74,8 @@ export default function QuotationView({
   const [prodSearch, setProdSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [convertingId, setConvertingId] = useState<string | null>(null);
+  const [selectedSalesRepId, setSelectedSalesRepId] = useState('');
+  const activeSalesReps=employees.filter(rep=>rep.shopId===taxConfig.activeShopId && rep.name.trim());
 
   const taxRate = activeShopProfile?.taxRate ?? taxConfig.taxRate;
 
@@ -151,10 +155,14 @@ export default function QuotationView({
   };
 
   const handleConvert = async (q: Quotation) => {
+    if (!activeSalesReps.some(rep=>rep.id===selectedSalesRepId)) {
+      alert('Select the Sales Representative responsible for this invoice.');
+      return;
+    }
     if (!confirm(`Convert quote ${q.quoteNumber} to a sale? This will reduce stock.`)) return;
     setConvertingId(q.id);
     try {
-      await authFetch(`/api/quotations/${q.id}/convert`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'Cash' }) });
+      await authFetch(`/api/quotations/${q.id}/convert`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'Cash', salesRepId: selectedSalesRepId }) });
       onRefreshDb();
     } catch(error) {
       alert(error instanceof Error ? error.message : 'Quotation could not be converted.');
@@ -256,7 +264,17 @@ export default function QuotationView({
             No quotations yet. Create one to get started.
           </div>
         ) : (
-          <table className="w-full text-xs text-left">
+          <table className="w-full text-xs text-left"><caption className="caption-top px-4 pb-3 text-left text-xs font-semibold text-slate-700">
+              Sales Representative for invoice conversion
+              <select aria-label="Select Sales Representative for quotation invoice" value={selectedSalesRepId}
+                onChange={event=>setSelectedSalesRepId(event.target.value)}
+                className="ml-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="">Select representative</option>
+                {activeSalesReps.map(rep=><option key={rep.id} value={rep.id}>{rep.name}</option>)}
+              </select>
+              {activeSalesReps.length===0&&<span className="ml-2 text-rose-700">Register Sales Representatives in Staff first.</span>}
+            </caption>
+            
             <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider">
               <tr>
                 <th className="px-4 py-3">Quote #</th>
