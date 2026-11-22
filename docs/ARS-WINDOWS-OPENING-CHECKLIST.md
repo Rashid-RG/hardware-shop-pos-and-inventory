@@ -22,7 +22,17 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5433/hardware_pos
 
 **Important:** The example Docker password is only a local development default. Replace it with a strong password before using the system for real business records. If the PostgreSQL volume already exists, changing `POSTGRES_PASSWORD` in Docker Compose alone **does not update the database user's existing password**. Change PostgreSQL credentials deliberately and verify the new connection without removing the volume.
 
-Set a strong `JWT_SECRET` (at least 32 random characters), plus **distinct** passwords of at least 12 characters for `ADMIN_PASSWORD`, `MANAGER_PASSWORD`, `WHOLESALE_MANAGER_PASSWORD`, `CASHIER_PASSWORD`, and `INVENTORY_PASSWORD`. Do not reuse default or example values.
+Set a strong `JWT_SECRET` (at least 32 random characters). **Do not put employee passwords in `.env.local`**. The app stores password hashes in PostgreSQL and employee accounts are created in System Administration.
+
+For a **new, empty user database**, open `http://localhost:3000` after startup. The one-time owner setup screen creates the first System Administrator. The setup endpoint is only accessible via localhost and closes once any account exists.
+
+For an **existing local database with user accounts already present**, the setup wizard does not run and no users are overwritten. Sign in with a known administrator account. If you do not know the existing administrator password, first create a PostgreSQL backup, then run this explicit, local-only recovery tool and choose a new administrator password:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/recover-local-admin.ps1
+```
+
+It requires confirmation of a backup and updates **only the password hash of an existing Super Admin**. It never creates a user, resets PostgreSQL, or clears business records.
 
 ## Start the application
 
