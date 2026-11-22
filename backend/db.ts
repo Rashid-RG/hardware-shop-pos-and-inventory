@@ -888,6 +888,87 @@ export const seedDatabase = async (initialState: any) => {
 };
 
 // Incremental Write Helpers
+/** Atomically edit a single SKU, its stock ledger and its audit record. */
+export const updateProductWithAudit = async (
+  product: Product, expectedQuantity: number, actor: string, role: string,
+  shopName: string, reason: string
+) => {
+  if (!product.shopId || !Number.isSafeInteger(product.quantity) || product.quantity < 0) {
+    throw new Error('Invalid shop or product stock quantity.');
+  }
+  const variants = product.variants || [];
+  if (variants.some((v) => !Number.isSafeInteger(v.quantity) || v.quantity < 0)) {
+    throw new Error('Variant stock must be a nonnegative whole number.');
+  }
+  if (variants.length && variants.reduce((sum, v) => sum + v.quantity, 0) !== product.quantity) {
+    throw new Error('Product stock must equal the total of its variants.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const locked = await client.query(
+      'SELECT quantity, variants_json FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [product.id, product.shopId]
+    );
+    if (!locked.rowCount) throw new Error('Product not found in this shop.');
+    const previousQty = Number(locked.rows[0].quantity);
+    if (previousQty !== expectedQuantity) {
+      throw new Error('Product stock changed since it was opened. Reload before editing.');
+    }
+    const oldVariants: ProductVariant[] = Array.isArray(locked.rows[0].variants_json)
+      ? locked.rows[0].variants_json : [];
+    if (oldVariants.length && !variants.length) {
+      throw new Error('Cannot erase variants from an existing product. Use a dedicated migration.');
+    }
+    if (oldVariants.length && (
+      oldVariants.length !== variants.length ||
+      oldVariants.some((old) => !variants.some((current) => current.id === old.id))
+    )) {
+      throw new Error('Cannot remove or replace existing variant IDs during product editing.');
+    }
+
+    await client.query(
+      `UPDATE products SET
+       name=$1,sku=$2,barcode=$3,qr_code=$4,internal_code=$5,image_url=$6,
+       images_json=$7::jsonb,brand=$8,category=$9,cost_price=$10,selling_price=$11,
+       wholesale_price=$12,dealer_price=$13,quantity=$14,reorder_level=$15,
+       warranty=$16,description=$17,long_description=$18,location=$19,status=$20,
+       variants_json=$21::jsonb,updated_at=NOW()
+       WHERE id=$22 AND shop_id=$23`,
+      [product.name, product.sku, product.barcode || null, product.qrCode || null,
+       product.internalCode || null, product.imageUrl || null, JSON.stringify(product.images || []),
+       product.brand, product.category, product.costPrice, product.sellingPrice,
+       product.wholesalePrice || 0, product.dealerPrice || 0, product.quantity,
+       product.reorderLevel, product.warranty, product.description, product.longDescription || null,
+       product.location || null, product.status || 'Active', JSON.stringify(variants),
+       product.id, product.shopId]
+    );
+    const delta = product.quantity - previousQty;
+    if (delta !== 0) {
+      await client.query(
+        `INSERT INTO stock_logs
+         (id,shop_id,date,product_id,product_name,type,quantity,reason,user_name)
+         VALUES ($1,$2,NOW(),$3,$4,'Stock Adjust',$5,$6,$7)`,
+        ['adjust-' + product.id + '-' + Date.now(), product.shopId, product.id,
+         product.name, delta, reason || 'Manual Product Adjustment', actor]
+      );
+    }
+    await client.query(
+      `INSERT INTO activity_logs
+       (id,shop_id,date,user_name,role,action,details)
+       VALUES ($1,$2,NOW(),$3,$4,'Updated Product',$5)`,
+      ['edit-' + product.id + '-' + Date.now(), product.shopId, actor, role,
+       `Updated ${product.name} in ${shopName}; stock changed by ${delta}.`]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 // Product intake is a single transaction: catalog row, stock ledger and audit
 // either all commit or all roll back. No other normalized tables are rewritten.
 export const createProductWithIntake = async (
