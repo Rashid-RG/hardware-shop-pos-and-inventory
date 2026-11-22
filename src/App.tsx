@@ -743,25 +743,26 @@ export default function App() {
 
   if (!authUser && setupRequired) {
     return (
-      <div className="min-h-screen bg-slate-950 p-4 flex items-center justify-center text-slate-100">
-        <form onSubmit={handleCreateAdmin} className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl space-y-4">
-          <div className="text-xs uppercase tracking-wider text-amber-400">ARS Hardware POS • First-time setup</div>
-          <h1 className="text-2xl font-bold">Create your administrator account</h1>
-          <p className="text-sm text-slate-400">Your login is stored securely in PostgreSQL, not in .env.local. This screen closes permanently when the first user is created.</p>
+      <div className="min-h-screen bg-[#101d32] p-4 sm:p-8 flex items-center justify-center text-slate-900 relative overflow-y-auto">
+        <div className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
+        <form onSubmit={handleCreateAdmin} className="relative w-full max-w-lg rounded-[28px] border border-slate-200 bg-white p-7 sm:p-10 shadow-2xl space-y-5">
+          <div className="flex items-center gap-3 mb-8"><span className="rounded-xl bg-amber-400 p-3 text-slate-900"><Bolt className="h-6 w-6" /></span><div><p className="font-heading font-bold text-xl">ARS Hardware</p><p className="text-[10px] uppercase font-semibold tracking-[0.17em] text-amber-700">First-time business setup</p></div></div>
+          <h1 className="font-heading text-3xl tracking-tight font-bold">Create your administrator account</h1>
+          <p className="text-sm leading-relaxed text-slate-600">Set up secure owner access. Employee accounts are managed in PostgreSQL, not in configuration files. This form becomes unavailable when the first account is created.</p>
           <label className="block text-sm">Full name
-            <input value={setupName} onChange={(e) => setSetupName(e.target.value)} required minLength={2} maxLength={100} autoComplete="name" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+            <input value={setupName} onChange={(e) => setSetupName(e.target.value)} required minLength={2} maxLength={100} autoComplete="name" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
           </label>
           <label className="block text-sm">Email address
-            <input type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required autoComplete="username" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+            <input type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required autoComplete="username" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
           </label>
           <label className="block text-sm">Password (12 characters minimum)
-            <input type="password" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+            <input type="password" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
           </label>
           <label className="block text-sm">Confirm password
-            <input type="password" value={setupConfirmPassword} onChange={(e) => setSetupConfirmPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1 w-full rounded-lg bg-slate-800 border border-slate-600 px-3 py-2" />
+            <input type="password" value={setupConfirmPassword} onChange={(e) => setSetupConfirmPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
           </label>
-          {setupError && <p role="alert" className="text-sm text-rose-400">{setupError}</p>}
-          <button disabled={isCreatingAdmin} type="submit" className="w-full rounded-lg bg-amber-500 px-4 py-3 font-semibold text-slate-950 disabled:opacity-50">
+          {setupError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{setupError}</p>}
+          <button disabled={isCreatingAdmin} type="submit" className="w-full rounded-xl bg-[#182a45] hover:bg-[#294264] px-4 py-3.5 font-semibold text-white transition disabled:opacity-50">
             {isCreatingAdmin ? 'Creating administrator...' : 'Create Administrator'}
           </button>
         </form>
