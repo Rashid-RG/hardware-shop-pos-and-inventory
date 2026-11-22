@@ -1,5 +1,6 @@
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
+import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
@@ -5209,6 +5210,55 @@ const lkrAmount = (raw: unknown) => {
     Math.abs(n * 100 - Math.round(n * 100)) <= 0.00001 ? n : null;
 };
 
+// Goods receipts are append-only, idempotent and stock updates are transactional.
+// The existing full-order receipt is forbidden after a partial receipt.
+app.get('/api/ars/purchases/:id/receipts',requireRole(['Super Admin','Store Manager','Inventory Staff']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try {
+    const order=await pool.query('SELECT id,status FROM purchase_orders WHERE id=$1 AND shop_id=$2',[req.params.id,activeShopId]);
+    if(!order.rowCount)return res.status(404).json({error:'Purchase order not found.'});
+    const lines=await pool.query(
+      `SELECT i.id AS "purchaseOrderItemId",i.product_id AS "productId",i.product_name AS "productName",
+         i.quantity AS ordered,COALESCE(SUM(ri.quantity),0)::integer AS received
+       FROM purchase_order_items i LEFT JOIN ars_receipt_batch_items ri ON ri.purchase_order_item_id=i.id
+       WHERE i.purchase_order_id=$1 GROUP BY i.id ORDER BY i.id`,[req.params.id]);
+    const batches=await pool.query(
+      `SELECT id,request_key,received_by,note,created_at FROM ars_receipt_batches
+       WHERE shop_id=$1 AND purchase_order_id=$2 ORDER BY created_at DESC`,[activeShopId,req.params.id]);
+    res.json({status:order.rows[0].status,items:lines.rows.map((line:any)=>({
+      ...line,ordered:Number(line.ordered),received:Number(line.received),
+      remaining:Number(line.ordered)-Number(line.received)
+    })),batches:batches.rows});
+  }catch(error){res.status(503).json({error:'Unable to load goods receipts.'});}
+});
+app.post('/api/ars/purchases/:id/receipts',requireRole(['Super Admin','Store Manager','Inventory Staff']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled until recovery.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const requestKey=String(req.body?.requestKey||'').trim();
+  const note=String(req.body?.note||'');
+  const rawItems=req.body?.items;
+  if(!Array.isArray(rawItems))return res.status(400).json({error:'Receipt items must be an array.'});
+  const items=rawItems.map((item:any)=>({purchaseOrderItemId:Number(item?.purchaseOrderItemId),quantity:Number(item?.quantity)}));
+  try {
+    const result=await receivePartialOrder(pool,{
+      shopId:activeShopId,poId:req.params.id,requestKey,
+      user:(req as AppRequest).authUser?.name||'Inventory Staff',note,items
+    });
+    if(!result.repeated) {
+      try {
+        const refreshed=await loadStateFromNormalized();
+        if(!refreshed)throw new Error('Cannot reload committed goods receipt.');
+        db=refreshed;
+      } catch(error) {
+        databaseWriteHealthy=false;
+        console.error('Goods receipt committed but refresh failed; writes disabled.',error);
+        return res.status(503).json({error:'Goods receipt committed, but cache refresh failed. Do not retry with a new key; reconcile first.',batchId:result.batchId});
+      }
+    }
+    res.status(result.repeated?200:201).json(result);
+  }catch(error){res.status(409).json({error:(error as Error).message});}
+});
+
 app.get('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager','Inventory Staff']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   try {
@@ -5390,6 +5440,7 @@ async function startServer() {
   // Acquire before any schema creation, seeding, or in-memory hydration.
   await acquireSingleWriterLease();
   await initPostgres();
+  await initPartialReceivingTables(pool);
   await loadDb();
 
   if (!IS_PRODUCTION) {
