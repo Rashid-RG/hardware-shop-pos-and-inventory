@@ -45,3 +45,9 @@ test('legacy database enforces single server writer with PostgreSQL advisory lea
   assert.match(startup, /await releaseSingleWriterLease\(\)/);
   assert.match(server, /single-writer lease connection lost; writes disabled/);
 });
+
+test('cash shift closing is scoped to the authenticated active shop', () => {
+  const route = server.split("app.post('/api/shifts/:id/close'")[1]?.split('// ── Reports Route')[0] || '';
+  assert.match(route, /s\.id === req\.params\.id && s\.shopId === activeShopId/);
+  assert.match(route, /Shift not found in this shop/);
+});
