@@ -84,8 +84,9 @@ export const renderArsInvoicePdf = async (
     label(safe(contact?.phone, ''), 155, 65, 286, 8.5);
     if (company?.supportEmail) label(company.supportEmail, 155, 79, 286, 8.5);
     doc.save().roundedRect(448, 52, 112, 27, 3).fill(NAVY).restore();
-    label((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'INVOICE',
-      452, 60, 105, 13, 'center', true);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#ffffff')
+      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'INVOICE',
+        452, 59, { width: 105, align: 'center', lineBreak: false });
     doc.moveTo(LEFT, 111).lineTo(RIGHT, 111).lineWidth(1.7).strokeColor('#2878bc').stroke();
 
     section(LEFT, 124, 248, 85, 'Customer');
@@ -105,9 +106,12 @@ export const renderArsInvoicePdf = async (
     doc.rect(LEFT, y, WIDTH, 25).fill(NAVY);
     const headers = ['#', 'Item Description', 'SKU', 'Qty', 'Unit Price', 'Discount', 'Amount'];
     for (let i = 0; i < headers.length; i++) {
-      label(headers[i], columns[i] + 3, y + 8,
-        columns[i + 1] - columns[i] - 6, i === 1 ? 8.1 : 7.6,
-        i === 0 ? 'center' : i >= 4 ? 'right' : 'left', true);
+      doc.font('Helvetica-Bold').fontSize(i === 1 ? 8.1 : 7.6).fillColor('#ffffff')
+      .text(headers[i], columns[i] + 3, y + 8, {
+        width: columns[i + 1] - columns[i] - 6,
+        align: i === 0 ? 'center' : i >= 4 ? 'right' : 'left',
+        lineBreak: false, ellipsis: true,
+      });
       doc.strokeColor('#7e9bb7').lineWidth(0.4)
         .moveTo(columns[i], y).lineTo(columns[i], y + 25).stroke();
     }
