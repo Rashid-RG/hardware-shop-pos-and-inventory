@@ -1,4 +1,5 @@
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
+import { notify } from '../utils/notifications';
 import React, { useState, useMemo } from 'react';
 import {
   FileText,
@@ -113,8 +114,8 @@ export default function QuotationView({
   }, [quoteItems, quoteDiscount, taxRate]);
 
   const handleSave = async () => {
-    if (!selectedCustomer?.id) return alert('Select a registered wholesale customer shop first.');
-    if (quoteItems.length === 0) return alert('Add at least one product to the quote.');
+    if (!selectedCustomer?.id) return notify.warning('Select a registered wholesale customer shop first.');
+    if (quoteItems.length === 0) return notify.warning('Add at least one product to the quote.');
     setIsSaving(true);
     try {
       await authFetch('/api/quotations', {
@@ -138,7 +139,7 @@ export default function QuotationView({
       setValidUntil('');
       onRefreshDb();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Quotation was not saved.');
+      notify.warning(error instanceof Error ? error.message : 'Quotation was not saved.');
     } finally {
       setIsSaving(false);
     }
@@ -149,14 +150,14 @@ export default function QuotationView({
       await authFetch(`/api/quotations/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
       onRefreshDb();
     } catch(error) {
-      alert(error instanceof Error ? error.message : 'Quotation status could not be updated.');
+      notify.warning(error instanceof Error ? error.message : 'Quotation status could not be updated.');
       onRefreshDb();
     }
   };
 
   const handleConvert = async (q: Quotation) => {
     if (!activeSalesReps.some(rep=>rep.id===selectedSalesRepId)) {
-      alert('Select the Sales Representative responsible for this invoice.');
+      notify.warning('Select the Sales Representative responsible for this invoice.');
       return;
     }
     if (!confirm(`Convert quote ${q.quoteNumber} to a sale? This will reduce stock.`)) return;
@@ -165,7 +166,7 @@ export default function QuotationView({
       await authFetch(`/api/quotations/${q.id}/convert`, { method: 'POST', body: JSON.stringify({ paymentMethod: 'Cash', salesRepId: selectedSalesRepId }) });
       onRefreshDb();
     } catch(error) {
-      alert(error instanceof Error ? error.message : 'Quotation could not be converted.');
+      notify.warning(error instanceof Error ? error.message : 'Quotation could not be converted.');
     } finally {
       setConvertingId(null);
     }
@@ -176,7 +177,7 @@ export default function QuotationView({
     try {
       await authFetch(`/api/quotations/${id}`, { method: 'DELETE' });
       onRefreshDb();
-    } catch(error) { alert(error instanceof Error ? error.message : 'Could not delete quotation.'); }
+    } catch(error) { notify.warning(error instanceof Error ? error.message : 'Could not delete quotation.'); }
   };
 
   const printQuote = (q: Quotation) => {
