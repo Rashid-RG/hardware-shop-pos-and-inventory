@@ -52,17 +52,33 @@ If Docker is used, the database is exposed on Windows port **5433**, not 5432. P
 - Enter a test product, make a small non-production sale, verify stock changes, refund it, and confirm stock and reports reconcile.
 - Verify that customer credit payments never exceed the outstanding balance and supplier receipts cannot be duplicated.
 
-## Backups and recovery
+## Backups and recovery — mandatory for wholesale operation
 
-To save a local PostgreSQL backup on Windows:
+**Only the Super Admin** sees **Backup & Recovery** in the ARS sidebar. This screen provides verified local procedures, but does not pretend a background backup happened or allow an unsafe live overwrite.
+
+Before taking orders or changing any import, inventory, supplier, customer-credit or partner-capital records:
+
+1. Confirm `.env.local` points to the intended operational database (usually `hardware_pos_ars`). Keep this file private.
+2. In Windows PowerShell at the existing project root, run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-local-postgres.ps1
 ```
 
-The script saves a `.dump` archive and its SHA-256 checksum under `backups`. Copy encrypted backup copies to storage **outside the POS computer**. The GitHub CI workflow restores an isolated test database and verifies records, but that does not replace a real restore drill on the ARS PC. **Do not restore into the operational ARS database to test a backup.** Use a separate test database and qualified operator.
+The script now **reads the active DATABASE_URL**, refuses a mismatched database or Docker port, and creates a PostgreSQL custom-format `.dump` plus `.sha256` checksum under `backups`. Verify both files exist and copy them onto an **encrypted external disk** or suitably protected second location away from the ARS POS PC.
 
-Never run `docker compose down -v`, `docker volume rm`, or destructive reset/database migration tools against ARS business data.
+3. Verify the exact archive on the same machine by restoring **into a separate new test database** (replace the filename):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-local-postgres-test.ps1 -BackupFile "backups\ars-hardware_pos_ars-YYYYMMDD-HHMMSS.dump"
+```
+
+The restore command requires a matching checksum, validates the archive, refuses an existing database, and creates only a new database named `ars_restore_test_*`. **It never replaces or points the application at your working database.** After the test restore, inspect important counts and representative invoices, stock, credit, imports and partner entries in pgAdmin.
+
+For normal business use, create and safely copy backups **every operating day**; additionally back up before important updates and test restore periodically. Off-site copies, retention and automatic scheduling are still operator responsibilities; this version **does not claim automatic daily backups**.
+
+**If a disaster requires an actual production recovery**, stop new billing, retain and back up the damaged database, verify the archive in isolation, and conduct a separately approved cutover. Do not restore directly over the operational database. Never run `docker compose down -v`, `docker volume rm` or destructive reset commands.
+
 
 ## Opening decision
 
