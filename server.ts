@@ -3039,7 +3039,8 @@ app.get('/api/db-admin/tables', requireRole(['Super Admin', 'Store Manager']), a
     `
   );
 
-  res.json({ tables: result.rows.map((r) => r.table_name) });
+  const hiddenTables = new Set(['users', 'app_state']);
+  res.json({ tables: result.rows.map((r) => r.table_name).filter((name) => !hiddenTables.has(name)) });
 });
 
 app.get('/api/db-admin/table/:tableName', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
@@ -3047,6 +3048,10 @@ app.get('/api/db-admin/table/:tableName', requireRole(['Super Admin', 'Store Man
   const requested = String(tableName || '').trim();
   if (!/^[a-z_][a-z0-9_]*$/i.test(requested)) {
     return res.status(400).json({ error: 'Invalid table name' });
+  }
+  // Sensitive credentials exist in both the user table and the state mirror.
+  if (requested === 'users' || requested === 'app_state') {
+    return res.status(403).json({ error: 'This table is not available through the data browser' });
   }
 
   const allowedResult = await pool.query<{ table_name: string }>(
