@@ -4074,69 +4074,65 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   res.json(tx);
 });
 
-app.post('/api/transactions/:id/print', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const authUser = (req as AppRequest).authUser;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const tx = db.transactions.find((item) => item.id === req.params.id && item.shopId === activeShopId);
-  if (!tx) {
-    return res.status(404).json({ error: 'Transaction not found' });
+// Printing is authorized before creating its immutable audit record. The DB
+// transaction locks the invoice to sequence concurrent print requests reliably.
+app.post('/api/transactions/:id/print',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled.'});
+  const user=(req as AppRequest).authUser;
+  const {activeShopId}=getActiveShopContext(db,req);
+  const requestedRaw=String(req.body?.copyType||'').trim();
+  if(requestedRaw && !INVOICE_COPY_TYPES.includes(requestedRaw as InvoiceCopyType))
+    return res.status(400).json({error:'Invalid invoice copy type.'});
+  const reason=String(req.body?.reason||'').trim();
+  if(reason.length>1000)return res.status(400).json({error:'Print reason is too long.'});
+  const client=await pool.connect();
+  let printLog:InvoicePrintLog|undefined;
+  let watermarkText='';
+  let secondaryWatermarkText='';
+  try {
+    await client.query('BEGIN');
+    const tx=await client.query('SELECT invoice_number FROM sales_transactions WHERE id=$1 AND shop_id=$2 FOR UPDATE',[req.params.id,activeShopId]);
+    if(!tx.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Invoice not found in this branch.'});}
+    const count=await client.query('SELECT COALESCE(MAX(print_sequence),0)::integer AS max_sequence FROM invoice_print_logs WHERE transaction_id=$1 AND shop_id=$2',
+      [req.params.id,activeShopId]);
+    const printSequence=Number(count.rows[0].max_sequence)+1;
+    const isFirstPrint=printSequence===1;
+    if(!isFirstPrint&&user?.role==='Cashier'&&requestedRaw&&requestedRaw!=='Duplicate Copy'){
+      await client.query('ROLLBACK');
+      return res.status(403).json({error:'Cashier can only request duplicate copies for reprints.'});
+    }
+    const copyType:InvoiceCopyType=isFirstPrint?'Original Copy':((requestedRaw as InvoiceCopyType)||'Duplicate Copy');
+    watermarkText=isFirstPrint?'ORIGINAL COPY':(copyType==='Reprinted Invoice'?'REPRINTED':copyType.toUpperCase());
+    secondaryWatermarkText=copyType==='Reprinted Invoice'?'DUPLICATE COPY':'';
+    printLog={id:'ipr-'+randomUUID(),shopId:activeShopId,transactionId:req.params.id,
+      invoiceNumber:tx.rows[0].invoice_number,copyType,printSequence,
+      printedBy:user?.name||'System',printedAt:new Date().toISOString(),reason:reason||undefined};
+    await client.query(
+      `INSERT INTO invoice_print_logs(id,shop_id,transaction_id,invoice_number,copy_type,print_sequence,printed_by,printed_at,reason)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [printLog.id,activeShopId,req.params.id,printLog.invoiceNumber,copyType,printSequence,printLog.printedBy,printLog.printedAt,reason||null]);
+    await client.query(
+      `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+       VALUES($1,$2,NOW(),$3,$4,'Invoice Print Logged',$5)`,
+      ['act-'+randomUUID(),activeShopId,printLog.printedBy,user?.role||'Cashier',
+        `Invoice ${printLog.invoiceNumber} printed as ${copyType} (sequence ${printSequence}).`]);
+    await client.query('COMMIT');
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>{});
+    return res.status(409).json({error:'Could not record invoice printing.'});
+  } finally {client.release();}
+  try {
+    const refreshed=await loadStateFromNormalized();
+    if(!refreshed)throw Error('Invoice print history not refreshed');
+    db=refreshed;
+    res.json({printLog,printSummary:{invoiceNumber:printLog!.invoiceNumber,
+      totalPrints:printLog!.printSequence,isReprint:printLog!.printSequence>1,
+      watermarkText,secondaryWatermarkText}});
+  }catch(error){
+    databaseWriteHealthy=false;
+    console.error('Print audit committed but refresh failed; writes disabled.',error);
+    res.status(503).json({error:'Print audit saved but reload failed. Reconcile before retrying.'});
   }
-
-  const requestedCopyTypeRaw = String(req.body?.copyType || '').trim();
-  const requestedCopyType = INVOICE_COPY_TYPES.includes(requestedCopyTypeRaw as InvoiceCopyType)
-    ? (requestedCopyTypeRaw as InvoiceCopyType)
-    : undefined;
-  const reason = String(req.body?.reason || '').trim();
-
-  const existingLogs = db.invoicePrintLogs.filter((log) => log.transactionId === tx.id);
-  const printSequence = existingLogs.length + 1;
-  const isFirstPrint = printSequence === 1;
-
-  if (!isFirstPrint && authUser?.role === 'Cashier' && requestedCopyType && requestedCopyType !== 'Duplicate Copy') {
-    return res.status(403).json({ error: 'Cashier can only print duplicate copies for reprints' });
-  }
-
-  const copyType: InvoiceCopyType = isFirstPrint
-    ? 'Original Copy'
-    : (requestedCopyType || 'Duplicate Copy');
-  const watermarkText = isFirstPrint ? 'ORIGINAL COPY' : (copyType === 'Reprinted Invoice' ? 'REPRINTED' : copyType.toUpperCase());
-  const secondaryWatermarkText = copyType === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '';
-
-  const printLog: InvoicePrintLog = {
-    id: `ipr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    shopId: activeShopId,
-    transactionId: tx.id,
-    invoiceNumber: tx.invoiceNumber,
-    copyType,
-    printSequence,
-    printedBy: authUser?.name || 'System',
-    printedAt: new Date().toISOString(),
-    reason: reason || undefined,
-  };
-
-  db.invoicePrintLogs.unshift(printLog);
-  db.activityLogs.unshift({
-    id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    shopId: activeShopId,
-    date: new Date().toISOString(),
-    user: authUser?.name || 'System',
-    role: authUser?.role || 'Store Manager',
-    action: 'Invoice Print Logged',
-    details: `Invoice ${tx.invoiceNumber} printed as ${copyType} (sequence ${printSequence}).`,
-  });
-
-  await saveDb();
-
-  res.json({
-    printLog,
-    printSummary: {
-      invoiceNumber: tx.invoiceNumber,
-      totalPrints: printSequence,
-      isReprint: !isFirstPrint,
-      watermarkText,
-      secondaryWatermarkText,
-    },
-  });
 });
 
 app.get('/api/transactions/:id/print-logs', requireRole(['Super Admin', 'Store Manager', 'Cashier']), (req, res) => {
@@ -4184,6 +4180,22 @@ app.get('/api/transactions/:id/pdf', requireRole(['Super Admin', 'Store Manager'
     res.status(500).json({ error: 'Failed to generate invoice PDF' });
   });
 });
+
+const recordInvoiceShareAudit=async(shopId:string,auth:AuthUser|undefined,action:string,details:string)=>{
+  if(!databaseWriteHealthy)throw new Error('Database writes are disabled.');
+  await pool.query(
+    `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+     VALUES($1,$2,NOW(),$3,$4,$5,$6)`,
+    ['act-'+randomUUID(),shopId,auth?.name||'System',auth?.role||'Cashier',action,details]);
+  try {
+    const refreshed=await loadStateFromNormalized();
+    if(!refreshed)throw new Error('Cannot refresh audit state');
+    db=refreshed;
+  } catch(error) {
+    databaseWriteHealthy=false;
+    throw new Error('Audit recorded but cache refresh failed; business writes disabled.');
+  }
+};
 
 app.post('/api/transactions/:id/share/email', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
@@ -4256,16 +4268,8 @@ app.post('/api/transactions/:id/share/email', requireRole(['Super Admin', 'Store
       ],
     });
 
-    db.activityLogs.unshift({
-      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      shopId: activeShopId,
-      date: new Date().toISOString(),
-      user: authUser?.name || 'System',
-      role: authUser?.role || 'Store Manager',
-      action: 'Invoice Shared via Email',
-      details: `Invoice ${tx.invoiceNumber} (${copyType}) emailed to ${to}.`,
-    });
-    await saveDb();
+    await recordInvoiceShareAudit(activeShopId,authUser,'Invoice Shared via Email',
+      `Invoice ${tx.invoiceNumber} (${copyType}) emailed to ${to}.`);
 
     res.json({ success: true, channel: 'email', invoiceNumber: tx.invoiceNumber, to, copyType });
   } catch (error) {
@@ -4357,16 +4361,8 @@ app.post('/api/transactions/:id/share/whatsapp', requireRole(['Super Admin', 'St
       return res.status(502).json({ error: payload?.error?.message || 'Failed to send WhatsApp message' });
     }
 
-    db.activityLogs.unshift({
-      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      shopId: activeShopId,
-      date: new Date().toISOString(),
-      user: authUser?.name || 'System',
-      role: authUser?.role || 'Store Manager',
-      action: 'Invoice Shared via WhatsApp PDF',
-      details: `Invoice ${tx.invoiceNumber} (${copyType}) PDF sent to WhatsApp ${to}.`,
-    });
-    await saveDb();
+    await recordInvoiceShareAudit(activeShopId,authUser,'Invoice Shared via WhatsApp PDF',
+      `Invoice ${tx.invoiceNumber} (${copyType}) PDF sent to WhatsApp ${to}.`);
 
     res.json({ success: true, channel: 'whatsapp', invoiceNumber: tx.invoiceNumber, to, copyType, providerResponse: payload });
   } catch (error) {
