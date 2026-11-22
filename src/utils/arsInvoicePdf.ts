@@ -91,7 +91,7 @@ export const renderArsInvoicePdf = async (
     row('Phone', safe(tx.customerPhone), 46, 186, 225, 49);
     row('Invoice No', tx.invoiceNumber, 306, 151, 239, 61);
     row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 166, 239, 61);
-    row('Salesperson', safe(tx.cashierName), 306, 181, 239, 61);
+    row('Sales Representative', safe(tx.salesRepName, 'Not recorded'), 306, 181, 239, 108);
     // Print metadata and payment type remain visible but compact.
     if (continuation) label('CONTINUED', 306, 197, 96, 7.5, 'left', true);
     label('Payment', 410, 197, 59, 7.5, 'left', true);
