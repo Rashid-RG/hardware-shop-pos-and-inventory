@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -3772,27 +3772,26 @@ app.put('/api/products/:id', requireRole(['Super Admin', 'Store Manager', 'Inven
 
 app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
-  const { activeShopId, activeShopName } = getActiveShopContext(db, req);
-  const index = db.products.findIndex((p) => p.id === req.params.id && p.shopId === activeShopId);
-  if (index !== -1) {
-    const deletedProduct = db.products[index];
-    db.products.splice(index, 1);
-
-    db.activityLogs.unshift({
-      id: 'act-' + Date.now(),
-      date: new Date().toISOString(),
-      user: authUser?.name || 'Admin',
-      role: authUser?.role || 'Super Admin',
-      action: 'Deleted Product',
-      details: `Removed product ${deletedProduct.name} from ${activeShopName} catalog list.`,
-      shopId: activeShopId,
-    });
-
-    await saveDb();
-    res.json({ success: true, id: req.params.id });
-  } else {
-    res.status(404).json({ error: 'Product not found' });
+  const { activeShopId } = getActiveShopContext(db, req);
+  const product = db.products.find((p) => p.id === req.params.id && p.shopId === activeShopId);
+  if (!product) return res.status(404).json({ error: 'Product not found in this shop' });
+  try {
+    // Archive the SKU; deleting it would break historical invoices and stock logs.
+    await archiveProduct(product.id, activeShopId,
+      authUser?.name || 'Admin', authUser?.role || 'Super Admin');
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
   }
+  const archived = { ...product, status: 'Inactive' as const };
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload archived product');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Product archived but cache refresh failed; writes disabled', error);
+  }
+  res.json({ success: true, archived: true, id: product.id, product: archived });
 });
 
 // POS Transaction Checkout Route
@@ -3834,6 +3833,9 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     const dbProduct = db.products.find((p) => p.id === item.product.id && p.shopId === activeShopId);
     if (!dbProduct) {
       return res.status(400).json({ error: `Product ${item.product.name} not found in catalog` });
+    }
+    if (dbProduct.status === 'Inactive') {
+      return res.status(409).json({ error: `Product ${dbProduct.name} is archived and cannot be sold` });
     }
 
     const variantId = String(item.variantId || '').trim();
