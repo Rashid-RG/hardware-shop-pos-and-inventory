@@ -1268,8 +1268,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
     // 3) Save Transaction items
     for (const item of tx.items) {
       await client.query(
-        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           tx.id,
           item.productId,
@@ -1279,6 +1279,11 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
           item.discount,
           item.discountAmount || 0,
           item.costPrice || 0,
+          item.variantId || null,
+          item.variantName || null,
+          item.variantUnit || null,
+          item.variantSku || null,
+          item.variantBarcode || null,
         ]
       );
     }
@@ -1286,8 +1291,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
     // 4) Update Customer credit and loyalty balances
     if (tx.customerId && tx.customerId !== 'cust-walkin') {
       const customerRes = await client.query(
-        'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
-        [tx.customerId]
+        'SELECT * FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [tx.customerId, tx.shopId]
       );
       if (customerRes.rowCount > 0) {
         const customer = customerRes.rows[0];
@@ -1295,7 +1300,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         const creditLimit = Number(customer.credit_limit || 0);
 
         if (tx.paymentMethod === 'Credit Account') {
-          if (currentCredit + tx.total > creditLimit) {
+          if (creditLimit > 0 && Math.round((currentCredit + tx.total) * 100) > Math.round(creditLimit * 100)) {
             throw new Error(`Credit limit exceeded. Outstanding: Rs.${currentCredit.toFixed(2)}, limit: Rs.${creditLimit.toFixed(2)}`);
           }
           await client.query(
@@ -1312,7 +1317,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
     }
 
     // 5) Log activity
-    const activityId = 'act-' + Date.now();
+    const activityId = 'act-' + tx.id;
     await client.query(
       `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
        VALUES ($1, $2, NOW(), $3, $4, 'Invoice Created', $5)`,
