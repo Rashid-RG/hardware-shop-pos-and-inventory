@@ -3,12 +3,12 @@ import {
   LayoutDashboard, ShoppingCart, Package, Truck, Users2,
   Settings2, LogOut, ShieldCheck, FileBarChart2, FileText,
   Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3,
-  UserRoundCog,
+  UserRoundCog, Ship,
 } from 'lucide-react';
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -36,17 +36,18 @@ const MANAGERS: Role[] = ['Super Admin', 'Store Manager'];
 
 const pinnedItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ALL_ROLES },
-  { id: 'pos', label: 'New Sale / POS', icon: ShoppingCart, roles: SALES_ROLES },
+  { id: 'pos', label: 'Wholesale Invoices', icon: ShoppingCart, roles: SALES_ROLES },
 ];
 const groups: NavGroup[] = [
-  { id: 'sales', title: 'Sales & Billing', items: [
+  { id: 'sales', title: 'Wholesale & Billing', items: [
     { id: 'quotations', label: 'Quotations', icon: FileText, roles: SALES_ROLES },
     { id: 'shifts', label: 'Cash Shifts', icon: Timer, roles: SALES_ROLES },
   ] },
-  { id: 'inventory', title: 'Inventory & Purchasing', items: [
+  { id: 'inventory', title: 'Imports & Stock', items: [
     { id: 'products', label: 'Products', icon: Package, roles: STOCK_ROLES },
     { id: 'inventory', label: 'Stock Management', icon: Layers3, roles: STOCK_ROLES },
     { id: 'purchases', label: 'Suppliers & Purchasing', icon: Truck, roles: STOCK_ROLES },
+    { id: 'imports', label: 'Import Landed Costs', icon: Ship, roles: MANAGERS },
   ] },
   { id: 'people', title: 'Customers & Staff', items: [
     { id: 'customers', label: 'Customers', icon: Users2, roles: SALES_ROLES },
@@ -99,7 +100,7 @@ export default function Sidebar({
     <aside id="sidebar-container" aria-label="Main navigation" className="flex h-full min-h-0 w-[272px] shrink-0 flex-col border-r border-white/10 bg-[#101d32] text-white shadow-xl shadow-slate-950/10">
       <div className="shrink-0 border-b border-white/10 px-4 pb-3 pt-4">
         <div className="flex items-center justify-between gap-1">
-          <ARSBrand subtitle="Business POS" />
+          <ARSBrand subtitle="Wholesale Distribution" />
           {onClose && (
             <button type="button" aria-label="Close navigation" onClick={onClose} className="rounded-lg p-1.5 text-slate-300 hover:bg-white/10 md:hidden">
               <X className="h-5 w-5" />
