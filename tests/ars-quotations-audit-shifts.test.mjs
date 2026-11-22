@@ -18,7 +18,8 @@ test('quotation creation and status updates never rewrite other tables',()=>{
 });
 test('quote conversion locks accepted quote and commits conversion with checkout stock changes',()=>{
   assert.match(quotes,/await checkoutTransaction\(tx,auth\?\.role\|\|'Cashier',activeShopName,q\.id\)/);
-  assert.match(checkout,/SELECT \* FROM quotations WHERE id=\$1 AND shop_id=\$2 FOR UPDATE/);
+  assert.match(checkout,/FROM quotations WHERE id=\$1 AND shop_id=\$2 FOR UPDATE/);
+  assert.match(checkout,/valid_until < \(NOW\(\) AT TIME ZONE 'Asia\/Colombo'\)::date AS is_expired/);
   assert.match(checkout,/saved\.status!=='Accepted'/);
   assert.match(checkout,/UPDATE quotations SET status='Converted'/);
   assert.match(checkout,/await client\.query\('COMMIT'\)/);
