@@ -59,19 +59,14 @@ export const renderArsInvoicePdf = async (
     label(':', x + keyW, y, 8, 8.2);
     label(v, x + keyW + 9, y, w - keyW - 9, 8.2);
   };
-  const footer = () => {
-    // Transparent footer: never paint a navy band or handwritten signature.
+  const footer = (pageNumber: number, totalPages: number) => {
+    // Repeat the footer on every printed sheet, including continuation pages.
     doc.moveTo(LEFT, 803).lineTo(RIGHT, 803).lineWidth(0.55).strokeColor(LINE).stroke();
     label('Generated with RS Nextward Business Systems', LEFT, 811, 282, 8.2, 'left', true);
     label('Reliable POS  •  Inventory  •  Wholesale Billing', 320, 811, 240, 8.2, 'right');
+    label(`Page ${pageNumber} of ${totalPages}`, 448, 785, 112, 8, 'right', true);
   };
   const header = (continuation: boolean) => {
-    if (continuation) {
-      label(safe(company?.companyLegalName, shopName), LEFT, 32, 330, 12, 'left', true);
-      label('INVOICE  ' + tx.invoiceNumber + '  (continued)', 355, 32, 205, 9, 'right', true);
-      doc.moveTo(LEFT, 57).lineTo(RIGHT, 57).strokeColor('#2878bc').lineWidth(1).stroke();
-      return 72;
-    }
     if (logo) {
       try { doc.image(logo, LEFT, 28, { fit: [99, 69] }); }
       catch { label('ARS', LEFT, 43, 100, 25, 'left', true); }
@@ -98,6 +93,7 @@ export const renderArsInvoicePdf = async (
     row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 166, 239, 61);
     row('Salesperson', safe(tx.cashierName), 306, 181, 239, 61);
     // Print metadata and payment type remain visible but compact.
+    if (continuation) label('CONTINUED', 306, 197, 96, 7.5, 'left', true);
     label('Payment', 410, 197, 59, 7.5, 'left', true);
     label(safe(tx.paymentMethod), 469, 197, 79, 7.5, 'right');
     return 226;
@@ -163,7 +159,6 @@ export const renderArsInvoicePdf = async (
     // Keep enough room for the notes, totals and all three signatures on the final page.
     // If another item would exceed the item region, continue on a new A4 page.
     if (y + height > 570) {
-      footer();
       doc.addPage();
       y = header(true);
       tableHeader(y);
@@ -185,11 +180,16 @@ export const renderArsInvoicePdf = async (
   });
   // One or multiple pages: fit summary and signatures without collision.
   if (Math.max(y + 16, 581) + 130 + 59 >= 793) {
-    footer();
     doc.addPage();
     y = header(true);
   }
   notesAndTotals(y);
-  footer();
+  // PDFKit buffers pages so we can print correct Page X of Y information.
+  // Render the complete ARS business header on every page before this stage.
+  const range = doc.bufferedPageRange();
+  for (let offset = 0; offset < range.count; offset++) {
+    doc.switchToPage(range.start + offset);
+    footer(offset + 1, range.count);
+  }
   doc.end();
 });
