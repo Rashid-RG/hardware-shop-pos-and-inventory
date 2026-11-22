@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { requireAuth, requireRole, getActiveShopContext, AppRequest } from '../middleware';
 import { pool, insertCustomer, updateCustomerCreditLimit, addCustomerCreditPayment } from '../db';
 import { Customer, CustomerCreditPayment } from '../../src/types';
@@ -38,8 +39,11 @@ router.put('/:id/credit', requireRole(['Super Admin', 'Store Manager']), async (
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const limit = Math.max(0, Number(creditLimit) || 0);
-    await updateCustomerCreditLimit(customerId, limit);
+    const limit = Number(creditLimit);
+    if (!Number.isFinite(limit) || limit < 0 || Math.abs(limit * 100 - Math.round(limit * 100)) > 0.00001) {
+      return res.status(400).json({ error: 'Invalid credit limit' });
+    }
+    await updateCustomerCreditLimit(customerId, activeShopId, limit);
 
     res.json({ id: customerId, creditLimit: limit });
   } catch (err: any) {
@@ -53,8 +57,9 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
   const { amount, paymentMethod, note } = req.body;
   const customerId = req.params.id;
 
-  if (Number(amount) <= 0) {
-    return res.status(400).json({ error: 'Amount must be positive' });
+  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0 ||
+      Math.abs(Number(amount) * 100 - Math.round(Number(amount) * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Amount must be positive with at most two decimal places' });
   }
 
   try {
@@ -65,7 +70,7 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
     const customer = check.rows[0];
 
     const payment: CustomerCreditPayment = {
-      id: `cpay-${Date.now()}`,
+      id: `cpay-${randomUUID()}`,
       shopId: activeShopId,
       customerId,
       customerName: customer.name,
@@ -77,14 +82,6 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
     };
 
     await addCustomerCreditPayment(payment);
-
-    // Record activity log
-    const actId = `act-${Date.now()}`;
-    await pool.query(
-      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
-       VALUES ($1, $2, NOW(), $3, $4, 'Credit Payment', $5)`,
-      [actId, activeShopId, authUser?.name || 'Cashier', authUser?.role || 'Cashier', `${customer.name} paid Rs.${payment.amount.toFixed(2)} towards credit balance.`]
-    );
 
     res.json({
       success: true,
