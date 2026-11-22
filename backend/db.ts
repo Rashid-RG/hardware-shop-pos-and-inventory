@@ -1348,111 +1348,109 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
   try {
     await client.query('BEGIN');
 
-    // 1) Lock and verify transaction
+    // Transaction row lock prevents simultaneous/double refunds.
     const txRes = await client.query(
       'SELECT * FROM sales_transactions WHERE id = $1 AND shop_id = $2 FOR UPDATE',
       [txId, shopId]
     );
-    if (txRes.rowCount === 0) {
-      throw new Error('Transaction not found.');
-    }
+    if (!txRes.rowCount) throw new Error('Transaction not found in this shop.');
     const tx = txRes.rows[0];
-    if (tx.status === 'Refunded') {
-      throw new Error('Transaction has already been refunded.');
-    }
+    if (tx.status === 'Refunded') throw new Error('Transaction has already been refunded.');
 
-    // Load transaction items
     const itemsRes = await client.query(
-      'SELECT * FROM sales_transaction_items WHERE transaction_id = $1',
+      'SELECT * FROM sales_transaction_items WHERE transaction_id = $1 ORDER BY id',
       [txId]
     );
-    const txItems = itemsRes.rows;
+    if (!itemsRes.rowCount) throw new Error('Cannot refund an invoice with no saved items.');
 
-    // 2) Restore stock for each item
-    for (const item of txItems) {
+    // All checks and mutations occur under the same PostgreSQL transaction.
+    // Any missing variant/product causes a ROLLBACK, not a partial return.
+    for (const item of itemsRes.rows) {
+      const quantity = Number(item.quantity);
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error('Cannot refund an invoice with invalid item quantities.');
+      }
       const productRes = await client.query(
         'SELECT * FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
         [item.product_id, shopId]
       );
-      if (productRes.rowCount > 0) {
-        const dbProduct = productRes.rows[0];
-        const variantsList = Array.isArray(dbProduct.variants_json) ? dbProduct.variants_json as ProductVariant[] : [];
+      if (!productRes.rowCount) throw new Error(`Cannot refund: product ${item.product_name} is missing from this shop.`);
+      const product = productRes.rows[0];
+      const variants: ProductVariant[] = Array.isArray(product.variants_json) ? product.variants_json : [];
 
-        if (item.variant_id) {
-          const variantIndex = variantsList.findIndex((v) => v.id === item.variant_id);
-          if (variantIndex !== -1) {
-            variantsList[variantIndex].quantity = (variantsList[variantIndex].quantity || 0) + Number(item.quantity);
-            const totalProductQty = variantsList.reduce((sum, v) => sum + Math.max(0, Number(v.quantity || 0)), 0);
-            await client.query(
-              `UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3`,
-              [totalProductQty, JSON.stringify(variantsList), dbProduct.id]
-            );
-          }
-        } else {
-          await client.query(
-            `UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
-            [item.quantity, dbProduct.id]
-          );
-        }
-
-        // Add Stock Log for Return
-        const logId = 'log-' + Date.now() + Math.random().toString(36).substring(2, 5);
+      if (item.variant_id) {
+        const variant = variants.find((entry) => entry.id === item.variant_id);
+        if (!variant) throw new Error(`Cannot refund: product variant ${item.variant_name || item.variant_id} is missing.`);
+        variant.quantity = Number(variant.quantity || 0) + quantity;
+        const stock = variants.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
         await client.query(
-          `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
-           VALUES ($1, $2, NOW(), $3, $4, 'Return', $5, 'Invoice Sale Refund', $6, $7)`,
-          [logId, shopId, item.product_id, item.product_name, item.quantity, cashierName, txId]
+          'UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3 AND shop_id = $4',
+          [stock, JSON.stringify(variants), product.id, shopId]
+        );
+      } else {
+        if (variants.length > 0) {
+          throw new Error('Cannot refund invoice without recorded variant on a variant-managed product.');
+        }
+        await client.query(
+          'UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2 AND shop_id = $3',
+          [quantity, product.id, shopId]
         );
       }
+
+      await client.query(
+        `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
+         VALUES ($1, $2, NOW(), $3, $4, 'Return', $5, $6, $7, $8)`,
+        ['return-' + txId + '-' + item.id, shopId, item.product_id, item.product_name, quantity,
+          reason ? 'Refund processed: ' + reason : 'Refund of invoice ' + tx.invoice_number, cashierName, txId]
+      );
     }
 
-    // 3) Deduct loyalty and credit outstanding
     if (tx.customer_id && tx.customer_id !== 'cust-walkin') {
       const customerRes = await client.query(
-        'SELECT * FROM customers WHERE id = $1 FOR UPDATE',
-        [tx.customer_id]
+        'SELECT * FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [tx.customer_id, shopId]
       );
-      if (customerRes.rowCount > 0) {
-        const customer = customerRes.rows[0];
-        const refundTotal = Number(tx.total);
-        const refundLoyalty = Math.floor(refundTotal / 10);
-
+      if (tx.payment_method === 'Credit Account' && !customerRes.rowCount) {
+        throw new Error('Cannot refund credit sale: customer account is missing.');
+      }
+      if (customerRes.rowCount) {
+        const total = Number(tx.total);
+        const loyalty = Math.floor(total / 10);
         if (tx.payment_method === 'Credit Account') {
+          const outstanding = Number(customerRes.rows[0].credit_balance);
+          if (!Number.isFinite(outstanding) || outstanding + 0.005 < total) {
+            throw new Error('Credit balance is below this invoice total. Reconcile customer payments before refunding.');
+          }
           await client.query(
             `UPDATE customers
-             SET loyalty_balance = GREATEST(0, loyalty_balance - $1),
-                 credit_balance = GREATEST(0, credit_balance - $2),
-                 updated_at = NOW()
-             WHERE id = $3`,
-            [refundLoyalty, refundTotal, tx.customer_id]
+             SET purchase_count = GREATEST(0, purchase_count - 1),
+                 loyalty_balance = GREATEST(0, loyalty_balance - $1),
+                 credit_balance = credit_balance - $2, updated_at = NOW()
+             WHERE id = $3 AND shop_id = $4`,
+            [loyalty, total, tx.customer_id, shopId]
           );
         } else {
           await client.query(
-            `UPDATE customers
-             SET loyalty_balance = GREATEST(0, loyalty_balance - $1),
-                 updated_at = NOW()
-             WHERE id = $2`,
-            [refundLoyalty, tx.customer_id]
+            `UPDATE customers SET purchase_count = GREATEST(0, purchase_count - 1),
+              loyalty_balance = GREATEST(0, loyalty_balance - $1), updated_at = NOW()
+              WHERE id = $2 AND shop_id = $3`,
+            [loyalty, tx.customer_id, shopId]
           );
         }
       }
     }
 
-    // 4) Set status to Refunded
     await client.query(
-      `UPDATE sales_transactions
-       SET status = 'Refunded', refunded_at = NOW(), refund_reason = $1
-       WHERE id = $2`,
-      [reason || 'Refund Requested', txId]
+      `UPDATE sales_transactions SET status = 'Refunded', refunded_at = NOW(), refund_reason = $1
+       WHERE id = $2 AND shop_id = $3`,
+      [reason || 'Refund Requested', txId, shopId]
     );
-
-    // 5) Log activity
-    const activityId = 'act-' + Date.now();
     await client.query(
       `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
        VALUES ($1, $2, NOW(), $3, $4, 'Invoice Refunded', $5)`,
-      [activityId, shopId, cashierName, cashierRole, `Refunded invoice ${tx.invoice_number} due to: ${reason || 'N/A'}. Total refunded: Rs.${Number(tx.total).toFixed(2)}.`]
+      ['refund-' + txId, shopId, cashierName, cashierRole,
+        `Refunded invoice ${tx.invoice_number}. Total: Rs.${Number(tx.total).toFixed(2)}. Reason: ${reason || 'Not supplied'}`]
     );
-
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
