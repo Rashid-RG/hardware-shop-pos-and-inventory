@@ -8,7 +8,7 @@ if (!['127.0.0.1', 'localhost'].includes(connection.hostname) || connection.path
   throw new Error('Refusing integration test outside local hardware_pos_ci database');
 }
 
-const { pool, initDbTables, checkoutTransaction, refundTransaction } = await import('../backend/db.ts');
+const { pool, initDbTables, checkoutTransaction, refundTransaction, archiveProduct } = await import('../backend/db.ts');
 
 test('real PostgreSQL checkout commits exact variant, credit and invoice atomically', async () => {
   const suffix = randomUUID();
@@ -111,6 +111,28 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
       "SELECT COUNT(*)::int AS count FROM stock_logs WHERE reference_id = $1 AND type = 'Return'", [first]
     );
     assert.equal(returnLogs.rows[0].count, 1);
+
+    // Historical invoices and returned stock must survive archiving a SKU.
+    await assert.rejects(
+      () => archiveProduct(productId, 'other-shop', 'CI Manager', 'Super Admin'),
+      /not found in this shop/
+    );
+    await archiveProduct(productId, shopId, 'CI Manager', 'Super Admin');
+    const archived = await pool.query('SELECT status, quantity FROM products WHERE id=$1', [productId]);
+    assert.equal(archived.rows[0].status, 'Inactive');
+    assert.equal(Number(archived.rows[0].quantity), 10);
+    const preservedItems = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM sales_transaction_items WHERE transaction_id=$1', [first]
+    );
+    assert.equal(preservedItems.rows[0].count, 1);
+    await assert.rejects(
+      () => archiveProduct(productId, shopId, 'CI Manager', 'Super Admin'),
+      /already archived/
+    );
+    await assert.rejects(
+      () => checkoutTransaction(tx(1, 'ci-archived-' + randomUUID()), 'Cashier', 'CI Shop'),
+      /archived and cannot be sold/
+    );
   } finally {
     await pool.end();
   }
