@@ -1365,7 +1365,7 @@ const normalizeState = (state: DBState): DBState => ({
       printFormat: (shop.printFormat === 'thermal' ? 'thermal' : 'a4') as 'a4' | 'thermal',
       invoiceCompanyMeta: {
         companyLegalName: String(shop?.invoiceCompanyMeta?.companyLegalName || ''),
-        companyTagline: String(shop?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail'),
+        companyTagline: String(shop?.invoiceCompanyMeta?.companyTagline || 'Hardware Import & Wholesale Distribution'),
         businessRegistrationNo: String(shop?.invoiceCompanyMeta?.businessRegistrationNo || ''),
         vatRegistrationNo: String(shop?.invoiceCompanyMeta?.vatRegistrationNo || ''),
         tinNo: String(shop?.invoiceCompanyMeta?.tinNo || ''),
