@@ -11,8 +11,8 @@ test('ARS setup keeps shop and Sales Representative in independently accessible 
   assert.match(pos,/setupDialog === 'customer'/);
   assert.match(pos,/id="pos-customer-select"/);
   assert.match(pos,/id="pos-sales-representative"/);
-  assert.match(pos,/value=\{selectedSalesRepId\}/);
-  assert.match(pos,/onChange=\{event=>setSelectedSalesRepId/);
+  assert.match(pos,/value=\{draftRepId\}/);
+  assert.match(pos,/onChange=\{event=>setDraftRepId/);
 });
 test('secondary buyer details stay in the setup dialog and final payment is separately reviewed',()=>{
   assert.match(pos,/id="pos-setup-backdrop"/);
