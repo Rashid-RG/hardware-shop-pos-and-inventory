@@ -2706,22 +2706,11 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   });
 });
 
+// Do not expose registered shop names, phone numbers, addresses or account/shop
+// associations to anonymous users. Branch choice is available after login,
+// where the authenticated user's shop permissions are enforced.
 app.get('/api/public/shops', (_req, res) => {
-  const queryEmail = String(_req.query.email || '').trim().toLowerCase();
-  const user = queryEmail ? db.users.find((entry) => entry.email.toLowerCase() === queryEmail) : undefined;
-  const roleAllowedShopIds = user ? getUserAllowedShops(toAuthRecordFromUser(user)) : undefined;
-  const fixedShopId = user ? getUserFixedShop(user.email) : undefined;
-  const shops = (db?.settings?.shopProfiles || [])
-    .filter((shop) => !roleAllowedShopIds || roleAllowedShopIds.includes(String(shop.id)))
-    .filter((shop) => !fixedShopId || String(shop.id) === fixedShopId)
-    .map((shop) => ({
-      id: String(shop.id),
-      name: String(shop.name || shop.id),
-      address: String(shop.address || ''),
-      phone: String(shop.phone || ''),
-    }));
-
-  res.json({ shops });
+  res.status(401).json({ error: 'Sign in to view your authorized branches.' });
 });
 
 app.use('/api', requireAuth);
