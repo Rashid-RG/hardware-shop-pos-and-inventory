@@ -8,7 +8,8 @@ const routes = server.split("app.post('/api/purchases'")[1]?.split('// Suppliers
 
 test('purchase routes use row-level database transactions and never rewrite all tables', () => {
   assert.match(routes, /await createPurchaseOrder\(po\)/);
-  assert.match(routes, /await receivePurchaseOrder\(po\.id, activeShopId/);
+  assert.match(routes, /Direct full-order stock posting is disabled/);
+  assert.doesNotMatch(routes, /await receivePurchaseOrder\(po\.id, activeShopId/);
   assert.match(routes, /await updatePurchaseOrderStatus\(po\.id, activeShopId/);
   assert.doesNotMatch(routes, /await saveDb\(\)/);
 });
