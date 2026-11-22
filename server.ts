@@ -2595,7 +2595,7 @@ app.post('/api/auth/setup-admin', requireLocalSetup, loginLimiter, async (req, r
   const email = String(req.body?.email || '').trim().toLowerCase();
   const password = String(req.body?.password || '');
   const confirmPassword = String(req.body?.confirmPassword || '');
-  if (name.length < 2 || name.length > 100 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) || email.length > 254) {
+  if (name.length < 2 || name.length > 100 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return res.status(400).json({ error: 'Enter a valid administrator name and email address.' });
   }
   if (password.length < 12 || password.length > 128 || password !== confirmPassword) {
