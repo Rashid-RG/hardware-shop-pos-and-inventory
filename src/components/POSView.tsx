@@ -2088,7 +2088,6 @@ export default function POSView({
           </div>
         </div>
 
-        </div>
         <div className="shrink-0 border-t border-slate-200 bg-white pt-3">
           <div className="flex items-center justify-between gap-3 pb-3">
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.reduce((sum, item) => sum + item.quantity, 0)} units</p>
