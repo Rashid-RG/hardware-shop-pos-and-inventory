@@ -204,6 +204,16 @@ export default function App() {
   }, [selectedShopId]);
 
   const handleLogout = () => {
+    // Revoke this exact session on the server before clearing its browser copy.
+    // The server keeps the revocation in PostgreSQL across restarts.
+    if (sessionToken) {
+      void fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      }).catch(() => {
+        // Local sign-out still clears the token if the network is unavailable.
+      });
+    }
     sessionStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(SHOP_SESSION_KEY);
     setSessionToken('');
