@@ -1161,6 +1161,7 @@ export default function App() {
                 <QuotationView
                   products={products}
                   customers={customers}
+                  employees={employees}
                   quotations={quotations}
                   taxConfig={taxConfig}
                   cashierName={currentUser}
