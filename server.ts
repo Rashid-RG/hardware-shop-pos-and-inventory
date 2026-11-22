@@ -3397,18 +3397,26 @@ app.put('/api/settings', requireRole(['Super Admin', 'Store Manager']), async (r
       return res.status(403).json({error:'Managers may only modify their assigned company profile.'});
     }
   }
+  if (!isAdmin && payload.shopProfiles === undefined) {
+    return res.status(400).json({error:'Choose your ARS branch profile to save changes.'});
+  }
+  const managerProfiles = !isAdmin && Array.isArray(payload.shopProfiles)
+    ? oldProfiles.map(profile => profile.id === activeShopId
+      ? payload.shopProfiles.find((candidate:any) => candidate.id === activeShopId) || profile
+      : profile)
+    : oldProfiles;
   const nextSettings: StoreSettings = {
-    taxRate: payload.taxRate === undefined ? db.settings.taxRate : Number(payload.taxRate),
-    storeName: String(payload.storeName ?? db.settings.storeName),
+    taxRate: !isAdmin ? db.settings.taxRate : payload.taxRate === undefined ? db.settings.taxRate : Number(payload.taxRate),
+    storeName: isAdmin ? String(payload.storeName ?? db.settings.storeName) : db.settings.storeName,
     currency: 'LKR',
-    invoicePrefix: String(payload.invoicePrefix ?? db.settings.invoicePrefix),
-    logoUrl: String(payload.logoUrl ?? db.settings.logoUrl ?? ''),
-    address: String(payload.address ?? db.settings.address ?? ''),
-    phone: String(payload.phone ?? db.settings.phone ?? ''),
-    shopQRData: String(payload.shopQRData ?? db.settings.shopQRData ?? ''),
-    activeShopId: isAdmin ? String(payload.activeShopId ?? db.settings.activeShopId ?? activeShopId) : activeShopId,
-    productCategories: Array.isArray(payload.productCategories) ? payload.productCategories : (db.settings.productCategories || []),
-    shopProfiles: Array.isArray(payload.shopProfiles) ? payload.shopProfiles : oldProfiles,
+    invoicePrefix: isAdmin ? String(payload.invoicePrefix ?? db.settings.invoicePrefix) : db.settings.invoicePrefix,
+    logoUrl: isAdmin ? String(payload.logoUrl ?? db.settings.logoUrl ?? '') : db.settings.logoUrl,
+    address: isAdmin ? String(payload.address ?? db.settings.address ?? '') : db.settings.address,
+    phone: isAdmin ? String(payload.phone ?? db.settings.phone ?? '') : db.settings.phone,
+    shopQRData: isAdmin ? String(payload.shopQRData ?? db.settings.shopQRData ?? '') : db.settings.shopQRData,
+    activeShopId: isAdmin ? String(payload.activeShopId ?? db.settings.activeShopId ?? activeShopId) : (db.settings.activeShopId || activeShopId),
+    productCategories: isAdmin && Array.isArray(payload.productCategories) ? payload.productCategories : (db.settings.productCategories || []),
+    shopProfiles: isAdmin && Array.isArray(payload.shopProfiles) ? payload.shopProfiles : managerProfiles,
   };
   if (!Number.isFinite(nextSettings.taxRate) || nextSettings.taxRate < 0 || nextSettings.taxRate > 100 ||
       !nextSettings.storeName.trim() || !nextSettings.invoicePrefix.trim() ||
