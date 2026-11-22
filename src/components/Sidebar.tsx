@@ -1,29 +1,15 @@
 import React from 'react';
 import {
-  LayoutDashboard,
-  ShoppingCart,
-  Package,
-  History,
-  Truck,
-  Users2,
-  Sparkles,
-  Settings2,
-  Lock,
-  Bolt,
-  User,
-  LogOut,
-  Database,
-  FileBarChart2,
-  FileText,
-  Timer,
-  Calculator,
-  X,
+  LayoutDashboard, ShoppingCart, Package, History, Truck, Users2, Sparkles,
+  Settings2, Bolt, UserRound, LogOut, ShieldCheck, FileBarChart2, FileText,
+  Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3
 } from 'lucide-react';
 import { Role } from '../types';
 
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators';
 interface SidebarProps {
-  activeTab: 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators';
-  setActiveTab: (tab: 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators') => void;
+  activeTab: Tab;
+  setActiveTab: (tab: Tab) => void;
   currentRole: Role;
   currentUser: string;
   activeShopId: string;
@@ -34,164 +20,129 @@ interface SidebarProps {
   onLogout: () => void;
   onClose?: () => void;
 }
-
 type NavItem = {
-  id: SidebarProps['activeTab'];
+  id: Tab;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   roles: Role[];
+  description?: string;
 };
+const ALL_ROLES: Role[] = ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'];
+const SALES_ROLES: Role[] = ['Super Admin', 'Store Manager', 'Cashier'];
+const STOCK_ROLES: Role[] = ['Super Admin', 'Store Manager', 'Inventory Staff'];
+const MANAGERS: Role[] = ['Super Admin', 'Store Manager'];
+const groups: Array<{ title: string; items: NavItem[] }> = [
+  { title: 'Overview', items: [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ALL_ROLES },
+  ] },
+  { title: 'Sales & billing', items: [
+    { id: 'pos', label: 'New Sale / POS', icon: ShoppingCart, roles: SALES_ROLES },
+    { id: 'quotations', label: 'Quotations', icon: FileText, roles: SALES_ROLES },
+    { id: 'shifts', label: 'Cash Shifts', icon: Timer, roles: SALES_ROLES },
+  ] },
+  { title: 'Inventory & purchasing', items: [
+    { id: 'products', label: 'Product Catalog', icon: Package, roles: STOCK_ROLES },
+    { id: 'inventory', label: 'Stock Management', icon: Layers3, roles: STOCK_ROLES },
+    { id: 'purchases', label: 'Suppliers & Purchasing', icon: Truck, roles: STOCK_ROLES },
+  ] },
+  { title: 'Business management', items: [
+    { id: 'relationships', label: 'Customers & Staff', icon: Users2, roles: SALES_ROLES },
+    { id: 'accounting', label: 'Accounting', icon: Settings2, roles: MANAGERS },
+    { id: 'reports', label: 'Reports & Analytics', icon: FileBarChart2, roles: SALES_ROLES },
+  ] },
+  { title: 'Tools & administration', items: [
+    { id: 'calculators', label: 'Calculators', icon: Calculator, roles: ALL_ROLES },
+    { id: 'ai-insights', label: 'AI Insights', icon: Sparkles, roles: ALL_ROLES },
+    { id: 'db-admin', label: 'System Administration', icon: ShieldCheck, roles: ['Super Admin'] },
+  ] },
+];
 
 export default function Sidebar({
-  activeTab,
-  setActiveTab,
-  currentRole,
-  currentUser,
-  activeShopId,
-  shopProfiles,
-  isShopLocked = false,
-  onOpenProfile,
-  onSwitchShop,
-  onLogout,
-  onClose,
+  activeTab, setActiveTab, currentRole, currentUser, activeShopId, shopProfiles,
+  isShopLocked = false, onOpenProfile, onSwitchShop, onLogout, onClose,
 }: SidebarProps) {
-  const navItems: NavItem[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'] },
-    { id: 'pos', label: 'POS Billing', icon: ShoppingCart, roles: ['Super Admin', 'Store Manager', 'Cashier'] },
-    { id: 'products', label: 'Product Catalog', icon: Package, roles: ['Super Admin', 'Store Manager', 'Inventory Staff'] },
-    { id: 'inventory', label: 'Stock Ledger', icon: History, roles: ['Super Admin', 'Store Manager', 'Inventory Staff'] },
-    { id: 'purchases', label: 'Suppliers & PO', icon: Truck, roles: ['Super Admin', 'Store Manager', 'Inventory Staff'] },
-    { id: 'relationships', label: 'Customers & Staff', icon: Users2, roles: ['Super Admin', 'Store Manager', 'Cashier'] },
-    { id: 'reports', label: 'Reports', icon: FileBarChart2, roles: ['Super Admin', 'Store Manager', 'Cashier'] },
-    { id: 'quotations', label: 'Quotations', icon: FileText, roles: ['Super Admin', 'Store Manager', 'Cashier'] },
-    { id: 'shifts', label: 'Cash Shifts', icon: Timer, roles: ['Super Admin', 'Store Manager', 'Cashier'] },
-    { id: 'calculators', label: 'Calculators Hub', icon: Calculator, roles: ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'] },
-    { id: 'ai-insights', label: 'Smart AI Insights', icon: Sparkles, roles: ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'] },
-    { id: 'accounting', label: 'Accounting', icon: Settings2, roles: ['Super Admin', 'Store Manager'] },
-    { id: 'db-admin', label: 'System Administration', icon: Database, roles: ['Super Admin'] },
-  ];
+  const currentShop = shopProfiles.find((shop) => shop.id === activeShopId);
+  const initials = currentUser.trim().split(/\s+/).slice(0, 2).map((part) => part[0] || '').join('').toUpperCase() || 'AR';
 
   return (
-    <div id="sidebar-container" className="w-68 bg-slate-900 text-white h-screen flex flex-col justify-between border-r border-slate-800 shrink-0">
-      {/* Brand Header */}
-      <div className="p-6 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-lg text-white font-black shadow-md shadow-indigo-500/20">
-            <Bolt className="w-5 h-5" />
+    <aside id="sidebar-container" aria-label="Main navigation" className="w-[280px] h-full min-h-0 bg-[#101d32] text-white flex flex-col border-r border-white/10 shrink-0 shadow-xl shadow-slate-950/10">
+      <div className="px-5 pt-6 pb-5 border-b border-white/10 shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-12 w-12 shrink-0 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/15">
+              <Bolt className="w-6 h-6" strokeWidth={2.4} />
+            </div>
+            <div className="min-w-0">
+              <p className="font-heading text-xl font-bold leading-tight tracking-tight">ARS Hardware</p>
+              <p className="text-[10px] uppercase font-semibold tracking-[0.18em] text-amber-300">Business POS</p>
+            </div>
           </div>
-          <div>
-            <h1 className="font-heading font-medium text-lg tracking-tight leading-none text-slate-100">
-              SMART POS
-            </h1>
-            <p className="text-[10px] uppercase font-mono tracking-wider text-indigo-400 mt-1">
-              Sleek Hardware POS
-            </p>
+          {onClose && (
+            <button type="button" aria-label="Close navigation" onClick={onClose} className="md:hidden rounded-lg p-2 text-slate-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-amber-400">
+              <X className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+        <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.055] px-3.5 py-3 flex items-center gap-2.5">
+          <div className="rounded-lg bg-amber-400/15 p-2 text-amber-300"><Store className="h-4 w-4" /></div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Active workspace</p>
+            <p className="truncate text-xs font-semibold text-slate-100" title={currentShop?.name}>{currentShop?.name || 'ARS Hardware'}</p>
           </div>
         </div>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="md:hidden p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
       </div>
 
-      {/* Navigation Items */}
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto min-h-0 scrollbar-thin">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const hasAccess = item.roles.includes(currentRole);
-          const isActive = activeTab === item.id;
-
+      <nav aria-label="Modules" className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-5 [scrollbar-width:thin] [scrollbar-color:#536078_transparent]">
+        {groups.map(({ title, items }) => {
+          const accessible = items.filter((item) => item.roles.includes(currentRole));
+          if (!accessible.length) return null;
           return (
-            <button
-              key={item.id}
-              id={`nav-btn-${item.id}`}
-              disabled={!hasAccess}
-              onClick={() => {
-                setActiveTab(item.id);
-                onClose?.();
-              }}
-              className={`w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium transition-all duration-250 ${
-                isActive
-                  ? 'bg-white/5 text-white border-l-4 border-indigo-500 rounded-r-lg rounded-l-none pl-2.5'
-                  : hasAccess
-                  ? 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-100 rounded-lg'
-                  : 'text-slate-600 cursor-not-allowed opacity-42'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Icon className={`w-4 h-4 ${isActive ? 'text-indigo-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
+            <section key={title} aria-label={title}>
+              <h2 className="px-3 mb-1.5 text-[10px] font-bold uppercase tracking-[0.17em] text-slate-500">{title}</h2>
+              <div className="space-y-0.5">
+                {accessible.map((item) => {
+                  const Icon = item.icon;
+                  const selected = activeTab === item.id;
+                  return (
+                    <button key={item.id} id={`nav-btn-${item.id}`} type="button" aria-current={selected ? 'page' : undefined}
+                      onClick={() => { setActiveTab(item.id); onClose?.(); }}
+                      className={`group relative w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium text-left transition-colors focus-visible:outline-2 focus-visible:outline-amber-400 ${selected ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-500/10' : 'text-slate-300 hover:bg-white/[0.075] hover:text-white'}`}>
+                      <Icon className={`h-[17px] w-[17px] shrink-0 ${selected ? 'text-slate-900' : 'text-slate-400 group-hover:text-amber-300'}`} />
+                      <span className="flex-1 truncate">{item.label}</span>
+                      {selected && <span className="h-1.5 w-1.5 rounded-full bg-slate-900" />}
+                    </button>
+                  );
+                })}
               </div>
-              {!hasAccess && <Lock className="w-3 h-3 text-slate-700" />}
-            </button>
+            </section>
           );
         })}
       </nav>
 
-      {/* Role Switcher & Operator Footer */}
-      <div className="p-4 border-t border-slate-800 bg-slate-950/40">
-        <div className="mb-3">
-          <label className="mb-1 block text-[10px] uppercase tracking-wider font-mono text-slate-500">
-            Active Shop
-          </label>
-          <select
-            value={activeShopId}
-            onChange={(e) => onSwitchShop(e.target.value)}
-            disabled={isShopLocked}
-            className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-          >
-            {(shopProfiles || []).map((shop) => (
-              <option key={shop.id} value={shop.id}>
-                {shop.name}
-              </option>
-            ))}
+      <div className="shrink-0 border-t border-white/10 bg-[#0c1729] p-4">
+        <label htmlFor="ars-shop-switcher" className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
+          Shop / Branch
+        </label>
+        <div className="relative">
+          <select id="ars-shop-switcher" value={activeShopId} onChange={(e) => onSwitchShop(e.target.value)} disabled={isShopLocked}
+            className="w-full appearance-none rounded-xl border border-white/15 bg-white/[0.065] py-2.5 pl-3 pr-9 text-xs font-semibold text-white outline-none focus:border-amber-400 disabled:opacity-70">
+            {(shopProfiles || []).map((shop) => <option className="text-slate-900" key={shop.id} value={shop.id}>{shop.name}</option>)}
           </select>
-          {isShopLocked && (
-            <p className="mt-1 text-[10px] font-mono text-slate-500">Locked by login shop scope</p>
-          )}
+          {isShopLocked ? <ShieldCheck className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" /> : <ChevronDown className="absolute right-3 top-2.5 h-4 w-4 text-slate-400 pointer-events-none" />}
         </div>
-
-        <div className="mb-4 text-[10px] uppercase tracking-wider font-mono text-slate-500 flex items-center gap-1.5">
-          <User className="w-3 h-3 text-slate-500" /> Signed in operator
-        </div>
-
-        <div className="flex items-center gap-2.5 py-2 px-1">
-          <div className="relative h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center text-xs font-bold text-indigo-400 border border-slate-700">
-            {currentUser.split(' ').map(n=>n[0]).join('')}
-            <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-slate-950"></span>
-          </div>
-          <div className="flex-1 overflow-hidden">
-            <p className="text-xs font-semibold text-slate-200 truncate">{currentUser}</p>
-            <p className="text-[10px] font-mono text-slate-400 truncate">{currentRole}</p>
-          </div>
-        </div>
-
-        <div className="mt-3 pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500 font-mono">
-          <span>Terminal Online</span>
-          <span className="flex items-center gap-1 text-[10px] text-slate-400">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            ACTIVE
+        <button type="button" onClick={onOpenProfile} className="mt-3 w-full flex items-center gap-3 rounded-xl p-2 text-left hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-amber-400">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-700 text-xs font-bold text-white">{initials}</span>
+          <span className="flex-1 min-w-0">
+            <span className="block truncate text-xs font-semibold">{currentUser}</span>
+            <span className="block truncate text-[11px] text-slate-400">{currentRole} · Edit profile</span>
           </span>
-        </div>
-
-        <button
-          onClick={onOpenProfile}
-          className="w-full mt-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-xs font-semibold text-slate-100 flex items-center justify-center gap-1.5"
-        >
-          <User className="w-3.5 h-3.5" /> Profile
+          <ArrowUpRight className="h-4 w-4 text-slate-400" />
         </button>
-
-        <button
-          onClick={onLogout}
-          className="w-full mt-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-xs font-semibold text-slate-100 flex items-center justify-center gap-1.5"
-        >
-          <LogOut className="w-3.5 h-3.5" /> Sign out
+        <button type="button" onClick={onLogout} className="mt-2 w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 py-2.5 text-xs font-semibold text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-amber-400">
+          <LogOut className="h-4 w-4" /> Sign out
         </button>
+        <p className="mt-3 text-center text-[10px] text-slate-500">Powered by RS Nextward</p>
       </div>
-    </div>
+    </aside>
   );
 }
