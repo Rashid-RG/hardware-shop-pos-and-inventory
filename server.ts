@@ -1858,6 +1858,11 @@ const initPostgres = async () => {
     ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS wholesale_meta JSONB;
     ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_name TEXT;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_unit TEXT;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_sku TEXT;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_barcode TEXT;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_limit NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS credit_balance NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE products ADD COLUMN IF NOT EXISTS internal_code TEXT;
@@ -2105,10 +2110,10 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
     for (const item of tx.items) {
       await client.query(
         `
-        INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         `,
-        [tx.id, item.productId, item.productName, item.quantity, item.sellingPrice, item.discount, item.discountAmount || 0, item.costPrice || 0]
+        [tx.id, item.productId, item.productName, item.quantity, item.sellingPrice, item.discount, item.discountAmount || 0, item.costPrice || 0, item.variantId || null, item.variantName || null, item.variantUnit || null, item.variantSku || null, item.variantBarcode || null]
       );
     }
   }
@@ -2420,6 +2425,11 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       items: (txItemsByTransaction.get(row.id) || []).map((item) => ({
         productId: item.product_id,
         productName: item.product_name,
+        variantId: item.variant_id || undefined,
+        variantName: item.variant_name || undefined,
+        variantUnit: item.variant_unit || undefined,
+        variantSku: item.variant_sku || undefined,
+        variantBarcode: item.variant_barcode || undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
         costPrice: Number(item.cost_price || 0),
