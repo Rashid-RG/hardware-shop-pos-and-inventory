@@ -193,6 +193,7 @@ export default function ProductManagementView({
 
   // Form Modal States
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [showAdvancedProduct, setShowAdvancedProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
@@ -389,6 +390,7 @@ export default function ProductManagementView({
   // Open form for adding
   const handleOpenAdd = () => {
     setEditingProduct(null);
+    setShowAdvancedProduct(false);
     setName('');
     setSku('CON-' + Math.floor(100 + Math.random() * 900));
     setBarcode('890100' + Math.floor(1000000 + Math.random() * 9000000));
@@ -406,20 +408,16 @@ export default function ProductManagementView({
     setLocation('Aisle 1, Level 1');
     setImageUrl('');
     setSimpleProductAttributes({});
-    setVariants([
-      createVariantDraft({
-        name: 'Default Variant',
-        unit: 'Piece',
-        sku: `CON-${Math.floor(100 + Math.random() * 900)}-V1`,
-        barcode: `890100${Math.floor(1000000 + Math.random() * 9000000)}1`,
-      }),
-    ]);
+    // Ordinary hardware products do not need a synthetic variant.
+    // Only real size/colour/pack variants should override base price and stock.
+    setVariants([]);
     setIsFormOpen(true);
   };
 
   // Open form for editing
   const handleOpenEdit = (p: Product) => {
     setEditingProduct(p);
+    setShowAdvancedProduct(Boolean(p.variants?.length || p.imageUrl || p.longDescription));
     setName(p.name);
     setSku(p.sku);
     setBarcode(p.barcode);
@@ -506,11 +504,6 @@ export default function ProductManagementView({
     const hasVariants = cleanedVariants.length > 0;
     const hasSimpleAttributes = Object.keys(simpleProductAttributes).length > 0;
 
-    if (!hasVariants && !hasSimpleAttributes && !editingProduct) {
-      notify.warning('Please add at least one complete variant (name, SKU, barcode) or fill category attributes.');
-      return;
-    }
-
     const primaryVariant = cleanedVariants[0];
     const totalVariantQty = hasVariants
       ? cleanedVariants.reduce((sum, variant) => sum + (Number(variant.quantity) || 0), 0)
@@ -566,6 +559,7 @@ export default function ProductManagementView({
       } else {
         await onAddProduct(payload);
       }
+      notify.success(editingProduct ? 'Product updated successfully.' : 'Product saved and ready for billing.');
       setIsFormOpen(false);
     } catch (err) {
       notify.error('Failed to commit catalog data: ' + err);
@@ -843,23 +837,29 @@ export default function ProductManagementView({
 
       {/* FORM MODAL PANEL (DRAWER overlay style) */}
       {isFormOpen && (
-        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg border border-slate-200 max-h-[90vh] overflow-y-auto font-sans relative">
+        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-40 animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
             <button
+              type="button"
+              aria-label="Close product editor"
               onClick={() => setIsFormOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+              className="absolute top-3 right-3 rounded-lg p-2 text-slate-500 hover:bg-slate-100"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="font-heading font-medium text-slate-900 text-lg mb-4">
-              {editingProduct ? 'Modify Hardware Product Specifications' : 'Register New Hardware Inventory Intake'}
-            </h3>
+            <div className="shrink-0 border-b border-slate-100 px-4 py-3 pr-12 sm:px-5">
+              <h3 className="font-heading font-semibold text-slate-900 text-lg">
+                {editingProduct ? 'Edit product' : 'Add product'}
+              </h3>
+              <p className="text-xs text-slate-500">Basic details first. Advanced specifications only when needed.</p>
+            </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 text-xs font-sans">
-              <div className="grid grid-cols-2 gap-4">
+            <form id="ars-product-editor" onSubmit={handleSubmit} className="min-h-0 flex flex-1 flex-col text-xs font-sans">
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+              <div className="grid grid-cols-2 gap-3">
                 {/* Store Department Category at the very top (full width) */}
-                <div className="col-span-2 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-150 shadow-2xs">
+                <div className="col-span-2 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-150 shadow-2xs">
                   <label className="block text-indigo-950 font-bold mb-1.5 text-xs">Store Department Category *</label>
                   <input
                     id="input-prod-category"
@@ -878,13 +878,7 @@ export default function ProductManagementView({
                   </datalist>
                 </div>
 
-                {!category.trim() ? (
-                  <div className="col-span-2 text-center py-10 bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-slate-400 p-4">
-                    <Package className="w-10 h-10 mx-auto text-slate-300 animate-pulse mb-2" />
-                    <p className="font-semibold text-xs text-slate-600">Enter or select a Category first</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">The registration form will automatically adjust and display relevant specifications.</p>
-                  </div>
-                ) : (
+                {/* Core fields are always visible: staff can complete them in any order. */}
                   <>
                     <div className="col-span-2">
                       <label className="block text-slate-500 font-semibold mb-1">Product Display Name *</label>
@@ -1064,7 +1058,16 @@ export default function ProductManagementView({
                       />
                     </div>
                   </>
-                )}
+
+                <div className="col-span-2">
+                  <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
+                    aria-expanded={showAdvancedProduct}
+                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                    <span>Advanced options · variants, specifications and images</span>
+                    <span aria-hidden="true">{showAdvancedProduct ? '−' : '+'}</span>
+                  </button>
+                </div>
+                {showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3">
 
                 {/* Category-Specific Attributes for Simple Product */}
                 {variants.length === 0 && (() => {
@@ -1315,10 +1318,12 @@ export default function ProductManagementView({
                     </div>
                   )}
                 </div>
+                </div>}
+              </div>
               </div>
 
               {/* Status Warning if quantity is lower than reorder level */}
-              {quantity <= reorderLevel && (
+              {variants.length === 0 && quantity <= reorderLevel && (
                 <div className="bg-amber-50 border border-amber-200 rounded p-3 flex items-start gap-2 text-slate-700">
                   <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                   <p className="text-[11px]">
@@ -1328,7 +1333,7 @@ export default function ProductManagementView({
               )}
 
               {/* Submitting buttons */}
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-5 flex gap-3">
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
@@ -1342,7 +1347,7 @@ export default function ProductManagementView({
                   disabled={isSubmitting}
                   className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition"
                 >
-                  {isSubmitting ? 'Registering specifications...' : editingProduct ? 'Save Specifications' : 'Register Product'}
+                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : 'Save Product'}
                 </button>
               </div>
             </form>
