@@ -31,8 +31,6 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [loginShopId, setLoginShopId] = useState('');
-  const [loginShops, setLoginShops] = useState<Array<{ id: string; name: string; address?: string; phone?: string }>>([]);
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
@@ -45,7 +43,6 @@ export default function App() {
   const [setupStatus, setSetupStatus] = useState('');
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
-  const [resetShopId, setResetShopId] = useState('');
   const [resetCurrentPassword, setResetCurrentPassword] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
   const [resetConfirmPassword, setResetConfirmPassword] = useState('');
@@ -60,10 +57,6 @@ export default function App() {
   const [profileCurrentPassword, setProfileCurrentPassword] = useState('');
   const [profileNewPassword, setProfileNewPassword] = useState('');
 
-  const isWholesaleLoginShop = (shop: { id: string; name: string }) => {
-    const normalizedName = String(shop.name || '').toLowerCase();
-    return String(shop.id || '') === 'shop-2' || normalizedName.includes('wholesale') || normalizedName.includes('ars pvt');
-  };
   const [profileConfirmPassword, setProfileConfirmPassword] = useState('');
   const [showProfileCurrentPassword, setShowProfileCurrentPassword] = useState(false);
   const [showProfileNewPassword, setShowProfileNewPassword] = useState(false);
@@ -202,25 +195,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    const loadLoginShops = async () => {
-      try {
-        const response = await fetch(`/api/public/shops?email=${encodeURIComponent(loginEmail)}`);
-        if (!response.ok) {
-          return;
-        }
-        const data = await response.json();
-        const shops = Array.isArray(data?.shops) ? data.shops : [];
-        setLoginShops(shops);
-        setLoginShopId((current) => (shops.some((shop) => shop.id === current) ? current : (shops[0]?.id || '')));
-      } catch {
-        // Keep login usable even if shop list endpoint is temporarily unavailable.
-      }
-    };
-
-    loadLoginShops();
-  }, [loginEmail]);
-
-  useEffect(() => {
     const savedSession = sessionStorage.getItem(SESSION_KEY);
     if (!savedSession) {
       setIsLoading(false);
@@ -309,7 +283,7 @@ export default function App() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: loginEmail, password: loginPassword, shopId: loginShopId }),
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
       });
 
       const data = await response.json();
@@ -321,7 +295,7 @@ export default function App() {
       const token: string = data.token;
       setAuthUser(user);
       setSessionToken(token);
-      const scopedShop = user.scopedShopId || loginShopId || user.allowedShopIds?.[0] || sessionStorage.getItem(SHOP_SESSION_KEY) || '';
+      const scopedShop = user.scopedShopId || user.allowedShopIds?.[0] || sessionStorage.getItem(SHOP_SESSION_KEY) || '';
       setSelectedShopId(scopedShop);
       sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, user }));
       if (scopedShop) {
@@ -602,7 +576,6 @@ export default function App() {
 
   const openLoginResetModal = () => {
     setResetEmail(loginEmail);
-    setResetShopId(loginShopId);
     setResetCurrentPassword('');
     setResetNewPassword('');
     setResetConfirmPassword('');
@@ -644,7 +617,7 @@ export default function App() {
       const loginResponse = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: resetEmail, password: resetCurrentPassword, shopId: resetShopId }),
+        body: JSON.stringify({ email: resetEmail, password: resetCurrentPassword }),
       });
       const loginData = await loginResponse.json();
       if (!loginResponse.ok) {
@@ -773,18 +746,18 @@ export default function App() {
   if (!authUser) {
     return (
       <div
-        className="relative min-h-screen w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-4 sm:p-7 lg:p-10"
+        className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-3 sm:p-6 lg:p-7"
       >
         <div className="pointer-events-none absolute inset-0 opacity-30 bg-cover bg-center" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#101d32]/95 via-[#101d32]/85 to-[#243b5c]/90" />
         <div className="relative z-10 w-full max-w-6xl overflow-hidden rounded-[30px] border border-white/15 bg-white/5 shadow-[0_25px_100px_rgba(0,0,0,0.38)] lg:grid lg:grid-cols-[1.12fr_0.88fr]">
-          <section className="hidden lg:flex flex-col justify-between min-h-[620px] border-r border-white/10 p-12 xl:p-14 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
+          <section className="hidden lg:flex flex-col justify-between min-h-[560px] border-r border-white/10 p-9 xl:p-12 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
             <div>
               <div className="inline-flex items-center gap-3">
                 <div className="rounded-2xl bg-amber-400 p-3 text-slate-950"><Bolt className="h-7 w-7" /></div>
                 <div><p className="font-heading text-2xl font-bold tracking-tight">ARS Hardware</p><p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">Business Management Suite</p></div>
               </div>
-              <div className="mt-24 max-w-xl">
+              <div className="mt-14 max-w-xl">
                 <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for hardware commerce</p>
                 <h1 className="font-heading text-5xl font-bold tracking-tight leading-[1.14] xl:text-[56px]">Your business.<br/><span className="text-amber-300">One powerful</span><br/>workspace.</h1>
                 <p className="mt-6 max-w-md text-[15px] leading-7 text-slate-300">Manage counter sales, inventory, purchasing and financial reporting from one organized, secure platform.</p>
@@ -792,14 +765,14 @@ export default function App() {
             </div>
             <div className="flex items-center gap-3 border-t border-white/15 pt-5 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
           </section>
-          <div className="bg-white p-6 text-slate-900 sm:p-10 lg:p-12 xl:p-14 flex flex-col justify-center">
-            <div className="mb-10">
+          <div className="bg-white p-6 text-slate-900 sm:p-8 lg:p-9 xl:p-11 flex flex-col justify-center">
+            <div className="mb-6">
               <div className="mb-8 flex items-center gap-3 lg:hidden"><span className="rounded-xl bg-amber-400 p-2.5"><Bolt className="h-5 w-5" /></span><div><p className="font-heading text-lg font-bold">ARS Hardware</p><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Business POS</p></div></div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
-              <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Sign in to your workspace</h2>
-              <p className="mt-3 text-sm text-slate-500">Enter your employee credentials and choose your assigned branch.</p>
+              <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
+              <p className="mt-3 text-sm text-slate-500">Sign in securely. Your authorized branch will load after verification.</p>
             </div>
-            <form onSubmit={handleLogin} className="space-y-5">
+            <form onSubmit={handleLogin} className="space-y-4">
 
           {setupStatus && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">{setupStatus}</p>}
 
@@ -840,28 +813,12 @@ export default function App() {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="ars-login-shop" className="mb-2 block text-xs font-semibold text-slate-700">Shop / Branch</label>
-            <select
-              id="ars-login-shop"
-              value={loginShopId}
-              onChange={(e) => setLoginShopId(e.target.value)}
-              className="w-full rounded-xl px-4 py-3 bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500"
-            >
-              {loginShops.length === 0 && <option value="">Default Shop</option>}
-              {loginShops.map((shop) => (
-                <option key={shop.id} value={shop.id}>
-                  {shop.name}{isWholesaleLoginShop(shop) ? ' (Wholesale)' : ' (Retail)'}
-                </option>
-              ))}
-            </select>
-            {loginShops.find((shop) => shop.id === loginShopId) && (
-              <p className="text-xs text-slate-500 leading-relaxed mt-2">
-                {loginShops.find((shop) => shop.id === loginShopId)?.name}
-                {loginShops.find((shop) => shop.id === loginShopId)?.address ? ` • ${loginShops.find((shop) => shop.id === loginShopId)?.address}` : ''}
-                {loginShops.find((shop) => shop.id === loginShopId)?.phone ? ` • ${loginShops.find((shop) => shop.id === loginShopId)?.phone}` : ''}
-              </p>
-            )}
+          <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+            <div>
+              <p className="text-xs font-semibold text-slate-800">Your branch is protected</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">Sign in first. You'll only see branches assigned to your account.</p>
+            </div>
           </div>
 
           {loginError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loginError}</p>}
@@ -882,7 +839,7 @@ export default function App() {
             Change Password
           </button>
             </form>
-            <div className="mt-8 border-t border-slate-100 pt-5 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <div className="mt-5 border-t border-slate-100 pt-4 flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> Protected business access</span>
               <span>RS Nextward</span>
             </div>
@@ -907,22 +864,6 @@ export default function App() {
                     className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
                     required
                   />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs text-slate-300">Shop</label>
-                  <select
-                    value={resetShopId}
-                    onChange={(event) => setResetShopId(event.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none"
-                  >
-                    {loginShops.length === 0 && <option value="">Default Shop</option>}
-                    {loginShops.map((shop) => (
-                      <option key={shop.id} value={shop.id}>
-                        {shop.name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
 
                 <div className="space-y-1">
