@@ -2338,6 +2338,7 @@ export default function POSView({
               </>
             )}
           </button>
+              </div>
             </div>
             <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
               <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting}
