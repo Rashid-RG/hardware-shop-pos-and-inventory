@@ -3057,6 +3057,17 @@ app.post(
   }
 );
 
+const allowDestructiveAdminTools = !IS_PRODUCTION && process.env.ENABLE_DESTRUCTIVE_ADMIN_TOOLS === 'true';
+const requireExplicitDataReset: express.RequestHandler = (req, res, next) => {
+  if (!allowDestructiveAdminTools) {
+    return res.status(403).json({ error: 'Database reset tools are disabled. Enable only in an isolated non-production environment.' });
+  }
+  if (req.body?.confirmation !== 'DELETE ALL TEST DATA') {
+    return res.status(400).json({ error: 'Explicit confirmation phrase required: DELETE ALL TEST DATA' });
+  }
+  next();
+};
+
 app.post('/api/db/sync-normalized', requireRole(['Super Admin']), requireExplicitDataReset, async (_req, res) => {
   const appStateResult = await pool.query<{ state: DBState }>('SELECT state FROM app_state WHERE id = $1', [DB_STATE_KEY]);
   if (!appStateResult.rowCount || !appStateResult.rows[0]) {
@@ -3168,17 +3179,6 @@ app.get('/api/db', (req, res) => {
 });
 
 // Reset database to initial defaults
-const allowDestructiveAdminTools = !IS_PRODUCTION && process.env.ENABLE_DESTRUCTIVE_ADMIN_TOOLS === 'true';
-const requireExplicitDataReset: express.RequestHandler = (req, res, next) => {
-  if (!allowDestructiveAdminTools) {
-    return res.status(403).json({ error: 'Database reset tools are disabled. Enable only in an isolated non-production environment.' });
-  }
-  if (req.body?.confirmation !== 'DELETE ALL TEST DATA') {
-    return res.status(400).json({ error: 'Explicit confirmation phrase required: DELETE ALL TEST DATA' });
-  }
-  next();
-};
-
 app.post('/api/db/reset', requireRole(['Super Admin']), requireExplicitDataReset, async (req, res) => {
   db = getInitialDbState();
   await saveDb();
