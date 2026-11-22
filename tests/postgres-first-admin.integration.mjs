@@ -101,6 +101,46 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
     assert.equal(data.user.role, 'Super Admin');
     assert.ok(data.token);
 
+    // ARS importer and partnership modules must behave against real isolated
+    // PostgreSQL tables with an authenticated administrator.
+    const authorized = (method = 'GET', body) => ({
+      method,
+      headers: { Authorization: 'Bearer ' + data.token, 'X-Shop-Id': 'shop-main',
+        ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const anonymousPartners = await fetch(origin + '/api/ars/partners');
+    assert.equal(anonymousPartners.status, 401, 'Partner financial data must require authentication');
+    const firstPartner = await fetch(origin + '/api/ars/partners', authorized('POST', {
+      name: 'Test Import Partner 1', ownershipPercent: 60,
+    }));
+    assert.equal(firstPartner.status, 201, await firstPartner.text().then(t => 'Partner create failed: ' + t));
+    // Check partnership transaction does not infer additional owners or shares.
+    const firstPartnerId = (await (await fetch(origin + '/api/ars/partners', authorized())).json()).partners[0].id;
+    const partnerCapital = await fetch(origin + '/api/ars/partner-capital', authorized('POST', {
+      partnerId: firstPartnerId, entryType: 'Contribution', amountLkr: 5000.25,
+      reference: 'CI-BANK-REF-01', note: 'Test funding only', entryDate: '2026-11-22',
+    }));
+    assert.equal(partnerCapital.status, 201, 'Authenticated capital insert failed');
+    const capitalResponse = await fetch(origin + '/api/ars/partners', authorized());
+    const partnerLedger = await capitalResponse.json();
+    assert.equal(partnerLedger.partners.length, 1);
+    assert.equal(partnerLedger.entries.length, 1);
+    assert.equal(partnerLedger.entries[0].reference, 'CI-BANK-REF-01');
+    const excessiveShares = await fetch(origin + '/api/ars/partners', authorized('POST', {
+      name: 'Second Partner', ownershipPercent: 50,
+    }));
+    assert.equal(excessiveShares.status, 409, 'Total ownership must never exceed 100%');
+    const nonexistentShipment = await fetch(origin + '/api/ars/import-shipments', authorized('POST', {
+      purchaseOrderId: 'no-such-order', shipmentReference: 'TEST-BL-01',
+      currency: 'CNY', exchangeRateLkr: 45, freightLkr: 300,
+      customsLkr: 50, clearanceLkr: 25,
+    }));
+    assert.equal(nonexistentShipment.status, 409, 'Shipments must reference a valid open purchase order');
+    const shipments = await fetch(origin + '/api/ars/import-shipments', authorized());
+    assert.equal(shipments.status, 200);
+    assert.deepEqual(await shipments.json(), []);
+
     const scratch = new Client({ connectionString: scratchUrl.href });
     try {
       await scratch.connect();
