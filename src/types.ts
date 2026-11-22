@@ -135,7 +135,9 @@ export interface SalesTransaction {
   customerPhone?: string;
   customerAddress?: string;
   customerId?: string;
-  cashierName: string;
+  cashierName: string; // internal operator audit only; never shown as the Sales Representative
+  salesRepId?: string;
+  salesRepName?: string; // saved invoice snapshot, including historic reprints
   items: {
     productId: string;
     productName: string;
