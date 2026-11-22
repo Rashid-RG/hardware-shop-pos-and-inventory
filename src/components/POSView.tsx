@@ -1526,6 +1526,7 @@ export default function POSView({
 
         const txWithQr: SalesTransaction = { ...completedTx, invoiceQrData };
         setReceiptModel(txWithQr);
+        notify.success(`Invoice ${completedTx.invoiceNumber} saved for ${completedTx.customerName}.`);
         setSelectedCopyType('Duplicate Copy');
         try {
           const printAudit = await logInvoicePrint(txWithQr, 'Original Copy');
@@ -1605,17 +1606,17 @@ export default function POSView({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
         {/* LEFT: Products, Searches, Filters (7 Cols) */}
-        <div className={`lg:col-span-7 flex flex-col space-y-4 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className={`lg:col-span-6 flex flex-col space-y-3 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Search header bar */}
-        <div className="bg-white p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row gap-3 items-center justify-between">
+        <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 flex flex-col sm:flex-row gap-2 items-center justify-between">
           <div className="relative w-full sm:w-80">
             <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
             <input
               id="pos-search-input"
               type="text"
-              placeholder="Search Name, SKU, or Barcode..."
+              placeholder="Find a product, SKU or barcode..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-slate-50 text-slate-800 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-sans"
@@ -1672,7 +1673,7 @@ export default function POSView({
         </div>
 
         {/* Dynamic Products Grid */}
-        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[580px] pr-1">
+        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-[580px] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
             const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
@@ -1818,7 +1819,7 @@ export default function POSView({
       </div>
 
       {/* RIGHT: Register Cart panel & Checkout Checkout (5 Cols) */}
-      <div className={`lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-lg p-3 sm:p-4 flex flex-col min-h-[550px] lg:h-[calc(100dvh-150px)] lg:min-h-[560px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-lg p-3 sm:p-4 flex flex-col min-h-[550px] lg:h-[calc(100dvh-150px)] lg:min-h-[560px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         <div className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1">
           {/* Active Operator Banner */}
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
@@ -1841,8 +1842,8 @@ export default function POSView({
           {/* Registered wholesale buyer lookup. Never bill an unknown walk-in account. */}
           <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3 font-sans text-xs">
             <div className="flex items-center justify-between gap-2">
-              <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">Bill to · Registered shop</p>
-                <p className="mt-1 text-[11px] text-slate-500">Select a saved wholesale customer; contact details fill automatically.</p>
+              <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">1 · Customer shop</p>
+                <p className="mt-1 text-[11px] text-slate-500">Choose the shop receiving this invoice.</p>
               </div>
             </div>
             <label htmlFor="pos-customer-search" className="block text-xs font-semibold text-slate-700">
@@ -1921,7 +1922,7 @@ export default function POSView({
             </details>
 
             <label htmlFor="pos-sales-representative" className="block text-[11px] font-semibold text-slate-800">
-              Sales Representative <span className="text-rose-600">*</span>
+              2 · Sales Representative <span className="text-rose-600">*</span>
               <select id="pos-sales-representative" required aria-label="Select Sales Representative"
                 value={selectedSalesRepId} onChange={(event) => setSelectedSalesRepId(event.target.value)}
                 className="mt-1 w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500">
@@ -2074,8 +2075,8 @@ export default function POSView({
           </div>
         </div>
 
-        {/* Ledger Bottom checkout math */}
-        <div className="shrink-0 border-t border-slate-200 bg-white pt-3 space-y-2 mt-2 lg:max-h-[48%] lg:overflow-y-auto">
+        {/* 3 · Payment and invoice totals */}
+        <div className="shrink-0 border-t border-slate-200 bg-white pt-2 space-y-2 mt-2 lg:max-h-[46%] lg:overflow-y-auto">
           <div className="space-y-1.5 text-xs text-slate-600 font-sans">
             <div className="flex justify-between">
               <span>Items Total</span>
@@ -2259,7 +2260,7 @@ export default function POSView({
             id="pos-pay-trigger"
             disabled={cart.length === 0 || isSubmitting || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
             onClick={handleCheckout}
-            className={`w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+            className={`sticky bottom-0 z-10 w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 : 'bg-slate-900 border border-slate-900 text-slate-100 hover:bg-slate-950'
@@ -2272,7 +2273,7 @@ export default function POSView({
               </>
             ) : (
               <>
-                Complete Checkout & Receipt ({currencySymbol}{total.toFixed(2)})
+                Save Invoice & Print A4 ({currencySymbol}{total.toFixed(2)})
               </>
             )}
           </button>
