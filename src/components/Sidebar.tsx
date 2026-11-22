@@ -5,6 +5,7 @@ import {
   Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3
 } from 'lucide-react';
 import { Role } from '../types';
+import ARSBrand from './ARSBrand';
 
 type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators';
 interface SidebarProps {
@@ -69,13 +70,7 @@ export default function Sidebar({
       <div className="px-5 pt-6 pb-5 border-b border-white/10 shrink-0">
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-12 w-12 shrink-0 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/15">
-              <Bolt className="w-6 h-6" strokeWidth={2.4} />
-            </div>
-            <div className="min-w-0">
-              <p className="font-heading text-xl font-bold leading-tight tracking-tight">ARS Hardware</p>
-              <p className="text-[10px] uppercase font-semibold tracking-[0.18em] text-amber-300">Business POS</p>
-            </div>
+            <ARSBrand subtitle="Business POS" />
           </div>
           {onClose && (
             <button type="button" aria-label="Close navigation" onClick={onClose} className="md:hidden rounded-lg p-2 text-slate-300 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-amber-400">
