@@ -1791,6 +1791,52 @@ const initPostgres = async () => {
     );
   `);
 
+  // New independent ARS wholesale tables. Never truncate, rewrite, or cascade
+  // existing POS business data when creating import or partner records.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ars_import_shipments (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      purchase_order_id TEXT NOT NULL,
+      shipment_reference TEXT NOT NULL,
+      origin_country TEXT NOT NULL DEFAULT 'China',
+      container_number TEXT NOT NULL DEFAULT '',
+      eta_date DATE,
+      invoice_currency TEXT NOT NULL DEFAULT 'CNY',
+      exchange_rate_lkr NUMERIC(16,6),
+      freight_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,
+      customs_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,
+      clearance_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(shop_id, purchase_order_id),
+      UNIQUE(shop_id, shipment_reference)
+    );
+    CREATE TABLE IF NOT EXISTS ars_business_partners (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      ownership_percent NUMERIC(5,2),
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS ars_partner_capital_entries (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      partner_id TEXT NOT NULL REFERENCES ars_business_partners(id),
+      entry_type TEXT NOT NULL CHECK(entry_type IN ('Contribution','Drawing')),
+      amount_lkr NUMERIC(16,2) NOT NULL CHECK(amount_lkr > 0),
+      entry_date DATE NOT NULL,
+      reference TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ars_import_shipments_shop_idx ON ars_import_shipments(shop_id,created_at DESC);
+    CREATE INDEX IF NOT EXISTS ars_partner_capital_shop_idx ON ars_partner_capital_entries(shop_id,entry_date DESC);
+  `);
+
   await pool.query(`
     UPDATE products SET shop_id = 'shop-main' WHERE shop_id IS NULL OR shop_id = '';
     ALTER TABLE products DROP CONSTRAINT IF EXISTS products_sku_key;
