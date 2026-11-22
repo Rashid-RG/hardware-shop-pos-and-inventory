@@ -1,13 +1,13 @@
 import React from 'react';
 import {
-  LayoutDashboard, ShoppingCart, Package, History, Truck, Users2, Sparkles,
+  LayoutDashboard, ShoppingCart, Package, History, Truck, Users2,
   Settings2, Bolt, UserRound, LogOut, ShieldCheck, FileBarChart2, FileText,
   Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3
 } from 'lucide-react';
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -53,7 +53,6 @@ const groups: Array<{ title: string; items: NavItem[] }> = [
   ] },
   { title: 'Tools & administration', items: [
     { id: 'calculators', label: 'Calculators', icon: Calculator, roles: ALL_ROLES },
-    { id: 'ai-insights', label: 'AI Insights', icon: Sparkles, roles: ALL_ROLES },
     { id: 'db-admin', label: 'System Administration', icon: ShieldCheck, roles: ['Super Admin'] },
   ] },
 ];
