@@ -26,3 +26,11 @@ test('ARS company mark is distinct and visible in the login and sidebar', () => 
   assert.match(brand, /ARS <span/);
   assert.match(sidebar, /RS Nextward/);
 });
+
+test('ARS UI supports collapsing the sidebar and omits AI controls', () => {
+  assert.match(app, /aria-label=\{isSidebarCollapsed \? 'Show sidebar' : 'Hide sidebar'\}/);
+  assert.match(app, /ars_sidebar_collapsed/);
+  assert.match(app, /PanelLeftOpen/);
+  assert.doesNotMatch(app, /AIRecommendationsView|isChatOpen|handleSendChatMessage|ai-insights/);
+  assert.doesNotMatch(sidebar, /AI Insights|ai-insights/);
+});
