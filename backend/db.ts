@@ -1569,7 +1569,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
     );
     // 3) Update status to Received
     await client.query(
-      `UPDATE purchase_orders SET status = 'Received' WHERE id = $1`,
+      `UPDATE purchase_orders SET status = 'Received' WHERE id = $1 AND shop_id = $2`,
       [poId, shopId]
     );
 
