@@ -3874,8 +3874,26 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
         ? 'UNPAID'
         : ((cashPaid ?? total) < total ? 'PARTIALLY PAID' : 'PAID')));
 
-  if (paymentMethod === 'Cash' && (cashPaid ?? 0) < total) {
+  if (!Number.isFinite(total) || total < 0) {
+    return res.status(400).json({ error: 'Invalid invoice total' });
+  }
+  if (paymentMethod === 'Cash' && (!Number.isFinite(cashPaid) || (cashPaid ?? 0) < total)) {
     return res.status(400).json({ error: `Cash received must be at least Rs.${total.toFixed(2)}.` });
+  }
+
+  // A configured positive customer credit limit is enforced BEFORE stock changes.
+  // Zero/absent legacy limits remain unrestricted until an owner sets a policy.
+  if (paymentMethod === 'Credit Account' && checkoutCustomer) {
+    const outstanding = Number(checkoutCustomer.creditBalance || 0);
+    const limit = Number(checkoutCustomer.creditLimit || 0);
+    if (!Number.isFinite(outstanding) || outstanding < 0 || !Number.isFinite(limit) || limit < 0) {
+      return res.status(400).json({ error: 'Customer credit account has invalid balances' });
+    }
+    if (limit > 0 && Math.round((outstanding + total) * 100) > Math.round(limit * 100)) {
+      return res.status(409).json({
+        error: `Credit limit exceeded. Available credit: Rs.${Math.max(0, limit - outstanding).toFixed(2)}.`,
+      });
+    }
   }
 
   for (const update of pendingStockUpdates) {
