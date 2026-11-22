@@ -7,7 +7,7 @@ if (!['localhost', '127.0.0.1'].includes(url.hostname) || url.pathname !== '/har
   throw new Error('Refusing credit integration test outside the local hardware_pos_ci database');
 }
 
-const { pool, initDbTables, addCustomerCreditPayment, updateCustomerCreditLimit } =
+const { pool, initDbTables, addCustomerCreditPayment, updateCustomerCreditLimit, insertCustomer, insertSupplier } =
   await import('../backend/db.ts');
 
 test('real PostgreSQL credit payments are atomic, scoped, and reject overpayments', async () => {
@@ -53,6 +53,34 @@ test('real PostgreSQL credit payments are atomic, scoped, and reject overpayment
     current = await pool.query('SELECT credit_balance FROM customers WHERE id = $1', [customerId]);
     assert.equal(Number(current.rows[0].credit_balance), 224.5, 'Repeated payment must roll back');
 
+    // Master-data creation must remain tenant-scoped and not inject opening balances.
+    const newCustomerId = 'ci-new-customer-' + suffix;
+    const newSupplierId = 'ci-new-supplier-' + suffix;
+    await insertCustomer({
+      id: newCustomerId, shopId, name: 'CI New Customer', phone: '',
+      email: '', address: '', loyaltyBalance: 0, purchaseCount: 0,
+      creditLimit: 0, creditBalance: 0,
+    });
+    await insertSupplier({
+      id: newSupplierId, shopId, name: 'CI New Supplier',
+      companyName: '', phone: '', email: '', address: '', taxNumber: '',
+    });
+    const masterCustomer = await pool.query(
+      'SELECT shop_id, credit_balance FROM customers WHERE id = $1', [newCustomerId]
+    );
+    const masterSupplier = await pool.query(
+      'SELECT shop_id FROM suppliers WHERE id = $1', [newSupplierId]
+    );
+    assert.equal(masterCustomer.rows[0].shop_id, shopId);
+    assert.equal(Number(masterCustomer.rows[0].credit_balance), 0);
+    assert.equal(masterSupplier.rows[0].shop_id, shopId);
+    await assert.rejects(
+      () => insertCustomer({
+        id: newCustomerId, shopId, name: 'Duplicate', phone: '', email: '',
+        address: '', loyaltyBalance: 0, purchaseCount: 0, creditLimit: 0, creditBalance: 0,
+      }),
+      /duplicate key/
+    );
     const count = await pool.query('SELECT COUNT(*)::integer AS n FROM customer_credit_payments WHERE id = $1', [id]);
     assert.equal(count.rows[0].n, 1);
     await assert.rejects(
