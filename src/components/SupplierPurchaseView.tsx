@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { notify } from '../utils/notifications';
 import {
   Truck,
   Plus,
@@ -86,7 +87,7 @@ export default function SupplierPurchaseView({
   const handleSubmitSupplier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supName.trim() || !supCompany.trim()) {
-      alert('Please fill out Name and Company fields');
+      notify.warning('Please fill out Name and Company fields');
       return;
     }
     setIsSupSubmitting(true);
@@ -107,7 +108,7 @@ export default function SupplierPurchaseView({
       setSupAddress('');
       setSupTax('');
     } catch (err) {
-      alert('Failed to register supplier: ' + err);
+      notify.error('Failed to register supplier: ' + err);
     } finally {
       setIsSupSubmitting(false);
     }
@@ -116,16 +117,16 @@ export default function SupplierPurchaseView({
   // PO Line Composer helpers
   const handleAddItemLine = () => {
     if (!selectedAddProductId) {
-      alert('Select a product to add to the line first');
+      notify.warning('Select a product to add to the line first');
       return;
     }
     const product = products.find((p) => p.id === selectedAddProductId);
     if (!product) return;
 
     const variant = product.variants?.find(item => item.id === variantId);
-    if (product.variants?.length && !variant) return alert('Choose the size or variant to receive.');
+    if (product.variants?.length && !variant) return notify.warning('Choose the size or variant to receive.');
     if (!Number.isSafeInteger(addQty) || addQty <= 0 || !Number.isFinite(addCost) || addCost < 0) {
-      return alert('Enter a positive whole quantity and a valid unit cost.');
+      return notify.warning('Enter a positive whole quantity and a valid unit cost.');
     }
     const existingIndex = poItems.findIndex((it) => it.productId === selectedAddProductId && it.variantId === variant?.id && it.costPrice === addCost);
     if (existingIndex !== -1) {
@@ -153,11 +154,11 @@ export default function SupplierPurchaseView({
 
   const handleCreatePurchaseRequest = async () => {
     if (!poSupplierId) {
-      alert('Please designate concrete Supplier target.');
+      notify.warning('Please designate concrete Supplier target.');
       return;
     }
     if (poItems.length === 0) {
-      alert('Must populate at least one catalog item line draft.');
+      notify.warning('Must populate at least one catalog item line draft.');
       return;
     }
     setIsPOSubmitting(true);
@@ -176,7 +177,7 @@ export default function SupplierPurchaseView({
       setPoSupplierId('');
       setPoItems([]);
     } catch (err) {
-      alert('Failed to create purchase order: ' + err);
+      notify.error('Failed to create purchase order: ' + err);
     } finally {
       setIsPOSubmitting(false);
     }
@@ -221,7 +222,7 @@ export default function SupplierPurchaseView({
     if (!paymentDraft) return;
     const amount = Number(paymentAmount);
     if (!amount || amount <= 0) {
-      alert('Enter a valid payment amount.');
+      notify.warning('Enter a valid payment amount.');
       return;
     }
     setIsPaymentSubmitting(true);
@@ -237,7 +238,7 @@ export default function SupplierPurchaseView({
       });
       setPaymentDraft(null);
     } catch (err) {
-      alert('Failed to record supplier payment: ' + err);
+      notify.error('Failed to record supplier payment: ' + err);
     } finally {
       setIsPaymentSubmitting(false);
     }
