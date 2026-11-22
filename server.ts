@@ -1517,7 +1517,9 @@ const initPostgres = async () => {
     );
     CREATE TABLE IF NOT EXISTS auth_sessions (
       id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      -- Do not FK this to users: legacy full-table saves TRUNCATE users CASCADE.
+      -- Auth middleware separately verifies that the account still exists.
+      user_id TEXT NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL,
       revoked_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
