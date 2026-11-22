@@ -17,6 +17,8 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
  const [saving,setSaving]=useState(false);
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
+ const [search,setSearch]=useState('');
+ const [showAll,setShowAll]=useState(false);
  const [form,setForm]=useState({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',
    currency:'CNY',exchangeRateLkr:'1',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
  const fetchWithAuth=(url:string,options:RequestInit={})=>fetch(url,{
@@ -41,17 +43,22 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
  };
  const openOrders=purchaseOrders.filter(po=>po.shopId===shopId&&['Pending','Ordered'].includes(po.status)&&!rows.some(row=>row.purchase_order_id===po.id));
  const format=(value:any)=>Number(value||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
+ const visibleRows=rows.filter(row=>(mode==='shipments'||['In Transit','Partially Received'].includes(row.status))&&
+   [row.shipment_reference,row.po_number,row.supplier_name,row.container_number].some(text=>String(text||'').toLowerCase().includes(search.toLowerCase().trim())));
+ const displayedRows=showAll?visibleRows:visibleRows.slice(0,12);
  return <div className="space-y-5">
-   <header className="rounded-2xl bg-[#172a47] p-6 text-white">
+   <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5">
      <p className="text-xs font-bold uppercase tracking-wider text-amber-300">ARS Import Operations</p>
-     <h2 className="mt-2 flex items-center gap-2 font-heading text-2xl font-bold">{mode==='shipments'?<Ship className="h-6 w-6"/>:<PackageCheck className="h-6 w-6"/>}{mode==='shipments'?'Import Shipment Register':'Warehouse Receiving'}</h2>
-     <p className="mt-2 text-sm text-slate-300">{mode==='shipments'?'Link incoming China shipments to purchase orders and record freight, customs and expected arrival.':'Receive confirmed purchase orders with atomic stock posting and duplicate-receipt protection.'}</p>
+     <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold">{mode==='shipments'?<Ship className="h-6 w-6"/>:<PackageCheck className="h-6 w-6"/>}{mode==='shipments'?'Import Shipment Register':'Warehouse Receiving'}</h2>
+     <p className="mt-1 text-xs text-slate-300">{mode==='shipments'?'Link incoming China shipments to purchase orders and record freight, customs and expected arrival.':'Receive confirmed purchase orders with atomic stock posting and duplicate-receipt protection.'}</p>
    </header>
    {error&&<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
    {notice&&<p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
    {mode==='shipments'&&['Super Admin','Store Manager'].includes(currentRole)&&
-    <form onSubmit={add} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 className="mb-3 text-lg font-bold">Register incoming shipment</h3>
+    <details className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <summary className="cursor-pointer text-sm font-bold text-slate-900">+ Register incoming shipment</summary>
+      <form onSubmit={add} className="mt-3 border-t border-slate-100 pt-3">
+      <h3 className="mb-2 text-xs font-semibold text-slate-600">Link an existing purchase order and enter shipment details</h3>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="text-xs font-semibold">Purchase order *
           <select required value={form.purchaseOrderId} onChange={e=>setForm(v=>({...v,purchaseOrderId:e.target.value}))}
@@ -77,12 +84,16 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
         <p className="flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>Registering a shipment does not add stock or pay suppliers.</p>
         <button type="submit" disabled={saving||!openOrders.length} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-xs font-bold text-slate-900 disabled:opacity-50"><Plus className="h-4 w-4"/>Register shipment</button>
       </div>
-    </form>}
-   <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-     <div className="mb-4 flex items-center justify-between gap-3"><h3 className="font-bold">{mode==='shipments'?'Shipment history':'Shipments awaiting warehouse receipt'}</h3>
-       <button type="button" disabled={loading} onClick={()=>void refresh()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold"><RefreshCcw className="h-4 w-4"/>Refresh</button></div>
+    </form></details>}
+   <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+     <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">{mode==='shipments'?'Shipment history':'Shipments awaiting warehouse receipt'}</h3>
+       <div className="flex flex-wrap items-center gap-2">
+         <input aria-label="Search shipments or purchase orders" type="search" value={search} onChange={e=>{setSearch(e.target.value);setShowAll(false);}}
+           placeholder="Find PO, supplier, shipment..." className="w-52 max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"/>
+         <button type="button" disabled={loading} onClick={()=>void refresh()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold"><RefreshCcw className="h-4 w-4"/>Refresh</button>
+       </div></div>
      <div className="space-y-3">
-       {rows.filter(row=>mode==='shipments'||['In Transit','Partially Received'].includes(row.status)).map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
+       {displayedRows.map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
          <div className="min-w-0"><p className="font-bold text-slate-900">{row.shipment_reference} · {row.po_number}</p>
            <p className="mt-1 text-xs text-slate-600">{row.supplier_name} · {row.origin_country} · {row.invoice_currency} · {row.container_number||'Container not entered'}</p>
            <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?String(row.eta_date).slice(0,10):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
@@ -90,7 +101,11 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
            {mode==='receiving'&&<button type="button" disabled={saving} onClick={()=>setReceivingPo({id:row.purchase_order_id,number:row.po_number})} className="rounded-xl bg-[#172a47] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Receive quantities</button>}
          </div>
        </article>)}
-       {!rows.some(row=>mode==='shipments'||row.status==='In Transit')&&<p className="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">No shipments to show. Create a supplier purchase order first, then register its shipment.</p>}
+       {visibleRows.length===0&&<p className="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">No shipments to show. Create a supplier purchase order first, then register its shipment.</p>}
+       {visibleRows.length>12&&<button type="button" onClick={()=>setShowAll(value=>!value)}
+          className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700">
+          {showAll?'Show fewer shipments':`Show ${visibleRows.length-12} more matching shipments`}
+        </button>}
      </div>
      {mode==='receiving'&&<p className="mt-4 text-xs text-amber-800">Only record verified goods actually received. Damaged or missing items must remain outstanding; formal discrepancy resolution is still pending.</p>}
    </section>
