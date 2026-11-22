@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { notify } from '../utils/notifications';
 import {
   Users,
   UserCheck,
@@ -77,7 +78,7 @@ export default function CustomerEmployeeView({
   const handleSubmitCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!custName.trim()) {
-      alert('Must designate Customer Name');
+      notify.warning('Must designate Customer Name');
       return;
     }
     setIsCustSubmitting(true);
@@ -96,7 +97,7 @@ export default function CustomerEmployeeView({
       setCustAddress('');
       setCustBalance(0);
     } catch (err) {
-      alert('Failed to register customer: ' + err);
+      notify.error('Failed to register customer: ' + err);
     } finally {
       setIsCustSubmitting(false);
     }
@@ -105,7 +106,7 @@ export default function CustomerEmployeeView({
   const handleSubmitEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!empName.trim() || !empRole) {
-      alert('Must designate staff name and role');
+      notify.warning('Must designate staff name and role');
       return;
     }
     setIsEmpSubmitting(true);
@@ -125,7 +126,7 @@ export default function CustomerEmployeeView({
       setEmpSalary(3000);
       setEmpAttendance('Present');
     } catch (err) {
-      alert('Failed to register employee: ' + err);
+      notify.error('Failed to register employee: ' + err);
     } finally {
       setIsEmpSubmitting(false);
     }
@@ -155,13 +156,13 @@ export default function CustomerEmployeeView({
   const handleSaveCreditLimit = async (customerId: string) => {
     const value = Number(creditEdit[customerId] ?? 0);
     if (Number.isNaN(value) || value < 0) {
-      alert('Enter a valid credit limit amount.');
+      notify.warning('Enter a valid credit limit amount.');
       return;
     }
     try {
       await onSetCreditLimit(customerId, value);
     } catch (err) {
-      alert('Failed to update credit limit: ' + err);
+      notify.error('Failed to update credit limit: ' + err);
     }
   };
 
@@ -170,7 +171,7 @@ export default function CustomerEmployeeView({
     if (!paymentDraft) return;
     const amount = Number(paymentAmount);
     if (!amount || amount <= 0) {
-      alert('Enter a valid payment amount.');
+      notify.warning('Enter a valid payment amount.');
       return;
     }
     setIsPaymentSubmitting(true);
@@ -188,7 +189,7 @@ export default function CustomerEmployeeView({
       setPaymentDate(new Date().toISOString().split('T')[0]);
       setPaymentNote('');
     } catch (err) {
-      alert('Failed to record customer payment: ' + err);
+      notify.error('Failed to record customer payment: ' + err);
     } finally {
       setIsPaymentSubmitting(false);
     }
