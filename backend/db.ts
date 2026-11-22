@@ -1438,6 +1438,9 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       }
 
       const dbProduct = productRes.rows[0];
+      if (dbProduct.status === 'Inactive') {
+        throw new Error(`Product ${dbProduct.name} is archived and cannot be sold.`);
+      }
       const variantsList = Array.isArray(dbProduct.variants_json) ? dbProduct.variants_json as ProductVariant[] : [];
 
       if (item.variantId) {
