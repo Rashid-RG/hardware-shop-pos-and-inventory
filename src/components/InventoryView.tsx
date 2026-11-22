@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { notify } from '../utils/notifications';
 import {
   History,
   TrendingDown,
@@ -48,22 +49,22 @@ export default function InventoryView({
   const handleSubmitAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProductId) {
-      alert('Please select a product to adjust.');
+      notify.warning('Please select a product to adjust.');
       return;
     }
     if (qtyDifference === 0) {
-      alert('Adjustment amount cannot be zero.');
+      notify.warning('Adjustment amount cannot be zero.');
       return;
     }
     if (!reason.trim()) {
-      alert('Please provide an audit reason or ticket log reference.');
+      notify.warning('Please provide an audit reason or ticket log reference.');
       return;
     }
     setIsSubmitting(true);
 
     const product = products.find((p) => p.id === selectedProductId);
     if (!product) {
-      alert('Product not found.');
+      notify.warning('Product not found.');
       setIsSubmitting(false);
       return;
     }
@@ -71,7 +72,7 @@ export default function InventoryView({
     // Compute new target quantity
     const newQty = product.quantity + qtyDifference;
     if (newQty < 0) {
-      alert('Inventory error: Stock cannot be adjusted below zero.');
+      notify.error('Inventory error: Stock cannot be adjusted below zero.');
       setIsSubmitting(false);
       return;
     }
@@ -87,7 +88,7 @@ export default function InventoryView({
       setQtyDifference(0);
       setReason('');
     } catch (err) {
-      alert('Adjustment failed: ' + err);
+      notify.error('Adjustment failed: ' + err);
     } finally {
       setIsSubmitting(false);
     }
@@ -95,7 +96,7 @@ export default function InventoryView({
 
   const handleOpenAdjustForProduct = (productId: string) => {
     if (!canAdjust) {
-      alert('Permission Denied: Your active security clearance restricts manual audit updates.');
+      notify.error('Permission Denied: Your active security clearance restricts manual audit updates.');
       return;
     }
     setSelectedProductId(productId);
