@@ -4506,7 +4506,7 @@ app.put('/api/purchases/:id/status', requireRole(['Super Admin', 'Store Manager'
   if (po.status === status) return res.json(po);
   try {
     if (status === 'Received') {
-      await receivePurchaseOrder(po.id, activeShopId, receiveUser || 'Inventory Officer');
+      return res.status(409).json({ error: 'Record checked quantities through Warehouse Receiving. Direct full-order stock posting is disabled.' });
     } else {
       await updatePurchaseOrderStatus(po.id, activeShopId, status, receiveUser || 'Inventory Officer');
     }
@@ -5277,7 +5277,7 @@ app.get('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager',
        WHERE s.shop_id=$1 ORDER BY s.created_at DESC LIMIT 250`, [activeShopId]);
     res.json(rows.rows.map((row) => ({
       ...row,
-      status: row.purchase_status === 'Received' ? 'Received' : row.purchase_status === 'Cancelled' ? 'Cancelled' : 'In Transit',
+      status: row.purchase_status === 'Received' ? 'Received' : row.purchase_status === 'Partially Received' ? 'Partially Received' : row.purchase_status === 'Cancelled' ? 'Cancelled' : 'In Transit',
     })));
   } catch { res.status(503).json({error: 'Could not load import shipments.'}); }
 });
@@ -5312,32 +5312,10 @@ app.post('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager'
     res.status(e?.code==='23505'?409:503).json({error:e?.code==='23505'?'Shipment reference or purchase order already registered.':'Could not register import shipment.'});
   }
 });
-app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','Store Manager','Inventory Staff']), async(req,res)=>{
-  const {activeShopId}=getActiveShopContext(db,req);
-  const shipment=await pool.query(
-    `SELECT s.purchase_order_id,p.status FROM ars_import_shipments s JOIN purchase_orders p
-     ON p.id=s.purchase_order_id AND p.shop_id=s.shop_id WHERE s.id=$1 AND s.shop_id=$2`,
-    [req.params.id,activeShopId]).catch(()=>null);
-  if (!shipment?.rowCount) return res.status(404).json({error:'Shipment was not found for this branch.'});
-  if (!['Pending','Ordered'].includes(shipment.rows[0].status)) {
-    return res.status(409).json({error:'Purchase order is already received or cannot be received.'});
-  }
-  try {
-    await receivePurchaseOrder(shipment.rows[0].purchase_order_id,activeShopId,(req as AppRequest).authUser?.name||'Warehouse Staff');
-    const refreshed=await loadStateFromNormalized();
-    if (!refreshed) throw new Error('Refresh failed after stock receipt');
-    db=refreshed;
-    res.json({status:'Received',purchaseOrderId:shipment.rows[0].purchase_order_id});
-  } catch(error:any) {
-    // If a transaction committed but refresh failed, do not permit further
-    // business writes until recovery. The purchase receipt itself is atomic.
-    const status=await pool.query('SELECT status FROM purchase_orders WHERE id=$1 AND shop_id=$2',
-      [shipment.rows[0].purchase_order_id,activeShopId]).catch(()=>null);
-    if (status?.rows[0]?.status==='Received') databaseWriteHealthy=false;
-    res.status(409).json({error:status?.rows[0]?.status==='Received'
-      ? 'Stock was committed but refresh failed; stop and reconcile before retrying.'
-      : (error?.message||'Warehouse receipt failed.')});
-  }
+// Legacy all-at-once receipt has been intentionally disabled. Staff must
+// submit a traceable GRN with explicit per-line quantities instead.
+app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','Store Manager','Inventory Staff']), (_req,res)=>{
+  res.status(409).json({error:'Use Warehouse Receiving to post verified item quantities. The legacy full-shipment receipt is disabled.'});
 });
 
 // Partner records and immutable capital contributions/drawings. Financial
