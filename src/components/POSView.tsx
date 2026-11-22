@@ -170,6 +170,7 @@ export default function POSView({
   // Completed transaction receipt modal
   const [receiptModel, setReceiptModel] = useState<SalesTransaction | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [selectedCopyType, setSelectedCopyType] = useState<InvoiceCopyType>('Duplicate Copy');
   const [isLoggingPrint, setIsLoggingPrint] = useState(false);
   const [invoicePrintHistory, setInvoicePrintHistory] = useState<Array<{ copyType: InvoiceCopyType; printSequence: number; printedBy: string; printedAt: string }>>([]);
@@ -1525,6 +1526,7 @@ export default function POSView({
         }
 
         const txWithQr: SalesTransaction = { ...completedTx, invoiceQrData };
+        setIsReviewOpen(false);
         setReceiptModel(txWithQr);
         notify.success(`Invoice ${completedTx.invoiceNumber} saved for ${completedTx.customerName}.`);
         setSelectedCopyType('Duplicate Copy');
@@ -2075,8 +2077,56 @@ export default function POSView({
           </div>
         </div>
 
+        </div>
+        <div className="shrink-0 border-t border-slate-200 bg-white pt-3">
+          <div className="flex items-center justify-between gap-3 pb-3">
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.reduce((sum, item) => sum + item.quantity, 0)} units</p>
+              <strong id="pos-total-price" className="text-xl font-bold text-slate-900">{formatMoney(total)}</strong></div>
+            <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">Not saved</span>
+          </div>
+          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting}
+            onClick={() => {
+              if (!selectedCustomer.id || selectedCustomer.id === 'cust-walkin' ||
+                  !customers.some(c => c.id === selectedCustomer.id && c.shopId === taxConfig.activeShopId)) {
+                notify.warning('Select a registered customer shop before reviewing this invoice.'); return;
+              }
+              if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
+                notify.warning('Select the Sales Representative before reviewing this invoice.'); return;
+              }
+              setIsReviewOpen(true);
+            }}
+            className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+            Review invoice & payment →
+          </button>
+        </div>
+      </div>
+
+      {isReviewOpen && (
+        <div id="pos-review-backdrop" className="fixed inset-0 z-[65] flex items-center justify-center bg-slate-950/60 p-2 sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
+            className="flex max-h-[min(92dvh,850px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Final review · no invoice saved yet</p>
+                <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & complete invoice</h2>
+                <p className="mt-1 text-xs text-slate-600">{selectedCustomer.name} · {activeSalesReps.find(rep => rep.id === selectedSalesRepId)?.name || 'Representative not selected'}</p></div>
+              <button type="button" aria-label="Close payment review" disabled={isSubmitting} onClick={() => setIsReviewOpen(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
+                <div className="space-y-1">
+                  {cart.map(item => {
+                    const line = getLinePricing(item);
+                    return <div key={getCartKey(item)} className="flex justify-between gap-3 text-xs text-slate-700">
+                      <span className="min-w-0 truncate">{item.product.name} × {item.quantity}</span>
+                      <strong className="shrink-0 font-mono">{formatMoney(line.lineTotal)}</strong>
+                    </div>;
+                  })}
+                </div>
+              </div>
         {/* 3 · Payment and invoice totals */}
-        <div className="shrink-0 border-t border-slate-200 bg-white pt-2 space-y-2 mt-2 lg:max-h-[46%] lg:overflow-y-auto">
+        <div className="mt-3 space-y-3">
           <div className="space-y-1.5 text-xs text-slate-600 font-sans">
             <div className="flex justify-between">
               <span>Items Total</span>
@@ -2117,7 +2167,7 @@ export default function POSView({
 
             <div className="flex justify-between text-base font-bold text-slate-950 border-t border-slate-100 pt-2 font-sans">
               <span>Total Bill</span>
-              <span id="pos-total-price" className="font-mono text-indigo-600">{currencySymbol}{total.toFixed(2)}</span>
+              <span className="font-mono text-indigo-600">{currencySymbol}{total.toFixed(2)}</span>
             </div>
 
             {paymentMethod === 'Cash' && (
@@ -2257,10 +2307,10 @@ export default function POSView({
 
           {/* Checkout Submit Trigger */}
           <button
-            id="pos-pay-trigger"
+            id="pos-pay-trigger" type="button"
             disabled={cart.length === 0 || isSubmitting || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
             onClick={handleCheckout}
-            className={`sticky bottom-0 z-10 w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+            className={`w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 : 'bg-slate-900 border border-slate-900 text-slate-100 hover:bg-slate-950'
@@ -2277,8 +2327,15 @@ export default function POSView({
               </>
             )}
           </button>
+            </div>
+            <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
+              <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Back to invoice</button>
+              <span className="text-xs text-slate-500">Check payment before saving</span>
+            </footer>
+          </section>
         </div>
-      </div>
+      )}
 
       {/* RECEIPT DIALOG MODAL ON CHECKOUT SUCCESS */}
         {receiptModel && (
