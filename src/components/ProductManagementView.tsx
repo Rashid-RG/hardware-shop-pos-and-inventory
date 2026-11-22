@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { notify } from '../utils/notifications';
 import {
   Plus,
   Edit2,
@@ -468,7 +469,7 @@ export default function ProductManagementView({
 
       setImageUrl(sanitizeImageSrc(data.imageUrl) || '');
     } catch (err: any) {
-      alert(err.message || 'Failed to upload image');
+      notify.warning(err.message || 'Failed to upload image');
     } finally {
       setIsUploadingImage(false);
     }
@@ -479,11 +480,11 @@ export default function ProductManagementView({
     e.preventDefault();
     const finalCategory = category.trim();
     if (!name.trim() || !sku.trim() || !barcode.trim()) {
-      alert('Please fill out Name, SKU, and Barcode fields.');
+      notify.warning('Please fill out Name, SKU, and Barcode fields.');
       return;
     }
     if (!finalCategory) {
-      alert('Please choose or enter a category.');
+      notify.warning('Please choose or enter a category.');
       return;
     }
 
@@ -506,7 +507,7 @@ export default function ProductManagementView({
     const hasSimpleAttributes = Object.keys(simpleProductAttributes).length > 0;
 
     if (!hasVariants && !hasSimpleAttributes && !editingProduct) {
-      alert('Please add at least one complete variant (name, SKU, barcode) or fill category attributes.');
+      notify.warning('Please add at least one complete variant (name, SKU, barcode) or fill category attributes.');
       return;
     }
 
@@ -567,7 +568,7 @@ export default function ProductManagementView({
       }
       setIsFormOpen(false);
     } catch (err) {
-      alert('Failed to commit catalog data: ' + err);
+      notify.error('Failed to commit catalog data: ' + err);
     } finally {
       setIsSubmitting(false);
     }
@@ -576,7 +577,7 @@ export default function ProductManagementView({
   const handleDelete = async (id: string, label: string) => {
     const isSuper = currentRole === 'Super Admin';
     if (!isSuper) {
-      alert('Permission Denied: Only Super Admin role holds authorities to erase catalog entries.');
+      notify.error('Permission Denied: Only Super Admin role holds authorities to erase catalog entries.');
       return;
     }
 
@@ -584,7 +585,7 @@ export default function ProductManagementView({
       try {
         await onDeleteProduct(id);
       } catch (err) {
-        alert('Failed to delete product: ' + err);
+        notify.error('Failed to delete product: ' + err);
       }
     }
   };
@@ -593,11 +594,11 @@ export default function ProductManagementView({
     e.preventDefault();
     const normalized = newCategoryName.trim();
     if (!normalized) {
-      alert('Please enter a category name.');
+      notify.warning('Please enter a category name.');
       return;
     }
     if (categories.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
-      alert('That category already exists.');
+      notify.error('That category already exists.');
       return;
     }
 
@@ -608,7 +609,7 @@ export default function ProductManagementView({
       handleCategoryChange(normalized);
       setIsCategoryModalOpen(false);
     } catch (err) {
-      alert('Failed to add category: ' + err);
+      notify.error('Failed to add category: ' + err);
     } finally {
       setIsCategorySubmitting(false);
     }
