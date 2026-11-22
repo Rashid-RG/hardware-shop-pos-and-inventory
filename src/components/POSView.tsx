@@ -172,6 +172,8 @@ export default function POSView({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [setupDialog, setSetupDialog] = useState<'customer' | 'representative' | null>(null);
+  const [draftCustomerId, setDraftCustomerId] = useState('');
+  const [draftRepId, setDraftRepId] = useState('');
   const [selectedCopyType, setSelectedCopyType] = useState<InvoiceCopyType>('Duplicate Copy');
   const [isLoggingPrint, setIsLoggingPrint] = useState(false);
   const [invoicePrintHistory, setInvoicePrintHistory] = useState<Array<{ copyType: InvoiceCopyType; printSequence: number; printedBy: string; printedAt: string }>>([]);
@@ -1852,13 +1854,13 @@ export default function POSView({
 
           {/* Required bill assignment is shown in summary, edited in focused dialogs. */}
           <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Invoice assignment">
-            <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setSetupDialog('customer');}}
+            <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setDraftCustomerId(selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id);setSetupDialog('customer');}}
               className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
               <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
               <span className="mt-1 block text-[11px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
             </button>
-            <button type="button" id="pos-open-representative" onClick={() => setSetupDialog('representative')}
+            <button type="button" id="pos-open-representative" onClick={() => {setDraftRepId(selectedSalesRepId);setSetupDialog('representative');}}
               className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">2 · Sales Representative *</span>
               <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
@@ -2022,19 +2024,19 @@ export default function POSView({
                     placeholder="Search registered customer shops..."
                     className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500"/>
                   <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-select">Registered customer shop *</label>
-                  <select id="pos-customer-select" required value={selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id}
+                  <select id="pos-customer-select" required value={draftCustomerId}
                     onChange={event => {
                       const customer=customers.find(c=>c.id===event.target.value && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
-                      if(customer) setSelectedCustomer(customer);
+                      if(customer) setDraftCustomerId(customer.id);
                     }}
                     className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
                     <option value="">Choose a shop...</option>
                     {availableWholesaleCustomers.map(customer=>(
                       <option key={customer.id} value={customer.id}>{customer.name}{customer.phone && customer.phone !== '-' ? ` · ${customer.phone}` : ''}</option>
                     ))}
-                    {selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' &&
-                      !availableWholesaleCustomers.some(c=>c.id===selectedCustomer.id) && (
-                        <option value={selectedCustomer.id}>{selectedCustomer.name} · selected</option>
+                    {draftCustomerId &&
+                      !availableWholesaleCustomers.some(c=>c.id===draftCustomerId) && (
+                        <option value={draftCustomerId}>{customers.find(c=>c.id===draftCustomerId)?.name || 'Selected shop'} · selected</option>
                       )}
                   </select>
                   {customers.filter(c=>c.id!=='cust-walkin'&&c.shopId===taxConfig.activeShopId).length===0 && (
@@ -2042,11 +2044,11 @@ export default function POSView({
                       No registered customer shops. Add a shop in Customers before creating an invoice.
                     </p>
                   )}
-                  {selectedCustomer.id && selectedCustomer.id!=='cust-walkin' && (
+                  {draftCustomerId && customers.some(c => c.id === draftCustomerId && c.shopId === taxConfig.activeShopId) && (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-                      <p className="font-semibold text-slate-900">{billingCustomerName}</p>
-                      <p className="mt-1">{billingCustomerPhone || 'No phone saved'} · {billingCustomerAddress || 'No address saved'}</p>
-                      <p className="mt-2">Outstanding credit: {formatMoney(currentCreditBalance)} / Limit: {formatMoney(creditLimit)}</p>
+                      <p className="font-semibold text-slate-900">{customers.find(c=>c.id===draftCustomerId)?.name}</p>
+                      <p className="mt-1">{customers.find(c=>c.id===draftCustomerId)?.phone || 'No phone saved'} · {customers.find(c=>c.id===draftCustomerId)?.address || 'No address saved'}</p>
+                      <p className="mt-2 text-slate-500">The invoice will use the registered customer details when you confirm.</p>
                     </div>
                   )}
                 </div>
@@ -2056,7 +2058,7 @@ export default function POSView({
                     Representative responsible for this invoice *
                   </label>
                   <select id="pos-sales-representative" required aria-label="Select Sales Representative"
-                    value={selectedSalesRepId} onChange={event=>setSelectedSalesRepId(event.target.value)}
+                    value={draftRepId} onChange={event=>setDraftRepId(event.target.value)}
                     className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
                     <option value="">Choose representative...</option>
                     {activeSalesReps.map(rep=><option key={rep.id} value={rep.id}>{rep.name}</option>)}
@@ -2074,9 +2076,19 @@ export default function POSView({
                 className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700">Close</button>
               <button type="button" id="pos-setup-confirm"
                 disabled={setupDialog === 'customer'
-                  ? !selectedCustomer.id || selectedCustomer.id === 'cust-walkin'
-                  : !activeSalesReps.some(rep=>rep.id===selectedSalesRepId)}
-                onClick={()=>setSetupDialog(null)}
+                  ? !customers.some(c=>c.id===draftCustomerId && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin')
+                  : !activeSalesReps.some(rep=>rep.id===draftRepId)}
+                onClick={()=>{
+                  if(setupDialog === 'customer'){
+                    const buyer=customers.find(c=>c.id===draftCustomerId && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
+                    if(!buyer)return;
+                    setSelectedCustomer(buyer);
+                  } else {
+                    if(!activeSalesReps.some(rep=>rep.id===draftRepId))return;
+                    setSelectedSalesRepId(draftRepId);
+                  }
+                  setSetupDialog(null);
+                }}
                 className="rounded-lg bg-slate-900 px-5 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
                 Confirm selection
               </button>
