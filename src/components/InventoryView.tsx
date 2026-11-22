@@ -30,6 +30,9 @@ export default function InventoryView({
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [logTypeFilter, setLogTypeFilter] = useState('All');
+  const [productSearch, setProductSearch] = useState('');
+  const [productLimit, setProductLimit] = useState(12);
+  const [logLimit, setLogLimit] = useState(25);
 
   // Manual Adjust Modal
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
@@ -112,8 +115,9 @@ export default function InventoryView({
     return matchesSearch && matchesType;
   });
 
+  const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())));
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 motion-safe:animate-fade-in">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 motion-safe:animate-fade-in">
       {/* LEFT: Products Quick Stock overview inline adjustments (5 cols) */}
       <div className="lg:col-span-5 space-y-4">
         <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs">
@@ -124,8 +128,11 @@ export default function InventoryView({
             Select catalog products to perform manual inventory overrides.
           </p>
 
-          <div className="space-y-3 max-h-[580px] overflow-y-auto pr-1">
-            {products.map((p) => {
+          <input type="search" aria-label="Find shelf stock product" value={productSearch}
+            onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
+            placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
+          <div className="space-y-2">
+            {matchingProducts.slice(0,productLimit).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
 
@@ -169,6 +176,11 @@ export default function InventoryView({
                 </div>
               );
             })}
+            {matchingProducts.length>productLimit&&<button type="button"
+              onClick={()=>setProductLimit(v=>v+12)}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
+              Show more shelf products ({matchingProducts.length-productLimit} remaining)
+            </button>}
           </div>
         </div>
       </div>
@@ -194,7 +206,7 @@ export default function InventoryView({
                 type="text"
                 placeholder="Search ledger by keyword or operator..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {setSearchTerm(e.target.value);setLogLimit(25);}}
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 text-slate-850 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-sans"
               />
             </div>
@@ -204,7 +216,7 @@ export default function InventoryView({
               <select
                 id="ledger-type-filter"
                 value={logTypeFilter}
-                onChange={(e) => setLogTypeFilter(e.target.value)}
+                onChange={(e) => {setLogTypeFilter(e.target.value);setLogLimit(25);}}
                 className="bg-slate-50 border border-slate-200 p-1.5 rounded-lg text-xs font-sans text-slate-700 focus:outline-none"
               >
                 <option value="All">All Movements</option>
@@ -232,7 +244,7 @@ export default function InventoryView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-sans">
-                {filteredLogs.map((log) => {
+                {filteredLogs.slice(0,logLimit).map((log) => {
                   const qtyVal = Number(log.quantity);
                   const isPos = qtyVal > 0;
 
@@ -286,13 +298,19 @@ export default function InventoryView({
               </tbody>
             </table>
           </div>
+          {filteredLogs.length>logLimit&&<div className="border-t border-slate-100 p-3 text-center">
+            <button type="button" onClick={()=>setLogLimit(v=>v+25)}
+              className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold">
+              Show more stock movements ({filteredLogs.length-logLimit} remaining)
+            </button>
+          </div>}
         </div>
       </div>
 
       {/* ADJUST QUANTITY OVERLAY MODAL */}
       {isAdjustOpen && (
         <div id="adjust-dialog-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-200 font-sans relative">
+          <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-sm border border-slate-200 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button
               onClick={() => setIsAdjustOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
