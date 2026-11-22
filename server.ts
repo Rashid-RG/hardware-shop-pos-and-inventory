@@ -317,7 +317,8 @@ const buildInvoicePdfBuffer = async (
     supportEmail?: string;
     websiteUrl?: string;
     socialLinks?: string;
-  }
+  },
+  contact?: { address?: string; phone?: string }
 ): Promise<Buffer> => {
   const logoBuffer = resolvePrintableLogoBuffer(logoUrl);
 
@@ -348,6 +349,7 @@ const buildInvoicePdfBuffer = async (
       doc.y = 96;
     }
 
+    const headerTop = doc.y;
     doc.save();
     doc.opacity(wmOpacity);
     doc.fontSize(56);
@@ -361,10 +363,12 @@ const buildInvoicePdfBuffer = async (
     doc.restore();
     doc.opacity(1);
 
-    doc.fillColor('#0f172a').fontSize(22).font('Helvetica-Bold').text(companyLegalName);
+    doc.fillColor('#0f172a').fontSize(22).font('Helvetica-Bold').text(companyLegalName, 40, headerTop);
     doc.moveDown(0.2);
     doc.fontSize(10).font('Helvetica').fillColor('#475569');
     doc.text(companyTagline);
+    if (contact?.address) doc.text(contact.address);
+    if (contact?.phone) doc.text(contact.phone);
     doc.text(`BR No: ${String(invoiceCompanyMeta?.businessRegistrationNo || '-')}`);
     doc.text(`VAT No: ${String(invoiceCompanyMeta?.vatRegistrationNo || '-')}`);
     doc.text(`TIN No: ${String(invoiceCompanyMeta?.tinNo || '-')}`);
@@ -439,10 +443,10 @@ const buildInvoicePdfBuffer = async (
     doc.moveDown(0.6);
     doc.font('Helvetica').fontSize(10).fillColor('#334155');
     doc.text(`Subtotal: Rs.${Number(tx.subtotal || 0).toFixed(2)}`, 360, doc.y, { width: 195, align: 'right' });
-    doc.text(`Discount: Rs.${Number(tx.discountAmount || 0).toFixed(2)}`, 360, doc.y + 14, { width: 195, align: 'right' });
-    doc.text(`Tax: Rs.${Number(tx.tax || 0).toFixed(2)}`, 360, doc.y + 28, { width: 195, align: 'right' });
+    doc.text(`Discount: Rs.${Number(tx.discountAmount || 0).toFixed(2)}`, 360, doc.y + 2, { width: 195, align: 'right' });
+    doc.text(`Tax: Rs.${Number(tx.tax || 0).toFixed(2)}`, 360, doc.y + 2, { width: 195, align: 'right' });
     doc.font('Helvetica-Bold').fontSize(14).fillColor('#1d4ed8');
-    doc.text(`Total: Rs.${Number(tx.total || 0).toFixed(2)}`, 360, doc.y + 44, { width: 195, align: 'right' });
+    doc.text(`Total: Rs.${Number(tx.total || 0).toFixed(2)}`, 360, doc.y + 4, { width: 195, align: 'right' });
 
     doc.moveDown(2);
     doc.font('Helvetica').fontSize(9).fillColor('#64748b');
@@ -1416,8 +1420,8 @@ const getInitialDbState = () => {
           id: 'shop-main',
           name: 'Lanka Smart Hardware',
           logoUrl: '',
-          address: '150 Galle Road, Colombo 03, Sri Lanka',
-          phone: '+94 11 234 5678',
+          address: '',
+          phone: '',
           taxRate: 0,
           invoicePrefix: 'SL-INV',
         },
@@ -1447,8 +1451,8 @@ const normalizeState = (state: DBState): DBState => ({
       id: 'shop-main',
       name: state.settings?.storeName || 'Lanka Smart Hardware',
       logoUrl: state.settings?.logoUrl || '',
-      address: state.settings?.address || '150 Galle Road, Colombo 03, Sri Lanka',
-      phone: state.settings?.phone || '+94 11 234 5678',
+      address: state.settings?.address || '',
+      phone: state.settings?.phone || '',
       taxRate: Number(state.settings?.taxRate || 0),
       invoicePrefix: state.settings?.invoicePrefix || 'SL-INV',
       printFormat: 'a4' as const,
@@ -1458,8 +1462,8 @@ const normalizeState = (state: DBState): DBState => ({
       id: String(shop.id || `shop-${index + 1}`),
       name: String(shop.name || `Shop ${index + 1}`),
       logoUrl: String(shop.logoUrl || ''),
-      address: String(shop.address || state.settings?.address || '150 Galle Road, Colombo 03, Sri Lanka'),
-      phone: String(shop.phone || state.settings?.phone || '+94 11 234 5678'),
+      address: String(shop.address || ''),
+      phone: String(shop.phone || ''),
       taxRate: Number(shop.taxRate || state.settings?.taxRate || 0),
       invoicePrefix: String(shop.invoicePrefix || state.settings?.invoicePrefix || 'SL-INV'),
       printFormat: (shop.printFormat === 'thermal' ? 'thermal' : 'a4') as 'a4' | 'thermal',
@@ -2250,8 +2254,8 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     currency: 'LKR',
     invoice_prefix: 'SL-INV',
     logo_url: '',
-    store_address: '150 Galle Road, Colombo 03, Sri Lanka',
-    store_phone: '+94 11 234 5678',
+    store_address: '',
+    store_phone: '',
     shop_qr_data: '',
     active_shop_id: 'shop-main',
     shop_profiles: [
@@ -2259,8 +2263,8 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
         id: 'shop-main',
         name: 'Lanka Smart Hardware',
         logoUrl: '',
-        address: '150 Galle Road, Colombo 03, Sri Lanka',
-        phone: '+94 11 234 5678',
+        address: '',
+        phone: '',
         taxRate: 18,
         invoicePrefix: 'SL-INV',
       },
@@ -3905,7 +3909,7 @@ app.get('/api/transactions/:id/pdf', requireRole(['Super Admin', 'Store Manager'
     secondaryWatermarkText,
     printedBy,
     printedAt,
-  }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta).then((pdfBuffer) => {
+  }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings).then((pdfBuffer) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.send(pdfBuffer);
@@ -3948,7 +3952,7 @@ app.post('/api/transactions/:id/share/email', requireRole(['Super Admin', 'Store
       printSequence: Math.max(1, Number(req.body?.printSequence) || 1),
       watermarkText: copyType === 'Reprinted Invoice' ? 'REPRINTED' : copyType.toUpperCase(),
       secondaryWatermarkText: copyType === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '',
-    }, (activeShopProfile?.logoUrl || db.settings.logoUrl || ''), activeShopProfile?.invoiceCompanyMeta);
+    }, (activeShopProfile?.logoUrl || db.settings.logoUrl || ''), activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings);
 
     const transporter = nodemailer.createTransport({
       host: smtpHost,
@@ -4043,7 +4047,7 @@ app.post('/api/transactions/:id/share/whatsapp', requireRole(['Super Admin', 'St
       printSequence,
       watermarkText,
       secondaryWatermarkText: copyType === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '',
-    }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta);
+    }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings);
 
     const formData = new FormData();
     formData.append('messaging_product', 'whatsapp');

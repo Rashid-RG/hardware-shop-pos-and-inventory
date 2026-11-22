@@ -308,7 +308,8 @@ router.get('/:id/pdf', requireRole(['Super Admin', 'Store Manager', 'Cashier']),
       activeShopName,
       { copyType, printSequence, watermarkText, secondaryWatermarkText, printedBy, printedAt },
       activeShopProfile?.logoUrl || settings.logo_url || '',
-      activeShopProfile?.invoiceCompanyMeta
+      activeShopProfile?.invoiceCompanyMeta,
+      activeShopProfile || { address: settings.store_address, phone: settings.store_phone }
     );
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -398,7 +399,8 @@ router.post('/:id/share/email', requireRole(['Super Admin', 'Store Manager', 'Ca
         secondaryWatermarkText: copyType === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '',
       },
       activeShopProfile?.logoUrl || settings.logo_url || '',
-      activeShopProfile?.invoiceCompanyMeta
+      activeShopProfile?.invoiceCompanyMeta,
+      activeShopProfile || { address: settings.store_address, phone: settings.store_phone }
     );
 
     await sendInvoiceEmail(to, subject, customMessage, pdfBuffer, pdfFileName, activeShopName, tx, copyType);
@@ -501,7 +503,8 @@ router.post('/:id/share/whatsapp', requireRole(['Super Admin', 'Store Manager', 
         secondaryWatermarkText: copyType === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '',
       },
       activeShopProfile?.logoUrl || settings.logo_url || '',
-      activeShopProfile?.invoiceCompanyMeta
+      activeShopProfile?.invoiceCompanyMeta,
+      activeShopProfile || { address: settings.store_address, phone: settings.store_phone }
     );
 
     const providerResponse = await sendInvoiceWhatsApp(to, pdfBuffer, pdfFileName, caption);

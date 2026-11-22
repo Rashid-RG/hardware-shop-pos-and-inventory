@@ -52,7 +52,8 @@ export const buildInvoicePdfBuffer = async (
     supportEmail?: string;
     websiteUrl?: string;
     socialLinks?: string;
-  }
+  },
+  contact?: { address?: string; phone?: string }
 ): Promise<Buffer> => {
   const logoBuffer = resolvePrintableLogoBuffer(logoUrl);
 
@@ -83,6 +84,7 @@ export const buildInvoicePdfBuffer = async (
       doc.y = 96;
     }
 
+    const headerTop = doc.y;
     doc.save();
     doc.opacity(wmOpacity);
     doc.fontSize(56);
@@ -96,10 +98,12 @@ export const buildInvoicePdfBuffer = async (
     doc.restore();
     doc.opacity(1);
 
-    doc.fillColor('#0f172a').fontSize(22).font('Helvetica-Bold').text(companyLegalName);
+    doc.fillColor('#0f172a').fontSize(22).font('Helvetica-Bold').text(companyLegalName, 40, headerTop);
     doc.moveDown(0.2);
     doc.fontSize(10).font('Helvetica').fillColor('#475569');
     doc.text(companyTagline);
+    if (contact?.address) doc.text(contact.address);
+    if (contact?.phone) doc.text(contact.phone);
     doc.text(`BR No: ${String(invoiceCompanyMeta?.businessRegistrationNo || '-')}`);
     doc.text(`VAT No: ${String(invoiceCompanyMeta?.vatRegistrationNo || '-')}`);
     doc.text(`TIN No: ${String(invoiceCompanyMeta?.tinNo || '-')}`);
@@ -174,10 +178,10 @@ export const buildInvoicePdfBuffer = async (
     doc.moveDown(0.6);
     doc.font('Helvetica').fontSize(10).fillColor('#334155');
     doc.text(`Subtotal: Rs.${Number(tx.subtotal || 0).toFixed(2)}`, 360, doc.y, { width: 195, align: 'right' });
-    doc.text(`Discount: Rs.${Number(tx.discountAmount || 0).toFixed(2)}`, 360, doc.y + 14, { width: 195, align: 'right' });
-    doc.text(`Tax: Rs.${Number(tx.tax || 0).toFixed(2)}`, 360, doc.y + 28, { width: 195, align: 'right' });
+    doc.text(`Discount: Rs.${Number(tx.discountAmount || 0).toFixed(2)}`, 360, doc.y + 2, { width: 195, align: 'right' });
+    doc.text(`Tax: Rs.${Number(tx.tax || 0).toFixed(2)}`, 360, doc.y + 2, { width: 195, align: 'right' });
     doc.font('Helvetica-Bold').fontSize(14).fillColor('#1d4ed8');
-    doc.text(`Total: Rs.${Number(tx.total || 0).toFixed(2)}`, 360, doc.y + 44, { width: 195, align: 'right' });
+    doc.text(`Total: Rs.${Number(tx.total || 0).toFixed(2)}`, 360, doc.y + 4, { width: 195, align: 'right' });
 
     doc.moveDown(2);
     doc.font('Helvetica').fontSize(9).fillColor('#64748b');

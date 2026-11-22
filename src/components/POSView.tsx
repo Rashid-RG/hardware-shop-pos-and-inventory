@@ -69,8 +69,8 @@ export default function POSView({
   const formatMoney = (amount: number) => `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const activeShopProfile = (taxConfig.shopProfiles || []).find((shop) => shop.id === taxConfig.activeShopId) || taxConfig.shopProfiles?.[0];
   const activeShopName = activeShopProfile?.name || taxConfig.storeName;
-  const shopAddress = activeShopProfile?.address || '150 Galle Road, Colombo 03, Sri Lanka';
-  const shopPhone = activeShopProfile?.phone || '+94 11 234 5678';
+  const shopAddress = (activeShopProfile ? activeShopProfile.address : taxConfig.address) || '';
+  const shopPhone = (activeShopProfile ? activeShopProfile.phone : taxConfig.phone) || '';
   const invoiceCompanyMeta = {
     companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName,
     companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail',
@@ -1064,7 +1064,7 @@ export default function POSView({
                       ${printableShopLogoMarkup}
                       <h1>${escapeHtml(invoiceCompanyMeta.companyLegalName)}</h1>
                       <p>${escapeHtml(invoiceCompanyMeta.companyTagline)}</p>
-                      <p>${escapeHtml(shopAddress)} | ${escapeHtml(shopPhone)}</p>
+                      <p>${[shopAddress, shopPhone].filter(Boolean).map(escapeHtml).join(' | ')}</p>
                       <div class="legal">
                         <div>BR No: <strong>${escapeHtml(invoiceCompanyMeta.businessRegistrationNo || '-')}</strong></div>
                         <div>VAT No: <strong>${escapeHtml(invoiceCompanyMeta.vatRegistrationNo || '-')}</strong></div>
@@ -1218,7 +1218,7 @@ export default function POSView({
           <meta charset="utf-8" />
           <title>Invoice ${escapeHtml(tx.invoiceNumber)}</title>
           <style>
-              @page { size: auto; margin: 12mm; }
+              @page { size: A4 portrait; margin: 12mm; }
             body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #ffffff; }
             .bill { border: 1px solid #dbe4f0; border-radius: 18px; overflow: hidden; }
             .hero { padding: 22px 24px 18px; background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 55%, #fff7ed 100%); border-bottom: 1px solid #dbe4f0; }
@@ -1300,7 +1300,7 @@ export default function POSView({
                   ${printableShopLogoMarkup}
                   <h1>${escapeHtml(activeShopName)}</h1>
                   <p>${escapeHtml(shopAddress)}</p>
-                  <p>Phone: ${escapeHtml(shopPhone)}</p>
+                  ${shopPhone ? '<p>Phone: ' + escapeHtml(shopPhone) + '</p>' : ''}
                 </div>
                 <div class="meta">
                   <div class="meta-grid">
@@ -2236,7 +2236,7 @@ export default function POSView({
                         <h3 className="font-heading font-black text-slate-900 text-sm uppercase tracking-wider">{invoiceCompanyMeta.companyLegalName}</h3>
                         <p className="text-[10px] text-slate-500">{invoiceCompanyMeta.companyTagline}</p>
                         <p className="text-[10px] text-slate-500 mt-1">{shopAddress}</p>
-                        <p className="text-[10px] text-slate-500">Phone: {shopPhone}</p>
+                        {shopPhone && <p className="text-[10px] text-slate-500">Phone: {shopPhone}</p>}
                         <p className="text-[10px] text-slate-500">BR: {invoiceCompanyMeta.businessRegistrationNo || '-'} | VAT: {invoiceCompanyMeta.vatRegistrationNo || '-'} | TIN: {invoiceCompanyMeta.tinNo || '-'}</p>
                       </div>
                       <div className="rounded-lg border border-slate-200 bg-white p-3">
