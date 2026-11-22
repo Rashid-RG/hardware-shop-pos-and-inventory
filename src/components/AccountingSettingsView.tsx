@@ -279,7 +279,7 @@ export default function AccountingSettingsView({
         logoUrl,
         address: shopAddress,
         phone: shopPhone,
-        printFormat,
+        printFormat: 'a4' as const,
         invoiceCompanyMeta: {
           companyLegalName,
           companyTagline,
@@ -292,7 +292,7 @@ export default function AccountingSettingsView({
           socialLinks,
         },
       };
-      return isWholesaleShopProfile(nextShop) ? { ...nextShop, printFormat: 'a4' as const } : nextShop;
+      return nextShop;
     });
 
     const activeShop = nextProfiles.find((shop) => shop.id === activeShopId) || nextProfiles[0];
@@ -300,9 +300,9 @@ export default function AccountingSettingsView({
     try {
       await onUpdateTaxConfig({
         storeName: activeShop?.name || storeName,
-        taxRate: Number(activeShop?.taxRate || taxRate),
+        taxRate: Number(activeShop?.taxRate ?? taxRate),
         currency,
-        invoicePrefix: String(activeShop?.invoicePrefix || invoicePrefix),
+        invoicePrefix: String(activeShop?.invoicePrefix ?? invoicePrefix),
         logoUrl: String(activeShop?.logoUrl || logoUrl || ''),
         address: String(activeShop?.address || shopAddress || ''),
         phone: String(activeShop?.phone || shopPhone || ''),
@@ -329,7 +329,7 @@ export default function AccountingSettingsView({
             ARS Finance & Company Profile
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Audit store cash flows, register fixed overhead expenses, and configure invoicing parameters.
+            Manage wholesale finances and edit ARS company details used in A4 invoices.
           </p>
         </div>
 
@@ -534,7 +534,7 @@ export default function AccountingSettingsView({
                 onClick={addShopProfile}
                 className="h-10 px-3 bg-slate-900 hover:bg-slate-950 text-white rounded font-semibold"
               >
-                + Add Shop
+                + Add Branch
               </button>
             </div>
 
