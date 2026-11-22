@@ -2,14 +2,13 @@ import React, { Suspense, lazy, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import ARSBrand from './components/ARSBrand';
 import loginBackgroundImage from './assets/login-hardware-bg.svg';
-import { Sparkles, MessageSquare, X, Send, Menu, ShieldCheck, Store, ArrowUpRight, LockKeyhole, Bolt } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen, ShieldCheck, Store, ArrowUpRight, LockKeyhole, Bolt } from 'lucide-react';
 const DashboardView = lazy(() => import('./components/DashboardView'));
 const POSView = lazy(() => import('./components/POSView'));
 const ProductManagementView = lazy(() => import('./components/ProductManagementView'));
 const InventoryView = lazy(() => import('./components/InventoryView'));
 const SupplierPurchaseView = lazy(() => import('./components/SupplierPurchaseView'));
 const CustomerEmployeeView = lazy(() => import('./components/CustomerEmployeeView'));
-const AIRecommendationsView = lazy(() => import('./components/AIRecommendationsView'));
 const AccountingSettingsView = lazy(() => import('./components/AccountingSettingsView'));
 const DBAdminView = lazy(() => import('./components/DBAdminView'));
 const ReportsView = lazy(() => import('./components/ReportsView'));
@@ -19,13 +18,14 @@ const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
 
-type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'ai-insights' | 'accounting' | 'db-admin' | 'calculators';
+type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('ars_sidebar_collapsed') === 'true');
   const [sessionToken, setSessionToken] = useState<string>('');
   const [selectedShopId, setSelectedShopId] = useState<string>('');
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -112,45 +112,6 @@ export default function App() {
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
-
-  // Floating AI Chat Assistant States
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [chatMessage, setChatMessage] = useState('');
-  const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'model'; content: string }>>([
-    { role: 'model', content: 'Hello! I am your Lanka Smart Hardware AI Assistant. How can I help you today with stock forecasting, builders\' estimates, or operations?' }
-  ]);
-  const [isChatSending, setIsChatSending] = useState(false);
-
-  const handleSendChatMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || isChatSending) return;
-
-    const userMsg = chatMessage.trim();
-    setChatMessage('');
-    const newHistory = [...chatHistory, { role: 'user', content: userMsg }];
-    setChatHistory(newHistory);
-    setIsChatSending(true);
-
-    try {
-      const response = await apiRequest('/api/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({
-          message: userMsg,
-          history: newHistory
-        })
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setChatHistory([...newHistory, { role: 'model', content: data.response }]);
-      } else {
-        setChatHistory([...newHistory, { role: 'model', content: `Error: ${data.error || 'Failed to generate response'}` }]);
-      }
-    } catch (err: any) {
-      setChatHistory([...newHistory, { role: 'model', content: `Error: ${err.message || 'Network error occurred'}` }]);
-    } finally {
-      setIsChatSending(false);
-    }
-  };
 
   useEffect(() => {
     // Status only enables setup when PostgreSQL has no accounts.
@@ -1010,7 +971,7 @@ export default function App() {
       )}
 
       {/* Dynamic Siderail Navigation bar container with mobile sliding drawer capability */}
-      <div className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 md:relative md:transform-none md:z-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+      <div className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 md:relative md:transform-none md:z-auto ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'} ${isSidebarCollapsed ? 'md:hidden' : ''}`}>
         <Sidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
@@ -1030,15 +991,29 @@ export default function App() {
       <main className="flex-1 min-w-0 overflow-y-auto bg-[#f3f6fb]">
         <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur px-4 py-3 sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
-            <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-3">
+              <button type="button" aria-label={isSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                aria-expanded={!isSidebarCollapsed}
+                title={isSidebarCollapsed ? 'Show navigation sidebar' : 'Hide navigation sidebar'}
+                onClick={() => {
+                  setIsSidebarCollapsed((value) => {
+                    localStorage.setItem('ars_sidebar_collapsed', String(!value));
+                    return !value;
+                  });
+                }}
+                className="hidden md:flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-amber-50 hover:border-amber-300 focus-visible:outline-2 focus-visible:outline-amber-400">
+                {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+              </button>
+              <div className="min-w-0">
               <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Hardware · Business workspace</p>
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
                 dashboard: 'Business Overview', pos: 'Point of Sale', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing',
                 relationships: 'Customers & Staff', reports: 'Reports & Analytics',
-                quotations: 'Quotations', shifts: 'Cash Shifts', 'ai-insights': 'AI Insights',
+                quotations: 'Quotations', shifts: 'Cash Shifts', 
                 accounting: 'Accounting', 'db-admin': 'System Administration', calculators: 'Calculators',
               } as Record<AppTab, string>)[activeTab]}</p>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <span className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
@@ -1175,17 +1150,6 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'ai-insights' && (
-                <AIRecommendationsView
-                  products={products}
-                  suppliers={suppliers}
-                  currentUser={currentUser}
-                  onRefreshDb={handleRefreshDb}
-                  onNavigateToTab={(tab) => setActiveTab(tab as AppTab)}
-                  authToken={sessionToken}
-                />
-              )}
-
               {activeTab === 'accounting' && (
                 <AccountingSettingsView
                   transactions={transactions}
@@ -1264,7 +1228,7 @@ export default function App() {
                       value={profileNewPassword}
                       onChange={(event) => setProfileNewPassword(event.target.value)}
                       className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-amber-500 focus:outline-none pr-20"
-                      placeholder="Minimum 8 characters"
+                      placeholder="Minimum 12 characters"
                     />
                     <button
                       type="button"
@@ -1319,89 +1283,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating AI Chat Assistant Bubble & Drawer */}
-      {authUser && (
-        <>
-          <button
-            onClick={() => setIsChatOpen(!isChatOpen)}
-            className="fixed bottom-6 right-6 z-50 p-4 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 shadow-xl text-white transition-all transform hover:scale-105 flex items-center justify-center border border-indigo-500/20"
-          >
-            {isChatOpen ? <X className="w-6 h-6" /> : <Sparkles className="w-6 h-6 animate-pulse" />}
-          </button>
 
-          {isChatOpen && (
-            <div className="fixed bottom-24 right-6 w-96 h-[500px] bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden text-slate-100 animate-in slide-in-from-bottom duration-250">
-              {/* Header */}
-              <div className="p-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 bg-indigo-600/10 rounded text-indigo-400 animate-bounce">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold">AI Assistant</h3>
-                    <p className="text-[10px] text-slate-400">Powered by Gemini AI Model</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsChatOpen(false)}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 font-sans text-xs">
-                {chatHistory.map((chat, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${chat.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-xl px-3 py-2 leading-relaxed ${
-                        chat.role === 'user'
-                          ? 'bg-indigo-600 text-white rounded-br-none shadow-md shadow-indigo-600/10'
-                          : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700/50'
-                      }`}
-                      style={{ whiteSpace: 'pre-line' }}
-                    >
-                      {chat.content}
-                    </div>
-                  </div>
-                ))}
-                {isChatSending && (
-                  <div className="flex justify-start">
-                    <div className="bg-slate-800 text-slate-400 rounded-xl rounded-bl-none border border-slate-700/50 px-3 py-2 flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 bg-slate-400 rounded-full animate-bounce"></span>
-                      <span className="h-1.5 w-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                      <span className="h-1.5 w-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Input Area */}
-              <form onSubmit={handleSendChatMessage} className="p-3 bg-slate-950 border-t border-slate-800 flex gap-2">
-                <input
-                  type="text"
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  placeholder="Ask a question or calculate cement..."
-                  className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                  disabled={isChatSending}
-                />
-                <button
-                  type="submit"
-                  disabled={isChatSending || !chatMessage.trim()}
-                  className="p-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:hover:bg-indigo-600 flex items-center justify-center transition"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </button>
-              </form>
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }
