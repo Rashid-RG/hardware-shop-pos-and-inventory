@@ -1765,8 +1765,16 @@ export default function POSView({
           {filteredProducts.length === 0 && (
             <div className="col-span-full py-16 text-center bg-white rounded-xl border border-dashed border-slate-200 text-slate-400">
               <BadgeAlert className="w-8 h-8 mx-auto text-slate-300" />
-              <p className="text-xs font-semibold mt-2">No matching products found</p>
-              <p className="text-[10px] text-slate-500 mt-1">Refine your search parameters or check your filters</p>
+              <p className="text-sm font-semibold mt-2 text-slate-700">{products.length === 0 ? 'No products registered yet' : 'No matching products found'}</p>
+              <p className="mt-1 text-xs text-slate-500">{products.length === 0
+                ? 'Add the first product in Products before creating an invoice.'
+                : 'Try clearing the search or selecting All categories.'}</p>
+              {products.length > 0 && (searchTerm || selectedCategory !== 'All') && (
+                <button type="button" onClick={() => {setSearchTerm('');setSelectedCategory('All');}}
+                  className="mt-3 rounded-lg border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">
+                  Clear product filters
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1842,18 +1850,21 @@ export default function POSView({
           )}
 
           {/* Registered wholesale buyer lookup. Never bill an unknown walk-in account. */}
-          <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-amber-200 bg-amber-50/50 p-3 font-sans text-xs">
+          <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-amber-200 bg-amber-50/40 p-3 font-sans text-xs">
             <div className="flex items-center justify-between gap-2">
               <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">1 · Customer shop</p>
-                <p className="mt-1 text-[11px] text-slate-500">Choose the shop receiving this invoice.</p>
+                <p className="mt-1 text-[11px] text-slate-500">Choose the receiving shop and its representative.</p>
               </div>
             </div>
-            <label htmlFor="pos-customer-search" className="block text-xs font-semibold text-slate-700">
-              Find shop by name, phone or address
+            <details className="rounded-lg border border-amber-100 bg-white/70 p-2">
+              <summary className="cursor-pointer text-xs font-semibold text-slate-700">Find shop by name, phone or address</summary>
+            <label htmlFor="pos-customer-search" className="mt-2 block text-xs font-semibold text-slate-700">
+              Search registered customers
               <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
                 onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search registered wholesale shops..."
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400" />
             </label>
+            </details>
             <label htmlFor="pos-customer-select" className="block text-xs font-semibold text-slate-700">
               Select customer shop *
               <select id="pos-customer-select" required value={selectedCustomer.id}
@@ -1872,7 +1883,7 @@ export default function POSView({
               </select>
             </label>
             {customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId).length === 0 && (
-              <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No wholesale shops registered yet. Open Customers in the sidebar to add your first buyer.</p>
+              <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No registered customer shops. Add one in Customers before billing.</p>
             )}
             <details className="rounded-lg border border-amber-100 bg-white/80 px-3 py-2" id="pos-customer-details">
               <summary className="cursor-pointer select-none text-[11px] font-semibold text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
