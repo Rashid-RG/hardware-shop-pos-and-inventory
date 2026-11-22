@@ -1,0 +1,6 @@
+{
+  "name": "Hardware Shop POS and Inventory",
+  "description": "Smart point-of-sale and inventory tracking system for hardware shops, including AI demand forecasting and real-time stock alert advisor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
