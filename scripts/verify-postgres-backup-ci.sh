@@ -55,4 +55,23 @@ for table in "${tables[@]}"; do
   fi
   echo "Restore verified: $table"
 done
+# Additional ARS ledgers use some composite primary keys instead of an id column.
+# Compare full sorted JSON rows for every ARS table present in the source DB.
+ars_tables=(
+  ars_import_shipments ars_business_partners ars_partner_capital_entries
+  ars_receipt_batches ars_receipt_batch_items
+  ars_partner_profit_allocations ars_partner_profit_shares
+)
+for table in "${ars_tables[@]}"; do
+  exists="$(pg psql -h 127.0.0.1 -U postgres -d hardware_pos_ci -v ON_ERROR_STOP=1 -Atc "SELECT to_regclass('public.$table') IS NOT NULL")"
+  [[ "$exists" == "t" ]] || continue
+  sql="SELECT md5(COALESCE(string_agg(row_to_json(t)::text, '|' ORDER BY row_to_json(t)::text),'')) FROM \"$table\" t"
+  original="$(pg psql -h 127.0.0.1 -U postgres -d hardware_pos_ci -v ON_ERROR_STOP=1 -Atc "$sql")"
+  restored="$(pg psql -h 127.0.0.1 -U postgres -d hardware_pos_restore_ci -v ON_ERROR_STOP=1 -Atc "$sql")"
+  if [[ "$original" != "$restored" ]]; then
+    echo "ARS restore mismatch: $table" >&2
+    exit 1
+  fi
+  echo "ARS restore verified: $table"
+done
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
