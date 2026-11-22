@@ -6,7 +6,7 @@ Set-Location (Join-Path $scriptDir '..')
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
   Copy-Item '.env.example' '.env.local'
-  Write-Host '.env.local created. Update credentials if needed.'
+  Write-Host '.env.local created. Configure strong passwords and JWT_SECRET before shop use.'
 }
 
 function Get-DatabaseUrlFromEnvFile {
@@ -103,7 +103,36 @@ function Test-PostgresAuth([string]$connectionString) {
   }
 }
 
-Write-Host 'Checking Docker daemon...'
+# Never silently start with demo login credentials or placeholder session secrets.
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  throw 'Node.js is not installed or not on PATH. Install Node.js 22 LTS before starting ARS POS.'
+}
+if (-not (Test-Path 'node_modules')) {
+  throw 'Node dependencies are missing. Run npm ci from the project folder first.'
+}
+$envLines = Get-Content '.env.local'
+$jwtLine = $envLines | Where-Object { $_ -match '^\s*JWT_SECRET\s*=' } | Select-Object -First 1
+$jwtValue = if ($jwtLine) { (($jwtLine -replace '^\s*JWT_SECRET\s*=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
+if ($jwtValue.Length -lt 32 -or $jwtValue -match '(?i)replace.with|change.?me|example|password') {
+  throw 'Set a strong random JWT_SECRET of at least 32 characters in .env.local before starting.'
+}
+$requiredPasswords = @('ADMIN_PASSWORD', 'MANAGER_PASSWORD', 'WHOLESALE_MANAGER_PASSWORD', 'CASHIER_PASSWORD', 'INVENTORY_PASSWORD')
+foreach ($key in $requiredPasswords) {
+  $line = $envLines | Where-Object { $_ -match ("^\s*" + $key + "\s*=") } | Select-Object -First 1
+  $value = if ($line) { (($line -replace '^\s*[^=]+=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
+  if ($value.Length -lt 12 -or $value -eq 'ChangeMe123!' -or $value -match '(?i)change.?me|example') {
+    throw "Configure a unique password of at least 12 characters for $key in .env.local."
+  }
+}
+if (($requiredPasswords | ForEach-Object {
+  $key = $_
+  $line = $envLines | Where-Object { $_ -match ("^\s*" + $key + "\s*=") } | Select-Object -First 1
+  (($line -replace '^\s*[^=]+=\s*', '').Trim().Trim('"').Trim("'"))
+} | Select-Object -Unique).Count -ne $requiredPasswords.Count) {
+  throw 'Every role must have a different password.'
+}
+
+Write-Host 'Checking database configuration...'
 $dockerAvailable = $false
 
 $dbUrl = Get-DatabaseUrlFromEnvFile
@@ -127,7 +156,19 @@ if ($dbUrl) {
 }
 
 if (-not $dbReady) {
-  Write-Host 'Starting PostgreSQL container...'
+  if (-not $dbUrl) {
+    throw 'DATABASE_URL is missing in .env.local.'
+  }
+  try {
+    $parsedUrl = [System.Uri]$dbUrl
+    $dbHost = $parsedUrl.Host
+  } catch {
+    throw 'DATABASE_URL in .env.local is invalid.'
+  }
+  if ($dbHost -notin @('localhost', '127.0.0.1', '::1', '[::1]')) {
+    throw 'Configured remote PostgreSQL is not reachable. Refusing to start unrelated local Docker database.'
+  }
+  Write-Host 'Starting local PostgreSQL container...'
   if (Try-StartDockerCompose) {
     $dockerAvailable = $true
   } else {
@@ -182,14 +223,14 @@ $portProcess = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction S
   Select-Object -First 1 -ExpandProperty OwningProcess
 
 if ($portProcess) {
-  Write-Host 'Port 3000 is in use. Stopping existing process...'
-  try {
-    Stop-Process -Id $portProcess -Force
-  } catch {
-    Write-Warning 'Failed to stop process on port 3000. Start may fail if port remains occupied.'
-  }
+  throw "Port 3000 is already in use by PID $portProcess. Close the existing process yourself if appropriate; no process was stopped."
 }
 
-Write-Host 'Starting application in development mode...'
-Start-Process 'http://localhost:3000' | Out-Null
+# A successful Docker startup does not prove credentials match the configured DB.
+$dbUrl = Get-DatabaseUrlFromEnvFile
+if (-not (Test-PostgresAuth $dbUrl)) {
+  throw 'PostgreSQL authentication failed. Confirm DATABASE_URL credentials and Windows port (Docker Compose default: 5433).'
+}
+Write-Host 'Database connection verified. Starting application...'
+Write-Host 'Open http://localhost:3000 after the server reports ready.'
 npm run dev
