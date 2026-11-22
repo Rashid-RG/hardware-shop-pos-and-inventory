@@ -202,7 +202,7 @@ export default function POSView({
     setBillingCustomerAddress(normalize(selectedCustomer.address));
   }, [selectedCustomer.id]);
 
-  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && (c.name + ' ' + c.phone + ' ' + c.address).toLowerCase().includes(customerSearch.trim().toLowerCase()));
+  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId && (c.name + ' ' + c.phone + ' ' + c.address).toLowerCase().includes(customerSearch.trim().toLowerCase()));
 
   const categories = [
     'All',
@@ -1450,7 +1450,7 @@ export default function POSView({
   // Process core checkout
   const handleCheckout = async () => {
     if (cart.length === 0) return;
-    if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin')) {
+    if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin' && customer.shopId === taxConfig.activeShopId)) {
       alert('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
     }
@@ -1844,7 +1844,7 @@ export default function POSView({
               Select customer shop *
               <select id="pos-customer-select" required value={selectedCustomer.id}
                 onChange={(e) => {
-                  const cust = customers.find((c) => c.id === e.target.value);
+                  const cust = customers.find((c) => c.id === e.target.value && c.shopId === taxConfig.activeShopId);
                   if (cust) setSelectedCustomer(cust);
                 }}
                 className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400">
@@ -1857,7 +1857,7 @@ export default function POSView({
                 )}
               </select>
             </label>
-            {customers.filter((c) => c.id !== 'cust-walkin').length === 0 && (
+            {customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId).length === 0 && (
               <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No wholesale shops registered yet. Open Customers in the sidebar to add your first buyer.</p>
             )}
             <div className="grid grid-cols-1 gap-2">
@@ -1868,7 +1868,8 @@ export default function POSView({
                   type="text"
                   value={billingCustomerName}
                   onChange={(e) => setBillingCustomerName(e.target.value)}
-                  placeholder="Enter customer name"
+                  placeholder="Registered shop name"
+                  readOnly
                   className="w-full bg-white border border-slate-200 p-2 rounded-lg focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -1881,7 +1882,8 @@ export default function POSView({
                     type="text"
                     value={billingCustomerPhone}
                     onChange={(e) => setBillingCustomerPhone(e.target.value)}
-                    placeholder="e.g. +94 77 123 4567"
+                    placeholder="Shop contact number"
+                    readOnly
                     className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
@@ -1894,6 +1896,7 @@ export default function POSView({
                     value={billingCustomerAddress}
                     onChange={(e) => setBillingCustomerAddress(e.target.value)}
                     placeholder="Shop / delivery address"
+                    readOnly
                     className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
