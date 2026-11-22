@@ -2,10 +2,16 @@ import React,{useEffect,useState} from 'react';
 import {Landmark,ShieldCheck,RefreshCcw,Plus} from 'lucide-react';
 type Partner={id:string;name:string;ownership_percent:string|null;};
 type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';amount_lkr:string;entry_date:string;reference:string;note:string;created_by:string;};
+type ProfitAllocation={id:string;period_key:string;approved_profit_lkr:string;approval_reference:string;allocated_at:string;approved_by:string;shares:Array<{partnerId:string;name:string;ownershipPercent:number;allocatedLkr:string}>};
 type Props={authToken:string;shopId:string;};
 export default function PartnerCapitalView({authToken,shopId}:Props){
  const [partners,setPartners]=useState<Partner[]>([]);
  const [entries,setEntries]=useState<Capital[]>([]);
+ const [profits,setProfits]=useState<ProfitAllocation[]>([]);
+ const [profitPeriod,setProfitPeriod]=useState(()=>new Date().toISOString().slice(0,7));
+ const [approvedProfit,setApprovedProfit]=useState('');
+ const [profitApproval,setProfitApproval]=useState('');
+ const [profitNote,setProfitNote]=useState('');
  const [name,setName]=useState('');
  const [ownership,setOwnership]=useState('');
  const [partnerId,setPartnerId]=useState('');
@@ -23,7 +29,26 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
    if(!response.ok)throw Error(data.error||'Unable to complete partner ledger request');
    return data;
  };
- const refresh=async()=>{try{const data=await call('/api/ars/partners');setPartners(data.partners);setEntries(data.entries);}catch(e:any){setError(e.message)}};
+ const refresh=async()=>{try{
+   const [data,allocations]=await Promise.all([call('/api/ars/partners'),call('/api/ars/partner-profits')]);
+   setPartners(data.partners);setEntries(data.entries);setProfits(allocations);
+ }catch(e:any){setError(e.message)}};
+ const recordProfit=async(e:React.FormEvent)=>{
+   e.preventDefault();
+   const profit=Number(approvedProfit);
+   if(!Number.isFinite(profit)||profit<=0||!profitApproval.trim())return;
+   if(!window.confirm(`Record approved profit of Rs.${profit.toFixed(2)} for ${profitPeriod}? This creates permanent allocations but DOES NOT transfer money. Confirm the approved accounting statement and ownership percentages.`))return;
+   setBusy(true);setError('');setNotice('');
+   try{
+     await call('/api/ars/partner-profits',{method:'POST',body:JSON.stringify({
+       periodKey:profitPeriod,approvedProfitLkr:profit,
+       approvalReference:profitApproval,note:profitNote
+     })});
+     setApprovedProfit('');setProfitApproval('');setProfitNote('');
+     setNotice('Profit allocation recorded. Payout transfers must be reconciled separately.');
+     await refresh();
+   }catch(e:any){setError(e.message)}finally{setBusy(false);}
+ };
  useEffect(()=>{void refresh()},[authToken,shopId]);
  const register=async(e:React.FormEvent)=>{
    e.preventDefault();setBusy(true);setError('');setNotice('');
@@ -52,7 +77,7 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
  return <div className="space-y-5">
   <header className="rounded-2xl bg-[#172a47] p-6 text-white"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
     <h2 className="mt-2 flex items-center gap-2 font-heading text-2xl font-bold"><Landmark className="h-6 w-6"/>Three-Partner Capital Ledger</h2>
-    <p className="mt-2 text-sm text-slate-300">Maintain independent records of contributions, drawings and agreed ownership. No automatic dividend or profit distribution.</p></header>
+    <p className="mt-2 text-sm text-slate-300">Maintain independent records of contributions, drawings and agreed ownership. Approved profit allocation is available when all three ownership percentages total 100%. It does not transfer funds.</p></header>
   {error&&<p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
   {notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
   <div className="grid gap-5 xl:grid-cols-2">
@@ -94,6 +119,34 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
       <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{String(e.entry_date).slice(0,10)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
     </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>This ledger is separate from cash, bank accounts and profit distribution. Reconcile it with supporting documents.</p>
+  </section>
+  <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <h3 className="font-bold">Approved partner profit allocation</h3>
+    <p className="mt-1 text-xs text-slate-600">Enter a profit amount approved from reconciled accounts. This is an allocation ledger only, not a cash payment, and cannot calculate business profit automatically.</p>
+    <form onSubmit={recordProfit} className="mt-4 grid gap-3 sm:grid-cols-2">
+      <label className="text-xs font-semibold">Accounting month<input type="month" required value={profitPeriod} onChange={e=>setProfitPeriod(e.target.value)} className={formField} /></label>
+      <label className="text-xs font-semibold">Approved distributable profit (LKR)<input type="number" min="0.01" step="0.01" required value={approvedProfit} onChange={e=>setApprovedProfit(e.target.value)} className={formField}/></label>
+      <label className="text-xs font-semibold sm:col-span-2">Approved financial statement / board reference<input required maxLength={160} value={profitApproval} onChange={e=>setProfitApproval(e.target.value)} className={formField} /></label>
+      <label className="text-xs font-semibold sm:col-span-2">Allocation note<textarea value={profitNote} onChange={e=>setProfitNote(e.target.value)} maxLength={1000} rows={2} className={formField}/></label>
+      <button type="submit" disabled={busy||partners.length!==3||Math.abs(ownershipTotal-100)>0.00001||partners.some(p=>p.ownership_percent===null)}
+        className="rounded-xl bg-[#172a47] px-4 py-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-2">
+        Record approved allocation (no money transfer)
+      </button>
+    </form>
+    {(partners.length!==3||Math.abs(ownershipTotal-100)>0.00001||partners.some(p=>p.ownership_percent===null))&&
+      <p role="status" className="mt-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">Configure three partners whose ownership percentages total exactly 100% before allocating profits.</p>}
+    <div className="mt-5 space-y-3">
+      <h4 className="text-sm font-semibold">Past approved allocations</h4>
+      {profits.length===0&&<p className="text-xs text-slate-500">No approved profit allocations recorded.</p>}
+      {profits.map(p=><div key={p.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-wrap justify-between gap-2 text-sm"><strong>{p.period_key} · Rs.{n(p.approved_profit_lkr)}</strong><span className="text-xs text-slate-500">Reference: {p.approval_reference}</span></div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">{(p.shares||[]).map(share=><div key={share.partnerId} className="rounded-lg bg-white p-3 text-xs">
+          <p className="font-semibold">{share.name}</p><p>{Number(share.ownershipPercent).toFixed(2)}% ownership</p>
+          <p className="mt-1 text-sm font-bold">Rs.{n(share.allocatedLkr)}</p>
+        </div>)}</div>
+        <p className="mt-2 text-[11px] text-slate-500">Recorded by {p.approved_by} · {new Date(p.allocated_at).toLocaleString()} · Payment status: not tracked</p>
+      </div>)}
+    </div>
   </section>
  </div>;
 }
