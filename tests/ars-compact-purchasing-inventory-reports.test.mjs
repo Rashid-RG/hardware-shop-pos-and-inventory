@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const purchases=readFileSync(new URL('../src/components/SupplierPurchaseView.tsx',import.meta.url),'utf8');
 const inventory=readFileSync(new URL('../src/components/InventoryView.tsx',import.meta.url),'utf8');
-const reports=readFileSync(new URL('../src/components/ReportsView.tsx',import.meta.url),'utf8';
+const reports=readFileSync(new URL('../src/components/ReportsView.tsx',import.meta.url),'utf8');
 
 test('purchases show searchable purchase orders with hidden line details until requested',()=>{
   assert.match(purchases,/visiblePurchaseOrders\.slice\(0,visiblePurchaseCount\)/);
