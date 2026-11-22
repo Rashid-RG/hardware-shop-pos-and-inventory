@@ -8,6 +8,7 @@ const POSView = lazy(() => import('./components/POSView'));
 const ProductManagementView = lazy(() => import('./components/ProductManagementView'));
 const InventoryView = lazy(() => import('./components/InventoryView'));
 const SupplierPurchaseView = lazy(() => import('./components/SupplierPurchaseView'));
+const ImportCostPlanner = lazy(() => import('./components/ImportCostPlanner'));
 const CustomerEmployeeView = lazy(() => import('./components/CustomerEmployeeView'));
 const AccountingSettingsView = lazy(() => import('./components/AccountingSettingsView'));
 const DBAdminView = lazy(() => import('./components/DBAdminView'));
@@ -18,7 +19,7 @@ const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
 
-type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
+type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 
@@ -1008,7 +1009,7 @@ export default function App() {
               <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Hardware · Business workspace</p>
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
                 dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
-                inventory: 'Stock Management', purchases: 'Suppliers & Purchasing',
+                inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs',
                 customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
                 quotations: 'Quotations', shifts: 'Cash Shifts', 
                 accounting: 'Accounting', 'db-admin': 'System Administration', calculators: 'Calculators',
@@ -1105,6 +1106,10 @@ export default function App() {
                   onReceivePO={handleReceivePO}
                   onAddSupplierPayment={handleAddSupplierPayment}
                 />
+              )}
+
+              {activeTab === 'imports' && ['Super Admin', 'Store Manager'].includes(currentRole) && (
+                <ImportCostPlanner />
               )}
 
               {(activeTab === 'customers' || activeTab === 'staff') && (
