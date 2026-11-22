@@ -1679,6 +1679,8 @@ const initPostgres = async () => {
     ALTER TABLE customers ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE employees ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS shop_id TEXT;
+    ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS sales_rep_id TEXT;
+    ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS sales_rep_name TEXT;
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE stock_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
@@ -1972,8 +1974,8 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
   for (const tx of state.transactions) {
     await client.query(
       `
-      INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status, refunded_at, refund_reason)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21)
+      INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status, refunded_at, refund_reason, sales_rep_id, sales_rep_name)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23)
       `,
       [
         tx.id,
@@ -1997,6 +1999,8 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
         tx.status || 'Completed',
         tx.refundedAt || null,
         tx.refundReason || null,
+        tx.salesRepId || null,
+        tx.salesRepName || null,
       ]
     );
 
@@ -2315,6 +2319,8 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       customerAddress: row.customer_address || undefined,
       customerId: row.customer_id || undefined,
       cashierName: row.cashier_name,
+      salesRepId: row.sales_rep_id || undefined,
+      salesRepName: row.sales_rep_name || undefined,
       items: (txItemsByTransaction.get(row.id) || []).map((item) => ({
         productId: item.product_id,
         productName: item.product_name,
@@ -3875,9 +3881,17 @@ app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) =
 
 // POS Transaction Checkout Route
 app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const { cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
+  const { cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, salesRepId, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
   const txId = `tx-${randomUUID()}`;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
+
+  // Sales Representative is explicitly selected from registered ARS staff.
+  // The signed-in operator stays separate for internal audit purposes only.
+  const rep = db.employees.find(employee =>
+    employee.id === String(salesRepId || '') && employee.shopId === activeShopId);
+  if (!rep || !rep.name?.trim()) {
+    return res.status(400).json({ error: 'Select a registered Sales Representative for this invoice.' });
+  }
 
   // ARS distributes exclusively to registered trade customers.
   // Enforce this on the server, not just with the browser's shop selector.
@@ -4043,7 +4057,9 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     customerPhone: checkoutCustomer?.phone || undefined,
     customerAddress: checkoutCustomer?.address || undefined,
     customerId: checkoutCustomer.id,
-    cashierName: cashierName || 'Cashier',
+    cashierName: (req as AppRequest).authUser?.name || 'System',
+    salesRepId: rep.id,
+    salesRepName: rep.name,
     items: completedItems,
     subtotal: Math.round(subtotal * 100) / 100,
     tax: tax,
