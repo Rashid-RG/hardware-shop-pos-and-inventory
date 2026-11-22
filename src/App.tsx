@@ -1064,6 +1064,7 @@ export default function App() {
                 <POSView
                   products={products}
                   customers={customers}
+                  employees={employees}
                   cashierName={currentUser}
                   currentRole={currentRole}
                   taxConfig={taxConfig}
