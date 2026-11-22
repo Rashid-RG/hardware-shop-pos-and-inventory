@@ -1859,6 +1859,14 @@ const saveAppStateMirror = async (client: PoolClient, state: DBState) => {
 };
 
 const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
+  // Legacy snapshot saves TRUNCATE purchases with CASCADE. Never erase ARS
+  // receipt history via a whole-state rewrite after partial receiving begins.
+  const protectedReceipts = await client.query(
+    'SELECT EXISTS(SELECT 1 FROM ars_receipt_batches) AS has_receipts'
+  );
+  if (protectedReceipts.rows[0]?.has_receipts) {
+    throw new Error('Legacy full-state rewrite blocked: ARS goods-receipt history exists. Use targeted SQL updates.');
+  }
   await client.query(`
     TRUNCATE TABLE sales_transaction_items,
       sales_transactions,
