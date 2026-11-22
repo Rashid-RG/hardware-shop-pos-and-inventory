@@ -1,6 +1,7 @@
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
+import { initArsProfitLedger, recordArsProfitAllocation } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
@@ -5516,6 +5517,41 @@ app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','St
   res.status(409).json({error:'Use Warehouse Receiving to post verified item quantities. The legacy full-shipment receipt is disabled.'});
 });
 
+// Recording a profit allocation is not a payout or confirmation of money sent.
+// Only the Super Admin may record an allocation supported by approved statements.
+app.get('/api/ars/partner-profits',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try {
+    const data=await pool.query(
+      `SELECT a.id,a.period_key,a.approved_profit_lkr,a.approval_reference,
+       a.note,a.approved_by,a.allocated_at,
+       COALESCE(jsonb_agg(jsonb_build_object('partnerId',p.id,'name',p.name,
+         'ownershipPercent',s.ownership_basis_points / 100.0,'allocatedLkr',s.allocated_lkr)
+          ORDER BY p.id) FILTER(WHERE s.partner_id IS NOT NULL),'[]'::jsonb) AS shares
+       FROM ars_partner_profit_allocations a
+       LEFT JOIN ars_partner_profit_shares s ON s.allocation_id=a.id
+       LEFT JOIN ars_business_partners p ON p.id=s.partner_id AND p.shop_id=a.shop_id
+       WHERE a.shop_id=$1
+       GROUP BY a.id ORDER BY a.period_key DESC LIMIT 120`,[activeShopId]);
+    res.json(data.rows);
+  }catch(error){res.status(503).json({error:'Could not load confidential partner profit records.'});}
+});
+app.post('/api/ars/partner-profits',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  try {
+    const result=await recordArsProfitAllocation(pool,{
+      shopId:activeShopId,
+      periodKey:String(req.body?.periodKey||''),
+      approvedProfitLkr:Number(req.body?.approvedProfitLkr),
+      approvalReference:String(req.body?.approvalReference||''),
+      approvedBy:(req as AppRequest).authUser?.email||'System',
+      note:String(req.body?.note||''),
+    });
+    res.status(201).json(result);
+  }catch(error){res.status(409).json({error:(error as Error).message});}
+});
+
 // Partner records and immutable capital contributions/drawings. Financial
 // statements and profit distributions must NOT be inferred from these entries.
 app.get('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
@@ -5625,6 +5661,7 @@ async function startServer() {
   await acquireSingleWriterLease();
   await initPostgres();
   await initPartialReceivingTables(pool);
+  await initArsProfitLedger(pool);
   await loadDb();
 
   if (!IS_PRODUCTION) {
