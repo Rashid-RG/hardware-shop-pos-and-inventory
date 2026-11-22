@@ -3381,28 +3381,70 @@ app.get('/api/settings', (_req, res) => {
 });
 
 app.put('/api/settings', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
+  if (!databaseWriteHealthy) return res.status(503).json({error:'Database recovery required before settings can be saved.'});
   const payload = req.body || {};
+  const {activeShopId} = getActiveShopContext(db, req);
+  const isAdmin = (req as AppRequest).authUser?.role === 'Super Admin';
+  const oldProfiles = db.settings.shopProfiles || [];
+  if (!isAdmin && payload.shopProfiles !== undefined) {
+    // A branch manager may update only their own existing branch, never create
+    // another branch or silently alter another branch's company profile.
+    const incoming = payload.shopProfiles;
+    if (!Array.isArray(incoming) || incoming.length !== oldProfiles.length ||
+        incoming.some((profile:any) => !profile || typeof profile.id !== 'string') ||
+        incoming.some((profile:any) => profile.id !== activeShopId &&
+          JSON.stringify(profile) !== JSON.stringify(oldProfiles.find(old => old.id === profile.id)))) {
+      return res.status(403).json({error:'Managers may only modify their assigned company profile.'});
+    }
+  }
   const nextSettings: StoreSettings = {
-    taxRate: payload.taxRate === undefined || payload.taxRate === null || payload.taxRate === '' ? db.settings.taxRate : Number(payload.taxRate),
-    storeName: String(payload.storeName || db.settings.storeName),
+    taxRate: payload.taxRate === undefined ? db.settings.taxRate : Number(payload.taxRate),
+    storeName: String(payload.storeName ?? db.settings.storeName),
     currency: 'LKR',
-    invoicePrefix: String(payload.invoicePrefix || db.settings.invoicePrefix),
-    logoUrl: String(payload.logoUrl || db.settings.logoUrl || ''),
-    address: String(payload.address || db.settings.address || ''),
-    phone: String(payload.phone || db.settings.phone || ''),
-    shopQRData: String(payload.shopQRData || db.settings.shopQRData || ''),
-    activeShopId: String(payload.activeShopId || db.settings.activeShopId || ''),
+    invoicePrefix: String(payload.invoicePrefix ?? db.settings.invoicePrefix),
+    logoUrl: String(payload.logoUrl ?? db.settings.logoUrl ?? ''),
+    address: String(payload.address ?? db.settings.address ?? ''),
+    phone: String(payload.phone ?? db.settings.phone ?? ''),
+    shopQRData: String(payload.shopQRData ?? db.settings.shopQRData ?? ''),
+    activeShopId: isAdmin ? String(payload.activeShopId ?? db.settings.activeShopId ?? activeShopId) : activeShopId,
     productCategories: Array.isArray(payload.productCategories) ? payload.productCategories : (db.settings.productCategories || []),
-    shopProfiles: Array.isArray(payload.shopProfiles) ? payload.shopProfiles : (db.settings.shopProfiles || []),
+    shopProfiles: Array.isArray(payload.shopProfiles) ? payload.shopProfiles : oldProfiles,
   };
-
-  db = normalizeState({
-    ...db,
-    settings: nextSettings,
-  });
-
-  await saveDb();
-  res.json(db.settings);
+  if (!Number.isFinite(nextSettings.taxRate) || nextSettings.taxRate < 0 || nextSettings.taxRate > 100 ||
+      !nextSettings.storeName.trim() || !nextSettings.invoicePrefix.trim() ||
+      nextSettings.invoicePrefix.length > 30 || nextSettings.storeName.length > 150 ||
+      nextSettings.shopProfiles!.length > 50 ||
+      nextSettings.shopProfiles!.some(profile => !profile?.id || !profile?.name)) {
+    return res.status(400).json({error:'Invalid ARS company settings.'});
+  }
+  const normalized = normalizeState({...db,settings:nextSettings}).settings;
+  try {
+    await pool.query(
+      `INSERT INTO store_settings
+         (id,tax_rate,store_name,currency,invoice_prefix,logo_url,store_address,store_phone,active_shop_id,product_categories,shop_profiles,shop_qr_data,updated_at)
+       VALUES ('default',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         tax_rate=EXCLUDED.tax_rate,store_name=EXCLUDED.store_name,currency=EXCLUDED.currency,
+         invoice_prefix=EXCLUDED.invoice_prefix,logo_url=EXCLUDED.logo_url,
+         store_address=EXCLUDED.store_address,store_phone=EXCLUDED.store_phone,
+         active_shop_id=EXCLUDED.active_shop_id,product_categories=EXCLUDED.product_categories,
+         shop_profiles=EXCLUDED.shop_profiles,shop_qr_data=EXCLUDED.shop_qr_data,updated_at=NOW()`,
+      [normalized.taxRate,normalized.storeName,normalized.currency,normalized.invoicePrefix,
+       normalized.logoUrl||'',normalized.address||'',normalized.phone||'',normalized.activeShopId||activeShopId,
+       JSON.stringify(normalized.productCategories||[]),JSON.stringify(normalized.shopProfiles||[]),normalized.shopQRData||'']);
+  } catch(error) {
+    return res.status(409).json({error:'Company settings could not be saved.'});
+  }
+  try {
+    const refreshed=await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Settings could not be reloaded.');
+    db=refreshed;
+    res.json(db.settings);
+  } catch(error) {
+    databaseWriteHealthy=false;
+    console.error('Settings committed but reload failed; writes disabled.',error);
+    res.status(503).json({error:'Settings committed but cache refresh failed. Do not resubmit before reconciliation.'});
+  }
 });
 
 app.get('/api/manual-expenses', (_req, res) => {
@@ -4597,34 +4639,68 @@ app.post('/api/customers', requireRole(['Super Admin', 'Store Manager', 'Cashier
 });
 
 // Employees Routes
-app.post('/api/employees', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
-  const { activeShopId } = getActiveShopContext(db, req);
-  const newEmployee: Employee = {
-    ...req.body,
-    id: 'emp-' + Date.now(),
-    shopId: activeShopId,
-    salary: Number(req.body.salary) || 2000,
-    performanceScore: 85
-  };
-  db.employees.push(newEmployee);
-  await saveDb();
-  res.json(newEmployee);
-});
-
-app.put('/api/employees/:id', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
-  const index = db.employees.findIndex((e) => e.id === req.params.id);
-  if (index !== -1) {
-    db.employees[index] = {
-      ...db.employees[index],
-      ...req.body,
-      salary: Number(req.body.salary),
-      performanceScore: Number(req.body.performanceScore) || 85
-    };
-    await saveDb();
-    res.json(db.employees[index]);
-  } else {
-    res.status(404).json({ error: 'Employee not found' });
+const refreshCommittedEmployeeState = async (res: express.Response) => {
+  try {
+    const refreshed=await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload committed employee data.');
+    db=refreshed;
+    return true;
+  } catch(error) {
+    databaseWriteHealthy=false;
+    console.error('Staff record committed but reload failed; writes disabled.',error);
+    res.status(503).json({error:'Staff change committed but refresh failed. Reconcile before retrying.'});
+    return false;
   }
+};
+
+const validateEmployee = (raw:any, shopId:string, id:string): Employee | null => {
+  const name=String(raw?.name||'').trim();
+  const role=String(raw?.role||'');
+  const salary=Number(raw?.salary);
+  const performanceScore=Number(raw?.performanceScore ?? 85);
+  const attendanceStatus=String(raw?.attendanceStatus||'Present');
+  if (!name || name.length>160 || !['Super Admin','Store Manager','Cashier','Inventory Staff'].includes(role) ||
+      !Number.isFinite(salary) || salary<0 || salary>999999999 ||
+      !Number.isSafeInteger(performanceScore) || performanceScore<0 || performanceScore>100 ||
+      !['Present','Absent','On Leave'].includes(attendanceStatus)) return null;
+  return {id,shopId,name,role:role as Role,phone:String(raw?.phone||'').slice(0,80),
+    email:String(raw?.email||'').slice(0,200),salary,attendanceStatus:attendanceStatus as Employee['attendanceStatus'],
+    performanceScore};
+};
+app.post('/api/employees', requireRole(['Super Admin', 'Store Manager']), async (req,res)=>{
+  if (!databaseWriteHealthy) return res.status(503).json({error:'Database writes are disabled.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const employee=validateEmployee(req.body,activeShopId,'emp-'+randomUUID());
+  if (!employee) return res.status(400).json({error:'Provide a valid staff name, role, salary, attendance and score.'});
+  try {
+    await pool.query(
+      `INSERT INTO employees(id,shop_id,name,role,phone,email,salary,attendance_status,performance_score)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [employee.id,activeShopId,employee.name,employee.role,employee.phone,employee.email,
+       employee.salary,employee.attendanceStatus,employee.performanceScore]);
+  } catch(error) { return res.status(409).json({error:'Staff record could not be created.'}); }
+  if (!(await refreshCommittedEmployeeState(res))) return;
+  res.status(201).json(employee);
+});
+app.put('/api/employees/:id',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if (!databaseWriteHealthy) return res.status(503).json({error:'Database writes are disabled.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const current=db.employees.find(item=>item.id===req.params.id && item.shopId===activeShopId);
+  if (!current) return res.status(404).json({error:'Staff member not found in this branch.'});
+  const employee=validateEmployee({...current,...req.body},activeShopId,current.id);
+  if (!employee) return res.status(400).json({error:'Invalid staff details.'});
+  let result;
+  try {
+    result=await pool.query(
+      `UPDATE employees SET name=$1,role=$2,phone=$3,email=$4,salary=$5,
+       attendance_status=$6,performance_score=$7,updated_at=NOW()
+       WHERE id=$8 AND shop_id=$9`,
+      [employee.name,employee.role,employee.phone,employee.email,employee.salary,
+       employee.attendanceStatus,employee.performanceScore,employee.id,activeShopId]);
+  } catch(error) { return res.status(409).json({error:'Staff record could not be updated.'}); }
+  if (!result.rowCount) return res.status(404).json({error:'Staff member no longer exists.'});
+  if (!(await refreshCommittedEmployeeState(res))) return;
+  res.json(employee);
 });
 
 
