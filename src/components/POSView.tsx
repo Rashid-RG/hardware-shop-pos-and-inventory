@@ -1,4 +1,5 @@
 import { invoiceFooter } from '../utils/invoiceFooter';
+import { notify } from '../utils/notifications';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import React, { useState, useEffect } from 'react';
 import {
@@ -680,7 +681,7 @@ export default function POSView({
   const createPrintWindow = () => {
     const printWindow = window.open('', '_blank', 'width=900,height=900');
     if (!printWindow) {
-      alert('Popup blocked. Please allow popups and try printing again.');
+      notify.warning('Popup blocked. Please allow popups and try printing again.');
       return null;
     }
 
@@ -1455,15 +1456,15 @@ export default function POSView({
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin' && customer.shopId === taxConfig.activeShopId)) {
-      alert('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
+      notify.warning('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
     }
     if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
-      alert('Select the Sales Representative responsible for this invoice.');
+      notify.warning('Select the Sales Representative responsible for this invoice.');
       return;
     }
     if (paymentMethod === 'Cash' && numericCashReceived < total) {
-      alert(`Cash received must be at least ${formatMoney(total)}.`);
+      notify.warning(`Cash received must be at least ${formatMoney(total)}.`);
       return;
     }
     const printWindow = createPrintWindow();
@@ -1540,7 +1541,7 @@ export default function POSView({
           });
         } catch {
           printReceiptInvoice(txWithQr, printWindow);
-          alert('Sale saved, but print audit log failed. Printed without tracked copy label.');
+          notify.warning('Sale saved, but print audit log failed. Printed without tracked copy label.');
         }
         // Require an explicit representative for each new invoice; another rep may handle the next sale.
         setSelectedSalesRepId('');
@@ -1554,13 +1555,13 @@ export default function POSView({
           printWindow.close();
         }
         const data = await response.json();
-        alert('POS Checkout error: ' + data.error);
+        notify.error('POS Checkout error: ' + data.error);
       }
     } catch (err) {
       if (printWindow) {
         printWindow.close();
       }
-      alert('Network failure processing transaction');
+      notify.error('Network failure processing transaction');
     } finally {
       setIsSubmitting(false);
     }
@@ -2602,7 +2603,7 @@ export default function POSView({
                           setIsExportingAuditCsv(true);
                           await exportInvoicePrintAuditCsv(printAuditFilters);
                         } catch (error: any) {
-                          alert(error?.message || 'Unable to export audit CSV');
+                          notify.warning(error?.message || 'Unable to export audit CSV');
                         } finally {
                           setIsExportingAuditCsv(false);
                         }
@@ -2721,7 +2722,7 @@ export default function POSView({
                           printedAt: printAudit.printLog.printedAt,
                         });
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to print invoice copy');
+                        notify.warning(error?.message || 'Unable to print invoice copy');
                       } finally {
                         setIsLoggingPrint(false);
                       }
@@ -2748,7 +2749,7 @@ export default function POSView({
                           printedAt: printAudit.printLog.printedAt,
                         });
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to download invoice PDF');
+                        notify.warning(error?.message || 'Unable to download invoice PDF');
                       } finally {
                         setIsDownloadingPdf(false);
                       }
@@ -2767,9 +2768,9 @@ export default function POSView({
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
                         await sendInvoiceWhatsApp(receiptModel, printAudit.printLog.copyType, printAudit.printLog.printSequence);
-                        alert('Invoice PDF shared successfully via WhatsApp API.');
+                        notify.warning('Invoice PDF shared successfully via WhatsApp API.');
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to share invoice PDF via WhatsApp');
+                        notify.warning(error?.message || 'Unable to share invoice PDF via WhatsApp');
                       } finally {
                         setIsSharingWhatsApp(false);
                       }
@@ -2788,9 +2789,9 @@ export default function POSView({
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
                         await sendInvoiceEmail(receiptModel, printAudit.printLog.copyType, printAudit.printLog.printSequence);
-                        alert('Invoice emailed successfully.');
+                        notify.warning('Invoice emailed successfully.');
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to email invoice');
+                        notify.warning(error?.message || 'Unable to email invoice');
                       } finally {
                         setIsSharingEmail(false);
                       }
