@@ -5,7 +5,7 @@ import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
@@ -616,9 +616,17 @@ const toAuthRecordFromUser = (user: UserAccount): AuthRecord => ({
   fixedShopId: getUserFixedShop(user.email),
 });
 
+// Bind JWTs to the current persisted account credentials and role.
+const getAuthRevision = (user: UserAccount) => createHash('sha256')
+  .update(JSON.stringify([user.id, user.email.toLowerCase(), user.role, user.passwordHash]))
+  .digest('hex');
+
 const createAuthToken = (user: { email: string; name: string; role: Role; scopedShopId?: string; allowedShopIds?: string[]; fixedShopId?: string }) => {
+  const currentAccount = db.users.find((account) => account.email.toLowerCase() === user.email.toLowerCase());
+  if (!currentAccount) throw new Error('Cannot create session for an unknown account.');
   return jwt.sign(
     {
+      authRevision: getAuthRevision(currentAccount),
       email: user.email,
       name: user.name,
       role: user.role,
@@ -2491,14 +2499,23 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
 
   const token = authHeader.slice(7);
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser & { authRevision?: string };
+    const currentAccount = db.users.find((account) => account.email.toLowerCase() === String(decoded.email || '').toLowerCase());
+    if (!currentAccount || decoded.authRevision !== getAuthRevision(currentAccount) ||
+        decoded.role !== currentAccount.role) {
+      return res.status(401).json({ error: 'Session no longer valid. Please sign in again.' });
+    }
+    const access = resolveUserShopAccess(toAuthRecordFromUser(currentAccount), decoded.scopedShopId || '');
+    if ('error' in access) {
+      return res.status(401).json({ error: 'Shop access changed. Please sign in again.' });
+    }
     (req as AppRequest).authUser = {
-      email: decoded.email,
-      name: decoded.name,
-      role: decoded.role,
-      scopedShopId: decoded.scopedShopId,
-      allowedShopIds: Array.isArray(decoded.allowedShopIds) ? decoded.allowedShopIds : undefined,
-      fixedShopId: typeof decoded.fixedShopId === 'string' ? decoded.fixedShopId : undefined,
+      email: currentAccount.email,
+      name: currentAccount.name,
+      role: currentAccount.role,
+      scopedShopId: access.scopedShopId,
+      allowedShopIds: access.allowedShopIds,
+      fixedShopId: access.fixedShopId,
     };
     next();
   } catch {
