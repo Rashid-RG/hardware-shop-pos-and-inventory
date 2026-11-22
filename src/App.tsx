@@ -11,6 +11,7 @@ const SupplierPurchaseView = lazy(() => import('./components/SupplierPurchaseVie
 const ImportCostPlanner = lazy(() => import('./components/ImportCostPlanner'));
 const ImportShipmentView = lazy(() => import('./components/ImportShipmentView'));
 const PartnerCapitalView = lazy(() => import('./components/PartnerCapitalView'));
+const BackupRecoveryView = lazy(() => import('./components/BackupRecoveryView'));
 const CustomerEmployeeView = lazy(() => import('./components/CustomerEmployeeView'));
 const AccountingSettingsView = lazy(() => import('./components/AccountingSettingsView'));
 const DBAdminView = lazy(() => import('./components/DBAdminView'));
@@ -21,7 +22,7 @@ const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
 
-type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'db-admin' | 'calculators';
+type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 
@@ -1014,7 +1015,7 @@ export default function App() {
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs', shipments: 'Import Shipments', 'warehouse-receiving': 'Warehouse Receiving', partners: 'Partner Capital',
                 customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
                 quotations: 'Quotations', shifts: 'Cash Shifts', 
-                accounting: 'Accounting', 'company-profile': 'Company Profile', 'db-admin': 'System Administration', calculators: 'Calculators',
+                accounting: 'Accounting', 'company-profile': 'Company Profile', 'backup-recovery': 'Backup & Recovery', 'db-admin': 'System Administration', calculators: 'Calculators',
               } as Record<AppTab, string>)[activeTab]}</p>
               </div>
             </div>
@@ -1189,6 +1190,10 @@ export default function App() {
                   onUpdateTaxConfig={handleUpdateSettings}
                   onAddManualExpense={handleAddManualExpense}
                 />
+              )}
+
+              {activeTab === 'backup-recovery' && currentRole === 'Super Admin' && (
+                <BackupRecoveryView />
               )}
 
               {activeTab === 'calculators' && (
