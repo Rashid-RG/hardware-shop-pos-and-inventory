@@ -35,3 +35,13 @@ test('failed database save reloads committed state and prevents unsafe follow-up
   assert.match(queue, /res\.status\(503\)/);
   assert.match(server, /database: 'recovery-required'/);
 });
+
+test('legacy database enforces single server writer with PostgreSQL advisory lease', () => {
+  assert.match(server, /pg_try_advisory_lock\(\$1::integer, \$2::integer\)/);
+  assert.match(server, /pg_advisory_unlock\(\$1::integer, \$2::integer\)/);
+  assert.match(server, /Another Hardware POS server already owns this database/);
+  const startup = server.split('async function startServer() {')[1] || '';
+  assert.ok(startup.indexOf('await acquireSingleWriterLease()') < startup.indexOf('await initPostgres()'));
+  assert.match(startup, /await releaseSingleWriterLease\(\)/);
+  assert.match(server, /single-writer lease connection lost; writes disabled/);
+});
