@@ -1112,11 +1112,58 @@ export const insertManualExpense = async (e: ManualExpense) => {
 };
 
 export const insertSupplierPayment = async (p: SupplierPayment) => {
-  await pool.query(
-    `INSERT INTO supplier_payments (id, shop_id, supplier_id, supplier_name, purchase_order_id, amount, payment_method, date, note, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [p.id, p.shopId || null, p.supplierId, p.supplierName, p.purchaseOrderId || null, p.amount, p.paymentMethod, p.date, p.note || null, p.createdBy || null]
-  );
+  if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
+      Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
+    throw new Error('Supplier payment amount must be positive with at most two decimal places.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const supplier = await client.query(
+      'SELECT id, name, company_name FROM suppliers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [p.supplierId, p.shopId]
+    );
+    if (!supplier.rowCount) throw new Error('Supplier not found in this shop.');
+
+    if (p.purchaseOrderId) {
+      const po = await client.query(
+        'SELECT id, supplier_id, total FROM purchase_orders WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [p.purchaseOrderId, p.shopId]
+      );
+      if (!po.rowCount || po.rows[0].supplier_id !== p.supplierId) {
+        throw new Error('Purchase order does not belong to this supplier and shop.');
+      }
+      const previous = await client.query(
+        'SELECT COALESCE(SUM(amount), 0) AS paid FROM supplier_payments WHERE purchase_order_id = $1 AND shop_id = $2',
+        [p.purchaseOrderId, p.shopId]
+      );
+      const available = Number(po.rows[0].total) - Number(previous.rows[0].paid);
+      if (!Number.isFinite(available) || Math.round(p.amount * 100) > Math.round(available * 100)) {
+        throw new Error('Supplier payment exceeds the remaining purchase order balance.');
+      }
+    }
+
+    const supplierName = supplier.rows[0].company_name || supplier.rows[0].name;
+    await client.query(
+      `INSERT INTO supplier_payments
+       (id, shop_id, supplier_id, supplier_name, purchase_order_id, amount, payment_method, date, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [p.id, p.shopId, p.supplierId, supplierName, p.purchaseOrderId || null, p.amount,
+       p.paymentMethod, p.date, p.note || null, p.createdBy || null]
+    );
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1,$2,NOW(),$3,'Store Manager','Supplier Payment',$4)`,
+      ['supplier-payment-' + p.id, p.shopId, p.createdBy || 'Manager',
+       `Paid Rs.${p.amount.toFixed(2)} to ${supplierName}.`]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 export const insertQuotation = async (q: Quotation) => {
