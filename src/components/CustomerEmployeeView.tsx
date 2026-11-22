@@ -42,6 +42,7 @@ export default function CustomerEmployeeView({
 }: CustomerEmployeeViewProps) {
   const activeTab = viewMode;
   const [searchTerm, setSearchTerm] = useState('');
+  const [visibleCount, setVisibleCount] = useState(12);
 
   // Customer Form states
   const [isCustOpen, setIsCustOpen] = useState(false);
@@ -218,7 +219,7 @@ export default function CustomerEmployeeView({
             type="text"
             placeholder={activeTab === 'customers' ? 'Search customers by Name, Phone, Email...' : 'Search staff members...'}
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => { setSearchTerm(e.target.value); setVisibleCount(12); }}
             className="w-full pl-9 pr-4 py-1.5 bg-slate-50 text-slate-800 text-xs rounded-lg border border-slate-250 focus:outline-none focus:border-amber-500"
           />
         </div>
@@ -249,7 +250,7 @@ export default function CustomerEmployeeView({
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredCustomers.map((c) => (
+          {filteredCustomers.slice(0, visibleCount).map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
@@ -350,6 +351,13 @@ export default function CustomerEmployeeView({
             </div>
           ))}
 
+          {filteredCustomers.length > visibleCount && (
+            <button type="button" className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              onClick={() => setVisibleCount(value => value + 12)}>
+              Show 12 more customer shops ({filteredCustomers.length - visibleCount} remaining)
+            </button>
+          )}
+
           {filteredCustomers.length === 0 && (
             <div className="col-span-full py-16 text-center bg-white border border-dashed border-slate-200 rounded-xl text-slate-400">
               <Users className="w-9 h-9 mx-auto opacity-40 text-slate-400" />
@@ -414,7 +422,7 @@ export default function CustomerEmployeeView({
       {/* TAB 2 CONTENT: EMPLOYEE ROSTER */}
       {activeTab === 'employees' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredEmployees.map((emp) => {
+          {filteredEmployees.slice(0, visibleCount).map((emp) => {
             const isPresent = emp.attendanceStatus === 'Present';
             const isOnLeave = emp.attendanceStatus === 'On Leave';
 
@@ -480,6 +488,12 @@ export default function CustomerEmployeeView({
               </div>
             );
           })}
+          {filteredEmployees.length > visibleCount && (
+            <button type="button" className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              onClick={() => setVisibleCount(value => value + 12)}>
+              Show 12 more representatives ({filteredEmployees.length - visibleCount} remaining)
+            </button>
+          )}
         </div>
       )}
 
