@@ -1,3 +1,6 @@
+import { invoiceFooter } from './src/utils/invoiceFooter';
+import { purchaseVariant } from './backend/purchaseVariant';
+import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -335,7 +338,7 @@ const buildInvoicePdfBuffer = async (
     doc.on('error', (error) => reject(error));
 
     const customerName = tx.customerName || 'Walk-in Customer';
-    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || 'ARS (PVT) LTD');
+    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName);
     const companyTagline = String(invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail');
     const paymentStatus = String(tx.paymentStatus || (tx.paymentMethod === 'Credit Account' ? 'CREDIT SALE' : 'PAID'));
     const wmOpacity = 0.12;
@@ -443,8 +446,9 @@ const buildInvoicePdfBuffer = async (
 
     doc.moveDown(2);
     doc.font('Helvetica').fontSize(9).fillColor('#64748b');
-    doc.text('Thank You For Your Business', 40, doc.y, { width: 515, align: 'center' });
-    doc.text('Software Powered By ARS POS System', 40, doc.y + 12, { width: 515, align: 'center' });
+    doc.text(invoiceFooter.goods, 40, doc.y, { width: 515, align: 'center' });
+    doc.text(invoiceFooter.thanks, 40, doc.y, { width: 515, align: 'center' });
+    doc.fontSize(8).text(invoiceFooter.credit, 40, doc.y + 2, { width: 515, align: 'center' });
     const supportLine = `Support: ${String(invoiceCompanyMeta?.supportPhone || '-')} | ${String(invoiceCompanyMeta?.supportEmail || '-')}`;
     doc.text(supportLine, 40, doc.y + 24, { width: 515, align: 'center' });
 
@@ -1460,7 +1464,7 @@ const normalizeState = (state: DBState): DBState => ({
       invoicePrefix: String(shop.invoicePrefix || state.settings?.invoicePrefix || 'SL-INV'),
       printFormat: (shop.printFormat === 'thermal' ? 'thermal' : 'a4') as 'a4' | 'thermal',
       invoiceCompanyMeta: {
-        companyLegalName: String(shop?.invoiceCompanyMeta?.companyLegalName || 'ARS (PVT) LTD'),
+        companyLegalName: String(shop?.invoiceCompanyMeta?.companyLegalName || ''),
         companyTagline: String(shop?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail'),
         businessRegistrationNo: String(shop?.invoiceCompanyMeta?.businessRegistrationNo || ''),
         vatRegistrationNo: String(shop?.invoiceCompanyMeta?.vatRegistrationNo || ''),
@@ -1706,6 +1710,7 @@ const initPostgres = async () => {
       cost_price NUMERIC(12,2) NOT NULL
     );
 
+    ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
     CREATE TABLE IF NOT EXISTS stock_logs (
       id TEXT PRIMARY KEY,
       shop_id TEXT,
@@ -2048,10 +2053,10 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
     for (const item of po.items) {
       await client.query(
         `
-        INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price, variant_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
         `,
-        [po.id, item.productId, item.productName, item.quantity, item.costPrice]
+        [po.id, item.productId, item.productName, item.quantity, item.costPrice, item.variantId || null]
       );
     }
   }
@@ -2370,6 +2375,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       supplierId: row.supplier_id,
       supplierName: row.supplier_name,
       items: (poItemsByOrder.get(row.id) || []).map((item) => ({
+        variantId: item.variant_id || undefined,
         productId: item.product_id,
         productName: item.product_name,
         quantity: Number(item.quantity),
@@ -3714,10 +3720,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   }
 
   // Calculate taxes and totals
-  const taxRate = Math.max(0, Number(db.settings.taxRate) || 0) / 100;
-  const tax = Math.round((subtotal * taxRate) * 100) / 100;
-  const discountedSub = Math.max(0, subtotal - (discountAmount || 0));
-  const total = Math.round((discountedSub + tax) * 100) / 100;
+  const shopProfile = db.settings.shopProfiles?.find(shop => shop.id === activeShopId);
+  const { tax, total } = invoiceTotals(subtotal, shopProfile?.taxRate ?? db.settings.taxRate, discountAmount);
   const cashPaid = paymentMethod === 'Cash' ? Math.round(Number(cashReceived ?? total) * 100) / 100 : undefined;
   const cashChange = paymentMethod === 'Cash' ? Math.round(Math.max(0, (cashPaid ?? 0) - total) * 100) / 100 : undefined;
   const normalizedPaymentStatus = normalizePaymentStatus(paymentStatus)
@@ -4263,20 +4267,24 @@ app.post('/api/purchases', requireRole(['Super Admin', 'Store Manager', 'Invento
   const { supplierId, supplierName, items, orderUser } = req.body;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
 
-  if (!items || items.length === 0) {
-    return res.status(400).json({ error: 'Purchase items list cannot be empty' });
-  }
-
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Add at least one purchase line.' });
   let totalWeightCost = 0;
-  const parts = items.map((itm: any) => {
-    totalWeightCost += itm.costPrice * itm.quantity;
-    return {
-      productId: itm.productId,
-      productName: itm.productName,
-      quantity: Number(itm.quantity),
-      costPrice: Number(itm.costPrice)
-    };
-  });
+  const parts: PurchaseOrder['items'] = [];
+  for (const item of items) {
+    const product = db.products.find(p => p.id === item?.productId && p.shopId === activeShopId);
+    if (!product || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.costPrice) || item.costPrice < 0) {
+      return res.status(400).json({ error: 'Invalid purchase product, quantity or cost.' });
+    }
+    try {
+      const variant = purchaseVariant(product.variants || [], item.variantId, product.name);
+      totalWeightCost += item.costPrice * item.quantity;
+      parts.push({ productId: product.id, productName: variant ? product.name + ' (' + variant.name + ')' : product.name,
+        variantId: variant?.id, quantity: item.quantity, costPrice: item.costPrice });
+    } catch (error) {
+      return res.status(400).json({ error: (error as Error).message });
+    }
+  }
 
   const newPO: PurchaseOrder = {
     id: 'po-' + Date.now(),
@@ -4314,28 +4322,45 @@ app.put('/api/purchases/:id/status', requireRole(['Super Admin', 'Store Manager'
 
   if (index !== -1) {
     const oldStatus = db.purchaseOrders[index].status;
-    db.purchaseOrders[index].status = status;
+    if (status === oldStatus) return res.json(db.purchaseOrders[index]);
+    if (!['Pending', 'Ordered', 'Cancelled', 'Received'].includes(status) || oldStatus === 'Received' || oldStatus === 'Cancelled') {
+      return res.status(409).json({ error: 'Invalid change to purchase order status.' });
+    }
 
-    // If status transitions to 'Received', add all quantities to inventory and trigger the stock log!
-    if (status === 'Received' && oldStatus !== 'Received') {
-      db.purchaseOrders[index].items.forEach((item) => {
-        const prodIndex = db.products.findIndex((p) => p.id === item.productId && p.shopId === activeShopId);
-        if (prodIndex !== -1) {
-          db.products[prodIndex] = applyProductStockDelta(db.products[prodIndex], item.quantity);
-          // Log stock in
-          db.stockLogs.unshift({
-            id: 'log-' + Date.now() + Math.random().toString(36).substring(2, 5),
-            shopId: activeShopId,
-            date: new Date().toISOString(),
-            productId: item.productId,
-            productName: item.productName,
-            type: 'Stock In',
-            quantity: item.quantity,
-            reason: `Purchase Receipt for ${db.purchaseOrders[index].poNumber}`,
-            user: receiveUser || 'Inventory Officer'
-          });
+    if (status === 'Received') {
+      // Validate every line before updating any stock or closing the order.
+      const changes: Array<{ product: Product; variant?: ProductVariant; item: PurchaseOrder['items'][number] }> = [];
+      for (const item of db.purchaseOrders[index].items) {
+        const product = db.products.find(p => p.id === item.productId && p.shopId === activeShopId);
+        if (!product || !Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
+          return res.status(400).json({ error: 'Ordered product or quantity unavailable.' });
         }
-      });
+        try {
+          changes.push({ item, product, variant: purchaseVariant(product.variants || [], item.variantId, product.name, true) });
+        } catch (error) {
+          return res.status(400).json({ error: (error as Error).message });
+        }
+      }
+      for (const { product, variant, item } of changes) {
+        if (variant) {
+          variant.quantity += item.quantity;
+          product.quantity = product.variants!.reduce((sum, v) => sum + v.quantity, 0);
+        } else {
+          product.quantity += item.quantity;
+        }
+        // Log stock in
+        db.stockLogs.unshift({
+          id: 'log-' + Date.now() + Math.random().toString(36).substring(2, 5),
+          shopId: activeShopId,
+          date: new Date().toISOString(),
+          productId: item.productId,
+          productName: item.productName,
+          type: 'Stock In',
+          quantity: item.quantity,
+          reason: `Purchase Receipt for ${db.purchaseOrders[index].poNumber}`,
+          user: receiveUser || 'Inventory Officer'
+        });
+      }
 
       db.activityLogs.unshift({
         id: 'act-' + Date.now(),
@@ -4358,6 +4383,7 @@ app.put('/api/purchases/:id/status', requireRole(['Super Admin', 'Store Manager'
       });
     }
 
+    db.purchaseOrders[index].status = status;
     await saveDb();
     res.json(db.purchaseOrders[index]);
   } else {
@@ -4768,8 +4794,22 @@ app.get('/api/quotations', (_req, res) => {
 app.post('/api/quotations', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
   const { activeShopId } = getActiveShopContext(db, req);
-  const { customerName, customerId, customerPhone, items, subtotal, tax, discountAmount, total, validUntil, notes } = req.body;
-  if (!items || items.length === 0) return res.status(400).json({ error: 'Quote items are required' });
+  const { customerName, customerId, customerPhone, items, discountAmount = 0, validUntil, notes } = req.body;
+  if (!Array.isArray(items) || !items.length || !Number.isFinite(discountAmount) || discountAmount < 0) {
+    return res.status(400).json({ error: 'Enter quotation items and a valid discount.' });
+  }
+  let lineSubtotal = 0;
+  for (const item of items) {
+    if (!item || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.sellingPrice) ||
+        item.sellingPrice < 0 || !Number.isFinite(item.discount ?? 0) || (item.discount ?? 0) < 0 ||
+        (item.discount ?? 0) > 100 || !Number.isFinite(item.discountAmount ?? 0) || (item.discountAmount ?? 0) < 0) {
+      return res.status(400).json({ error: 'Invalid quotation price, quantity or line discount.' });
+    }
+    const line = item.sellingPrice * item.quantity * (1 - (item.discount ?? 0) / 100) - (item.discountAmount ?? 0);
+    lineSubtotal += roundMoney(Math.max(0, line));
+  }
+  const profile = db.settings.shopProfiles?.find(shop => shop.id === activeShopId);
+  const { subtotal, tax, total } = invoiceTotals(lineSubtotal, profile?.taxRate ?? db.settings.taxRate, discountAmount);
   const quotation: Quotation = {
     id: `quo-${Date.now()}`,
     shopId: activeShopId,

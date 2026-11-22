@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import { purchaseVariant } from './purchaseVariant';
 import bcrypt from 'bcryptjs';
 import { DATABASE_URL, DB_STATE_KEY } from './config';
 import {
@@ -256,6 +257,8 @@ export const initDbTables = async () => {
         quantity INTEGER NOT NULL,
         cost_price NUMERIC(12,2) NOT NULL
       );
+
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
 
       CREATE TABLE IF NOT EXISTS stock_logs (
         id TEXT PRIMARY KEY,
@@ -646,6 +649,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       supplierId: row.supplier_id,
       supplierName: row.supplier_name,
       items: (poItemsByOrder.get(row.id) || []).map((item) => ({
+        variantId: item.variant_id || undefined,
         productId: item.product_id,
         productName: item.product_name,
         quantity: Number(item.quantity),
@@ -1463,10 +1467,13 @@ export const createPurchaseOrder = async (po: PurchaseOrder) => {
     );
 
     for (const item of po.items) {
+      const product = await client.query('SELECT name, variants_json FROM products WHERE id = $1 AND shop_id = $2', [item.productId, po.shopId]);
+      if (!product.rowCount) throw new Error('Product unavailable in this shop.');
+      purchaseVariant(product.rows[0].variants_json || [], item.variantId, product.rows[0].name);
       await client.query(
-        `INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [po.id, item.productId, item.productName, item.quantity, item.costPrice]
+        `INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price, variant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [po.id, item.productId, item.productName, item.quantity, item.costPrice, item.variantId || null]
       );
     }
 
@@ -1497,8 +1504,11 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
     }
     const po = poRes.rows[0];
     if (po.status === 'Received') {
-      throw new Error('Purchase order has already been received.');
+      await client.query('COMMIT');
+      return;
     }
+
+    if (po.status !== 'Pending' && po.status !== 'Ordered') throw new Error('Only open orders can be received.');
 
     // Load items
     const itemsRes = await client.query(
@@ -1513,38 +1523,39 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
         'SELECT * FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
         [item.product_id, shopId]
       );
-      if (productRes.rowCount > 0) {
-        const dbProduct = productRes.rows[0];
-        // Note: For simplicity, receipt adds to the main product stock.
-        // If it's a product with variants, it adds to the first variant if exists, or directly.
-        const variantsList = Array.isArray(dbProduct.variants_json) ? dbProduct.variants_json as ProductVariant[] : [];
-
-        if (variantsList.length > 0) {
-          // Add to first variant or match SKU if possible
-          const index = 0;
-          variantsList[index].quantity = (variantsList[index].quantity || 0) + Number(item.quantity);
-          const totalProductQty = variantsList.reduce((sum, v) => sum + Math.max(0, Number(v.quantity || 0)), 0);
-          await client.query(
-            `UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3`,
-            [totalProductQty, JSON.stringify(variantsList), dbProduct.id]
-          );
-        } else {
-          await client.query(
-            `UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
-            [item.quantity, dbProduct.id]
-          );
-        }
-
-        // Add Stock Log
-        const logId = 'log-' + Date.now() + Math.random().toString(36).substring(2, 5);
+      if (!productRes.rowCount) throw new Error('Ordered product unavailable in this shop.');
+      if (!Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('Invalid purchase quantity.');
+      const dbProduct = productRes.rows[0];
+      const variantsList: ProductVariant[] = dbProduct.variants_json || [];
+      const variant = purchaseVariant(variantsList, item.variant_id, dbProduct.name, true);
+      if (variant) {
+        variant.quantity = Number(variant.quantity || 0) + Number(item.quantity);
+        const totalProductQty = variantsList.reduce((sum, v) => sum + Math.max(0, Number(v.quantity || 0)), 0);
         await client.query(
-          `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
-           VALUES ($1, $2, NOW(), $3, $4, 'Stock In', $5, 'Purchase Order Receipt', $6, $7)`,
-          [logId, shopId, item.product_id, item.product_name, item.quantity, receiveUser, poId]
+          `UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3`,
+          [totalProductQty, JSON.stringify(variantsList), dbProduct.id]
+        );
+      } else {
+        await client.query(
+          `UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
+          [item.quantity, dbProduct.id]
         );
       }
+
+      // Add Stock Log
+      const logId = 'log-' + Date.now() + Math.random().toString(36).substring(2, 5);
+      await client.query(
+        `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
+         VALUES ($1, $2, NOW(), $3, $4, 'Stock In', $5, 'Purchase Order Receipt', $6, $7)`,
+        [logId, shopId, item.product_id, item.product_name, item.quantity, receiveUser, poId]
+      );
     }
 
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1, $2, NOW(), $3, 'Inventory Staff', 'Received Materials', $4)`,
+      ['received-' + poId, shopId, receiveUser, 'Received purchase order ' + po.po_number]
+    );
     // 3) Update status to Received
     await client.query(
       `UPDATE purchase_orders SET status = 'Received' WHERE id = $1`,

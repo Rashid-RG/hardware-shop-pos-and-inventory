@@ -39,7 +39,7 @@ export default function AccountingSettingsView({
   onAddManualExpense,
 }: AccountingSettingsViewProps) {
   const defaultInvoiceCompanyMeta = {
-    companyLegalName: 'ARS (PVT) LTD',
+    companyLegalName: '',
     companyTagline: 'Hardware Wholesale & Retail',
     businessRegistrationNo: '',
     vatRegistrationNo: '',

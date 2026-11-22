@@ -175,6 +175,7 @@ export interface PurchaseOrder {
   items: {
     productId: string;
     productName: string;
+    variantId?: string;
     quantity: number;
     costPrice: number;
   }[];

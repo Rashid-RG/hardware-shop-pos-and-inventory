@@ -1,3 +1,4 @@
+import { invoiceFooter } from '../../src/utils/invoiceFooter';
 import PDFDocument from 'pdfkit';
 import path from 'path';
 import fs from 'fs';
@@ -72,7 +73,7 @@ export const buildInvoicePdfBuffer = async (
     doc.on('error', (error) => reject(error));
 
     const customerName = tx.customerName || 'Walk-in Customer';
-    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || 'ARS (PVT) LTD');
+    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName);
     const companyTagline = String(invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail');
     const paymentStatus = String(tx.paymentStatus || (tx.paymentMethod === 'Credit Account' ? 'CREDIT SALE' : 'PAID'));
     const wmOpacity = 0.12;
@@ -180,8 +181,9 @@ export const buildInvoicePdfBuffer = async (
 
     doc.moveDown(2);
     doc.font('Helvetica').fontSize(9).fillColor('#64748b');
-    doc.text('Thank You For Your Business', 40, doc.y, { width: 515, align: 'center' });
-    doc.text('Software Powered By ARS POS System', 40, doc.y + 12, { width: 515, align: 'center' });
+    doc.text(invoiceFooter.goods, 40, doc.y, { width: 515, align: 'center' });
+    doc.text(invoiceFooter.thanks, 40, doc.y, { width: 515, align: 'center' });
+    doc.fontSize(8).text(invoiceFooter.credit, 40, doc.y + 2, { width: 515, align: 'center' });
     const supportLine = `Support: ${String(invoiceCompanyMeta?.supportPhone || '-')} | ${String(invoiceCompanyMeta?.supportEmail || '-')}`;
     doc.text(supportLine, 40, doc.y + 24, { width: 515, align: 'center' });
 

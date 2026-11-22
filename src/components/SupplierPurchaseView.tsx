@@ -60,8 +60,10 @@ export default function SupplierPurchaseView({
   // New PO Composer details
   const [isPOOpen, setIsPOOpen] = useState(false);
   const [poSupplierId, setPoSupplierId] = useState('');
-  const [poItems, setPoItems] = useState<{ productId: string; productName: string; quantity: number; costPrice: number }[]>([]);
+  const [poItems, setPoItems] = useState<PurchaseOrder['items']>([]);
   const [selectedAddProductId, setSelectedAddProductId] = useState('');
+  const [variantId, setVariantId] = useState('');
+  const selectedProduct = products.find(product => product.id === selectedAddProductId);
   const [addQty, setAddQty] = useState(20);
   const [addCost, setAddCost] = useState(5.0);
   const [isPOSubmitting, setIsPOSubmitting] = useState(false);
@@ -117,8 +119,12 @@ export default function SupplierPurchaseView({
     const product = products.find((p) => p.id === selectedAddProductId);
     if (!product) return;
 
-    // Check if line item exists already
-    const existingIndex = poItems.findIndex((it) => it.productId === selectedAddProductId);
+    const variant = product.variants?.find(item => item.id === variantId);
+    if (product.variants?.length && !variant) return alert('Choose the size or variant to receive.');
+    if (!Number.isSafeInteger(addQty) || addQty <= 0 || !Number.isFinite(addCost) || addCost < 0) {
+      return alert('Enter a positive whole quantity and a valid unit cost.');
+    }
+    const existingIndex = poItems.findIndex((it) => it.productId === selectedAddProductId && it.variantId === variant?.id && it.costPrice === addCost);
     if (existingIndex !== -1) {
       const updated = [...poItems];
       updated[existingIndex].quantity += addQty;
@@ -128,7 +134,8 @@ export default function SupplierPurchaseView({
         ...poItems,
         {
           productId: selectedAddProductId,
-          productName: product.name,
+          productName: variant ? product.name + " (" + variant.name + ")" : product.name,
+          variantId: variant?.id,
           quantity: addQty,
           costPrice: addCost,
         },
@@ -379,7 +386,7 @@ export default function SupplierPurchaseView({
                       >
                         <Wallet className="w-3.5 h-3.5" /> Record Payment
                       </button>
-                      {po.status !== 'Received' && canModify ? (
+                      {(po.status === 'Pending' || po.status === 'Ordered') && canModify ? (
                         <button
                           id={`btn-receive-po-${po.id}`}
                           onClick={() => handleReceivePurchaseOrder(po.id)}
@@ -728,6 +735,7 @@ export default function SupplierPurchaseView({
                       id="po-additem-select"
                       value={selectedAddProductId}
                       onChange={(e) => {
+                        setVariantId('');
                         setSelectedAddProductId(e.target.value);
                         // Autofill cost price if found
                         const prod = products.find((p) => p.id === e.target.value);
@@ -746,6 +754,18 @@ export default function SupplierPurchaseView({
                     </select>
                   </div>
 
+                  {!!selectedProduct?.variants?.length && (
+                    <label className="text-xs">Size or variant
+                      <select value={variantId} className="block w-full p-2" onChange={event => {
+                        const variant = selectedProduct.variants?.find(item => item.id === event.target.value);
+                        setVariantId(event.target.value);
+                        setAddCost(variant?.costPrice ?? selectedProduct.costPrice);
+                      }}>
+                        <option value="">Choose a variant</option>
+                        {selectedProduct.variants.map(item => <option key={item.id} value={item.id}>{item.name} ({item.sku})</option>)}
+                      </select>
+                    </label>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-slate-400 text-[10px] uppercase font-mono mb-1">Buy Quantity</label>

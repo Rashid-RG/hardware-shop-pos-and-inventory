@@ -1,3 +1,5 @@
+import { invoiceFooter } from '../utils/invoiceFooter';
+import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import React, { useState, useEffect } from 'react';
 import {
   Search,
@@ -70,7 +72,7 @@ export default function POSView({
   const shopAddress = activeShopProfile?.address || '150 Galle Road, Colombo 03, Sri Lanka';
   const shopPhone = activeShopProfile?.phone || '+94 11 234 5678';
   const invoiceCompanyMeta = {
-    companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || 'ARS (PVT) LTD',
+    companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName,
     companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail',
     businessRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.businessRegistrationNo || '',
     vatRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.vatRegistrationNo || '',
@@ -448,11 +450,9 @@ export default function POSView({
 
   const grossSubtotal = cart.reduce((acc, item) => acc + getLinePricing(item).gross, 0);
   const itemDiscountTotal = cart.reduce((acc, item) => acc + getLinePricing(item).lineDiscountTotal, 0);
-  const subtotal = cart.reduce((acc, item) => acc + getLinePricing(item).lineTotal, 0);
+  const subtotal = cart.reduce((acc, item) => acc + roundMoney(getLinePricing(item).lineTotal), 0);
 
-  const tax = Math.round(subtotal * (taxConfig.taxRate / 100) * 100) / 100; // dynamic VAT/sales tax from settings
-  const discountedSub = Math.max(0, subtotal - cashDiscount);
-  const total = Math.round((discountedSub + tax) * 100) / 100;
+  const { tax, total } = invoiceTotals(subtotal, taxConfig.taxRate, cashDiscount);
   const numericCashReceived = Number(cashReceived) || 0;
   const changeDue = paymentMethod === 'Cash' ? Math.max(0, Math.round((numericCashReceived - total) * 100) / 100) : 0;
   const cashShortage = paymentMethod === 'Cash' && numericCashReceived < total;
@@ -925,7 +925,7 @@ export default function POSView({
                 </div>
               </div>
 
-              <div class="center muted" style="margin-top: 8px;">Thank you for choosing ${escapeHtml(activeShopName)}. We value your trust and look forward to serving you again.</div>
+              <div class="center muted" style="margin-top: 8px;">${invoiceFooter.goods}<br>${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small></div>
             </section>
             <script>
               setTimeout(() => {
@@ -1144,8 +1144,9 @@ export default function POSView({
                   </div>
 
                   <div class="footer">
-                    <div><strong>Thank You For Your Business</strong></div>
-                    <div>Software Powered By ARS POS System</div>
+                    <div>${invoiceFooter.goods}</div>
+                    <div><strong>${invoiceFooter.thanks}</strong></div>
+                    <div><small>${invoiceFooter.credit}</small></div>
                     <div style="margin-top:4px;">Support: ${escapeHtml(invoiceCompanyMeta.supportPhone || '-')} | ${escapeHtml(invoiceCompanyMeta.supportEmail || '-')}</div>
                     <div>${escapeHtml(invoiceCompanyMeta.websiteUrl || '-')} ${invoiceCompanyMeta.socialLinks ? `| ${escapeHtml(invoiceCompanyMeta.socialLinks)}` : ''}</div>
                   </div>
@@ -1399,7 +1400,7 @@ export default function POSView({
               </div>
 
               <footer class="foot">
-                ${isWholesaleShop ? 'Wholesale supply invoice generated on A4 format. Please validate delivered quantities and terms at receipt.' : 'Returns accepted within 14 days with valid receipt.'} Printed by ${escapeHtml(activeShopName)}.
+                ${isWholesaleShop ? 'Wholesale supply invoice generated on A4 format. Please validate delivered quantities and terms at receipt.' : 'Returns accepted within 14 days with valid receipt.'} Printed by ${escapeHtml(activeShopName)}.<br>${invoiceFooter.goods} ${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small>
               </footer>
 
               <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px;">
@@ -2409,8 +2410,9 @@ export default function POSView({
 
                 {/* Footer notes */}
                 <div className="text-center pt-4 border-t border-dashed border-slate-200 text-[10px] text-slate-500">
-                  <p className="font-semibold">Thank You For Your Business</p>
-                  <p className="mt-1">Software Powered By ARS POS System</p>
+                  <p>{invoiceFooter.goods}</p>
+                  <p className="font-semibold">{invoiceFooter.thanks}</p>
+                  <p className="mt-1">{invoiceFooter.credit}</p>
                   <p className="mt-1">Support: {invoiceCompanyMeta.supportPhone || '-'} | {invoiceCompanyMeta.supportEmail || '-'}</p>
                   <p>{invoiceCompanyMeta.websiteUrl || '-'}{invoiceCompanyMeta.socialLinks ? ` | ${invoiceCompanyMeta.socialLinks}` : ''}</p>
                 </div>

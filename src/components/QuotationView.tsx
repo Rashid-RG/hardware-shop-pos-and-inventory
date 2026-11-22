@@ -1,3 +1,4 @@
+import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import React, { useState, useMemo } from 'react';
 import {
   FileText,
@@ -66,7 +67,7 @@ export default function QuotationView({
   const [isSaving, setIsSaving] = useState(false);
   const [convertingId, setConvertingId] = useState<string | null>(null);
 
-  const taxRate = (activeShopProfile?.taxRate ?? taxConfig.taxRate) / 100;
+  const taxRate = activeShopProfile?.taxRate ?? taxConfig.taxRate;
 
   const filteredProducts = useMemo(() =>
     prodSearch.length > 1
@@ -96,12 +97,9 @@ export default function QuotationView({
   const { subtotal, tax, total } = useMemo(() => {
     const sub = quoteItems.reduce((sum, item) => {
       const line = item.sellingPrice * item.quantity * (1 - item.discount / 100) - (item.discountAmount || 0);
-      return sum + Math.max(0, line);
+      return sum + roundMoney(Math.max(0, line));
     }, 0);
-    const disc = Math.min(sub, quoteDiscount);
-    const discountedSub = sub - disc;
-    const t = discountedSub * taxRate;
-    return { subtotal: Math.round(sub * 100) / 100, tax: Math.round(t * 100) / 100, total: Math.round((discountedSub + t) * 100) / 100 };
+    return invoiceTotals(sub, taxRate, quoteDiscount);
   }, [quoteItems, quoteDiscount, taxRate]);
 
   const handleSave = async () => {
