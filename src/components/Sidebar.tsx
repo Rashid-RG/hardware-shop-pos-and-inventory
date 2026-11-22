@@ -3,12 +3,12 @@ import {
   LayoutDashboard, ShoppingCart, Package, Truck, Users2,
   Settings2, LogOut, ShieldCheck, FileBarChart2, FileText,
   Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3,
-  UserRoundCog, Ship, Building2, Landmark, ClipboardCheck,
+  UserRoundCog, Ship, Building2, Landmark, ClipboardCheck, DatabaseBackup,
 } from 'lucide-react';
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'db-admin' | 'calculators';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -63,6 +63,7 @@ const groups: NavGroup[] = [
   ] },
   { id: 'admin', title: 'Administration', items: [
     { id: 'company-profile', label: 'Company Profile', icon: Building2, roles: MANAGERS },
+    { id: 'backup-recovery', label: 'Backup & Recovery', icon: DatabaseBackup, roles: ['Super Admin'] },
     { id: 'db-admin', label: 'System Administration', icon: ShieldCheck, roles: ['Super Admin'] },
   ] },
 ];
