@@ -16,7 +16,7 @@ export default function ARSBrand({
   compact = false,
   featured = false,
   dark = false,
-  subtitle = 'HARDWARE & TRADING',
+  subtitle = 'IMPORTS & WHOLESALE DISTRIBUTION',
   className = '',
 }: ARSBrandProps) {
   return (
