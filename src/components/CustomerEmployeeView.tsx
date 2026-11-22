@@ -194,23 +194,23 @@ export default function CustomerEmployeeView({
   };
 
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
-      <div className="flex flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+    <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
+      <div className="flex flex-col gap-1 rounded-xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm sm:px-5">
         <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-amber-700">
-          {activeTab === 'customers' ? 'Sales & customer relationships' : 'Operations & workforce'}
+          {activeTab === 'customers' ? 'Sales & customer relationships' : 'ARS field sales team'}
         </p>
         <h2 className="font-heading text-2xl font-bold tracking-tight text-slate-950">
-          {activeTab === 'customers' ? 'Customer Management' : 'Staff Management'}
+          {activeTab === 'customers' ? 'Customer Management' : 'Sales Representatives'}
         </h2>
         <p className="text-sm leading-relaxed text-slate-500">
           {activeTab === 'customers'
             ? 'Manage customer records, credit limits, outstanding balances and payments.'
-            : 'Manage staff details, roles, attendance and payroll information.'}
+            : 'Keep registered sales representatives organized for accurate invoice assignment.'}
         </p>
       </div>
 
       {/* FILTER SEARCH AREA */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+      <div className="bg-white px-3 py-2.5 rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="relative w-full sm:w-85">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
@@ -230,7 +230,7 @@ export default function CustomerEmployeeView({
               onClick={() => setIsCustOpen(true)}
               className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 transition"
             >
-              <Plus className="w-4 h-4" /> Register Customer Profile
+              <Plus className="w-4 h-4" /> Add Customer Shop
             </button>
           ) : (
             canOnboard && (
@@ -239,7 +239,7 @@ export default function CustomerEmployeeView({
                 onClick={() => setIsEmpOpen(true)}
                 className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 transition"
               >
-                <Plus className="w-4 h-4" /> Onboard Staff Member
+                <Plus className="w-4 h-4" /> Add Sales Representative
               </button>
             )
           )}
@@ -248,12 +248,12 @@ export default function CustomerEmployeeView({
 
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {filteredCustomers.map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
-              className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
+              className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
             >
               <div>
                 <div className="flex items-start justify-between">
@@ -269,7 +269,7 @@ export default function CustomerEmployeeView({
                   </span>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-50 space-y-2 text-xs text-slate-600 font-mono">
+                <div className="mt-2 pt-2 border-t border-slate-50 space-y-1 text-xs text-slate-600 font-mono">
                   <p className="flex items-center gap-2">
                     <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     <span>{c.phone}</span>
@@ -284,7 +284,7 @@ export default function CustomerEmployeeView({
                   </p>
                 </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-2 text-[10px]">
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
                   <div className="rounded-lg border border-amber-100 bg-amber-50 p-2">
                     <p className="uppercase font-semibold text-amber-700">Credit Limit</p>
                     <p className="font-mono font-bold text-slate-900 mt-1">{formatMoney(Number(c.creditLimit || 0))}</p>
@@ -296,7 +296,9 @@ export default function CustomerEmployeeView({
                 </div>
 
                 {c.id !== 'cust-walkin' && (
-                  <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50/80 p-3 space-y-2">
+                  <details className="mt-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2 space-y-2">
+                    <summary className="cursor-pointer py-1 text-xs font-semibold text-slate-700">Credit actions & recent payments</summary>
+                    <div className="mt-2 space-y-2">
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
@@ -337,11 +339,12 @@ export default function CustomerEmployeeView({
                         ))}
                       </div>
                     )}
-                  </div>
+                    </div>
+                  </details>
                 )}
               </div>
 
-              <div className="mt-4 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
+              <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
                 <span>Invoiced Checkouts: <strong className="text-slate-800">{c.purchaseCount}</strong></span>
               </div>
             </div>
@@ -357,15 +360,15 @@ export default function CustomerEmployeeView({
       )}
 
       {paymentDraft && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 z-40 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-md border border-slate-250 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button onClick={() => setPaymentDraft(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X className="w-5 h-5" />
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">Customer Credit Payment</h3>
 
-            <form onSubmit={handleSubmitCreditPayment} className="space-y-4 text-xs font-sans">
+            <form onSubmit={handleSubmitCreditPayment} className="space-y-2.5 text-xs font-sans">
               <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-slate-700">
                 <div className="font-semibold">{paymentDraft.name}</div>
                 <div className="text-[10px] font-mono text-slate-500 mt-1">Outstanding: {formatMoney(Number(paymentDraft.creditBalance || 0))}</div>
@@ -419,7 +422,7 @@ export default function CustomerEmployeeView({
               <div
                 key={emp.id}
                 id={`employee-card-${emp.id}`}
-                className="bg-white p-5 rounded-xl border border-slate-150 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
+                className="bg-white p-3 rounded-xl border border-slate-150 shadow-2xs flex flex-col justify-between hover:shadow-xs transition"
               >
                 <div>
                   <div className="flex items-start justify-between">
@@ -492,7 +495,7 @@ export default function CustomerEmployeeView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">
-              Onboard Loyalty Customer Profile
+              Register Wholesale Customer Shop
             </h3>
 
             <form onSubmit={handleSubmitCustomer} className="space-y-4 text-xs font-sans">
@@ -504,7 +507,7 @@ export default function CustomerEmployeeView({
                   required
                   value={custName}
                   onChange={(e) => setCustName(e.target.value)}
-                  placeholder="e.g. Liam Neeson (Contractor)"
+                  placeholder="Registered shop name"
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -516,7 +519,7 @@ export default function CustomerEmployeeView({
                   type="text"
                   value={custPhone}
                   onChange={(e) => setCustPhone(e.target.value)}
-                  placeholder="+1-555-9010"
+                  placeholder="e.g. 07X XXX XXXX"
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                 />
               </div>
@@ -528,7 +531,7 @@ export default function CustomerEmployeeView({
                   type="email"
                   value={custEmail}
                   onChange={(e) => setCustEmail(e.target.value)}
-                  placeholder="neeson@contacting.org"
+                  placeholder="shop@example.lk"
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                 />
               </div>
@@ -540,7 +543,7 @@ export default function CustomerEmployeeView({
                   type="text"
                   value={custAddress}
                   onChange={(e) => setCustAddress(e.target.value)}
-                  placeholder="Street 18, Houston, TX"
+                  placeholder="Shop address, town, Sri Lanka"
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -591,7 +594,7 @@ export default function CustomerEmployeeView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">
-              Onboard Store Staff Member
+              Register Sales Representative
             </h3>
 
             <form onSubmit={handleSubmitEmployee} className="space-y-4 text-xs font-sans">
@@ -603,7 +606,7 @@ export default function CustomerEmployeeView({
                   required
                   value={empName}
                   onChange={(e) => setEmpName(e.target.value)}
-                  placeholder="e.g. Barney Stinson"
+                  placeholder="Representative full name"
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
                 />
               </div>
@@ -631,7 +634,7 @@ export default function CustomerEmployeeView({
                     type="text"
                     value={empPhone}
                     onChange={(e) => setEmpPhone(e.target.value)}
-                    placeholder="+1-555-2200"
+                    placeholder="e.g. 07X XXX XXXX"
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                   />
                 </div>
@@ -643,7 +646,7 @@ export default function CustomerEmployeeView({
                     type="email"
                     value={empEmail}
                     onChange={(e) => setEmpEmail(e.target.value)}
-                    placeholder="b.stinson@ironshop.com"
+                    placeholder="representative@example.lk"
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-400 font-mono"
                   />
                 </div>
