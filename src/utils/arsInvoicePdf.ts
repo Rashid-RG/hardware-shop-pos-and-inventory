@@ -63,7 +63,7 @@ export const renderArsInvoicePdf = async (
     // Transparent footer: never paint a navy band or handwritten signature.
     doc.moveTo(LEFT, 803).lineTo(RIGHT, 803).lineWidth(0.55).strokeColor(LINE).stroke();
     label('Generated with RS Nextward Business Systems', LEFT, 811, 282, 8.2, 'left', true);
-    label('Retail POS  •  Inventory  •  Wholesale Billing', 320, 811, 240, 8.2, 'right');
+    label('Reliable POS  •  Inventory  •  Wholesale Billing', 320, 811, 240, 8.2, 'right');
   };
   const header = (continuation: boolean) => {
     if (continuation) {
@@ -98,7 +98,8 @@ export const renderArsInvoicePdf = async (
     row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 166, 239, 61);
     row('Salesperson', safe(tx.cashierName), 306, 181, 239, 61);
     // Print metadata and payment type remain visible but compact.
-    label(safe(tx.paymentMethod), 459, 197, 89, 7.5, 'right');
+    label('Payment', 410, 197, 59, 7.5, 'left', true);
+    label(safe(tx.paymentMethod), 469, 197, 79, 7.5, 'right');
     return 226;
   };
   const columns = [35, 56, 277, 339, 377, 439, 495, 560];
@@ -120,7 +121,7 @@ export const renderArsInvoicePdf = async (
   const notesAndTotals = (y: number) => {
     const top = Math.max(y + 16, 581);
     section(LEFT, top, 260, 114, 'Notes');
-    label('Goods once sold may be exchanged only with', 45, top + 31, 242, 8.2);
+    label('Goods once sold will be exchanged only with', 45, top + 31, 242, 8.2);
     label('the original invoice and management approval.', 45, top + 44, 242, 8.2);
     label('Thank you for your business.', 45, top + 75, 242, 8.2);
     box(305, top, 255, 114);
