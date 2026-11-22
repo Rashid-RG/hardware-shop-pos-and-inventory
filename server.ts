@@ -5289,7 +5289,7 @@ app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
   const name=String(req.body?.name||'').trim();
   const pctRaw=req.body?.ownershipPercent;
   const pct=pctRaw===null || pctRaw===undefined || pctRaw==='' ? null : Number(pctRaw);
-  if(name.length<2||name.length>120 || (pct!==null && (!Number.isFinite(pct)||pct<0||pct>100||Math.round(pct*100)!==pct*100))) {
+  if(name.length<2||name.length>120 || (pct!==null && (!Number.isFinite(pct)||pct<0||pct>100||Math.abs(pct*100-Math.round(pct*100))>0.00001))) {
     return res.status(400).json({error:'Provide partner name and optional valid ownership percentage.'});
   }
   const client=await pool.connect();
