@@ -5235,7 +5235,7 @@ app.post('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager'
   const charges=[req.body?.freightLkr??0,req.body?.customsLkr??0,req.body?.clearanceLkr??0].map(lkrAmount);
   if (!poId || !reference || reference.length>90 || container.length>80 || notes.length>2000 ||
       !['CNY','USD','LKR'].includes(currency) || !Number.isFinite(fx) || fx<=0 || fx>100000 ||
-      charges.some(n=>n===null) || (eta && !/^\\d{4}-\\d{2}-\\d{2}$/.test(eta))) {
+      charges.some(n=>n===null) || (eta && !/^\d{4}-\d{2}-\d{2}$/.test(eta))) {
     return res.status(400).json({error:'Valid purchase order, shipment reference, currency, exchange rate and expenses are required.'});
   }
   try {
@@ -5348,7 +5348,7 @@ app.post('/api/ars/partner-capital',requireRole(['Super Admin']),async(req,res)=
   const note=String(req.body?.note||'').trim();
   const date=String(req.body?.entryDate||'').trim();
   if(!['Contribution','Drawing'].includes(entryType)||amount===null||amount<=0||!partnerId||!reference||reference.length>120||
-    note.length>1000|| !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
+    note.length>1000|| !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return res.status(400).json({error:'Partner, valid amount, date, reference and contribution/drawing type are required.'});
   }
   try{
