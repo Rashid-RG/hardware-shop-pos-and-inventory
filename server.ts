@@ -2973,7 +2973,14 @@ app.post('/api/db/sync-normalized', requireRole(['Super Admin']), requireExplici
   res.json({ success: true, message: 'Normalized tables synced from app_state' });
 });
 
-app.get('/api/db-admin/tables', requireRole(['Super Admin', 'Store Manager']), async (_req, res) => {
+// Raw SQL table browsing is a development-only diagnostic tool, not a business admin feature.
+const requireLocalDatabaseDiagnostics: express.RequestHandler = (_req, res, next) => {
+  if (IS_PRODUCTION || process.env.ENABLE_DATABASE_DIAGNOSTICS !== 'true') {
+    return res.status(403).json({ error: 'Raw database diagnostics are disabled.' });
+  }
+  next();
+};
+app.get('/api/db-admin/tables', requireRole(['Super Admin']), requireLocalDatabaseDiagnostics, async (_req, res) => {
   const result = await pool.query<{ table_name: string }>(
     `
     SELECT table_name
@@ -2987,7 +2994,7 @@ app.get('/api/db-admin/tables', requireRole(['Super Admin', 'Store Manager']), a
   res.json({ tables: result.rows.map((r) => r.table_name).filter((name) => !hiddenTables.has(name)) });
 });
 
-app.get('/api/db-admin/table/:tableName', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
+app.get('/api/db-admin/table/:tableName', requireRole(['Super Admin']), requireLocalDatabaseDiagnostics, async (req, res) => {
   const { tableName } = req.params;
   const requested = String(tableName || '').trim();
   if (!/^[a-z_][a-z0-9_]*$/i.test(requested)) {
