@@ -90,6 +90,7 @@ export default function CustomerEmployeeView({
         address: custAddress,
         loyaltyBalance: custBalance,
       });
+      notify.success('Customer shop registered successfully.');
       setIsCustOpen(false);
       setCustName('');
       setCustPhone('');
@@ -119,6 +120,7 @@ export default function CustomerEmployeeView({
         salary: empSalary,
         attendanceStatus: empAttendance,
       });
+      notify.success('Sales Representative registered successfully.');
       setIsEmpOpen(false);
       setEmpName('');
       setEmpPhone('');
@@ -161,6 +163,7 @@ export default function CustomerEmployeeView({
     }
     try {
       await onSetCreditLimit(customerId, value);
+      notify.success('Customer credit limit updated.');
     } catch (err) {
       notify.error('Failed to update credit limit: ' + err);
     }
@@ -183,6 +186,7 @@ export default function CustomerEmployeeView({
         date: paymentDate,
         note: paymentNote || undefined,
       });
+      notify.success('Customer payment recorded.');
       setPaymentDraft(null);
       setPaymentAmount('');
       setPaymentMethod('Cash');
