@@ -2558,9 +2558,33 @@ const loadDb = async () => {
   await syncNormalizedFromState(db);
 };
 
+// Stop accepting more writes if a save fails and the last committed state
+// cannot be recovered. In-memory mutations must never be treated as durable.
+let databaseWriteHealthy = true;
+
 const saveDb = async () => {
-  db = normalizeState(db);
-  await syncNormalizedFromState(db);
+  if (!databaseWriteHealthy) {
+    throw new Error('Database writes are unavailable until the server is restarted and recovery is verified.');
+  }
+  try {
+    const nextState = normalizeState(db);
+    await syncNormalizedFromState(nextState);
+    db = nextState;
+  } catch (saveError) {
+    // A failed PostgreSQL write rolls back its transaction. The current
+    // in-memory object may already have stock/credit mutations; discard it.
+    try {
+      const committedState = await loadStateFromNormalized();
+      if (!committedState) {
+        throw new Error('Cannot reload a committed database state');
+      }
+      db = committedState;
+    } catch (recoveryError) {
+      databaseWriteHealthy = false;
+      console.error('Database recovery failed: further writes are disabled', recoveryError);
+    }
+    throw saveError;
+  }
 };
 
 type AppRequest = express.Request & { authUser?: AuthUser };
@@ -2606,6 +2630,9 @@ let writeQueue: Promise<void> = Promise.resolve();
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     return next();
+  }
+  if (!databaseWriteHealthy) {
+    return res.status(503).json({ error: 'Database recovery required. Writes are temporarily disabled.' });
   }
 
   let releaseWrite!: () => void;
