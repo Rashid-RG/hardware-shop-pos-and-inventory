@@ -4226,6 +4226,7 @@ app.post('/api/transactions/:id/share/email', requireRole(['Super Admin', 'Store
     return res.status(400).json({ error: 'SMTP configuration is missing. Set EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, EMAIL_SMTP_USER, EMAIL_SMTP_PASS, EMAIL_FROM.' });
   }
 
+  let deliveryCompleted = false;
   try {
     const pdfBuffer = await buildInvoicePdfBuffer(tx, activeShopName, {
       copyType,
@@ -4269,12 +4270,15 @@ app.post('/api/transactions/:id/share/email', requireRole(['Super Admin', 'Store
       ],
     });
 
+    deliveryCompleted = true;
     await recordInvoiceShareAudit(activeShopId,authUser,'Invoice Shared via Email',
       `Invoice ${tx.invoiceNumber} (${copyType}) emailed to ${to}.`);
 
     res.json({ success: true, channel: 'email', invoiceNumber: tx.invoiceNumber, to, copyType });
   } catch (error) {
-    res.status(502).json({ error: `Failed to send email: ${String(error)}` });
+    res.status(deliveryCompleted ? 503 : 502).json({ error: deliveryCompleted
+      ? 'Email was accepted by the mail provider, but audit recording failed. Do not send it again without checking.'
+      : `Could not send invoice email: ${String(error)}` });
   }
 });
 
@@ -4312,6 +4316,7 @@ app.post('/api/transactions/:id/share/whatsapp', requireRole(['Super Admin', 'St
     `From: ${activeShopName}`,
   ].join('\n');
 
+  let deliveryCompleted = false;
   try {
     const pdfFileName = `${tx.invoiceNumber}-${copyType.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.pdf`;
     const pdfBuffer = await buildInvoicePdfBuffer(tx, activeShopName, {
@@ -4362,12 +4367,15 @@ app.post('/api/transactions/:id/share/whatsapp', requireRole(['Super Admin', 'St
       return res.status(502).json({ error: payload?.error?.message || 'Failed to send WhatsApp message' });
     }
 
+    deliveryCompleted = true;
     await recordInvoiceShareAudit(activeShopId,authUser,'Invoice Shared via WhatsApp PDF',
       `Invoice ${tx.invoiceNumber} (${copyType}) PDF sent to WhatsApp ${to}.`);
 
     res.json({ success: true, channel: 'whatsapp', invoiceNumber: tx.invoiceNumber, to, copyType, providerResponse: payload });
   } catch (error) {
-    res.status(502).json({ error: `Failed to send WhatsApp document: ${String(error)}` });
+    res.status(deliveryCompleted ? 503 : 502).json({ error: deliveryCompleted
+      ? 'WhatsApp accepted the document, but audit recording failed. Check delivery before retrying.'
+      : `Could not send WhatsApp document: ${String(error)}` });
   }
 });
 
