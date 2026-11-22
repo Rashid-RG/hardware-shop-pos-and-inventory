@@ -318,6 +318,8 @@ export const initDbTables = async () => {
       ALTER TABLE customers ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS shop_id TEXT;
+    ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS sales_rep_id TEXT;
+    ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS sales_rep_name TEXT;
       ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE stock_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
@@ -1506,8 +1508,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
 
     // 2) Save main Transaction row
     await client.query(
-      `INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, 'Completed')`,
+      `INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status, sales_rep_id, sales_rep_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, 'Completed', $19, $20)`,
       [
         tx.id,
         tx.shopId || null,
@@ -1527,6 +1529,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         tx.paymentMethod,
         tx.paymentStatus || null,
         tx.wholesaleMeta ? JSON.stringify(tx.wholesaleMeta) : null,
+        tx.salesRepId || null,
+        tx.salesRepName || null,
       ]
     );
 
