@@ -74,14 +74,14 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
  const n=(v:any)=>Number(v||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
  const ownershipTotal=partners.reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
  const formField='mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 focus:border-amber-400 focus:outline-none';
- return <div className="space-y-5">
-  <header className="rounded-2xl bg-[#172a47] p-6 text-white"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
-    <h2 className="mt-2 flex items-center gap-2 font-heading text-2xl font-bold"><Landmark className="h-6 w-6"/>Three-Partner Capital Ledger</h2>
-    <p className="mt-2 text-sm text-slate-300">Maintain independent records of contributions, drawings and agreed ownership. Approved profit allocation is available when all three ownership percentages total 100%. It does not transfer funds.</p></header>
+ return <div className="space-y-3">
+  <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
+    <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold"><Landmark className="h-6 w-6"/>Three-Partner Capital Ledger</h2>
+    <p className="mt-1 text-xs text-slate-300">Maintain independent records of contributions, drawings and agreed ownership. Approved profit allocation is available when all three ownership percentages total 100%. It does not transfer funds.</p></header>
   {error&&<p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
   {notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-  <div className="grid gap-5 xl:grid-cols-2">
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+  <div className="grid gap-3 xl:grid-cols-2">
+    <section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
       <div className="flex items-center justify-between"><h3 className="font-bold">Partners ({partners.length}/3)</h3><button type="button" onClick={()=>void refresh()} className="rounded-lg p-2 text-slate-600" aria-label="Refresh partner records"><RefreshCcw className="h-4 w-4"/></button></div>
       <p className="mt-1 text-xs text-slate-500">Ownership shares are optional until agreed. Shares must not exceed 100% combined.</p>
       <div className="mt-3 space-y-3">{partners.map(p=><div key={p.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -96,8 +96,8 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
         <button disabled={busy} type="submit" className="flex items-center justify-center gap-1 rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-slate-900 disabled:opacity-50"><Plus className="h-4 w-4"/>Add partner</button>
       </form>}
     </section>
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <h3 className="font-bold">Record partner contribution or drawing</h3>
+    <details className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+      <summary className="cursor-pointer font-bold">Record partner contribution or drawing</summary>
       <p className="mt-1 text-xs text-slate-500">Records are immutable. Verify payment evidence and reference before saving.</p>
       <form onSubmit={postCapital} className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold">Partner
@@ -110,18 +110,18 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
         <label className="text-xs font-semibold sm:col-span-2">Notes<textarea maxLength={1000} rows={2} value={note} onChange={e=>setNote(e.target.value)} className={formField}/></label>
         <button type="submit" disabled={busy||!partners.length} className="rounded-xl bg-[#172a47] px-4 py-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-2">Record permanent capital entry</button>
       </form>
-    </section>
+    </details>
   </div>
-  <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <h3 className="font-bold">Partner capital activity</h3>
+  <details className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+    <summary className="cursor-pointer font-bold">Partner capital activity ({entries.length} records)</summary>
     <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-xs">
       <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">Date</th><th>Partner</th><th>Type</th><th>Amount · LKR</th><th>Reference</th></tr></thead>
       <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{String(e.entry_date).slice(0,10)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
     </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>This ledger is separate from cash, bank accounts and profit distribution. Reconcile it with supporting documents.</p>
-  </section>
-  <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-    <h3 className="font-bold">Approved partner profit allocation</h3>
+  </details>
+  <details className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+    <summary className="cursor-pointer font-bold">Approved partner profit allocation ({profits.length} periods)</summary>
     <p className="mt-1 text-xs text-slate-600">Enter a profit amount approved from reconciled accounts. This is an allocation ledger only, not a cash payment, and cannot calculate business profit automatically.</p>
     <form onSubmit={recordProfit} className="mt-4 grid gap-3 sm:grid-cols-2">
       <label className="text-xs font-semibold">Accounting month<input type="month" required value={profitPeriod} onChange={e=>setProfitPeriod(e.target.value)} className={formField} /></label>
@@ -147,6 +147,6 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
         <p className="mt-2 text-[11px] text-slate-500">Recorded by {p.approved_by} · {new Date(p.allocated_at).toLocaleString()} · Payment status: not tracked</p>
       </div>)}
     </div>
-  </section>
+  </details>
  </div>;
 }
