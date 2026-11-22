@@ -171,6 +171,7 @@ export default function POSView({
   const [receiptModel, setReceiptModel] = useState<SalesTransaction | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [setupDialog, setSetupDialog] = useState<'customer' | 'representative' | null>(null);
   const [selectedCopyType, setSelectedCopyType] = useState<InvoiceCopyType>('Duplicate Copy');
   const [isLoggingPrint, setIsLoggingPrint] = useState(false);
   const [invoicePrintHistory, setInvoicePrintHistory] = useState<Array<{ copyType: InvoiceCopyType; printSequence: number; printedBy: string; printedAt: string }>>([]);
@@ -1579,7 +1580,7 @@ export default function POSView({
   };
 
   return (
-    <div className="flex flex-col space-y-4 min-h-[calc(100vh-140px)] select-none motion-safe:animate-fade-in">
+    <div className="flex flex-col gap-3 min-h-0 select-none motion-safe:animate-fade-in">
       {/* Mobile view selector (visible only on lg:hidden) */}
       <div className="lg:hidden flex border border-slate-200 bg-white rounded-xl p-1 shadow-2xs shrink-0">
         <button
@@ -1829,8 +1830,8 @@ export default function POSView({
       </div>
 
       {/* RIGHT: Register Cart panel & Checkout Checkout (5 Cols) */}
-      <div className={`lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-lg p-3 sm:p-4 flex flex-col min-h-[550px] lg:h-[calc(100dvh-150px)] lg:min-h-[560px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-        <div className="min-h-0 flex-1 lg:overflow-y-auto lg:pr-1">
+      <div className={`lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-3 sm:p-4 flex flex-col min-h-[400px] lg:h-[calc(100dvh-238px)] lg:min-h-[390px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           {/* Active Operator Banner */}
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
             <div>
@@ -1849,136 +1850,21 @@ export default function POSView({
             </div>
           )}
 
-          {/* Registered wholesale buyer lookup. Never bill an unknown walk-in account. */}
-          <div className="mb-3 grid grid-cols-1 gap-2 rounded-xl border border-amber-200 bg-amber-50/40 p-3 font-sans text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <div><p className="text-[11px] font-bold uppercase tracking-wider text-amber-800">1 · Customer shop</p>
-                <p className="mt-1 text-[11px] text-slate-500">Choose the receiving shop and its representative.</p>
-              </div>
-            </div>
-            <details className="rounded-lg border border-amber-100 bg-white/70 p-2">
-              <summary className="cursor-pointer text-xs font-semibold text-slate-700">Find shop by name, phone or address</summary>
-            <label htmlFor="pos-customer-search" className="mt-2 block text-xs font-semibold text-slate-700">
-              Search registered customers
-              <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)} placeholder="Search registered wholesale shops..."
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400" />
-            </label>
-            </details>
-            <label htmlFor="pos-customer-select" className="block text-xs font-semibold text-slate-700">
-              Select customer shop *
-              <select id="pos-customer-select" required value={selectedCustomer.id}
-                onChange={(e) => {
-                  const cust = customers.find((c) => c.id === e.target.value && c.shopId === taxConfig.activeShopId);
-                  if (cust) setSelectedCustomer(cust);
-                }}
-                className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-400">
-                <option value="" disabled>Choose a registered shop...</option>
-                {availableWholesaleCustomers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}{c.phone && c.phone !== '-' ? ` · ${c.phone}` : ''}</option>
-                ))}
-                {selectedCustomer.id && !availableWholesaleCustomers.some((c) => c.id === selectedCustomer.id) && (
-                  <option value={selectedCustomer.id}>{selectedCustomer.name} · selected</option>
-                )}
-              </select>
-            </label>
-            {customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId).length === 0 && (
-              <p role="status" className="rounded-lg bg-white px-3 py-2 text-amber-800">No registered customer shops. Add one in Customers before billing.</p>
-            )}
-            <details className="rounded-lg border border-amber-100 bg-white/80 px-3 py-2" id="pos-customer-details">
-              <summary className="cursor-pointer select-none text-[11px] font-semibold text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
-                Customer contact details (view)
-              </summary>
-              <div className="mt-2 grid grid-cols-1 gap-2">
-              <div>
-                <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Customer shop name</label>
-                <input
-                  id="pos-billing-customer-name"
-                  type="text"
-                  value={billingCustomerName}
-                  onChange={(e) => setBillingCustomerName(e.target.value)}
-                  placeholder="Registered shop name"
-                  readOnly
-                  className="w-full bg-white border border-slate-200 p-2 rounded-lg focus:outline-none focus:border-amber-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Phone Number</label>
-                  <input
-                    id="pos-billing-customer-phone"
-                    type="text"
-                    value={billingCustomerPhone}
-                    onChange={(e) => setBillingCustomerPhone(e.target.value)}
-                    placeholder="Shop contact number"
-                    readOnly
-                    className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Business address</label>
-                  <input
-                    id="pos-billing-customer-address"
-                    type="text"
-                    value={billingCustomerAddress}
-                    onChange={(e) => setBillingCustomerAddress(e.target.value)}
-                    placeholder="Shop / delivery address"
-                    readOnly
-                    className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            </details>
-
-            <label htmlFor="pos-sales-representative" className="block text-[11px] font-semibold text-slate-800">
-              2 · Sales Representative <span className="text-rose-600">*</span>
-              <select id="pos-sales-representative" required aria-label="Select Sales Representative"
-                value={selectedSalesRepId} onChange={(event) => setSelectedSalesRepId(event.target.value)}
-                className="mt-1 w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-indigo-500">
-                <option value="">Select Sales Representative</option>
-                {activeSalesReps.map(rep => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
-              </select>
-              {activeSalesReps.length === 0 &&
-                <span className="mt-1 block text-[11px] text-rose-700">Register Sales Representatives in Staff before billing.</span>}
-            </label>
-
-            {selectedCustomer.id !== 'cust-walkin' && (
-              <details className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-700">
-                <summary className="cursor-pointer font-semibold text-slate-600">Customer credit and purchase history</summary>
-                <div className="mt-2 space-y-2 bg-slate-100 p-2 rounded text-[11px] text-slate-700">
-                <div className="flex justify-between items-center">
-                  <span>Loyalty Balance: <strong className="font-mono text-indigo-600">{selectedCustomer.loyaltyBalance} pts</strong></span>
-                  <span>Prior Transactions: <strong>{selectedCustomer.purchaseCount}</strong></span>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
-                  <span className="flex items-center gap-1 text-slate-600">
-                    <BookUser className="w-3.5 h-3.5 text-amber-500" /> Credit Limit: <strong className="font-mono">{formatMoney(creditLimit)}</strong>
-                  </span>
-                  <span className={`font-mono font-semibold ${currentCreditBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    Balance: {formatMoney(currentCreditBalance)}
-                  </span>
-                </div>
-                </div>
-              </details>
-            )}
-
-            {paymentMethod === 'Credit Account' && (
-              <div className={`rounded-lg border px-3 py-2 text-[11px] ${creditAccountAllowed ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-                {selectedCustomer.id === 'cust-walkin'
-                  ? 'Credit account requires a saved customer profile.'
-                  : creditLimit <= 0
-                  ? 'This customer has no credit limit configured.'
-                  : creditExceeded
-                  ? `Credit limit exceeded. Projected balance ${formatMoney(projectedCreditBalance)} is above limit ${formatMoney(creditLimit)}.`
-                  : `This sale will post to customer credit. Projected balance: ${formatMoney(projectedCreditBalance)} of ${formatMoney(creditLimit)}.`}
-              </div>
-            )}
+          {/* Required bill assignment is shown in summary, edited in focused dialogs. */}
+          <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Invoice assignment">
+            <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setSetupDialog('customer');}}
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
+              <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
+              <span className="mt-1 block text-[11px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
+            </button>
+            <button type="button" id="pos-open-representative" onClick={() => setSetupDialog('representative')}
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">2 · Sales Representative *</span>
+              <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
+              <span className="mt-1 block text-[11px] text-indigo-600">{selectedSalesRepId ? 'Change representative' : 'Tap to select rep'} →</span>
+            </button>
           </div>
-
           {/* Cart Header */}
           <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-50 pb-2.5 font-sans mb-3">
             <span>Product</span>
@@ -2079,7 +1965,7 @@ export default function POSView({
             })}
 
             {cart.length === 0 && (
-              <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center border border-dashed border-slate-100 rounded-xl">
+              <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center border border-dashed border-slate-100 rounded-xl">
                 <ShoppingCart className="w-8 h-8 text-slate-200" />
                 <p className="text-xs font-semibold mt-1">Cash Register is Empty</p>
                 <p className="text-[10px] text-slate-500 mt-1">Click on products on the left to add items</p>
@@ -2111,6 +1997,94 @@ export default function POSView({
         </div>
       </div>
 
+      {setupDialog && (
+        <div id="pos-setup-backdrop" className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-setup-title"
+            className="flex max-h-[min(88dvh,700px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">Invoice setup</p>
+                <h2 id="pos-setup-title" className="text-base font-bold text-slate-900">
+                  {setupDialog === 'customer' ? 'Select customer shop' : 'Select Sales Representative'}
+                </h2>
+              </div>
+              <button type="button" aria-label="Close invoice setup" onClick={() => setSetupDialog(null)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+              {setupDialog === 'customer' ? (
+                <div className="space-y-3">
+                  <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-search">
+                    Search shop by name, phone or address
+                  </label>
+                  <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
+                    onChange={event => setCustomerSearch(event.target.value)}
+                    placeholder="Search registered customer shops..."
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500"/>
+                  <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-select">Registered customer shop *</label>
+                  <select id="pos-customer-select" required value={selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id}
+                    onChange={event => {
+                      const customer=customers.find(c=>c.id===event.target.value && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
+                      if(customer) setSelectedCustomer(customer);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Choose a shop...</option>
+                    {availableWholesaleCustomers.map(customer=>(
+                      <option key={customer.id} value={customer.id}>{customer.name}{customer.phone && customer.phone !== '-' ? ` · ${customer.phone}` : ''}</option>
+                    ))}
+                    {selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' &&
+                      !availableWholesaleCustomers.some(c=>c.id===selectedCustomer.id) && (
+                        <option value={selectedCustomer.id}>{selectedCustomer.name} · selected</option>
+                      )}
+                  </select>
+                  {customers.filter(c=>c.id!=='cust-walkin'&&c.shopId===taxConfig.activeShopId).length===0 && (
+                    <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                      No customer shops registered. Add a shop in Customers before creating an invoice.
+                    </p>
+                  )}
+                  {selectedCustomer.id && selectedCustomer.id!=='cust-walkin' && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      <p className="font-semibold text-slate-900">{billingCustomerName}</p>
+                      <p className="mt-1">{billingCustomerPhone || 'No phone saved'} · {billingCustomerAddress || 'No address saved'}</p>
+                      <p className="mt-2">Outstanding credit: {formatMoney(currentCreditBalance)} / Limit: {formatMoney(creditLimit)}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <label htmlFor="pos-sales-representative" className="block text-xs font-semibold text-slate-700">
+                    Representative responsible for this invoice *
+                  </label>
+                  <select id="pos-sales-representative" required aria-label="Select Sales Representative"
+                    value={selectedSalesRepId} onChange={event=>setSelectedSalesRepId(event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Choose representative...</option>
+                    {activeSalesReps.map(rep=><option key={rep.id} value={rep.id}>{rep.name}</option>)}
+                  </select>
+                  {activeSalesReps.length===0 && (
+                    <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                      No representatives registered. Add one in Staff before billing.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
+              <button type="button" onClick={()=>setSetupDialog(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700">Close</button>
+              <button type="button" id="pos-setup-confirm"
+                disabled={setupDialog === 'customer'
+                  ? !selectedCustomer.id || selectedCustomer.id === 'cust-walkin'
+                  : !activeSalesReps.some(rep=>rep.id===selectedSalesRepId)}
+                onClick={()=>setSetupDialog(null)}
+                className="rounded-lg bg-slate-900 px-5 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+                Confirm selection
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
       {isReviewOpen && (
         <div id="pos-review-backdrop" className="fixed inset-0 z-[65] flex items-center justify-center bg-slate-950/60 p-2 sm:p-5">
           <section role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
@@ -2123,6 +2097,13 @@ export default function POSView({
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+              {paymentMethod === 'Credit Account' && (
+                <div role="status" className={`mb-3 rounded-lg border px-3 py-2 text-xs ${creditAccountAllowed?'border-amber-200 bg-amber-50 text-amber-900':'border-rose-200 bg-rose-50 text-rose-800'}`}>
+                  {creditLimit <= 0 ? 'This customer has no credit limit configured.'
+                    : creditExceeded ? `Credit limit exceeded: ${formatMoney(projectedCreditBalance)} above allowed ${formatMoney(creditLimit)}.`
+                    : `Invoice will be posted to customer credit. New balance: ${formatMoney(projectedCreditBalance)} / ${formatMoney(creditLimit)}.`}
+                </div>
+              )}
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
                 <div className="space-y-1">
