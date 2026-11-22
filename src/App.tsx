@@ -640,7 +640,6 @@ export default function App() {
 
       setLoginEmail(resetEmail.trim());
       setLoginPassword('');
-      setLoginShopId(resetShopId);
       setResetCurrentPassword('');
       setResetNewPassword('');
       setResetConfirmPassword('');
