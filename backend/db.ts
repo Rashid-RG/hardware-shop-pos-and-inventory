@@ -1019,24 +1019,53 @@ export const insertCustomer = async (c: Customer) => {
   );
 };
 
-export const updateCustomerCreditLimit = async (customerId: string, creditLimit: number) => {
-  await pool.query('UPDATE customers SET credit_limit = $1, updated_at = NOW() WHERE id = $2', [creditLimit, customerId]);
+export const updateCustomerCreditLimit = async (customerId: string, shopId: string, creditLimit: number) => {
+  if (!Number.isFinite(creditLimit) || creditLimit < 0 || Math.round(creditLimit * 100) !== creditLimit * 100) {
+    throw new Error('Invalid credit limit.');
+  }
+  const result = await pool.query(
+    'UPDATE customers SET credit_limit = $1, updated_at = NOW() WHERE id = $2 AND shop_id = $3 RETURNING id',
+    [creditLimit, customerId, shopId]
+  );
+  if (!result.rowCount) throw new Error('Customer not found in this shop.');
 };
 
 export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
+  if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
+      !Number.isSafeInteger(Math.round(p.amount * 100)) ||
+      Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
+    throw new Error('Payment amount must be positive and have at most two decimal places.');
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Record payment
+    const result = await client.query(
+      'SELECT name, credit_balance FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [p.customerId, p.shopId]
+    );
+    if (!result.rowCount) throw new Error('Customer not found in this shop.');
+    const outstanding = Number(result.rows[0].credit_balance);
+    if (!Number.isFinite(outstanding) || outstanding <= 0) {
+      throw new Error('Customer has no outstanding credit balance.');
+    }
+    if (Math.round(p.amount * 100) > Math.round(outstanding * 100)) {
+      throw new Error('Payment exceeds the customer outstanding credit balance.');
+    }
     await client.query(
       `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [p.id, p.shopId || null, p.customerId, p.customerName, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null]
+      [p.id, p.shopId, p.customerId, result.rows[0].name, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null]
     );
-    // Decrement customer outstanding balance
     await client.query(
-      `UPDATE customers SET credit_balance = GREATEST(0, credit_balance - $1), updated_at = NOW() WHERE id = $2`,
-      [p.amount, p.customerId]
+      `UPDATE customers SET credit_balance = credit_balance - $1, updated_at = NOW()
+       WHERE id = $2 AND shop_id = $3`,
+      [p.amount, p.customerId, p.shopId]
+    );
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1, $2, NOW(), $3, 'Cashier', 'Credit Payment', $4)`,
+      ['credit-payment-' + p.id, p.shopId, p.createdBy || 'Cashier',
+       `Customer ${result.rows[0].name} paid Rs.${p.amount.toFixed(2)} towards credit.`]
     );
     await client.query('COMMIT');
   } catch (error) {
