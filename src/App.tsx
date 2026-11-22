@@ -18,7 +18,7 @@ const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
 
-type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'relationships' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
+type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 
@@ -1009,7 +1009,7 @@ export default function App() {
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
                 dashboard: 'Business Overview', pos: 'Point of Sale', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing',
-                relationships: 'Customers & Staff', reports: 'Reports & Analytics',
+                customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
                 quotations: 'Quotations', shifts: 'Cash Shifts', 
                 accounting: 'Accounting', 'db-admin': 'System Administration', calculators: 'Calculators',
               } as Record<AppTab, string>)[activeTab]}</p>
@@ -1107,8 +1107,10 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'relationships' && (
+              {(activeTab === 'customers' || activeTab === 'staff') && (
                 <CustomerEmployeeView
+                  key={activeTab}
+                  viewMode={activeTab === 'customers' ? 'customers' : 'employees'}
                   customers={customers}
                   employees={employees}
                   customerCreditPayments={customerCreditPayments}
