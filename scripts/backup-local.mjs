@@ -35,13 +35,20 @@ async function dump() {
     const proc = spawn('docker', ['exec', container, 'pg_dump', '-U', 'postgres', '-d', database, '-Fc', '--no-owner', '--no-privileges'], { stdio: ['ignore', 'pipe', 'pipe'] });
     const output = createWriteStream(tempFile, { flags: 'wx' });
     let stderr = '';
+    let processCode = null;
+    let fileFinished = false;
     let settled = false;
-    const fail = (error) => {
+    const fail = error => {
       if (settled) return;
       settled = true;
       proc.kill();
       output.destroy();
       reject(error);
+    };
+    const maybeDone = () => {
+      if (settled || processCode === null || !fileFinished) return;
+      settled = true;
+      accept();
     };
     proc.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4000); });
     proc.on('error', fail);
@@ -49,12 +56,36 @@ async function dump() {
     proc.stdout.pipe(output);
     proc.on('close', code => {
       if (code !== 0) return fail(new Error(`pg_dump exited ${code}: ${stderr}`));
-      output.end();
+      processCode = code;
+      maybeDone();
     });
-    output.on('finish', () => {
+    output.on('finish', () => { fileFinished = true; maybeDone(); });
+  });
+}
+async function verifyArchive(file) {
+  await new Promise((accept, reject) => {
+    const proc = spawn('docker', ['exec', '-i', container, 'pg_restore', '--list'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const input = createReadStream(file);
+    const fail = error => {
       if (settled) return;
-      // The dump process must already have exited successfully.
       settled = true;
+      input.destroy();
+      proc.kill();
+      reject(error);
+    };
+    proc.on('error', fail);
+    input.on('error', fail);
+    proc.stdin.on('error', fail);
+    proc.stdout.on('data', chunk => { stdout = (stdout + chunk.toString()).slice(-65536); });
+    proc.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-4000); });
+    input.pipe(proc.stdin);
+    proc.on('close', code => {
+      if (settled) return;
+      settled = true;
+      if (code !== 0 || !stdout.includes('TABLE')) return reject(new Error('Archive verification failed: ' + (stderr || 'missing table metadata')));
       accept();
     });
   });
@@ -69,18 +100,7 @@ try {
   await dump();
   if (!existsSync(tempFile) || statSync(tempFile).size < 1024) throw new Error('Dump missing or unexpectedly small');
   // pg_restore parses the archive contents without applying changes to any database.
-  const verification = spawnSync('docker', ['exec', '-i', container, 'pg_restore', '--list'], {
-    input: await (async () => {
-      const chunks = [];
-      for await (const chunk of createReadStream(tempFile)) chunks.push(chunk);
-      return Buffer.concat(chunks);
-    })(),
-    maxBuffer: Math.max(64 * 1024 * 1024, statSync(tempFile).size + 1024 * 1024),
-    timeout: 120000
-  });
-  if (verification.error || verification.status !== 0 || !verification.stdout?.toString().includes('TABLE')) {
-    throw new Error('Archive verification failed: ' + (verification.stderr?.toString() || verification.error?.message || 'missing table metadata'));
-  }
+  await verifyArchive(tempFile);
   renameSync(tempFile, finalFile);
   const digest = await sha256(finalFile);
   console.log(JSON.stringify({ status: 'verified', file: finalFile, bytes: statSync(finalFile).size, sha256: digest }));
