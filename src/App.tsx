@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import loginBackgroundImage from './assets/login-hardware-bg.svg';
-import { Sparkles, MessageSquare, X, Send, Menu } from 'lucide-react';
+import { Sparkles, MessageSquare, X, Send, Menu, ShieldCheck, Store, ArrowUpRight, LockKeyhole, Bolt } from 'lucide-react';
 const DashboardView = lazy(() => import('./components/DashboardView'));
 const POSView = lazy(() => import('./components/POSView'));
 const ProductManagementView = lazy(() => import('./components/ProductManagementView'));
@@ -772,42 +772,67 @@ export default function App() {
   if (!authUser) {
     return (
       <div
-        className="min-h-screen text-slate-100 flex items-center justify-center p-4 bg-cover bg-center bg-no-repeat"
-        style={{
-          backgroundImage: `linear-gradient(rgba(2, 6, 23, 0.7), rgba(2, 6, 23, 0.78)), url(${loginBackgroundImage})`,
-        }}
+        className="relative min-h-screen w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-4 sm:p-7 lg:p-10"
       >
-        <form onSubmit={handleLogin} className="w-full max-w-sm bg-slate-900/90 backdrop-blur-sm border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
-          <h1 className="text-xl font-semibold tracking-tight">Hardware Shop POS Login</h1>
-          <p className="text-xs text-slate-400">Use your staff credentials to continue.</p>
+        <div className="pointer-events-none absolute inset-0 opacity-30 bg-cover bg-center" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#101d32]/95 via-[#101d32]/85 to-[#243b5c]/90" />
+        <div className="relative z-10 w-full max-w-6xl overflow-hidden rounded-[30px] border border-white/15 bg-white/5 shadow-[0_25px_100px_rgba(0,0,0,0.38)] lg:grid lg:grid-cols-[1.12fr_0.88fr]">
+          <section className="hidden lg:flex flex-col justify-between min-h-[620px] border-r border-white/10 p-12 xl:p-14 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
+            <div>
+              <div className="inline-flex items-center gap-3">
+                <div className="rounded-2xl bg-amber-400 p-3 text-slate-950"><Bolt className="h-7 w-7" /></div>
+                <div><p className="font-heading text-2xl font-bold tracking-tight">ARS Hardware</p><p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">Business Management Suite</p></div>
+              </div>
+              <div className="mt-24 max-w-xl">
+                <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for hardware commerce</p>
+                <h1 className="font-heading text-5xl font-bold tracking-tight leading-[1.14] xl:text-[56px]">Your business.<br/><span className="text-amber-300">One powerful</span><br/>workspace.</h1>
+                <p className="mt-6 max-w-md text-[15px] leading-7 text-slate-300">Manage counter sales, inventory, purchasing and financial reporting from one organized, secure platform.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 border-t border-white/15 pt-5 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
+          </section>
+          <div className="bg-white p-6 text-slate-900 sm:p-10 lg:p-12 xl:p-14 flex flex-col justify-center">
+            <div className="mb-10">
+              <div className="mb-8 flex items-center gap-3 lg:hidden"><span className="rounded-xl bg-amber-400 p-2.5"><Bolt className="h-5 w-5" /></span><div><p className="font-heading text-lg font-bold">ARS Hardware</p><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Business POS</p></div></div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
+              <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Sign in to your workspace</h2>
+              <p className="mt-3 text-sm text-slate-500">Enter your employee credentials and choose your assigned branch.</p>
+            </div>
+            <form onSubmit={handleLogin} className="space-y-5">
 
-          {setupStatus && <p className="rounded-lg bg-emerald-900/40 border border-emerald-600 px-3 py-2 text-xs text-emerald-300">{setupStatus}</p>}
+          {setupStatus && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">{setupStatus}</p>}
 
           <div className="space-y-2">
-            <label className="text-xs text-slate-300">Email</label>
+            <label htmlFor="ars-login-email" className="mb-2 block text-xs font-semibold text-slate-700">Email address</label>
             <input
+              id="ars-login-email"
               type="email"
+              autoComplete="username"
+              placeholder="name@yourcompany.com"
               value={loginEmail}
               onChange={(e) => setLoginEmail(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-amber-500"
+              className="w-full rounded-xl px-4 py-3 bg-slate-50 border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500 transition"
               required
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs text-slate-300">Password</label>
+            <label htmlFor="ars-login-password" className="mb-2 block text-xs font-semibold text-slate-700">Password</label>
             <div className="relative">
               <input
+                id="ars-login-password"
                 type={showLoginPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="Enter your password"
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-amber-500 pr-20"
+                className="w-full rounded-xl px-4 py-3 bg-slate-50 border border-slate-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500 pr-20 transition"
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowLoginPassword((current) => !current)}
-                className="absolute inset-y-0 right-2 my-auto h-7 rounded-md border border-slate-700 bg-slate-700/70 px-2 text-[10px] font-semibold text-slate-200 hover:bg-slate-600"
+                className="absolute inset-y-0 right-2 my-auto h-8 rounded-lg px-2 text-xs font-semibold text-slate-600 hover:bg-slate-200"
               >
                 {showLoginPassword ? 'Hide' : 'Show'}
               </button>
@@ -815,11 +840,12 @@ export default function App() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs text-slate-300">Shop / Branch</label>
+            <label htmlFor="ars-login-shop" className="mb-2 block text-xs font-semibold text-slate-700">Shop / Branch</label>
             <select
+              id="ars-login-shop"
               value={loginShopId}
               onChange={(e) => setLoginShopId(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 bg-slate-800 border border-slate-700 text-sm focus:outline-none focus:border-amber-500"
+              className="w-full rounded-xl px-4 py-3 bg-slate-50 border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500"
             >
               {loginShops.length === 0 && <option value="">Default Shop</option>}
               {loginShops.map((shop) => (
@@ -829,7 +855,7 @@ export default function App() {
               ))}
             </select>
             {loginShops.find((shop) => shop.id === loginShopId) && (
-              <p className="text-[11px] text-slate-400 leading-relaxed">
+              <p className="text-xs text-slate-500 leading-relaxed mt-2">
                 {loginShops.find((shop) => shop.id === loginShopId)?.name}
                 {loginShops.find((shop) => shop.id === loginShopId)?.address ? ` • ${loginShops.find((shop) => shop.id === loginShopId)?.address}` : ''}
                 {loginShops.find((shop) => shop.id === loginShopId)?.phone ? ` • ${loginShops.find((shop) => shop.id === loginShopId)?.phone}` : ''}
@@ -837,24 +863,30 @@ export default function App() {
             )}
           </div>
 
-          {loginError && <p className="text-xs text-rose-400">{loginError}</p>}
+          {loginError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loginError}</p>}
 
           <button
             type="submit"
             disabled={isLoggingIn}
-            className="w-full rounded-lg py-2.5 bg-amber-500 text-slate-900 font-semibold hover:bg-amber-400 transition disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-2 rounded-xl py-3.5 bg-[#182a45] text-white text-sm font-bold hover:bg-[#243c60] transition shadow-lg shadow-slate-950/10 disabled:opacity-60"
           >
-            {isLoggingIn ? 'Signing in...' : 'Sign In'}
+            {isLoggingIn ? 'Signing in...' : <>Secure Sign In <ArrowUpRight className="h-4 w-4" /></>}
           </button>
 
           <button
             type="button"
             onClick={openLoginResetModal}
-            className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            className="w-full rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition"
           >
             Change Password
           </button>
-        </form>
+            </form>
+            <div className="mt-8 border-t border-slate-100 pt-5 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> Protected business access</span>
+              <span>RS Nextward</span>
+            </div>
+          </div>
+        </div>
 
         {isResetModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
@@ -989,9 +1021,9 @@ export default function App() {
   });
 
   return (
-    <div className="h-screen w-screen flex flex-col md:flex-row bg-slate-50 text-slate-800 antialiased font-sans select-none overflow-hidden relative">
+    <div className="h-screen w-screen flex flex-col md:flex-row bg-[#f3f6fb] text-slate-800 antialiased font-sans overflow-hidden relative">
       {/* Mobile Header Bar */}
-      <header className="md:hidden h-14 bg-slate-900 text-white flex items-center justify-between px-4 border-b border-slate-800 shrink-0 z-40 shadow-sm">
+      <header className="md:hidden h-16 bg-[#101d32] text-white flex items-center justify-between px-4 border-b border-white/10 shrink-0 z-40 shadow-sm">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsSidebarOpen(true)}
@@ -1034,7 +1066,30 @@ export default function App() {
       </div>
 
       {/* Primary Inner Main Area Scroll view wrapper */}
-      <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-50/50">
+      <main className="flex-1 min-w-0 overflow-y-auto bg-[#f3f6fb]">
+        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur px-4 py-3 sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Hardware · Business workspace</p>
+              <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
+                dashboard: 'Business Overview', pos: 'Point of Sale', products: 'Product Catalog',
+                inventory: 'Stock Management', purchases: 'Suppliers & Purchasing',
+                relationships: 'Customers & Staff', reports: 'Reports & Analytics',
+                quotations: 'Quotations', shifts: 'Cash Shifts', 'ai-insights': 'AI Insights',
+                accounting: 'Accounting', 'db-admin': 'System Administration', calculators: 'Calculators',
+              } as Record<AppTab, string>)[activeTab]}</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
+              {(['Super Admin', 'Store Manager', 'Cashier'] as Role[]).includes(currentRole) && (
+                <button type="button" onClick={() => setActiveTab('pos')} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
+                  <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">New Sale</span><span className="sm:hidden">Sale</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </header>
+        <div className="p-4 sm:p-6 lg:p-8">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-full space-y-4">
             <div className="h-9 w-9 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
@@ -1043,7 +1098,7 @@ export default function App() {
             </p>
           </div>
         ) : (
-          <div className="max-w-7xl mx-auto">
+          <div className="max-w-[1500px] mx-auto">
             <Suspense
               fallback={
                 <div className="flex min-h-[24rem] flex-col items-center justify-center space-y-4 rounded-3xl border border-slate-200 bg-white/70">
@@ -1198,6 +1253,7 @@ export default function App() {
             </Suspense>
           </div>
         )}
+        </div>
       </main>
 
       {isProfileModalOpen && (
