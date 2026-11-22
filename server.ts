@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -3687,7 +3687,7 @@ app.post('/api/products', requireRole(['Super Admin', 'Store Manager', 'Inventor
   }
   const newProduct: Product = {
     ...normalizedPayload,
-    id: 'prod-' + Date.now(),
+    id: 'prod-' + randomUUID(),
     shopId: activeShopId,
     imageUrl: normalizedPayload.imageUrl || '',
     quantity: Number(normalizedPayload.quantity) || 0,
@@ -3695,34 +3695,26 @@ app.post('/api/products', requireRole(['Super Admin', 'Store Manager', 'Inventor
     sellingPrice: Number(normalizedPayload.sellingPrice) || 0,
     reorderLevel: Number(normalizedPayload.reorderLevel) || 10,
   };
-  db.products.push(newProduct);
-
-  // Add stock ledger entry if starting with quantity > 0
-  if (newProduct.quantity > 0) {
-    db.stockLogs.unshift({
-      id: 'log-' + Date.now(),
-      date: new Date().toISOString(),
-      productId: newProduct.id,
-      productName: newProduct.name,
-      type: 'Stock In',
-      quantity: newProduct.quantity,
-      reason: 'Initial Product Registration Intake',
-      user: authUser?.name || 'System',
-      shopId: activeShopId,
-    });
+  if (!Number.isSafeInteger(newProduct.quantity) || newProduct.quantity < 0 ||
+      !Number.isSafeInteger(newProduct.reorderLevel) || newProduct.reorderLevel < 0 ||
+      (newProduct.variants || []).some((v) =>
+        !Number.isSafeInteger(v.quantity) || v.quantity < 0)) {
+    return res.status(400).json({ error: 'Product stock quantities must be nonnegative whole numbers.' });
   }
-
-  db.activityLogs.unshift({
-    id: 'act-' + Date.now(),
-    date: new Date().toISOString(),
-    user: authUser?.name || 'SystemAdmin',
-    role: authUser?.role || 'Super Admin',
-    action: 'Added Product',
-    details: `Added ${newProduct.name} (SKU: ${newProduct.sku}) into catalog for ${activeShopName}.`,
-    shopId: activeShopId,
-  });
-
-  await saveDb();
+  try {
+    await createProductWithIntake(newProduct, authUser?.name || 'System',
+      authUser?.role || 'Inventory Staff', activeShopName);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Could not reload committed product');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Product created but state refresh failed; further writes disabled', error);
+  }
   res.json(newProduct);
 });
 
