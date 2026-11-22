@@ -1,5 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
+import { checkoutTransaction } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -3954,19 +3955,6 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     }
   }
 
-  for (const update of pendingStockUpdates) {
-    if (update.variantId && Array.isArray(update.product.variants)) {
-      const targetVariant = update.product.variants.find((variant) => variant.id === update.variantId);
-      if (targetVariant) {
-        targetVariant.quantity = Math.max(0, Number(targetVariant.quantity || 0) - update.quantity);
-        update.product.quantity = update.product.variants.reduce((sum, variant) => sum + Math.max(0, Number(variant.quantity || 0)), 0);
-      }
-    } else {
-      update.product.quantity = Math.max(0, Number(update.product.quantity || 0) - update.quantity);
-    }
-  }
-  db.stockLogs.unshift(...pendingStockLogs);
-
   const invoicePrefix = String(shopProfile?.invoicePrefix || db.settings.invoicePrefix || 'INV').trim();
   const invoiceNum = `${invoicePrefix}-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
@@ -3993,33 +3981,21 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     status: 'Completed',
   };
 
-  db.transactions.unshift(tx);
+  // PostgreSQL is authoritative for checkout: the transaction updates only
+  // the affected rows and commits everything together, or rolls back all of it.
+  // Do not call saveDb() here: it rewrites all normalized tables.
+  await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName);
 
-  // Update customer loyalty points if a valid customer
-  if (customerId && customerId !== 'cust-walkin') {
-    const custIndex = db.customers.findIndex((c) => c.id === customerId && c.shopId === activeShopId);
-    if (custIndex !== -1) {
-      db.customers[custIndex].purchaseCount += 1;
-      const gainedPoints = Math.floor(tx.total / 10);
-      db.customers[custIndex].loyaltyBalance += gainedPoints;
-      // If paid on credit, increase the customer's outstanding credit balance
-      if (paymentMethod === 'Credit Account') {
-        db.customers[custIndex].creditBalance = (db.customers[custIndex].creditBalance || 0) + tx.total;
-      }
-    }
+  // The transaction has committed. Return success even if the cache refresh
+  // fails, otherwise a cashier may retry and create a second paid invoice.
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Could not refresh the committed database state');
+    db = refreshed;
+  } catch (refreshError) {
+    databaseWriteHealthy = false;
+    console.error('Checkout saved but state hydration failed. Further writes disabled.', refreshError);
   }
-
-  db.activityLogs.unshift({
-    id: 'act-' + Date.now(),
-    shopId: activeShopId,
-    date: new Date().toISOString(),
-    user: cashierName || 'Cashier',
-    role: 'Cashier',
-    action: 'Invoice Created',
-    details: `Billed sales transaction ${invoiceNum} for ${activeShopName}, total Rs.${tx.total.toFixed(2)}.`
-  });
-
-  await saveDb();
   res.json(tx);
 });
 
