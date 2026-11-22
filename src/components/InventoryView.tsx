@@ -83,6 +83,7 @@ export default function InventoryView({
         reason: `${adjustType}: ${reason.trim()}`,
         user: currentUser,
       });
+      notify.success('Inventory adjustment saved with audit reason.');
       setIsAdjustOpen(false);
       setSelectedProductId('');
       setQtyDifference(0);
