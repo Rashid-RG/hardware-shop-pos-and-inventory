@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
+import NotificationCenter from './components/NotificationCenter';
 import ARSBrand from './components/ARSBrand';
 import loginBackgroundImage from './assets/login-hardware-bg.svg';
 import { Menu, PanelLeftClose, PanelLeftOpen, ShieldCheck, Store, ArrowUpRight, LockKeyhole, Bolt } from 'lucide-react';
@@ -683,6 +684,7 @@ export default function App() {
     const setupInputClass = 'mt-1.5 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-400/30';
     return (
       <div className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] px-3 py-4 text-slate-900 sm:px-6 sm:py-6">
+      <NotificationCenter />
         <div className="pointer-events-none fixed inset-0 bg-cover bg-center opacity-15" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <div className="relative mx-auto flex min-h-[calc(100dvh-2rem)] max-w-3xl items-center justify-center sm:min-h-[calc(100dvh-3rem)]">
           <form onSubmit={handleCreateAdmin} className="w-full rounded-[24px] border border-white/15 bg-white px-5 py-5 shadow-[0_24px_90px_rgba(0,0,0,0.25)] sm:px-8 sm:py-7">
@@ -732,6 +734,7 @@ export default function App() {
     return (
       <div
         className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-3 sm:p-6 lg:p-7"
+      <NotificationCenter />
       >
         <div className="pointer-events-none absolute inset-0 opacity-30 bg-cover bg-center" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#101d32]/95 via-[#101d32]/85 to-[#243b5c]/90" />
@@ -948,6 +951,7 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col md:flex-row bg-[#f3f6fb] text-slate-800 antialiased font-sans overflow-hidden relative">
+      <NotificationCenter />
       {/* Mobile Header Bar */}
       <header className="md:hidden h-16 bg-[#101d32] text-white flex items-center justify-between px-4 border-b border-white/10 shrink-0 z-40 shadow-sm">
         <div className="flex items-center gap-3">
