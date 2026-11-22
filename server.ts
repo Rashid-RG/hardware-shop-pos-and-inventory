@@ -222,6 +222,48 @@ if (!process.env.DATABASE_URL) {
 
 const DB_STATE_KEY = 'default';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// The legacy Windows server holds mutable state in process memory and replaces
+// normalized tables during saves. Only one instance may own a PostgreSQL
+// database until all writes have migrated to targeted SQL transactions.
+// Session-level advisory lock stays held on this dedicated pooled connection.
+const SINGLE_WRITER_LOCK_CLASS = 1642958133;
+const SINGLE_WRITER_LOCK_ID = 1;
+let singleWriterLease: PoolClient | null = null;
+
+const acquireSingleWriterLease = async () => {
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
+      [SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID]
+    );
+    if (!result.rows[0]?.acquired) {
+      throw new Error('Another Hardware POS server already owns this database. Stop the duplicate instance before starting.');
+    }
+    client.on('error', (error) => {
+      databaseWriteHealthy = false;
+      console.error('Hardware POS single-writer lease connection lost; writes disabled.', error);
+    });
+    singleWriterLease = client;
+  } catch (error) {
+    client.release();
+    throw error;
+  }
+};
+
+const releaseSingleWriterLease = async () => {
+  if (!singleWriterLease) return;
+  const client = singleWriterLease;
+  singleWriterLease = null;
+  try {
+    await client.query('SELECT pg_advisory_unlock($1::integer, $2::integer)', [
+      SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID,
+    ]);
+  } finally {
+    client.release();
+  }
+};
 const LOGIN_ATTEMPT_LIMIT = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map<string, { failedCount: number; lockUntil: number }>();
@@ -5213,6 +5255,8 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 });
 
 async function startServer() {
+  // Acquire before any schema creation, seeding, or in-memory hydration.
+  await acquireSingleWriterLease();
   await initPostgres();
   await loadDb();
 
@@ -5245,6 +5289,7 @@ async function startServer() {
     server.close(async () => {
       clearTimeout(timeout);
       try {
+        await releaseSingleWriterLease();
         await pool.end();
       } catch (error) {
         console.error('Error while closing PostgreSQL pool:', error);
@@ -5265,7 +5310,13 @@ process.on('uncaughtException', (error) => {
   console.error('Uncaught exception:', error);
 });
 
-startServer().catch((error) => {
+startServer().catch(async (error) => {
   console.error('Server startup failed:', error);
+  try {
+    await releaseSingleWriterLease();
+    await pool.end();
+  } catch (shutdownError) {
+    console.error('Cleanup after failed startup failed:', shutdownError);
+  }
   process.exit(1);
 });
