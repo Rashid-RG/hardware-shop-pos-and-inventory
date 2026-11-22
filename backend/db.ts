@@ -1432,7 +1432,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       // Hold the quote row lock through the sale commit to make conversion
       // exactly once even with simultaneous customer-service requests.
       const quote=await client.query(
-        'SELECT * FROM quotations WHERE id=$1 AND shop_id=$2 FOR UPDATE',
+        "SELECT *, valid_until < (NOW() AT TIME ZONE 'Asia/Colombo')::date AS is_expired FROM quotations WHERE id=$1 AND shop_id=$2 FOR UPDATE",
         [quotationId,tx.shopId]);
       if(!quote.rowCount)throw new Error('Quotation not found in this branch.');
       const saved=quote.rows[0];
@@ -1440,14 +1440,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         throw new Error('Only an accepted, unconverted quotation may be invoiced.');
       // An accepted quotation does not override its stated validity.
       // ARS operates in Sri Lanka; check the business date, not UTC midnight.
-      if(saved.valid_until) {
-        const validUntil=String(saved.valid_until).slice(0,10);
-        const businessToday=new Intl.DateTimeFormat('en-CA',{
-          timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'
-        }).format(new Date());
-        if(validUntil < businessToday)
-          throw new Error('Quotation validity has expired. Issue a new approved quotation.');
-      }
+      if(saved.is_expired) throw new Error('Quotation validity has expired. Issue a new approved quotation.');
       const savedItems=Array.isArray(saved.items)?saved.items:[];
       if(savedItems.length!==tx.items.length||Math.round(Number(saved.total)*100)!==Math.round(tx.total*100)||
          saved.customer_id!==tx.customerId||
