@@ -25,6 +25,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
   const [fromDate, setFromDate] = useState(thirtyDaysAgo);
   const [toDate, setToDate] = useState(today);
   const [activeTab, setActiveTab] = useState<'sales' | 'products' | 'expenses'>('sales');
+  const [visibleRows, setVisibleRows] = useState(20);
 
   const productCostMap = useMemo(() => new Map(products.map((p) => [p.id, p.costPrice])), [products]);
 
@@ -87,10 +88,10 @@ export default function ReportsView({ transactions, products, manualExpenses, au
   const exportCSV = () => {
     let csv = '';
     if (activeTab === 'sales') {
-      csv = 'Invoice,Date,Customer,Cashier,Items,Subtotal,Tax,Discount,Total,Profit,Payment,Status\n';
+      csv = 'Invoice,Date,Customer,Sales Representative,Items,Subtotal,Tax,Discount,Total,Profit,Payment,Status\n';
       filteredTx.forEach((t) => {
         const p = calcProfit(t);
-        csv += `${t.invoiceNumber},${t.date.split('T')[0]},${t.customerName},${t.cashierName},${t.items.length},${t.subtotal},${t.tax},${t.discountAmount},${t.total},${p},${t.paymentMethod},${t.status || 'Completed'}\n`;
+        csv += `${t.invoiceNumber},${t.date.split('T')[0]},${t.customerName},${t.salesRepName || 'Not recorded'},${t.items.length},${t.subtotal},${t.tax},${t.discountAmount},${t.total},${p},${t.paymentMethod},${t.status || 'Completed'}\n`;
       });
     } else if (activeTab === 'products') {
       csv = 'Product,Units Sold,Revenue,Profit\n';
@@ -113,14 +114,15 @@ export default function ReportsView({ transactions, products, manualExpenses, au
   };
 
   const setPreset = (days: number) => {
+    setVisibleRows(20);
     setToDate(today);
     setFromDate(new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white px-4 py-3 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-heading font-semibold text-slate-900 flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-indigo-500" /> Business Reports
@@ -135,9 +137,9 @@ export default function ReportsView({ transactions, products, manualExpenses, au
           ))}
           <div className="flex items-center gap-1.5 border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
             <Calendar className="w-3.5 h-3.5 text-slate-400" />
-            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="text-xs text-slate-700 outline-none bg-transparent" />
+            <input type="date" value={fromDate} onChange={(e) => {setFromDate(e.target.value);setVisibleRows(20);}} className="text-xs text-slate-700 outline-none bg-transparent" />
             <span className="text-slate-400 text-xs">–</span>
-            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="text-xs text-slate-700 outline-none bg-transparent" />
+            <input type="date" value={toDate} onChange={(e) => {setToDate(e.target.value);setVisibleRows(20);}} className="text-xs text-slate-700 outline-none bg-transparent" />
           </div>
           <button onClick={exportCSV} className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg transition">
             <Download className="w-3.5 h-3.5" /> Export CSV
@@ -146,7 +148,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
       </div>
 
       {/* KPI summary row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {[
           { label: 'Total Revenue', value: `${currencySymbol}${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: 'text-indigo-600', bg: 'bg-indigo-50' },
           { label: 'Gross Profit', value: `${totalProfit >= 0 ? '+' : ''}${currencySymbol}${totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600', bg: 'bg-emerald-50' },
@@ -154,7 +156,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
           { label: 'Net Profit', value: `${netProfit >= 0 ? '+' : ''}${currencySymbol}${netProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: netProfit >= 0 ? 'text-emerald-700' : 'text-rose-600', bg: netProfit >= 0 ? 'bg-emerald-50' : 'bg-rose-50' },
           { label: 'Transactions', value: `${filteredTx.length} (${refundCount} refunded)`, color: 'text-slate-700', bg: 'bg-slate-50' },
         ].map((kpi) => (
-          <div key={kpi.label} className={`${kpi.bg} border border-slate-100 rounded-xl p-4`}>
+          <div key={kpi.label} className={`${kpi.bg} border border-slate-100 rounded-xl p-3`}>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{kpi.label}</p>
             <p className={`text-lg font-bold ${kpi.color} mt-1 leading-tight`}>{kpi.value}</p>
           </div>
@@ -171,7 +173,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              onClick={() => setActiveTab(id as any)}
+              onClick={() => {setActiveTab(id as any);setVisibleRows(20);}}
               className={`flex items-center gap-1.5 px-5 py-3 text-xs font-semibold transition border-b-2 ${activeTab === id ? 'border-indigo-500 text-indigo-600 bg-indigo-50/40' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
             >
               <Icon className="w-3.5 h-3.5" /> {label}
@@ -187,7 +189,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                   <th className="px-4 py-3">Invoice</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Cashier</th>
+                  <th className="px-4 py-3">Sales Representative</th>
                   <th className="px-4 py-3 text-right">Revenue</th>
                   <th className="px-4 py-3 text-right">Profit</th>
                   <th className="px-4 py-3">Payment</th>
@@ -198,14 +200,14 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                 {filteredTx.length === 0 && (
                   <tr><td colSpan={8} className="text-center py-10 text-slate-400">No transactions in selected range</td></tr>
                 )}
-                {filteredTx.map((t) => {
+                {filteredTx.slice(0,visibleRows).map((t) => {
                   const p = calcProfit(t);
                   return (
                     <tr key={t.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-2.5 font-mono text-indigo-600 font-semibold">{t.invoiceNumber}</td>
                       <td className="px-4 py-2.5 text-slate-500">{t.date.split('T')[0]}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.customerName}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{t.cashierName}</td>
+                      <td className="px-4 py-2.5 text-slate-500">{t.salesRepName || 'Not recorded'}</td>
                       <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">Rs.{t.total.toFixed(2)}</td>
                       <td className={`px-4 py-2.5 text-right font-mono font-bold ${p >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
                         {t.status === 'Refunded' ? '—' : `${p >= 0 ? '+' : ''}Rs.${p.toFixed(2)}`}
@@ -240,7 +242,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                 {productSales.length === 0 && (
                   <tr><td colSpan={5} className="text-center py-10 text-slate-400">No sales in selected range</td></tr>
                 )}
-                {productSales.map((p, i) => {
+                {productSales.slice(0,visibleRows).map((p, i) => {
                   const margin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
                   return (
                     <tr key={i} className="hover:bg-slate-50/50">
@@ -275,7 +277,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                   {filteredExpenses.length === 0 && (
                     <tr><td colSpan={4} className="text-center py-10 text-slate-400">No expenses in selected range</td></tr>
                   )}
-                  {filteredExpenses.map((e) => (
+                  {filteredExpenses.slice(0,visibleRows).map((e) => (
                     <tr key={e.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-2.5 text-slate-500">{e.date}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{e.desc}</td>
@@ -295,6 +297,18 @@ export default function ReportsView({ transactions, products, manualExpenses, au
             </div>
           )}
         </div>
+
+        {(() => {
+          const count=activeTab==='sales'?filteredTx.length:activeTab==='products'?productSales.length:filteredExpenses.length;
+          return count>visibleRows ? (
+            <div className="flex justify-center border-t border-slate-100 bg-white p-3">
+              <button type="button" onClick={()=>setVisibleRows(countNow=>countNow+20)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                Show 20 more records ({count-visibleRows} remaining)
+              </button>
+            </div>
+          ):null;
+        })()}
 
         {/* Payment method breakdown */}
         {activeTab === 'sales' && paymentMethodBreakdown.length > 0 && (
