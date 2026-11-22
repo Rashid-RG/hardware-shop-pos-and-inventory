@@ -1468,6 +1468,11 @@ export const createPurchaseOrder = async (po: PurchaseOrder) => {
   try {
     await client.query('BEGIN');
 
+    const supplierRes = await client.query(
+      'SELECT id FROM suppliers WHERE id = $1 AND shop_id = $2',
+      [po.supplierId, po.shopId]
+    );
+    if (!supplierRes.rowCount) throw new Error('Supplier is not available in this shop.');
     await client.query(
       `INSERT INTO purchase_orders (id, shop_id, po_number, date, supplier_id, supplier_name, total, status)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
@@ -1511,10 +1516,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       throw new Error('Purchase order not found.');
     }
     const po = poRes.rows[0];
-    if (po.status === 'Received') {
-      await client.query('COMMIT');
-      return;
-    }
+    if (po.status === 'Received') throw new Error('Purchase order already received.');
 
     if (po.status !== 'Pending' && po.status !== 'Ordered') throw new Error('Only open orders can be received.');
 
@@ -1524,6 +1526,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       [poId]
     );
     const poItems = itemsRes.rows;
+    if (!poItems.length) throw new Error('Cannot receive an empty purchase order.');
 
     // 2) Acknowledge receipt and increase stock
     for (const item of poItems) {
@@ -1551,7 +1554,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       }
 
       // Add Stock Log
-      const logId = 'log-' + Date.now() + Math.random().toString(36).substring(2, 5);
+      const logId = 'received-' + poId + '-line-' + item.id;
       await client.query(
         `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
          VALUES ($1, $2, NOW(), $3, $4, 'Stock In', $5, 'Purchase Order Receipt', $6, $7)`,
@@ -1567,9 +1570,49 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
     // 3) Update status to Received
     await client.query(
       `UPDATE purchase_orders SET status = 'Received' WHERE id = $1`,
-      [poId]
+      [poId, shopId]
     );
 
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/** Set an open PO status, without writing unrelated business tables. */
+export const updatePurchaseOrderStatus = async (
+  poId: string, shopId: string, status: 'Pending' | 'Ordered' | 'Cancelled', userName: string
+) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      'SELECT po_number, status FROM purchase_orders WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [poId, shopId]
+    );
+    if (!result.rowCount) throw new Error('Purchase order not found in this shop.');
+    const po = result.rows[0];
+    if (po.status === 'Received' || po.status === 'Cancelled') {
+      throw new Error('Cannot modify a received or cancelled purchase order.');
+    }
+    if (status === 'Pending' && po.status !== 'Pending') {
+      throw new Error('Cannot move an ordered purchase back to Pending.');
+    }
+    if (po.status !== status) {
+      await client.query(
+        'UPDATE purchase_orders SET status = $1 WHERE id = $2 AND shop_id = $3',
+        [status, poId, shopId]
+      );
+      await client.query(
+        `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+         VALUES ($1, $2, NOW(), $3, 'Inventory Staff', 'PO Status Updated', $4)`,
+        ['po-status-' + poId + '-' + Date.now(), shopId, userName,
+          `Purchase order ${po.po_number} changed to ${status}`]
+      );
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
