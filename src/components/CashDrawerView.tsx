@@ -59,6 +59,7 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
         notify.warning(data.error || 'Failed to open shift.');
         return;
       }
+      notify.success('Cash shift opened successfully.');
       setFloatAmount('');
       onRefreshDb();
     } finally {
@@ -81,6 +82,7 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
         notify.warning(data.error || 'Failed to close shift.');
         return;
       }
+      notify.success('Cash shift closed and reconciliation saved.');
       setActualCash('');
       setClosingNote('');
       onRefreshDb();
