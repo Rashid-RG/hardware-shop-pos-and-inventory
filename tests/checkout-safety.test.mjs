@@ -28,3 +28,13 @@ test('invoice identifiers avoid time-only collisions', () => {
   assert.match(checkout, /randomUUID\(\)\.slice\(0, 8\)/);
   assert.match(checkout, /shopProfile\?\.invoicePrefix/);
 });
+
+test('credit limit check runs before any stock mutation and rejects invalid amounts', () => {
+  const limitCheck = checkout.indexOf("if (paymentMethod === 'Credit Account' && checkoutCustomer)");
+  const stockMutation = checkout.indexOf('for (const update of pendingStockUpdates)');
+  assert.ok(limitCheck >= 0, 'Credit limit check is required');
+  assert.ok(stockMutation > limitCheck, 'Credit checks must happen before stock changes');
+  assert.match(checkout, /outstanding \+ total/);
+  assert.match(checkout, /Credit limit exceeded/);
+  assert.match(checkout, /!Number\.isFinite\(cashPaid\)/);
+});
