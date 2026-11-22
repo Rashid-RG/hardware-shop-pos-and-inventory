@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction } from './backend/db';
+import { checkoutTransaction, refundTransaction } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4401,97 +4401,31 @@ app.post('/api/transactions/:id/refund', requireRole(['Super Admin', 'Store Mana
 
   // Validate the entire return before changing any stock or customer balance.
   // A missing SKU/variant must not produce a "refunded" invoice with no restock.
-  for (const item of tx.items) {
-    const product = db.products.find((p) => p.id === item.productId && p.shopId === tx.shopId);
-    if (!product) {
-      return res.status(409).json({ error: `Cannot refund: product ${item.productName} is missing from this shop` });
-    }
-    if (!Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) <= 0) {
-      return res.status(409).json({ error: 'Cannot refund an invoice with invalid item quantities' });
-    }
-    if (item.variantId && !product.variants?.some((variant) => variant.id === item.variantId)) {
-      return res.status(409).json({ error: `Cannot refund: product variant ${item.variantName || item.variantId} is missing` });
-    }
+  // PostgreSQL handles the entire refund atomically. Never call the legacy
+  // full-state save here; it would truncate invoice and stock history.
+  try {
+    await refundTransaction(tx.id, activeShopId, String(reason || 'Not provided'),
+      authUser?.name || 'Manager', authUser?.role || 'Store Manager');
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message || 'Refund could not be completed' });
   }
 
-  const refundCustomer = tx.customerId && tx.customerId !== 'cust-walkin'
-    ? db.customers.find((c) => c.id === tx.customerId && c.shopId === tx.shopId)
-    : undefined;
-  if (tx.paymentMethod === 'Credit Account') {
-    if (!refundCustomer) {
-      return res.status(409).json({ error: 'Cannot refund credit sale: customer account is missing' });
-    }
-    // Credit payments are currently recorded against the customer account rather
-    // than a specific invoice. Do not reverse paid credit without reconciliation.
-    if (!Number.isFinite(Number(refundCustomer.creditBalance)) ||
-        Number(refundCustomer.creditBalance) + 0.005 < Number(tx.total)) {
-      return res.status(409).json({
-        error: 'Credit balance is below this invoice total. Reconcile customer payments before refunding.',
-      });
-    }
-  }
-
-  for (const item of tx.items) {
-    const productIndex = db.products.findIndex((p) => p.id === item.productId && p.shopId === tx.shopId);
-    if (productIndex !== -1) {
-      const product = db.products[productIndex];
-      if (item.variantId && Array.isArray(product.variants)) {
-        const targetVariant = product.variants.find((variant) => variant.id === item.variantId);
-        if (targetVariant) {
-          targetVariant.quantity = Math.max(0, Number(targetVariant.quantity || 0)) + item.quantity;
-          product.quantity = product.variants.reduce((sum, variant) => sum + Math.max(0, Number(variant.quantity || 0)), 0);
-        }
-      } else {
-        product.quantity += item.quantity;
-      }
-    }
-
-    db.stockLogs.unshift({
-      id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      shopId: tx.shopId,
-      date: new Date().toISOString(),
-      productId: item.productId,
-      productName: item.productName,
-      type: 'Return',
-      quantity: item.quantity,
-      reason: reason ? `Refund processed: ${reason}` : `Refund processed for invoice ${tx.invoiceNumber}`,
-      user: authUser?.name || 'Manager',
-      referenceId: tx.id,
-    });
-  }
-
-  if (tx.customerId && tx.customerId !== 'cust-walkin') {
-    const customerIndex = db.customers.findIndex((c) => c.id === tx.customerId && c.shopId === tx.shopId);
-    if (customerIndex !== -1) {
-      db.customers[customerIndex].purchaseCount = Math.max(0, db.customers[customerIndex].purchaseCount - 1);
-      const revertedPoints = Math.floor(tx.total / 10);
-      db.customers[customerIndex].loyaltyBalance = Math.max(0, db.customers[customerIndex].loyaltyBalance - revertedPoints);
-      if (tx.paymentMethod === 'Credit Account') {
-        db.customers[customerIndex].creditBalance =
-          Math.round((Number(db.customers[customerIndex].creditBalance || 0) - Number(tx.total)) * 100) / 100;
-      }
-    }
-  }
-
-  db.transactions[txIndex] = {
-    ...tx,
-    status: 'Refunded',
+  // The refund has already COMMITTED: do not return an ambiguous error that
+  // might cause an operator to retry a successfully refunded invoice.
+  const result = {
+    ...tx, status: 'Refunded' as const,
     refundedAt: new Date().toISOString(),
     refundReason: String(reason || 'Not provided'),
   };
-
-  db.activityLogs.unshift({
-    id: `act-${Date.now()}`,
-    shopId: tx.shopId,
-    date: new Date().toISOString(),
-    user: authUser?.name || 'Manager',
-    role: authUser?.role || 'Store Manager',
-    action: 'Refund Processed',
-    details: `Refunded invoice ${tx.invoiceNumber} (${db.settings.currency} ${tx.total.toFixed(2)}).`,
-  });
-
-  await saveDb();
-  res.json(db.transactions[txIndex]);
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Committed refund could not be reloaded');
+    db = refreshed;
+  } catch (refreshError) {
+    databaseWriteHealthy = false;
+    console.error('Refund committed but state refresh failed; further writes disabled.', refreshError);
+  }
+  res.json(result);
 });
 
 // Create Purchase Orders (Suppliers)
