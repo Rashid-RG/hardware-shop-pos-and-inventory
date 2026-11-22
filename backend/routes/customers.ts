@@ -10,21 +10,29 @@ router.use(requireAuth);
 
 router.post('/', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(req);
-  const newCustomer: Customer = {
-    ...req.body,
-    id: 'cust-' + Date.now(),
+  const name = String(req.body?.name || '').trim();
+  const limit = Number(req.body?.creditLimit ?? 0);
+  if (!name || !Number.isFinite(limit) || limit < 0 ||
+      Math.abs(limit * 100 - Math.round(limit * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Customer name and a valid credit limit are required.' });
+  }
+  const customer: Customer = {
+    id: 'cust-' + randomUUID(),
     shopId: activeShopId,
-    loyaltyBalance: Number(req.body.loyaltyBalance) || 0,
+    name,
+    phone: String(req.body?.phone || '').trim(),
+    email: String(req.body?.email || '').trim(),
+    address: String(req.body?.address || '').trim(),
+    loyaltyBalance: 0,
     purchaseCount: 0,
-    creditLimit: Number(req.body.creditLimit) || 0,
-    creditBalance: Number(req.body.creditBalance) || 0,
+    creditLimit: (req as AppRequest).authUser?.role === 'Cashier' ? 0 : limit,
+    creditBalance: 0,
   };
-
   try {
-    await insertCustomer(newCustomer);
-    res.json(newCustomer);
+    await insertCustomer(customer);
+    res.json(customer);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(409).json({ error: err.message });
   }
 });
 
