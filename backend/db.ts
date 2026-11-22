@@ -1438,6 +1438,16 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       const saved=quote.rows[0];
       if(saved.status!=='Accepted'||saved.converted_to_tx_id)
         throw new Error('Only an accepted, unconverted quotation may be invoiced.');
+      // An accepted quotation does not override its stated validity.
+      // ARS operates in Sri Lanka; check the business date, not UTC midnight.
+      if(saved.valid_until) {
+        const validUntil=String(saved.valid_until).slice(0,10);
+        const businessToday=new Intl.DateTimeFormat('en-CA',{
+          timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'
+        }).format(new Date());
+        if(validUntil < businessToday)
+          throw new Error('Quotation validity has expired. Issue a new approved quotation.');
+      }
       const savedItems=Array.isArray(saved.items)?saved.items:[];
       if(savedItems.length!==tx.items.length||Math.round(Number(saved.total)*100)!==Math.round(tx.total*100)||
          saved.customer_id!==tx.customerId||
