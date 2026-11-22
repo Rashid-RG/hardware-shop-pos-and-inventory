@@ -18,6 +18,7 @@ import { SalesTransaction, PurchaseOrder, Role, ManualExpense, StoreSettings } f
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
 
 interface AccountingSettingsViewProps {
+  initialView?: 'accounting' | 'settings';
   transactions: SalesTransaction[];
   purchaseOrders: PurchaseOrder[];
   currentRole: Role;
@@ -29,6 +30,7 @@ interface AccountingSettingsViewProps {
 }
 
 export default function AccountingSettingsView({
+  initialView = 'accounting',
   transactions,
   purchaseOrders,
   currentRole,
@@ -51,7 +53,7 @@ export default function AccountingSettingsView({
   };
 
   const currencySymbol = 'Rs.';
-  const [activeTab, setActiveTab] = useState<'accounting' | 'settings'>('accounting');
+  const [activeTab, setActiveTab] = useState<'accounting' | 'settings'>(initialView);
 
   // Expense Logger form states
   const [isExpOpen, setIsExpOpen] = useState(false);
@@ -72,7 +74,7 @@ export default function AccountingSettingsView({
     return [
       {
         id: 'shop-main',
-        name: config.storeName || 'Lanka Smart Hardware',
+        name: config.storeName || 'ARS Hardware',
         logoUrl: config.logoUrl || '',
         address: config.address || '',
         phone: config.phone || '',
@@ -207,7 +209,7 @@ export default function AccountingSettingsView({
       return;
     }
     setActiveShopId(shopId);
-    setStoreName(activeShop.name || 'Lanka Smart Hardware');
+    setStoreName(activeShop.name || 'ARS Hardware');
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
     setTaxRate(Number(activeShop.taxRate || 18));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
@@ -316,7 +318,7 @@ export default function AccountingSettingsView({
 
   const isManager = ['Super Admin', 'Store Manager'].includes(currentRole);
   const selectedSettingsShop = shopProfiles.find((shop) => shop.id === activeShopId);
-  const isWholesaleSettingsShop = Boolean(selectedSettingsShop && isWholesaleShopProfile(selectedSettingsShop));
+  const isWholesaleSettingsShop = true; // ARS uses A4 wholesale invoices.
 
   return (
     <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
@@ -324,7 +326,7 @@ export default function AccountingSettingsView({
       <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            Accounting and Store Settings
+            ARS Finance & Company Profile
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Audit store cash flows, register fixed overhead expenses, and configure invoicing parameters.
@@ -507,7 +509,7 @@ export default function AccountingSettingsView({
       {activeTab === 'settings' && (
         <div className="bg-white p-6 rounded-xl border border-slate-150 shadow-xs max-w-lg mx-auto">
           <h3 className="font-heading font-medium text-slate-900 text-base mb-4 flex items-center gap-1.5">
-            <Settings className="w-5 h-5 text-amber-500 animate-spin-slow" /> Store Parameters configuration
+            <Settings className="w-5 h-5 text-amber-500 animate-spin-slow" /> Company Profile · Legal & Billing Details
           </h3>
 
           <form onSubmit={handleSaveSettings} className="space-y-5 text-xs font-sans">
@@ -522,7 +524,7 @@ export default function AccountingSettingsView({
                 >
                   {shopProfiles.map((shop) => (
                     <option key={shop.id} value={shop.id}>
-                      {shop.name}{isWholesaleShopProfile(shop) ? ' (Wholesale)' : ' (Retail)'}
+                      {shop.name}
                     </option>
                   ))}
                 </select>
@@ -537,7 +539,7 @@ export default function AccountingSettingsView({
             </div>
 
             <div>
-              <label className="block text-slate-500 font-semibold mb-1">Corporate Store Handle Name *</label>
+              <label className="block text-slate-500 font-semibold mb-1">Company / Branch Name *</label>
               <input
                 id="settings-store-name"
                 type="text"
@@ -580,15 +582,15 @@ export default function AccountingSettingsView({
               </div>
               {logoUrl && (
                 <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded flex items-center gap-2">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded bg-white border border-slate-200 text-[10px] font-bold text-slate-500">OK</span>
-                  <span className="text-[11px] text-slate-500">Logo uploaded and stored for the active shop</span>
+                  <img src={sanitizeImageSrc(logoUrl) || ''} alt="Company logo preview" className="h-14 w-20 rounded-lg border border-slate-200 bg-slate-900 p-1 object-contain" />
+                  <span className="text-[11px] text-slate-500">Logo ready. Save Company Profile to apply it to invoices.</span>
                 </div>
               )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-slate-500 font-semibold mb-1">Shop Address</label>
+                <label className="block text-slate-500 font-semibold mb-1">Registered / Trading Address</label>
                 <textarea
                   id="settings-shop-address"
                   value={shopAddress}
