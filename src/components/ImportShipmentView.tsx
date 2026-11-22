@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {Ship,PackageCheck,Plus,RefreshCcw,ShieldCheck} from 'lucide-react';
+import PartialReceiptPanel from './PartialReceiptPanel';
 import type {PurchaseOrder,Role} from '../types';
 
 type Shipment = {
@@ -12,6 +13,7 @@ type Props={authToken:string;shopId:string;currentRole:Role;purchaseOrders:Purch
 export default function ImportShipmentView({authToken,shopId,currentRole,purchaseOrders,onRefreshDb,mode}:Props){
  const [rows,setRows]=useState<Shipment[]>([]);
  const [loading,setLoading]=useState(false);
+ const [receivingPo,setReceivingPo]=useState<{id:string;number:string}|null>(null);
  const [saving,setSaving]=useState(false);
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
@@ -36,15 +38,6 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
      setForm({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',currency:'CNY',exchangeRateLkr:'1',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
      await refresh();
    }catch(e:any){setError(e.message||'Unable to register shipment');}finally{setSaving(false);}
- };
- const receive=async(shipment:Shipment)=>{
-   if(!window.confirm(`Receive the entire purchase order ${shipment.po_number}? Stock will increase once. Check every received quantity against the delivery before continuing.`))return;
-   setSaving(true);setError('');setNotice('');
-   try{const response=await fetchWithAuth(`/api/ars/import-shipments/${encodeURIComponent(shipment.id)}/receive`,{method:'POST',body:'{}'});
-     const data=await response.json();if(!response.ok)throw Error(data.error||'Receipt failed');
-     setNotice(`Purchase order ${shipment.po_number} received. Inventory updated once.`);
-     await refresh();onRefreshDb();
-   }catch(e:any){setError(e.message||'Warehouse receipt failed');}finally{setSaving(false);}
  };
  const openOrders=purchaseOrders.filter(po=>po.shopId===shopId&&['Pending','Ordered'].includes(po.status)&&!rows.some(row=>row.purchase_order_id===po.id));
  const format=(value:any)=>Number(value||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -89,17 +82,18 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
      <div className="mb-4 flex items-center justify-between gap-3"><h3 className="font-bold">{mode==='shipments'?'Shipment history':'Shipments awaiting warehouse receipt'}</h3>
        <button type="button" disabled={loading} onClick={()=>void refresh()} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold"><RefreshCcw className="h-4 w-4"/>Refresh</button></div>
      <div className="space-y-3">
-       {rows.filter(row=>mode==='shipments'||row.status==='In Transit').map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
+       {rows.filter(row=>mode==='shipments'||['In Transit','Partially Received'].includes(row.status)).map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
          <div className="min-w-0"><p className="font-bold text-slate-900">{row.shipment_reference} · {row.po_number}</p>
            <p className="mt-1 text-xs text-slate-600">{row.supplier_name} · {row.origin_country} · {row.invoice_currency} · {row.container_number||'Container not entered'}</p>
            <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?String(row.eta_date).slice(0,10):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
          <div className="flex shrink-0 items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status==='Received'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-800'}`}>{row.status}</span>
-           {mode==='receiving'&&<button type="button" disabled={saving} onClick={()=>void receive(row)} className="rounded-xl bg-[#172a47] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Receive full PO</button>}
+           {mode==='receiving'&&<button type="button" disabled={saving} onClick={()=>setReceivingPo({id:row.purchase_order_id,number:row.po_number})} className="rounded-xl bg-[#172a47] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Receive quantities</button>}
          </div>
        </article>)}
        {!rows.some(row=>mode==='shipments'||row.status==='In Transit')&&<p className="rounded-xl bg-slate-50 p-8 text-center text-sm text-slate-500">No shipments to show. Create a supplier purchase order first, then register its shipment.</p>}
      </div>
-     {mode==='receiving'&&<p className="mt-4 text-xs text-amber-800">Full-order receiving only. Do not confirm partial or damaged deliveries; partial receiving and discrepancy handling are not yet implemented.</p>}
+     {mode==='receiving'&&<p className="mt-4 text-xs text-amber-800">Only record verified goods actually received. Damaged or missing items must remain outstanding; formal discrepancy resolution is still pending.</p>}
    </section>
+   {mode==='receiving'&&receivingPo&&<PartialReceiptPanel poId={receivingPo.id} poNumber={receivingPo.number} authToken={authToken} shopId={shopId} onClose={()=>setReceivingPo(null)} onCommitted={()=>{void refresh();onRefreshDb();}} />}
  </div>;
 }
