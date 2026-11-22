@@ -48,18 +48,27 @@ test('unsupported payment methods are rejected before checkout mutations', () =>
 });
 
 const refund = server.split("app.post('/api/transactions/:id/refund'")[1]?.split('// Create Purchase Orders')[0] || '';
+const atomicRefund = dbHelper.split('export const refundTransaction = ')[1]?.split('export const createPurchaseOrder')[0] || '';
 
-test('refund prevalidates every SKU and variant before changing stock', () => {
-  assert.match(refund, /Cannot refund: product/);
-  assert.match(refund, /Cannot refund: product variant/);
-  assert.match(refund, /Number\.isSafeInteger\(Number\(item\.quantity\)\)/);
-  assert.ok(refund.indexOf("for (const item of tx.items)") < refund.indexOf("db.stockLogs.unshift("));
+test('refund uses atomic SQL rather than legacy table rewrites', () => {
+  assert.match(refund, /await refundTransaction\(tx\.id, activeShopId/);
+  assert.doesNotMatch(refund, /await saveDb\(\)/);
+  assert.match(atomicRefund, /SELECT \* FROM sales_transactions WHERE id = \$1 AND shop_id = \$2 FOR UPDATE/);
+  assert.match(atomicRefund, /await client\.query\('COMMIT'\)/);
+  assert.match(atomicRefund, /await client\.query\('ROLLBACK'\)/);
 });
 
-test('credit-sale refund checks and reverses customer outstanding balance', () => {
-  assert.match(refund, /tx\.paymentMethod === 'Credit Account'/);
-  assert.match(refund, /Credit balance is below this invoice total/);
-  assert.match(refund, /db\.customers\[customerIndex\]\.creditBalance/);
-  assert.match(refund, /Number\(tx\.total\)/);
-  assert.ok(refund.indexOf('Credit balance is below') < refund.indexOf('db.stockLogs.unshift('));
+test('refund rejects missing products and variants under the same database transaction', () => {
+  assert.match(atomicRefund, /Cannot refund: product/);
+  assert.match(atomicRefund, /Cannot refund: product variant/);
+  assert.match(atomicRefund, /Number\.isSafeInteger\(quantity\)/);
+  assert.match(atomicRefund, /SELECT \* FROM products WHERE id = \$1 AND shop_id = \$2 FOR UPDATE/);
+});
+
+test('refund does not forgive already paid credit without reconciliation', () => {
+  assert.match(atomicRefund, /Credit balance is below this invoice total/);
+  assert.match(atomicRefund, /credit_balance = credit_balance - \$2/);
+  assert.match(atomicRefund, /purchase_count = GREATEST\(0, purchase_count - 1\)/);
+  assert.match(atomicRefund, /WHERE id = \$3 AND shop_id = \$4/);
+  assert.match(refund, /databaseWriteHealthy = false/);
 });
