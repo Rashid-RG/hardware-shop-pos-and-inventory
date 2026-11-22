@@ -27,6 +27,11 @@ docker info *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Docker is unavailable. No backup created.' }
 docker inspect $Container *> $null
 if ($LASTEXITCODE -ne 0) { throw "Container '$Container' not found. Verify the actual database host before backing up." }
+$portMap = docker port $Container '5432/tcp' 2>$null
+if ($LASTEXITCODE -ne 0) { throw 'Cannot verify Docker database port mapping.' }
+if ($dbUri.Port -gt 0 -and $portMap -notmatch ":$($dbUri.Port)(\\s|$)") {
+  throw 'Docker container port differs from active DATABASE_URL. Refusing to back up the wrong database.'
+}
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
 $baseName = "ars-$Database-$stamp"
 $remoteFile = "/tmp/$baseName.dump"
