@@ -888,6 +888,40 @@ export const seedDatabase = async (initialState: any) => {
 };
 
 // Incremental Write Helpers
+/** Archive instead of deleting product rows referenced by invoices and stock history. */
+export const archiveProduct = async (
+  productId: string, shopId: string, archivedBy: string, actorRole: string
+) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      'SELECT id, name, status FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [productId, shopId]
+    );
+    if (!result.rowCount) throw new Error('Product not found in this shop.');
+    if (result.rows[0].status === 'Inactive') {
+      throw new Error('Product is already archived.');
+    }
+    await client.query(
+      "UPDATE products SET status = 'Inactive', updated_at = NOW() WHERE id = $1 AND shop_id = $2",
+      [productId, shopId]
+    );
+    await client.query(
+      `INSERT INTO activity_logs (id,shop_id,date,user_name,role,action,details)
+       VALUES ($1,$2,NOW(),$3,$4,'Archived Product',$5)`,
+      ['archive-' + productId + '-' + Date.now(), shopId, archivedBy, actorRole,
+       `Archived ${result.rows[0].name}; historical invoices and stock remain unchanged.`]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 /** Atomically edit a single SKU, its stock ledger and its audit record. */
 export const updateProductWithAudit = async (
   product: Product, expectedQuantity: number, actor: string, role: string,
