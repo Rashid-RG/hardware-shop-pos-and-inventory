@@ -2039,7 +2039,7 @@ export default function POSView({
                   </select>
                   {customers.filter(c=>c.id!=='cust-walkin'&&c.shopId===taxConfig.activeShopId).length===0 && (
                     <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
-                      No customer shops registered. Add a shop in Customers before creating an invoice.
+                      No registered customer shops. Add a shop in Customers before creating an invoice.
                     </p>
                   )}
                   {selectedCustomer.id && selectedCustomer.id!=='cust-walkin' && (
