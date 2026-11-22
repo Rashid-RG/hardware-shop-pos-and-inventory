@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -3721,60 +3721,53 @@ app.post('/api/products', requireRole(['Super Admin', 'Store Manager', 'Inventor
 app.put('/api/products/:id', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const index = db.products.findIndex((p) => p.id === req.params.id && p.shopId === activeShopId);
-  if (index !== -1) {
-    const oldQty = db.products[index].quantity;
-    const normalizedPayload = normalizeIncomingProduct(req.body, db.products[index]);
-    const variantsProvided = Array.isArray(req.body?.variants);
-    const payloadError = validateProductPayload(normalizedPayload);
-    if (payloadError) {
-      return res.status(400).json({ error: payloadError });
-    }
-    const newQty = Number(normalizedPayload.quantity);
+  const current = db.products.find((p) => p.id === req.params.id && p.shopId === activeShopId);
+  if (!current) return res.status(404).json({ error: 'Product not found in this shop' });
+  const normalized = normalizeIncomingProduct(req.body, current);
+  const variantsProvided = Array.isArray(req.body?.variants);
+  const validation = validateProductPayload(normalized);
+  if (validation) return res.status(400).json({ error: validation });
 
-    // If quantity differs, log a quick audit log
-    if (oldQty !== newQty) {
-      db.stockLogs.unshift({
-        id: 'log-' + Date.now(),
-        date: new Date().toISOString(),
-        productId: req.params.id,
-        productName: req.body.name || db.products[index].name,
-        type: 'Stock Adjust',
-        quantity: newQty - oldQty,
-        reason: req.body.reason || 'Manual Adjustment Audit Update',
-        user: authUser?.name || 'Supervisor',
-        shopId: activeShopId,
-      });
-    }
-
-    const updatedProduct = {
-      ...db.products[index],
-      ...normalizedPayload,
-      variants: variantsProvided ? normalizedPayload.variants : db.products[index].variants,
-      costPrice: Number(normalizedPayload.costPrice),
-      sellingPrice: Number(normalizedPayload.sellingPrice),
-      reorderLevel: Number(normalizedPayload.reorderLevel),
-    };
-
-    db.products[index] = variantsProvided
-      ? { ...updatedProduct, quantity: newQty }
-      : applyProductStockDelta({ ...updatedProduct, quantity: oldQty }, newQty - oldQty);
-
-    db.activityLogs.unshift({
-      id: 'act-' + Date.now(),
-      date: new Date().toISOString(),
-      user: authUser?.name || 'Admin',
-      role: authUser?.role || 'Super Admin',
-      action: 'Updated Product',
-      details: `Modified product details/quantity for ${db.products[index].name} in ${activeShopName}.`,
-      shopId: activeShopId,
+  // Legacy editing could silently spread stock adjustments across variants.
+  // Require explicit per-variant quantities when stock of variant-managed SKUs changes.
+  const originalVariants = current.variants || [];
+  const variants = variantsProvided ? normalized.variants || [] : originalVariants;
+  if (originalVariants.length && !variantsProvided &&
+      Number(normalized.quantity) !== current.quantity) {
+    return res.status(400).json({
+      error: 'Edit the individual variants to adjust stock on a variant-managed product.',
     });
-
-    await saveDb();
-    res.json(db.products[index]);
-  } else {
-    res.status(404).json({ error: 'Product not found' });
   }
+  const quantity = variants.length
+    ? variants.reduce((sum, v) => sum + Number(v.quantity), 0)
+    : Number(normalized.quantity);
+  if (!Number.isSafeInteger(quantity) || quantity < 0 ||
+      !Number.isSafeInteger(normalized.reorderLevel) || normalized.reorderLevel < 0 ||
+      variants.some((v) => !Number.isSafeInteger(v.quantity) || v.quantity < 0)) {
+    return res.status(400).json({ error: 'Stock and reorder quantities must be nonnegative whole numbers.' });
+  }
+
+  const updated: Product = {
+    ...current, ...normalized, id: current.id, shopId: activeShopId,
+    variants: variants.length ? variants : undefined,
+    quantity,
+  };
+  try {
+    await updateProductWithAudit(updated, current.quantity,
+      authUser?.name || 'Supervisor', authUser?.role || 'Inventory Staff',
+      activeShopName, String(req.body?.reason || 'Manual Product Adjustment').slice(0, 300));
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Could not reload updated product');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Product edit committed but cache refresh failed; writes disabled', error);
+  }
+  res.json(updated);
 });
 
 app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) => {
