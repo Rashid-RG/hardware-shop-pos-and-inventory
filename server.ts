@@ -650,11 +650,9 @@ const loginLimiter = rateLimit({
 const normalizeLoginKey = (email: string, ip: string) => `${email.trim().toLowerCase()}::${ip}`;
 
 const getRequestIp = (req: express.Request) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.ip || 'unknown';
+  // Express applies its configured trust-proxy policy to req.ip.
+  // Never trust caller-supplied X-Forwarded-For directly for login throttling.
+  return req.ip || req.socket.remoteAddress || 'unknown';
 };
 
 const productImageStorage = multer.diskStorage({
