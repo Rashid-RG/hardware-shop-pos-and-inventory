@@ -16,7 +16,7 @@ test('ARS invoice setup uses separate customer and representative dialogs',()=>{
 test('cannot confirm a missing shop or unregistered sales rep',()=>{
   assert.match(pos,/c.id===event.target.value && c.shopId===taxConfig.activeShopId/);
   assert.match(pos,/selectedCustomer.id === 'cust-walkin'/);
-  assert.match(pos,/!activeSalesReps.some\(rep=>rep.id===selectedSalesRepId\)/);
+  assert.match(pos,/!activeSalesReps.some\(rep=>rep.id===draftRepId\)/);
   assert.match(pos,/activeSalesReps.map\(rep=>/);
 });
 test('summary and review avoid multiple independently scrolling payment panels',()=>{
