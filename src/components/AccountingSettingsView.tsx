@@ -40,7 +40,7 @@ export default function AccountingSettingsView({
 }: AccountingSettingsViewProps) {
   const defaultInvoiceCompanyMeta = {
     companyLegalName: '',
-    companyTagline: 'Hardware Wholesale & Retail',
+    companyTagline: 'Hardware Import & Wholesale Distribution',
     businessRegistrationNo: '',
     vatRegistrationNo: '',
     tinNo: '',
