@@ -44,3 +44,20 @@ test('unsupported payment methods are rejected before checkout mutations', () =>
   assert.match(checkout, /!allowedPaymentMethods\.has\(paymentMethod\)/);
   assert.ok(checkout.indexOf('Unsupported payment method') < checkout.indexOf('for (const update of pendingStockUpdates)'));
 });
+
+const refund = server.split("app.post('/api/transactions/:id/refund'")[1]?.split('// Create Purchase Orders')[0] || '';
+
+test('refund prevalidates every SKU and variant before changing stock', () => {
+  assert.match(refund, /Cannot refund: product/);
+  assert.match(refund, /Cannot refund: product variant/);
+  assert.match(refund, /Number\.isSafeInteger\(Number\(item\.quantity\)\)/);
+  assert.ok(refund.indexOf("for (const item of tx.items)") < refund.indexOf("db.stockLogs.unshift("));
+});
+
+test('credit-sale refund checks and reverses customer outstanding balance', () => {
+  assert.match(refund, /tx\.paymentMethod === 'Credit Account'/);
+  assert.match(refund, /Credit balance is below this invoice total/);
+  assert.match(refund, /db\.customers\[customerIndex\]\.creditBalance/);
+  assert.match(refund, /Number\(tx\.total\)/);
+  assert.ok(refund.indexOf('Credit balance is below') < refund.indexOf('db.stockLogs.unshift('));
+});
