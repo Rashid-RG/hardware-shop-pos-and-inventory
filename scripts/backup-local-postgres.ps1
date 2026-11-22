@@ -42,7 +42,7 @@ $backupFile = Join-Path $Destination "$name.dump"
 $tempFile = "$backupFile.partial"
 $checksumFile = "$backupFile.sha256"
 $uploadZip = Join-Path $Destination "$name-uploads.zip"
-$uploadTemp = "$uploadZip.partial"
+$uploadTemp = "$uploadZip.partial.zip"
 $uploadChecksum = "$uploadZip.sha256"
 try {
   & docker exec $Container pg_isready -U $DbUser -d $Database *> $null
