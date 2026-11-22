@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
+import ARSBrand from './components/ARSBrand';
 import loginBackgroundImage from './assets/login-hardware-bg.svg';
 import { Sparkles, MessageSquare, X, Send, Menu, ShieldCheck, Store, ArrowUpRight, LockKeyhole, Bolt } from 'lucide-react';
 const DashboardView = lazy(() => import('./components/DashboardView'));
@@ -719,7 +720,7 @@ export default function App() {
       <div className="min-h-screen bg-[#101d32] p-4 sm:p-8 flex items-center justify-center text-slate-900 relative overflow-y-auto">
         <div className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <form onSubmit={handleCreateAdmin} className="relative w-full max-w-lg rounded-[28px] border border-slate-200 bg-white p-7 sm:p-10 shadow-2xl space-y-5">
-          <div className="flex items-center gap-3 mb-8"><span className="rounded-xl bg-amber-400 p-3 text-slate-900"><Bolt className="h-6 w-6" /></span><div><p className="font-heading font-bold text-xl">ARS Hardware</p><p className="text-[10px] uppercase font-semibold tracking-[0.17em] text-amber-700">First-time business setup</p></div></div>
+          <div className="mb-8"><ARSBrand dark subtitle="First-time business setup" /></div>
           <h1 className="font-heading text-3xl tracking-tight font-bold">Create your administrator account</h1>
           <p className="text-sm leading-relaxed text-slate-600">Set up secure owner access. Employee accounts are managed in PostgreSQL, not in configuration files. This form becomes unavailable when the first account is created.</p>
           <label className="block text-sm">Full name
@@ -754,8 +755,7 @@ export default function App() {
           <section className="hidden lg:flex flex-col justify-between min-h-[560px] border-r border-white/10 p-9 xl:p-12 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
             <div>
               <div className="inline-flex items-center gap-3">
-                <div className="rounded-2xl bg-amber-400 p-3 text-slate-950"><Bolt className="h-7 w-7" /></div>
-                <div><p className="font-heading text-2xl font-bold tracking-tight">ARS Hardware</p><p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-300">Business Management Suite</p></div>
+                <ARSBrand subtitle="Hardware • Wholesale • Retail" className="ars-login-brand" />
               </div>
               <div className="mt-14 max-w-xl">
                 <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for hardware commerce</p>
@@ -767,7 +767,7 @@ export default function App() {
           </section>
           <div className="bg-white p-6 text-slate-900 sm:p-8 lg:p-9 xl:p-11 flex flex-col justify-center">
             <div className="mb-6">
-              <div className="mb-8 flex items-center gap-3 lg:hidden"><span className="rounded-xl bg-amber-400 p-2.5"><Bolt className="h-5 w-5" /></span><div><p className="font-heading text-lg font-bold">ARS Hardware</p><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Business POS</p></div></div>
+              <div className="mb-6 lg:hidden"><ARSBrand dark subtitle="Hardware • Wholesale • Retail" /></div>
               <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
               <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
               <p className="mt-3 text-sm text-slate-500">Sign in securely. Your authorized branch will load after verification.</p>
