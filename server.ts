@@ -3773,6 +3773,12 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   if (paymentMethod === 'Credit Account' && !checkoutCustomer) {
     return res.status(400).json({ error: 'A registered customer is required for credit sales' });
   }
+  const allowedPaymentMethods = new Set([
+    'Cash', 'Credit Card', 'Debit Card', 'QR Code', 'Bank Transfer', 'Mobile Wallet', 'Credit Account',
+  ]);
+  if (!allowedPaymentMethods.has(paymentMethod)) {
+    return res.status(400).json({ error: 'Unsupported payment method' });
+  }
 
   const checkoutError = validateCheckoutPayload(cartItems || []);
   if (checkoutError) {
