@@ -30,3 +30,15 @@ test('system admin UI does not present destructive database buttons or raw table
   assert.doesNotMatch(rendered, /Export CSV/);
   assert.match(sidebar, /'Super Admin'/);
 });
+
+test('user changes do not trigger the destructive whole-database rewrite', () => {
+  const endpoints = server.split("app.put('/api/profile'")[1]?.split("app.post(\n  '/api/uploads/product-image'")[0] || '';
+  assert.ok(endpoints.includes("app.post('/api/users'"));
+  assert.match(endpoints, /INSERT INTO users/);
+  assert.match(endpoints, /UPDATE users SET email/);
+  assert.match(endpoints, /DELETE FROM users/);
+  assert.doesNotMatch(endpoints, /syncNormalizedFromState\(db\)/);
+  assert.match(endpoints, /Cannot delete the last System Administrator/);
+  assert.match(endpoints, /Cannot demote the last System Administrator/);
+  assert.match(endpoints, /at least 12 characters/);
+});
