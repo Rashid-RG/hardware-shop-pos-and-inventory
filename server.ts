@@ -2650,6 +2650,11 @@ app.use('/api', (req, res, next) => {
     res.once('finish', release);
     res.once('close', release);
     if (res.destroyed) return release();
+    // A prior queued request may have failed while this request was waiting.
+    if (!databaseWriteHealthy) {
+      res.status(503).json({ error: 'Database recovery required. Writes are temporarily disabled.' });
+      return;
+    }
     next();
   }).catch((error) => {
     releaseWrite();
