@@ -391,9 +391,11 @@ export default function ProductManagementView({
   const handleOpenAdd = () => {
     setEditingProduct(null);
     setShowAdvancedProduct(false);
+    const generatedCode = 'ARS-' + crypto.randomUUID().slice(0, 12).toUpperCase();
     setName('');
-    setSku('CON-' + Math.floor(100 + Math.random() * 900));
-    setBarcode('890100' + Math.floor(1000000 + Math.random() * 9000000));
+    setSku(generatedCode);
+    // Internal scan code only; never fabricate a manufacturer's EAN barcode.
+    setBarcode(generatedCode);
     setInternalCode('');
     setBrand('');
     setCategory('');
@@ -417,7 +419,7 @@ export default function ProductManagementView({
   // Open form for editing
   const handleOpenEdit = (p: Product) => {
     setEditingProduct(p);
-    setShowAdvancedProduct(Boolean(p.variants?.length || p.imageUrl || p.longDescription));
+    setShowAdvancedProduct(true); // Editing exposes current optional information before saving.
     setName(p.name);
     setSku(p.sku);
     setBarcode(p.barcode);
@@ -640,7 +642,7 @@ export default function ProductManagementView({
             Hardware Catalog Directory
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Register new shipments, configure pricing spreads, design custom SKUs.
+            Find products quickly. Add a standard item in seconds or expand advanced options.
           </p>
         </div>
 
@@ -650,7 +652,7 @@ export default function ProductManagementView({
             onClick={handleOpenAdd}
             className="bg-slate-900 hover:bg-slate-950 text-slate-100 text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-2 shadow-xs transition"
           >
-            <Plus className="w-4 h-4" /> Register New Product
+            <Plus className="w-4 h-4" /> Add Product
           </button>
         )}
       </div>
@@ -906,7 +908,7 @@ export default function ProductManagementView({
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">EAN / Barcode *</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Barcode / Internal Scan Code *</label>
                       <input
                         id="input-prod-barcode"
                         type="text"
@@ -914,36 +916,6 @@ export default function ProductManagementView({
                         value={barcode}
                         onChange={(e) => setBarcode(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Manufacturer Brand</label>
-                      <input
-                        id="input-prod-brand"
-                        type="text"
-                        value={brand}
-                        onChange={(e) => setBrand(e.target.value)}
-                        list="catalog-brand-suggestions"
-                        placeholder="e.g. Stanley, Hilti, Dewalt"
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
-                      />
-                      <datalist id="catalog-brand-suggestions">
-                        {uniqueBrands.map((b) => (
-                          <option key={b} value={b} />
-                        ))}
-                      </datalist>
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Internal Code (Admin Only)</label>
-                      <input
-                        id="input-prod-internal-code"
-                        type="text"
-                        value={internalCode}
-                        onChange={(e) => setInternalCode(e.target.value.toUpperCase())}
-                        placeholder="e.g. YMV, TSK"
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 uppercase font-mono"
                       />
                     </div>
 
@@ -982,6 +954,48 @@ export default function ProductManagementView({
                         value={quantity}
                         onChange={(e) => setQuantity(Number(e.target.value))}
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                  </>
+
+                <div className="col-span-2">
+                  <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
+                    aria-expanded={showAdvancedProduct}
+                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                    <span>Advanced options · variants, specifications and images</span>
+                    <span aria-hidden="true">{showAdvancedProduct ? '−' : '+'}</span>
+                  </button>
+                </div>
+                {showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3">
+                  <p className="col-span-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Optional product details</p>
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Manufacturer Brand</label>
+                      <input
+                        id="input-prod-brand"
+                        type="text"
+                        value={brand}
+                        onChange={(e) => setBrand(e.target.value)}
+                        list="catalog-brand-suggestions"
+                        placeholder="e.g. Stanley, Hilti, Dewalt"
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
+                      />
+                      <datalist id="catalog-brand-suggestions">
+                        {uniqueBrands.map((b) => (
+                          <option key={b} value={b} />
+                        ))}
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Internal Code (Admin Only)</label>
+                      <input
+                        id="input-prod-internal-code"
+                        type="text"
+                        value={internalCode}
+                        onChange={(e) => setInternalCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. YMV, TSK"
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 uppercase font-mono"
                       />
                     </div>
 
@@ -1057,17 +1071,6 @@ export default function ProductManagementView({
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-sans"
                       />
                     </div>
-                  </>
-
-                <div className="col-span-2">
-                  <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
-                    aria-expanded={showAdvancedProduct}
-                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100">
-                    <span>Advanced options · variants, specifications and images</span>
-                    <span aria-hidden="true">{showAdvancedProduct ? '−' : '+'}</span>
-                  </button>
-                </div>
-                {showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3">
 
                 {/* Category-Specific Attributes for Simple Product */}
                 {variants.length === 0 && (() => {
