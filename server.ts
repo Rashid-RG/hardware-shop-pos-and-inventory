@@ -3459,33 +3459,45 @@ app.get('/api/manual-expenses', (_req, res) => {
   res.json(db.manualExpenses);
 });
 
-app.post('/api/manual-expenses', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
-  const { desc, amount, category } = req.body || {};
-  if (!desc || Number(amount) <= 0) {
-    return res.status(400).json({ error: 'Description and positive amount are required' });
+app.post('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled until recovery.'});
+  const desc=String(req.body?.desc||'').trim();
+  const category=String(req.body?.category||'Other').trim();
+  const amount=Number(req.body?.amount);
+  if(!desc||desc.length>1000||!category||category.length>100||
+     !Number.isFinite(amount)||amount<=0||amount>1_000_000_000||
+     Math.abs(amount*100-Math.round(amount*100))>0.00001){
+    return res.status(400).json({error:'Enter a description, valid category, and positive amount with up to two decimals.'});
   }
-
-  const authUser = (req as AppRequest).authUser;
-  const expense: ManualExpense = {
-    id: `exp-${Date.now()}`,
-    desc: String(desc),
-    amount: Number(amount),
-    category: String(category || 'Other'),
-    date: new Date().toISOString().split('T')[0],
-  };
-  db.manualExpenses.unshift(expense);
-
-  db.activityLogs.unshift({
-    id: `act-${Date.now()}`,
-    date: new Date().toISOString(),
-    user: authUser?.name || 'System',
-    role: authUser?.role || 'Super Admin',
-    action: 'Logged Expense',
-    details: `Added manual expense ${expense.desc} (${db.settings.currency} ${expense.amount.toFixed(2)}).`,
-  });
-
-  await saveDb();
-  res.json(expense);
+  const {activeShopId}=getActiveShopContext(db,req);
+  const authUser=(req as AppRequest).authUser;
+  const expense:ManualExpense={id:'exp-'+randomUUID(),desc,amount,category,date:new Date().toISOString().slice(0,10)};
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO manual_expenses(id,description,amount,date,category) VALUES($1,$2,$3,$4,$5)',
+      [expense.id,expense.desc,expense.amount,expense.date,expense.category]);
+    await client.query(
+      `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+       VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,
+      ['act-'+randomUUID(),activeShopId,authUser?.name||'System',authUser?.role||'Store Manager',
+       `Added manual expense ${expense.desc} (LKR ${expense.amount.toFixed(2)}).`]);
+    await client.query('COMMIT');
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    return res.status(409).json({error:'Expense could not be recorded.'});
+  }finally{client.release();}
+  try{
+    const refreshed=await loadStateFromNormalized();
+    if(!refreshed)throw new Error('Cannot reload committed expense');
+    db=refreshed;
+    res.status(201).json(expense);
+  }catch(error){
+    databaseWriteHealthy=false;
+    console.error('Expense committed but refresh failed; writes disabled',error);
+    res.status(503).json({error:'Expense was committed but reload failed. Reconcile before retrying.'});
+  }
 });
 
 // Products Routes
