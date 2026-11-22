@@ -15,12 +15,12 @@ test('Windows sample configuration uses mapped PostgreSQL host port', () => {
   assert.match(config, /127\.0\.0\.1:5433\/hardware_pos/);
   assert.match(docker, /5433:5432/);
 });
-test('Windows startup checks all logins, session secret and actual PostgreSQL authentication', () => {
-  assert.match(launcher, /\$requiredPasswords = @\('ADMIN_PASSWORD'/);
+test('Windows startup validates a strong session secret and PostgreSQL without demo role passwords', () => {
   assert.match(launcher, /\$jwtValue\.Length -lt 32/);
-  assert.match(launcher, /Every role must have a different password/);
   assert.match(launcher, /Test-PostgresAuth \$dbUrl/);
-  assert.match(launcher, /Configure a unique password/);
+  assert.doesNotMatch(launcher, /\$requiredPasswords = @\('ADMIN_PASSWORD'/);
+  assert.doesNotMatch(launcher, /Configure a unique password/);
+  assert.match(launcher, /Employee credentials are managed in PostgreSQL/);
 });
 test('Windows startup avoids launching Docker for unreachable remote PostgreSQL', () => {
   assert.match(launcher, /Configured remote PostgreSQL is not reachable/);
