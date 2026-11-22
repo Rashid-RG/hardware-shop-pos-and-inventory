@@ -5190,6 +5190,169 @@ app.get('/api/reports/sales', (req, res) => {
   res.json({ rows, totals, from: fromDate, to: toDate });
 });
 
+// ARS import shipment register. Each shipment references an existing, shop-scoped
+// purchase order. Receiving uses the existing atomic PO receiver, not a second
+// stock posting path. Repeat receipt is rejected at the PO row lock.
+const lkrAmount = (raw: unknown) => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1_000_000_000 &&
+    Math.abs(n * 100 - Math.round(n * 100)) <= 0.00001 ? n : null;
+};
+
+app.get('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager','Inventory Staff']), async (req, res) => {
+  const { activeShopId } = getActiveShopContext(db, req);
+  try {
+    const rows = await pool.query(
+      `SELECT s.*, p.po_number, p.supplier_name, p.status AS purchase_status
+       FROM ars_import_shipments s
+       JOIN purchase_orders p ON p.id=s.purchase_order_id AND p.shop_id=s.shop_id
+       WHERE s.shop_id=$1 ORDER BY s.created_at DESC LIMIT 250`, [activeShopId]);
+    res.json(rows.rows.map((row) => ({
+      ...row,
+      status: row.purchase_status === 'Received' ? 'Received' : row.purchase_status === 'Cancelled' ? 'Cancelled' : 'In Transit',
+    })));
+  } catch { res.status(503).json({error: 'Could not load import shipments.'}); }
+});
+app.post('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager']), async (req,res) => {
+  const { activeShopId } = getActiveShopContext(db, req);
+  const poId=String(req.body?.purchaseOrderId||'').trim();
+  const reference=String(req.body?.shipmentReference||'').trim();
+  const currency=String(req.body?.currency||'CNY').toUpperCase();
+  const container=String(req.body?.containerNumber||'').trim();
+  const notes=String(req.body?.notes||'').trim();
+  const eta=String(req.body?.etaDate||'').trim();
+  const fx=Number(req.body?.exchangeRateLkr);
+  const charges=[req.body?.freightLkr??0,req.body?.customsLkr??0,req.body?.clearanceLkr??0].map(lkrAmount);
+  if (!poId || !reference || reference.length>90 || container.length>80 || notes.length>2000 ||
+      !['CNY','USD','LKR'].includes(currency) || !Number.isFinite(fx) || fx<=0 || fx>100000 ||
+      charges.some(n=>n===null) || (eta && !/^\\d{4}-\\d{2}-\\d{2}$/.test(eta))) {
+    return res.status(400).json({error:'Valid purchase order, shipment reference, currency, exchange rate and expenses are required.'});
+  }
+  try {
+    const po=await pool.query('SELECT status FROM purchase_orders WHERE id=$1 AND shop_id=$2',[poId,activeShopId]);
+    if (!po.rowCount || !['Pending','Ordered'].includes(po.rows[0].status)) {
+      return res.status(409).json({error:'Select an open purchase order belonging to this branch.'});
+    }
+    const id='shipment-'+randomUUID();
+    const auth=(req as AppRequest).authUser!;
+    await pool.query(`INSERT INTO ars_import_shipments
+      (id,shop_id,purchase_order_id,shipment_reference,container_number,eta_date,invoice_currency,exchange_rate_lkr,freight_lkr,customs_lkr,clearance_lkr,notes,created_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [id,activeShopId,poId,reference,container,eta||null,currency,fx,charges[0],charges[1],charges[2],notes,auth.email]);
+    res.status(201).json({id,shipmentReference:reference,status:'In Transit'});
+  } catch(e:any) {
+    res.status(e?.code==='23505'?409:503).json({error:e?.code==='23505'?'Shipment reference or purchase order already registered.':'Could not register import shipment.'});
+  }
+});
+app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','Store Manager','Inventory Staff']), async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  const shipment=await pool.query(
+    `SELECT s.purchase_order_id,p.status FROM ars_import_shipments s JOIN purchase_orders p
+     ON p.id=s.purchase_order_id AND p.shop_id=s.shop_id WHERE s.id=$1 AND s.shop_id=$2`,
+    [req.params.id,activeShopId]).catch(()=>null);
+  if (!shipment?.rowCount) return res.status(404).json({error:'Shipment was not found for this branch.'});
+  if (!['Pending','Ordered'].includes(shipment.rows[0].status)) {
+    return res.status(409).json({error:'Purchase order is already received or cannot be received.'});
+  }
+  try {
+    await receivePurchaseOrder(shipment.rows[0].purchase_order_id,activeShopId,(req as AppRequest).authUser?.name||'Warehouse Staff');
+    const refreshed=await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Refresh failed after stock receipt');
+    db=refreshed;
+    res.json({status:'Received',purchaseOrderId:shipment.rows[0].purchase_order_id});
+  } catch(error:any) {
+    // If a transaction committed but refresh failed, do not permit further
+    // business writes until recovery. The purchase receipt itself is atomic.
+    const status=await pool.query('SELECT status FROM purchase_orders WHERE id=$1 AND shop_id=$2',
+      [shipment.rows[0].purchase_order_id,activeShopId]).catch(()=>null);
+    if (status?.rows[0]?.status==='Received') databaseWriteHealthy=false;
+    res.status(409).json({error:status?.rows[0]?.status==='Received'
+      ? 'Stock was committed but refresh failed; stop and reconcile before retrying.'
+      : (error?.message||'Warehouse receipt failed.')});
+  }
+});
+
+// Partner records and immutable capital contributions/drawings. Financial
+// statements and profit distributions must NOT be inferred from these entries.
+app.get('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try {
+    const [partners,entries]=await Promise.all([
+      pool.query('SELECT * FROM ars_business_partners WHERE shop_id=$1 ORDER BY created_at,id',[activeShopId]),
+      pool.query('SELECT * FROM ars_partner_capital_entries WHERE shop_id=$1 ORDER BY entry_date DESC,created_at DESC LIMIT 500',[activeShopId])
+    ]);
+    res.json({partners:partners.rows,entries:entries.rows});
+  }catch{res.status(503).json({error:'Could not load confidential partner ledger.'});}
+});
+app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  const name=String(req.body?.name||'').trim();
+  const pctRaw=req.body?.ownershipPercent;
+  const pct=pctRaw===null || pctRaw===undefined || pctRaw==='' ? null : Number(pctRaw);
+  if(name.length<2||name.length>120 || (pct!==null && (!Number.isFinite(pct)||pct<0||pct>100||Math.round(pct*100)!==pct*100))) {
+    return res.status(400).json({error:'Provide partner name and optional valid ownership percentage.'});
+  }
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
+    const partners=await client.query('SELECT ownership_percent FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
+    if(partners.rowCount>=3){await client.query('ROLLBACK');return res.status(409).json({error:'ARS has a maximum of three partners.'});}
+    const allocated=partners.rows.reduce((sum,row)=>sum+Number(row.ownership_percent||0),0);
+    if(pct!==null && allocated+pct>100.000001){await client.query('ROLLBACK');return res.status(409).json({error:'Total partner ownership cannot exceed 100%.'});}
+    const id='partner-'+randomUUID();
+    await client.query('INSERT INTO ars_business_partners (id,shop_id,name,ownership_percent,created_by) VALUES ($1,$2,$3,$4,$5)',
+      [id,activeShopId,name,pct,(req as AppRequest).authUser!.email]);
+    await client.query('COMMIT');
+    res.status(201).json({id,name,ownership_percent:pct});
+  }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Could not register partner.'});}
+  finally{client.release();}
+});
+app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  const pctRaw=req.body?.ownershipPercent;
+  const pct=pctRaw===null||pctRaw===''?null:Number(pctRaw);
+  if(pct!==null && (!Number.isFinite(pct)||pct<0||pct>100||Math.abs(pct*100-Math.round(pct*100))>0.00001)) {
+    return res.status(400).json({error:'Ownership must be blank or 0–100% with two decimals.'});
+  }
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
+    const partners=await client.query('SELECT id,ownership_percent FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
+    if(!partners.rows.some(p=>p.id===req.params.id)){await client.query('ROLLBACK');return res.status(404).json({error:'Partner not found.'});}
+    const others=partners.rows.filter(p=>p.id!==req.params.id).reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
+    if(pct!==null && others+pct>100.000001){await client.query('ROLLBACK');return res.status(409).json({error:'Total partner ownership cannot exceed 100%.'});}
+    await client.query('UPDATE ars_business_partners SET ownership_percent=$1 WHERE id=$2 AND shop_id=$3',[pct,req.params.id,activeShopId]);
+    await client.query('COMMIT');
+    res.json({id:req.params.id,ownership_percent:pct});
+  }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Ownership update failed.'});}
+  finally{client.release();}
+});
+app.post('/api/ars/partner-capital',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  const partnerId=String(req.body?.partnerId||'').trim();
+  const entryType=String(req.body?.entryType||'');
+  const amount=lkrAmount(req.body?.amountLkr);
+  const reference=String(req.body?.reference||'').trim();
+  const note=String(req.body?.note||'').trim();
+  const date=String(req.body?.entryDate||'').trim();
+  if(!['Contribution','Drawing'].includes(entryType)||amount===null||amount<=0||!partnerId||!reference||reference.length>120||
+    note.length>1000|| !/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) {
+    return res.status(400).json({error:'Partner, valid amount, date, reference and contribution/drawing type are required.'});
+  }
+  try{
+    const partner=await pool.query('SELECT id FROM ars_business_partners WHERE id=$1 AND shop_id=$2',[partnerId,activeShopId]);
+    if(!partner.rowCount)return res.status(404).json({error:'Partner not found for this branch.'});
+    const id='capital-'+randomUUID();
+    await pool.query(`INSERT INTO ars_partner_capital_entries
+      (id,shop_id,partner_id,entry_type,amount_lkr,entry_date,reference,note,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id,activeShopId,partnerId,entryType,amount,date,reference,note,(req as AppRequest).authUser!.email]);
+    res.status(201).json({id,partnerId,entryType,amountLkr:amount});
+  }catch{res.status(503).json({error:'Unable to record partner capital entry.'});}
+});
+
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: 'API route not found' });
 });
