@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4430,131 +4430,86 @@ app.post('/api/transactions/:id/refund', requireRole(['Super Admin', 'Store Mana
 
 // Create Purchase Orders (Suppliers)
 app.post('/api/purchases', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
-  const { supplierId, supplierName, items, orderUser } = req.body;
-  const { activeShopId, activeShopName } = getActiveShopContext(db, req);
-
-  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Add at least one purchase line.' });
-  let totalWeightCost = 0;
+  const { supplierId, items, orderUser } = req.body || {};
+  const { activeShopId } = getActiveShopContext(db, req);
+  const supplier = db.suppliers.find((item) => item.id === supplierId && item.shopId === activeShopId);
+  if (!supplier) return res.status(400).json({ error: 'Supplier not found in this shop' });
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'Add at least one purchase line' });
   const parts: PurchaseOrder['items'] = [];
+  let sum = 0;
   for (const item of items) {
-    const product = db.products.find(p => p.id === item?.productId && p.shopId === activeShopId);
-    if (!product || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 ||
-      !Number.isFinite(item.costPrice) || item.costPrice < 0) {
-      return res.status(400).json({ error: 'Invalid purchase product, quantity or cost.' });
+    const product = db.products.find((p) => p.id === item?.productId && p.shopId === activeShopId);
+    const quantity = Number(item?.quantity);
+    const costPrice = Number(item?.costPrice);
+    if (!product || !Number.isSafeInteger(quantity) || quantity <= 0 ||
+        !Number.isFinite(costPrice) || costPrice < 0) {
+      return res.status(400).json({ error: 'Invalid purchase product, quantity or cost' });
     }
     try {
       const variant = purchaseVariant(product.variants || [], item.variantId, product.name);
-      totalWeightCost += item.costPrice * item.quantity;
-      parts.push({ productId: product.id, productName: variant ? product.name + ' (' + variant.name + ')' : product.name,
-        variantId: variant?.id, quantity: item.quantity, costPrice: item.costPrice });
+      sum += quantity * costPrice;
+      parts.push({ productId: product.id, productName: variant ? `${product.name} (${(variant as ProductVariant & { name: string }).name})` : product.name,
+        variantId: variant?.id, quantity, costPrice });
     } catch (error) {
       return res.status(400).json({ error: (error as Error).message });
     }
   }
-
-  const newPO: PurchaseOrder = {
-    id: 'po-' + Date.now(),
+  if (!Number.isFinite(sum) || sum > 9999999999) return res.status(400).json({ error: 'Invalid purchase total' });
+  const po: PurchaseOrder = {
+    id: 'po-' + randomUUID(),
     shopId: activeShopId,
-    poNumber: 'PO-2026-' + Math.floor(1000 + Math.random() * 9000),
+    poNumber: 'PO-' + Date.now() + '-' + randomUUID().slice(0, 8).toUpperCase(),
     date: new Date().toISOString(),
-    supplierId: supplierId,
-    supplierName: supplierName,
+    supplierId: supplier.id,
+    supplierName: supplier.companyName || supplier.name,
     items: parts,
-    total: Math.round(totalWeightCost * 100) / 100,
-    status: 'Pending'
+    total: Math.round(sum * 100) / 100,
+    status: 'Pending',
   };
-
-  db.purchaseOrders.unshift(newPO);
-
-  db.activityLogs.unshift({
-    id: 'act-' + Date.now(),
-    shopId: activeShopId,
-    date: new Date().toISOString(),
-    user: orderUser || 'Inventory Officer',
-    role: 'Inventory Staff',
-    action: 'Created PO',
-    details: `Drafted request ${newPO.poNumber} with supplier ${newPO.supplierName} for ${activeShopName} (Rs.${newPO.total.toFixed(2)}).`
-  });
-
-  await saveDb();
-  res.json(newPO);
+  try {
+    await createPurchaseOrder(po);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot refresh committed purchase');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Purchase committed but refresh failed; writes disabled', error);
+  }
+  res.json(po);
 });
 
-// Update Purchase Order status (Receive items)
 app.put('/api/purchases/:id/status', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
-  const { status, receiveUser } = req.body;
+  const { status, receiveUser } = req.body || {};
   const { activeShopId } = getActiveShopContext(db, req);
-  const index = db.purchaseOrders.findIndex((po) => po.id === req.params.id && po.shopId === activeShopId);
-
-  if (index !== -1) {
-    const oldStatus = db.purchaseOrders[index].status;
-    if (status === oldStatus) return res.json(db.purchaseOrders[index]);
-    if (!['Pending', 'Ordered', 'Cancelled', 'Received'].includes(status) || oldStatus === 'Received' || oldStatus === 'Cancelled') {
-      return res.status(409).json({ error: 'Invalid change to purchase order status.' });
-    }
-
-    if (status === 'Received') {
-      // Validate every line before updating any stock or closing the order.
-      const changes: Array<{ product: Product; variant?: ProductVariant; item: PurchaseOrder['items'][number] }> = [];
-      for (const item of db.purchaseOrders[index].items) {
-        const product = db.products.find(p => p.id === item.productId && p.shopId === activeShopId);
-        if (!product || !Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
-          return res.status(400).json({ error: 'Ordered product or quantity unavailable.' });
-        }
-        try {
-          changes.push({ item, product, variant: purchaseVariant(product.variants || [], item.variantId, product.name, true) });
-        } catch (error) {
-          return res.status(400).json({ error: (error as Error).message });
-        }
-      }
-      for (const { product, variant, item } of changes) {
-        if (variant) {
-          variant.quantity += item.quantity;
-          product.quantity = product.variants!.reduce((sum, v) => sum + v.quantity, 0);
-        } else {
-          product.quantity += item.quantity;
-        }
-        // Log stock in
-        db.stockLogs.unshift({
-          id: 'log-' + Date.now() + Math.random().toString(36).substring(2, 5),
-          shopId: activeShopId,
-          date: new Date().toISOString(),
-          productId: item.productId,
-          productName: item.productName,
-          type: 'Stock In',
-          quantity: item.quantity,
-          reason: `Purchase Receipt for ${db.purchaseOrders[index].poNumber}`,
-          user: receiveUser || 'Inventory Officer'
-        });
-      }
-
-      db.activityLogs.unshift({
-        id: 'act-' + Date.now(),
-        shopId: activeShopId,
-        date: new Date().toISOString(),
-        user: receiveUser || 'Inventory Officer',
-        role: 'Inventory Staff',
-        action: 'Received Materials',
-        details: `Confirmed delivery receipt for ${db.purchaseOrders[index].poNumber} and restocked products.`
-      });
-    } else {
-      db.activityLogs.unshift({
-        id: 'act-' + Date.now(),
-        shopId: activeShopId,
-        date: new Date().toISOString(),
-        user: receiveUser || 'Inventory Officer',
-        role: 'Inventory Staff',
-        action: 'PO Status Updated',
-        details: `Transitioned purchase order ${db.purchaseOrders[index].poNumber} state to ${status}.`
-      });
-    }
-
-    db.purchaseOrders[index].status = status;
-    await saveDb();
-    res.json(db.purchaseOrders[index]);
-  } else {
-    res.status(404).json({ error: 'Purchase Order not found' });
+  const po = db.purchaseOrders.find((item) => item.id === req.params.id && item.shopId === activeShopId);
+  if (!po) return res.status(404).json({ error: 'Purchase order not found in this shop' });
+  if (!['Pending', 'Ordered', 'Cancelled', 'Received'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid purchase status' });
   }
+  if (po.status === status) return res.json(po);
+  try {
+    if (status === 'Received') {
+      await receivePurchaseOrder(po.id, activeShopId, receiveUser || 'Inventory Officer');
+    } else {
+      await updatePurchaseOrderStatus(po.id, activeShopId, status, receiveUser || 'Inventory Officer');
+    }
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  const result = { ...po, status };
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot refresh committed purchase status');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Purchase status committed but refresh failed; writes disabled', error);
+  }
+  res.json(result);
 });
 
 // Suppliers Routes
