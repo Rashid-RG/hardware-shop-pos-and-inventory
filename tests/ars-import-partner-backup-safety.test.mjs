@@ -38,6 +38,8 @@ test('partner and import modules use isolated PostgreSQL tables, not whole-db ov
   assert.match(server,/CREATE TABLE IF NOT EXISTS ars_business_partners/);
   assert.match(server,/CREATE TABLE IF NOT EXISTS ars_partner_capital_entries/);
   assert.match(server,/api\/ars\/import-shipments\/\:id\/receive/);
-  assert.match(server,/receivePurchaseOrder\(shipment.rows\[0\].purchase_order_id/);
+  assert.match(server,/api\/ars\/purchases\/\:id\/receipts/);
+  assert.match(server,/await receivePartialOrder\(pool/);
+  assert.match(server,/legacy full-shipment receipt is disabled/i);
   assert.match(server,/api\/ars\/partner-capital',requireRole\(\['Super Admin'\]\)/);
 });
