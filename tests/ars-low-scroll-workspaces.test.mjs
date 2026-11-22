@@ -40,3 +40,11 @@ test('ARS company settings use two columns and hide infrequent legal fields',()=
   assert.match(panel,/sticky bottom-0/);
   assert.match(panel,/id="btn-save-settings"/);
 });
+
+test('long customer and representative directories progressively render twelve cards and search resets the page',()=>{
+  assert.match(customers,/filteredCustomers\.slice\(0, visibleCount\)/);
+  assert.match(customers,/filteredEmployees\.slice\(0, visibleCount\)/);
+  assert.match(customers,/Show 12 more customer shops/);
+  assert.match(customers,/Show 12 more representatives/);
+  assert.match(customers,/setVisibleCount\(12\)/);
+});
