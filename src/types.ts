@@ -180,7 +180,7 @@ export interface PurchaseOrder {
     costPrice: number;
   }[];
   total: number;
-  status: 'Pending' | 'Ordered' | 'Received' | 'Cancelled';
+  status: 'Pending' | 'Ordered' | 'Partially Received' | 'Received' | 'Cancelled';
 }
 
 export interface StockLog {
