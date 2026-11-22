@@ -2675,6 +2675,13 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.get('/api/ready', async (_req, res) => {
+  if (!databaseWriteHealthy) {
+    return res.status(503).json({
+      ok: false,
+      status: 'degraded',
+      database: 'recovery-required',
+    });
+  }
   try {
     await pool.query('SELECT 1');
     res.json({
