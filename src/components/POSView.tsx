@@ -25,12 +25,13 @@ import {
   MessageCircle,
   Filter,
 } from 'lucide-react';
-import { Product, ProductVariant, Customer, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
+import { Product, ProductVariant, Customer, Employee, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
 import { QRFeatureView } from './QRFeatureView';
 
 interface POSViewProps {
   products: Product[];
   customers: Customer[];
+  employees: Employee[];
   cashierName: string;
   currentRole: 'Super Admin' | 'Store Manager' | 'Cashier' | 'Inventory Staff';
   taxConfig?: StoreSettings;
@@ -41,6 +42,7 @@ interface POSViewProps {
 export default function POSView({
   products,
   customers,
+  employees,
   cashierName,
   currentRole,
   taxConfig = { taxRate: 18, storeName: 'Lanka Smart Hardware', currency: 'LKR', invoicePrefix: 'SL-INV' },
@@ -138,6 +140,8 @@ export default function POSView({
   const [customerSearch, setCustomerSearch] = useState('');
   const [billingCustomerPhone, setBillingCustomerPhone] = useState<string>('');
   const [billingCustomerAddress, setBillingCustomerAddress] = useState<string>('');
+  const [selectedSalesRepId, setSelectedSalesRepId] = useState('');
+  const activeSalesReps = employees.filter(rep => rep.shopId === taxConfig.activeShopId && rep.name.trim());
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cashDiscount, setCashDiscount] = useState<number>(0); // manual absolute currency amount off
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Cash');
@@ -896,7 +900,7 @@ export default function POSView({
               <div class="meta-grid">
                 <div><strong>Invoice:</strong> ${escapeHtml(tx.invoiceNumber)}</div>
                 <div><strong>Date:</strong> ${escapeHtml(new Date(tx.date).toLocaleString())}</div>
-                <div><strong>Cashier:</strong> ${escapeHtml(tx.cashierName)}</div>
+                <div><strong>Sales Representative:</strong> ${escapeHtml(tx.salesRepName || 'Not recorded')}</div>
               </div>
               <div class="customer-line">
                 <div><strong>Customer:</strong> ${escapeHtml(tx.customerName)}</div>
@@ -918,8 +922,8 @@ export default function POSView({
               <div class="sign-wrap">
                 <div class="sig-box">
                   <div class="sig-line">________________</div>
-                  <div>Cashier Signature</div>
-                  <div>${escapeHtml(tx.cashierName)}</div>
+                  <div>Sales Representative</div>
+                  <div>${escapeHtml(tx.salesRepName || 'Not recorded')}</div>
                 </div>
                 <div class="stamp-box">
                   <div>SHOP</div>
@@ -1078,7 +1082,7 @@ export default function POSView({
                       <div class="row"><span>Invoice No</span><strong>${escapeHtml(tx.invoiceNumber)}</strong></div>
                       <div class="row"><span>Invoice Date</span><strong>${escapeHtml(formatDate(issueDate))}</strong></div>
                       <div class="row"><span>Due Date</span><strong>${escapeHtml(formatDate(dueDate))}</strong></div>
-                      <div class="row"><span>Sales Rep</span><strong>${escapeHtml(tx.cashierName)}</strong></div>
+                      <div class="row"><span>Sales Rep</span><strong>${escapeHtml(tx.salesRepName || 'Not recorded')}</strong></div>
                       <span class="badge ${statusClass}">${escapeHtml(statusLabel)}</span>
                       <div class="reprint-note">${escapeHtml(copyLabel)}${printMeta?.isReprint ? ` | Reprint: ${escapeHtml(new Date(printMeta?.printedAt || new Date().toISOString()).toLocaleString())} by ${escapeHtml(printMeta?.printedBy || tx.cashierName)}` : ''}</div>
                     </div>
@@ -1349,7 +1353,7 @@ export default function POSView({
 
             <div class="content">
               <div class="sub">
-                <div class="card"><div class="k">Cashier</div><div class="v">${escapeHtml(tx.cashierName)}</div></div>
+                <div class="card"><div class="k">Sales Representative</div><div class="v">${escapeHtml(tx.salesRepName || 'Not recorded')}</div></div>
                 <div class="card"><div class="k">Line Items</div><div class="v">${escapeHtml(String(tx.items.length))}</div></div>
                 <div class="card"><div class="k">Total Units</div><div class="v">${escapeHtml(String(totalUnits))}</div></div>
                 <div class="card"><div class="k">Tax Rate</div><div class="v">${escapeHtml(`${taxConfig.taxRate.toFixed(1)}%`)}</div></div>
@@ -1454,6 +1458,10 @@ export default function POSView({
       alert('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
     }
+    if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
+      alert('Select the Sales Representative responsible for this invoice.');
+      return;
+    }
     if (paymentMethod === 'Cash' && numericCashReceived < total) {
       alert(`Cash received must be at least ${formatMoney(total)}.`);
       return;
@@ -1470,7 +1478,7 @@ export default function POSView({
           customerName: (billingCustomerName || '').trim() || selectedCustomer.name,
           customerPhone: (billingCustomerPhone || '').trim() || undefined,
           customerAddress: (billingCustomerAddress || '').trim() || undefined,
-          cashierName: cashierName,
+          salesRepId: selectedSalesRepId,
           paymentMethod: paymentMethod,
           paymentStatus: paymentMethod === 'Credit Account'
             ? 'CREDIT SALE'
@@ -1813,7 +1821,7 @@ export default function POSView({
           <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4 text-xs font-sans">
             <div>
               <p className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Terminal Register 01</p>
-              <p className="font-medium text-slate-800">Cashier: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
+              <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
             </div>
             <div className="p-1 px-2.5 bg-slate-50 rounded-md border border-slate-150 text-slate-600 text-[11px] font-mono">
               Mode: Check-out
@@ -2110,6 +2118,17 @@ export default function POSView({
             )}
           </div>
 
+          <label className="block rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-slate-800">
+            Sales Representative <span className="text-rose-600">*</span>
+            <select required aria-label="Select Sales Representative" value={selectedSalesRepId}
+              onChange={(event) => setSelectedSalesRepId(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-2.5 text-sm text-slate-900">
+              <option value="">Select Sales Representative</option>
+              {activeSalesReps.map(rep => <option key={rep.id} value={rep.id}>{rep.name}</option>)}
+            </select>
+            {activeSalesReps.length === 0 && <p className="mt-2 text-rose-700">No Sales Representatives registered for this shop. Add representatives in Staff.</p>}
+          </label>
+
           {/* Payment Method Selector Grid */}
           <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
             {[
@@ -2276,8 +2295,8 @@ export default function POSView({
                           <span className="text-right font-bold text-slate-900">{receiptModel.invoiceNumber}</span>
                           <span>DATE</span>
                           <span className="text-right">{new Date(receiptModel.date).toLocaleDateString()} {new Date(receiptModel.date).toLocaleTimeString()}</span>
-                          <span>CASHIER</span>
-                          <span className="text-right truncate">{receiptModel.cashierName}</span>
+                          <span>SALES REPRESENTATIVE</span>
+                          <span className="text-right truncate">{receiptModel.salesRepName || 'Not recorded'}</span>
                           <span>PAYMENT</span>
                           <span className="text-right font-semibold text-indigo-600">{receiptModel.paymentMethod}</span>
                         </div>
