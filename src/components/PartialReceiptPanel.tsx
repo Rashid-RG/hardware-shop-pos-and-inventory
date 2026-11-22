@@ -1,0 +1,103 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { PackageCheck, RefreshCcw, ShieldCheck, X } from 'lucide-react';
+
+type Line = { purchaseOrderItemId: number; productId: string; productName: string; ordered: number; received: number; remaining: number };
+type Batch = { id: string; received_by: string; note: string; created_at: string };
+type Overview = { status: string; items: Line[]; batches: Batch[] };
+type Props = { poId: string; poNumber: string; authToken: string; shopId: string; onClose: () => void; onCommitted: () => void };
+
+export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId, onClose, onCommitted }: Props) {
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [quantities, setQuantities] = useState<Record<number, string>>({});
+  const [note, setNote] = useState('');
+  const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const headers = { Authorization: `Bearer ${authToken}`, 'X-Shop-Id': shopId, 'Content-Type': 'application/json' };
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/ars/purchases/${encodeURIComponent(poId)}/receipts`, { headers });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || 'Cannot load receiving history');
+      setOverview(data);
+      setQuantities({});
+      setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Unable to load receipts'); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void refresh(); }, [poId, authToken, shopId]);
+  const selected = useMemo(() => (overview?.items || []).flatMap(line => {
+    const raw = quantities[line.purchaseOrderItemId] || '';
+    if (!raw.trim() || raw === '0') return [];
+    const quantity = Number(raw);
+    return [{ purchaseOrderItemId: line.purchaseOrderItemId, quantity }];
+  }), [overview, quantities]);
+  const valid = selected.length > 0 && selected.every(line => {
+    const info = overview?.items.find(item => item.purchaseOrderItemId === line.purchaseOrderItemId);
+    return info && Number.isSafeInteger(line.quantity) && line.quantity > 0 && line.quantity <= info.remaining;
+  });
+  const submit = async () => {
+    if (!valid || saving) return;
+    if (!window.confirm(`Post ${selected.reduce((sum, line) => sum + line.quantity, 0)} units to warehouse stock for ${poNumber}? This receipt cannot be edited or deleted.`)) return;
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const response = await fetch(`/api/ars/purchases/${encodeURIComponent(poId)}/receipts`, {
+        method: 'POST', headers, body: JSON.stringify({ requestKey, note, items: selected })
+      });
+      const data = await response.json();
+      if (!response.ok) throw Error(data.error || 'Could not save goods receipt');
+      setSuccess(data.repeated ? 'Previous receipt found; stock was not added again.' : `Goods receipt recorded. Status: ${data.status}.`);
+      setRequestKey(crypto.randomUUID()); setNote('');
+      await refresh(); onCommitted();
+    } catch (e) {
+      // Keep the request key unchanged so a retry is idempotent after an uncertain network result.
+      setError((e instanceof Error ? e.message : 'Receipt failed') + ' If the connection failed, retry with the same receipt; do not enter a new delivery.');
+    } finally { setSaving(false); }
+  };
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Receive purchase order goods" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3 sm:p-6">
+      <section className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <header className="flex items-center justify-between border-b border-slate-200 bg-slate-900 px-5 py-4 text-white">
+          <div><p className="text-xs font-bold uppercase tracking-wider text-amber-300">ARS Warehouse / Goods Received Note</p><h3 className="text-lg font-bold">{poNumber}</h3></div>
+          <button type="button" aria-label="Close receiving" onClick={onClose} disabled={saving} className="rounded-lg p-2 hover:bg-slate-700"><X className="h-5 w-5" /></button>
+        </header>
+        <div className="space-y-4 overflow-y-auto p-5">
+          <p className="flex items-center gap-2 text-sm text-slate-600"><ShieldCheck className="h-4 w-4 text-emerald-600" />Only enter quantities physically checked and accepted at the warehouse.</p>
+          {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+          {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
+          {loading && <p className="text-sm text-slate-500">Loading receiving balances…</p>}
+          {!loading && overview && <>
+            <div className="flex flex-wrap justify-between gap-2 text-sm"><strong>Status: {overview.status}</strong><button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 text-slate-600 underline"><RefreshCcw className="h-4 w-4" /> Refresh</button></div>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[540px] text-left text-sm">
+                <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
+                <tbody>{overview.items.map(line => <tr key={line.purchaseOrderItemId} className="border-t border-slate-100">
+                  <td className="p-3 font-semibold text-slate-800">{line.productName}</td>
+                  <td className="p-3 text-right">{line.ordered}</td><td className="p-3 text-right">{line.received}</td><td className="p-3 text-right font-bold">{line.remaining}</td>
+                  <td className="p-3"><input aria-label={`Receive ${line.productName}`} type="number" min="0" max={line.remaining} step="1" disabled={saving || line.remaining === 0}
+                    value={quantities[line.purchaseOrderItemId] ?? ''} onChange={e => setQuantities(current => ({...current,[line.purchaseOrderItemId]:e.target.value}))}
+                    placeholder={line.remaining ? '0' : 'Complete'} className="w-28 rounded-lg border border-slate-300 p-2 disabled:bg-slate-100" /></td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+            <label className="block text-xs font-semibold text-slate-700">Receiving note / container details
+              <textarea maxLength={1000} rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="Delivery batch, shortages, damaged packages or document reference" className="mt-1 block w-full rounded-xl border border-slate-200 p-3 text-sm" />
+            </label>
+            <div className="rounded-xl bg-slate-50 p-3"><h4 className="mb-2 text-xs font-bold uppercase text-slate-600">Previous receiving batches</h4>
+              {overview.batches.length === 0 ? <p className="text-sm text-slate-500">No goods received yet.</p> :
+                <ul className="space-y-2">{overview.batches.map(batch => <li key={batch.id} className="text-xs text-slate-600"><strong>{new Date(batch.created_at).toLocaleString()}</strong> · {batch.received_by}{batch.note ? ' · ' + batch.note : ''}</li>)}</ul>}
+            </div>
+          </>}
+        </div>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4">
+          <p className="text-xs text-slate-500">{selected.length} line(s) selected · {selected.reduce((sum,line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0),0)} units</p>
+          <div className="flex gap-2"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm">Close</button>
+            <button type="button" onClick={() => void submit()} disabled={!valid || saving || loading || overview?.status === 'Received'} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><PackageCheck className="h-4 w-4" />{saving ? 'Recording…' : 'Confirm received quantities'}</button></div>
+        </footer>
+      </section>
+    </div>
+  );
+}
