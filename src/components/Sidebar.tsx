@@ -3,12 +3,12 @@ import {
   LayoutDashboard, ShoppingCart, Package, Truck, Users2,
   Settings2, LogOut, ShieldCheck, FileBarChart2, FileText,
   Timer, Calculator, X, ChevronDown, Store, ArrowUpRight, Layers3,
-  UserRoundCog, Ship,
+  UserRoundCog, Ship, Building2, Landmark, ClipboardCheck,
 } from 'lucide-react';
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'db-admin' | 'calculators';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'db-admin' | 'calculators';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -48,6 +48,8 @@ const groups: NavGroup[] = [
     { id: 'inventory', label: 'Stock Management', icon: Layers3, roles: STOCK_ROLES },
     { id: 'purchases', label: 'Suppliers & Purchasing', icon: Truck, roles: STOCK_ROLES },
     { id: 'imports', label: 'Import Landed Costs', icon: Ship, roles: MANAGERS },
+    { id: 'shipments', label: 'Import Shipments', icon: Ship, roles: MANAGERS },
+    { id: 'warehouse-receiving', label: 'Warehouse Receiving', icon: ClipboardCheck, roles: STOCK_ROLES },
   ] },
   { id: 'people', title: 'Customers & Staff', items: [
     { id: 'customers', label: 'Customers', icon: Users2, roles: SALES_ROLES },
@@ -56,9 +58,11 @@ const groups: NavGroup[] = [
   { id: 'management', title: 'Reports & Management', items: [
     { id: 'reports', label: 'Reports & Analytics', icon: FileBarChart2, roles: SALES_ROLES },
     { id: 'accounting', label: 'Accounting', icon: Settings2, roles: MANAGERS },
+    { id: 'partners', label: 'Partner Capital', icon: Landmark, roles: ['Super Admin'] },
     { id: 'calculators', label: 'Calculators', icon: Calculator, roles: ALL_ROLES },
   ] },
   { id: 'admin', title: 'Administration', items: [
+    { id: 'company-profile', label: 'Company Profile', icon: Building2, roles: MANAGERS },
     { id: 'db-admin', label: 'System Administration', icon: ShieldCheck, roles: ['Super Admin'] },
   ] },
 ];
