@@ -2598,6 +2598,38 @@ const requireRole = (roles: Role[]): express.RequestHandler => {
   };
 };
 
+// Temporary single-process protection for the legacy in-memory database model.
+// Without this queue, two async checkout requests can read the same stock before
+// either one persists its result. This is NOT a replacement for row-level
+// PostgreSQL transactions and must not be used as a multi-server locking scheme.
+let writeQueue: Promise<void> = Promise.resolve();
+app.use('/api', (req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    return next();
+  }
+
+  let releaseWrite!: () => void;
+  const held = new Promise<void>((resolve) => { releaseWrite = resolve; });
+  const previous = writeQueue;
+  writeQueue = held;
+  void previous.then(() => {
+    // Release exactly once, including cancelled client connections.
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseWrite();
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    if (res.destroyed) return release();
+    next();
+  }).catch((error) => {
+    releaseWrite();
+    next(error);
+  });
+});
+
 // --- API Implementation ---
 
 app.get('/api/health', (_req, res) => {
