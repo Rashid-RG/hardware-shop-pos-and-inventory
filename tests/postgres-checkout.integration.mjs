@@ -8,7 +8,7 @@ if (!['127.0.0.1', 'localhost'].includes(connection.hostname) || connection.path
   throw new Error('Refusing integration test outside local hardware_pos_ci database');
 }
 
-const { pool, initDbTables, checkoutTransaction } = await import('../backend/db.ts');
+const { pool, initDbTables, checkoutTransaction, refundTransaction } = await import('../backend/db.ts');
 
 test('real PostgreSQL checkout commits exact variant, credit and invoice atomically', async () => {
   const suffix = randomUUID();
@@ -72,6 +72,45 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     assert.equal(count.rows[0].count, 0);
     const after = await pool.query('SELECT quantity FROM products WHERE id = $1', [productId]);
     assert.equal(Number(after.rows[0].quantity), 8, 'Failed credit sale must not decrease stock');
+
+    // Wrong-shop refund must fail without touching stock or credit.
+    await assert.rejects(
+      () => refundTransaction(first, 'ci-other-shop', 'Wrong shop', 'CI Manager', 'Store Manager'),
+      /Transaction not found/
+    );
+
+    // An account-level payment can make the remaining credit less than the
+    // invoice. Never erase the paid portion by silently reducing credit to zero.
+    await pool.query('UPDATE customers SET credit_balance = 150 WHERE id = $1', [customerId]);
+    await assert.rejects(
+      () => refundTransaction(first, shopId, 'Credit already paid', 'CI Manager', 'Store Manager'),
+      /Credit balance is below this invoice total/
+    );
+    const afterFailedRefund = await pool.query('SELECT quantity FROM products WHERE id = $1', [productId]);
+    assert.equal(Number(afterFailedRefund.rows[0].quantity), 8, 'Failed refund must roll back stock');
+
+    // Once payments are reconciled, refund restores the precise variant.
+    await pool.query('UPDATE customers SET credit_balance = 200 WHERE id = $1', [customerId]);
+    await refundTransaction(first, shopId, 'Customer returned goods', 'CI Manager', 'Store Manager');
+    const stockRestored = await pool.query('SELECT quantity, variants_json FROM products WHERE id = $1', [productId]);
+    assert.equal(Number(stockRestored.rows[0].quantity), 10);
+    assert.equal(stockRestored.rows[0].variants_json[0].quantity, 10);
+    const refundedCustomer = await pool.query(
+      'SELECT credit_balance,purchase_count,loyalty_balance FROM customers WHERE id = $1', [customerId]
+    );
+    assert.equal(Number(refundedCustomer.rows[0].credit_balance), 0);
+    assert.equal(Number(refundedCustomer.rows[0].purchase_count), 0);
+    assert.equal(Number(refundedCustomer.rows[0].loyalty_balance), 0);
+    const invoiceStatus = await pool.query('SELECT status FROM sales_transactions WHERE id = $1', [first]);
+    assert.equal(invoiceStatus.rows[0].status, 'Refunded');
+    await assert.rejects(
+      () => refundTransaction(first, shopId, 'Duplicate attempt', 'CI Manager', 'Store Manager'),
+      /already been refunded/
+    );
+    const returnLogs = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM stock_logs WHERE reference_id = $1 AND type = 'Return'", [first]
+    );
+    assert.equal(returnLogs.rows[0].count, 1);
   } finally {
     await pool.end();
   }
