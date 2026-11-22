@@ -68,7 +68,7 @@ export default function Sidebar({
     { id: 'calculators', label: 'Calculators Hub', icon: Calculator, roles: ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'] },
     { id: 'ai-insights', label: 'Smart AI Insights', icon: Sparkles, roles: ['Super Admin', 'Store Manager', 'Cashier', 'Inventory Staff'] },
     { id: 'accounting', label: 'Accounting', icon: Settings2, roles: ['Super Admin', 'Store Manager'] },
-    { id: 'db-admin', label: 'DB Admin', icon: Database, roles: ['Super Admin', 'Store Manager'] },
+    { id: 'db-admin', label: 'System Administration', icon: Database, roles: ['Super Admin'] },
   ];
 
   return (
