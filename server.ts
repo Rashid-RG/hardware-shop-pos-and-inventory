@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4842,25 +4842,43 @@ app.get('/api/supplier-payments', (_req, res) => {
 app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
   const { activeShopId } = getActiveShopContext(db, req);
-  const { supplierId, supplierName, purchaseOrderId, amount, paymentMethod, date, note } = req.body;
-  if (!supplierId || Number(amount) <= 0) {
-    return res.status(400).json({ error: 'supplierId and positive amount are required' });
+  const { supplierId, purchaseOrderId, amount, paymentMethod, date, note } = req.body || {};
+  const supplier = db.suppliers.find((s) => s.id === supplierId && s.shopId === activeShopId);
+  if (!supplier) return res.status(404).json({ error: 'Supplier not found in this shop' });
+  const paid = Number(amount);
+  if (!Number.isFinite(paid) || paid <= 0 ||
+      Math.abs(paid * 100 - Math.round(paid * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Payment must be positive with at most two decimal places' });
+  }
+  if (purchaseOrderId && !db.purchaseOrders.some((po) =>
+    po.id === purchaseOrderId && po.shopId === activeShopId && po.supplierId === supplier.id)) {
+    return res.status(400).json({ error: 'Purchase order does not belong to this supplier and shop' });
   }
   const sp: SupplierPayment = {
-    id: `spay-${Date.now()}`,
+    id: 'spay-' + randomUUID(),
     shopId: activeShopId,
-    supplierId: String(supplierId),
-    supplierName: String(supplierName || ''),
+    supplierId: supplier.id,
+    supplierName: supplier.companyName || supplier.name,
     purchaseOrderId: purchaseOrderId || undefined,
-    amount: Number(amount),
+    amount: paid,
     paymentMethod: String(paymentMethod || 'Bank Transfer'),
-    date: String(date || new Date().toISOString().split('T')[0]),
-    note: note || undefined,
+    date: String(date || new Date().toISOString().slice(0, 10)),
+    note: typeof note === 'string' ? note.slice(0, 500) : undefined,
     createdBy: authUser?.name,
   };
-  db.supplierPayments.unshift(sp);
-  db.activityLogs.unshift({ id: `act-${Date.now()}`, shopId: activeShopId, date: new Date().toISOString(), user: authUser?.name || 'Manager', role: authUser?.role || 'Store Manager', action: 'Supplier Payment', details: `Paid Rs.${sp.amount.toFixed(2)} to ${sp.supplierName}.` });
-  await saveDb();
+  try {
+    await insertSupplierPayment(sp);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload committed supplier payment');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Supplier payment committed but refresh failed; writes disabled', error);
+  }
   res.json(sp);
 });
 
