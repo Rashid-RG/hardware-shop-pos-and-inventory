@@ -715,30 +715,50 @@ export default function App() {
   };
 
   if (!authUser && setupRequired) {
+    const setupInputClass = 'mt-1.5 block w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-400/30';
     return (
-      <div className="min-h-screen bg-[#101d32] p-4 sm:p-8 flex items-center justify-center text-slate-900 relative overflow-y-auto">
-        <div className="absolute inset-0 opacity-20 bg-cover bg-center pointer-events-none" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
-        <form onSubmit={handleCreateAdmin} className="relative w-full max-w-lg rounded-[28px] border border-slate-200 bg-white p-7 sm:p-10 shadow-2xl space-y-5">
-          <div className="mb-8"><ARSBrand dark subtitle="First-time business setup" /></div>
-          <h1 className="font-heading text-3xl tracking-tight font-bold">Create your administrator account</h1>
-          <p className="text-sm leading-relaxed text-slate-600">Set up secure owner access. Employee accounts are managed in PostgreSQL, not in configuration files. This form becomes unavailable when the first account is created.</p>
-          <label className="block text-sm">Full name
-            <input value={setupName} onChange={(e) => setSetupName(e.target.value)} required minLength={2} maxLength={100} autoComplete="name" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
-          </label>
-          <label className="block text-sm">Email address
-            <input type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required autoComplete="username" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
-          </label>
-          <label className="block text-sm">Password (12 characters minimum)
-            <input type="password" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
-          </label>
-          <label className="block text-sm">Confirm password
-            <input type="password" value={setupConfirmPassword} onChange={(e) => setSetupConfirmPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" className="mt-1.5 w-full rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400/30 focus:border-amber-500" />
-          </label>
-          {setupError && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{setupError}</p>}
-          <button disabled={isCreatingAdmin} type="submit" className="w-full rounded-xl bg-[#182a45] hover:bg-[#294264] px-4 py-3.5 font-semibold text-white transition disabled:opacity-50">
-            {isCreatingAdmin ? 'Creating administrator...' : 'Create Administrator'}
-          </button>
-        </form>
+      <div className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] px-3 py-4 text-slate-900 sm:px-6 sm:py-6">
+        <div className="pointer-events-none fixed inset-0 bg-cover bg-center opacity-15" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
+        <div className="relative mx-auto flex min-h-[calc(100dvh-2rem)] max-w-3xl items-center justify-center sm:min-h-[calc(100dvh-3rem)]">
+          <form onSubmit={handleCreateAdmin} className="w-full rounded-[24px] border border-white/15 bg-white px-5 py-5 shadow-[0_24px_90px_rgba(0,0,0,0.25)] sm:px-8 sm:py-7">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <ARSBrand dark subtitle="Secure first-time setup" />
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-800">
+                <ShieldCheck className="h-3.5 w-3.5" /> Owner registration
+              </span>
+            </div>
+            <div className="pb-4 pt-4">
+              <h1 className="font-heading text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">Create your administrator account</h1>
+              <p className="mt-1.5 max-w-2xl text-xs leading-relaxed text-slate-500 sm:text-sm">
+                Set up the first business owner account. Your credentials are securely stored in PostgreSQL.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+              <label htmlFor="ars-setup-name" className="block text-xs font-semibold text-slate-700">Full name
+                <input id="ars-setup-name" value={setupName} onChange={(e) => setSetupName(e.target.value)} required minLength={2} maxLength={100} autoComplete="name" placeholder="Owner's full name" className={setupInputClass} />
+              </label>
+              <label htmlFor="ars-setup-email" className="block text-xs font-semibold text-slate-700">Email address
+                <input id="ars-setup-email" type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} required autoComplete="username" placeholder="owner@company.com" className={setupInputClass} />
+              </label>
+              <label htmlFor="ars-setup-password" className="block text-xs font-semibold text-slate-700">Password
+                <input id="ars-setup-password" type="password" value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" placeholder="At least 12 characters" className={setupInputClass} />
+              </label>
+              <label htmlFor="ars-setup-confirm" className="block text-xs font-semibold text-slate-700">Confirm password
+                <input id="ars-setup-confirm" type="password" value={setupConfirmPassword} onChange={(e) => setSetupConfirmPassword(e.target.value)} minLength={12} maxLength={128} required autoComplete="new-password" placeholder="Repeat your password" className={setupInputClass} />
+              </label>
+            </div>
+
+            {setupError && <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{setupError}</p>}
+            <div className="mt-4 flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="flex items-center gap-1.5 text-[11px] text-slate-500"><LockKeyhole className="h-4 w-4 text-emerald-600" /> Setup closes after your first administrator is created.</p>
+              <button disabled={isCreatingAdmin} type="submit" className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#182a45] px-6 py-2.5 text-sm font-bold text-white transition hover:bg-[#294264] disabled:opacity-50 sm:w-auto">
+                {isCreatingAdmin ? 'Creating administrator...' : <>Create Administrator <ArrowUpRight className="h-4 w-4" /></>}
+              </button>
+            </div>
+            <p className="mt-3 text-center text-[10px] tracking-wide text-slate-400 sm:text-right">Business software by RS Nextward</p>
+          </form>
+        </div>
       </div>
     );
   }
