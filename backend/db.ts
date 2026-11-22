@@ -1842,7 +1842,7 @@ export const updatePurchaseOrderStatus = async (
     );
     if (!result.rowCount) throw new Error('Purchase order not found in this shop.');
     const po = result.rows[0];
-    if (po.status === 'Received' || po.status === 'Cancelled') {
+    if (po.status === 'Received' || po.status === 'Cancelled' || po.status === 'Partially Received') {
       throw new Error('Cannot modify a received or cancelled purchase order.');
     }
     if (status === 'Pending' && po.status !== 'Pending') {
