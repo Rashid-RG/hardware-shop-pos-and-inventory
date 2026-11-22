@@ -18,6 +18,7 @@ import {
 import { Customer, Employee, Role, CustomerCreditPayment } from '../types';
 
 interface CustomerEmployeeViewProps {
+  viewMode: 'customers' | 'employees';
   customers: Customer[];
   employees: Employee[];
   customerCreditPayments: CustomerCreditPayment[];
@@ -29,6 +30,7 @@ interface CustomerEmployeeViewProps {
 }
 
 export default function CustomerEmployeeView({
+  viewMode,
   customers,
   employees,
   customerCreditPayments,
@@ -38,7 +40,7 @@ export default function CustomerEmployeeView({
   onSetCreditLimit,
   onAddCreditPayment,
 }: CustomerEmployeeViewProps) {
-  const [activeTab, setActiveTab] = useState<'customers' | 'employees'>('customers');
+  const activeTab = viewMode;
   const [searchTerm, setSearchTerm] = useState('');
 
   // Customer Form states
@@ -193,45 +195,22 @@ export default function CustomerEmployeeView({
 
   return (
     <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
-      {/* Tab Switching Controls Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            Human Relationships & Staff Gate
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Log loyalty customer details and oversee floor staff performance metrics.
-          </p>
-        </div>
-
-        <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-          <button
-            onClick={() => {
-              setActiveTab('customers');
-              setSearchTerm('');
-            }}
-            className={`px-4 py-1.5 rounded text-xs font-semibold tracking-tight transition ${
-              activeTab === 'customers' ? 'bg-white text-slate-950 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Customer directory
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab('employees');
-              setSearchTerm('');
-            }}
-            className={`px-4 py-1.5 rounded text-xs font-semibold tracking-tight transition ${
-              activeTab === 'employees' ? 'bg-white text-slate-950 shadow-xs' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Employee Ledger
-          </button>
-        </div>
+      <div className="flex flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
+        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-amber-700">
+          {activeTab === 'customers' ? 'Sales & customer relationships' : 'Operations & workforce'}
+        </p>
+        <h2 className="font-heading text-2xl font-bold tracking-tight text-slate-950">
+          {activeTab === 'customers' ? 'Customer Management' : 'Staff Management'}
+        </h2>
+        <p className="text-sm leading-relaxed text-slate-500">
+          {activeTab === 'customers'
+            ? 'Manage customer records, credit limits, outstanding balances and payments.'
+            : 'Manage staff details, roles, attendance and payroll information.'}
+        </p>
       </div>
 
       {/* FILTER SEARCH AREA */}
-      <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-2xs flex flex-col sm:flex-row gap-3 items-center justify-between">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="relative w-full sm:w-85">
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
@@ -249,7 +228,7 @@ export default function CustomerEmployeeView({
             <button
               id="btn-register-customer"
               onClick={() => setIsCustOpen(true)}
-              className="bg-slate-900 hover:bg-slate-950 text-slate-150 text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition leading-none shadow-3xs"
+              className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 transition"
             >
               <Plus className="w-4 h-4" /> Register Customer Profile
             </button>
@@ -258,7 +237,7 @@ export default function CustomerEmployeeView({
               <button
                 id="btn-onboard-employee"
                 onClick={() => setIsEmpOpen(true)}
-                className="bg-slate-900 hover:bg-slate-950 text-slate-150 text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-1.5 transition leading-none shadow-3xs"
+                className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 transition"
               >
                 <Plus className="w-4 h-4" /> Onboard Staff Member
               </button>
