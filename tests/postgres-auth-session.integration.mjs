@@ -68,7 +68,7 @@ test('real login, logout and password rotation revoke previous session tokens', 
     });
     const withToken = (token) => ({ Authorization: 'Bearer ' + token });
     const first = await login(password);
-    assert.equal(first.status, 200, await first.text());
+    assert.equal(first.status, 200, output.slice(-3000));
     const firstJson = await first.json();
     assert.ok(firstJson.token);
     const valid = await fetch(origin + '/api/profile', { headers: withToken(firstJson.token) });
@@ -81,13 +81,13 @@ test('real login, logout and password rotation revoke previous session tokens', 
     assert.equal(signedOut.status, 401, 'Signed-out token must be revoked');
 
     const second = await login(password);
-    assert.equal(second.status, 200, await second.text());
+    assert.equal(second.status, 200, output.slice(-3000));
     const secondJson = await second.json();
     const rotate = await fetch(origin + '/api/profile', {
       method: 'PUT', headers: { ...withToken(secondJson.token), 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword: password, newPassword: updatedPassword }),
     });
-    assert.equal(rotate.status, 200, await rotate.text());
+    assert.equal(rotate.status, 200, output.slice(-3000));
     const rotated = await rotate.json();
     assert.ok(rotated.token);
     const stale = await fetch(origin + '/api/profile', { headers: withToken(secondJson.token) });
