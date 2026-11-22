@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { notify } from '../utils/notifications';
 import {
   TrendingUp,
   TrendingDown,
@@ -246,7 +247,7 @@ export default function AccountingSettingsView({
   const handleLogManualExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!expDesc.trim() || expAmt <= 0) {
-      alert('Description and positive amount are required.');
+      notify.warning('Description and positive amount are required.');
       return;
     }
 
@@ -260,7 +261,7 @@ export default function AccountingSettingsView({
       setExpDesc('');
       setExpAmt(0);
     } catch (err: any) {
-      alert(err.message || 'Failed to log expense');
+      notify.warning(err.message || 'Failed to log expense');
     }
   };
 
@@ -312,7 +313,7 @@ export default function AccountingSettingsView({
       setIsSettingsSaved(true);
       setTimeout(() => setIsSettingsSaved(false), 3000);
     } catch (err: any) {
-      alert(err.message || 'Failed to save settings');
+      notify.warning(err.message || 'Failed to save settings');
     }
   };
 
@@ -576,7 +577,7 @@ export default function AccountingSettingsView({
                     try {
                       await handleUploadShopLogo(file);
                     } catch (err: any) {
-                      alert(err.message || 'Failed to upload logo');
+                      notify.warning(err.message || 'Failed to upload logo');
                     }
                   }}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs"
