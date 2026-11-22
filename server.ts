@@ -5107,118 +5107,167 @@ app.get('/api/quotations', (_req, res) => {
   res.json(db.quotations.filter((q) => q.shopId === activeShopId));
 });
 
-app.post('/api/quotations', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const authUser = (req as AppRequest).authUser;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const { customerName, customerId, customerPhone, items, discountAmount = 0, validUntil, notes } = req.body;
-  if (!Array.isArray(items) || !items.length || !Number.isFinite(discountAmount) || discountAmount < 0) {
-    return res.status(400).json({ error: 'Enter quotation items and a valid discount.' });
+const refreshCommittedQuoteState=async(res:express.Response)=>{
+  try {
+    const fresh=await loadStateFromNormalized();
+    if(!fresh)throw new Error('Cannot refresh quotations after a committed write.');
+    db=fresh;
+    return true;
+  }catch(error){
+    databaseWriteHealthy=false;
+    console.error('Quotation committed but reload failed; writes disabled.',error);
+    res.status(503).json({error:'Quotation change committed but reload failed. Reconcile before retrying.'});
+    return false;
   }
-  let lineSubtotal = 0;
-  for (const item of items) {
-    if (!item || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.sellingPrice) ||
-        item.sellingPrice < 0 || !Number.isFinite(item.discount ?? 0) || (item.discount ?? 0) < 0 ||
-        (item.discount ?? 0) > 100 || !Number.isFinite(item.discountAmount ?? 0) || (item.discountAmount ?? 0) < 0) {
-      return res.status(400).json({ error: 'Invalid quotation price, quantity or line discount.' });
+};
+
+app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const auth=(req as AppRequest).authUser;
+  const customerId=String(req.body?.customerId||'').trim();
+  const customer=db.customers.find(row=>row.id===customerId&&row.shopId===activeShopId);
+  if(!customer)return res.status(400).json({error:'Select a registered wholesale customer shop.'});
+  const items=req.body?.items;
+  const discountAmount=Number(req.body?.discountAmount??0);
+  const dateRaw=String(req.body?.validUntil||'');
+  const notes=String(req.body?.notes||'');
+  if(!Array.isArray(items)||!items.length||items.length>100||
+     !Number.isFinite(discountAmount)||discountAmount<0||discountAmount>1_000_000_000||
+     notes.length>2000||(dateRaw&&!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)))
+    return res.status(400).json({error:'Invalid quotation items, discount, date, or notes.'});
+  let lineSubtotal=0;
+  const normalizedItems:Quotation['items']=[];
+  for(const raw of items){
+    const product=db.products.find(row=>row.id===raw?.productId&&row.shopId===activeShopId);
+    const quantity=Number(raw?.quantity);
+    const unitPrice=Number(raw?.sellingPrice);
+    const discount=Number(raw?.discount??0);
+    const discountFixed=Number(raw?.discountAmount??0);
+    if(!product||!Number.isSafeInteger(quantity)||quantity<1||quantity>1_000_000_000||
+       !Number.isFinite(unitPrice)||unitPrice<0||unitPrice>1_000_000_000||
+       !Number.isFinite(discount)||discount<0||discount>100||
+       !Number.isFinite(discountFixed)||discountFixed<0||
+       (unitPrice*quantity*(1-discount/100))<discountFixed) {
+      return res.status(400).json({error:'Invalid product or quantity, unit price, and discount.'});
     }
-    const line = item.sellingPrice * item.quantity * (1 - (item.discount ?? 0) / 100) - (item.discountAmount ?? 0);
-    lineSubtotal += roundMoney(Math.max(0, line));
+    const lineAmount=roundMoney(unitPrice*quantity*(1-discount/100)-discountFixed);
+    lineSubtotal+=lineAmount;
+    normalizedItems.push({productId:product.id,productName:product.name,
+      quantity,sellingPrice:unitPrice,discount,discountAmount:discountFixed});
   }
-  const profile = db.settings.shopProfiles?.find(shop => shop.id === activeShopId);
-  const { subtotal, tax, total } = invoiceTotals(lineSubtotal, profile?.taxRate ?? db.settings.taxRate, discountAmount);
-  const quotation: Quotation = {
-    id: `quo-${Date.now()}`,
-    shopId: activeShopId,
-    quoteNumber: `QUO-${Date.now().toString().slice(-6)}`,
-    date: new Date().toISOString(),
-    validUntil: validUntil || undefined,
-    customerId: customerId || undefined,
-    customerName: String(customerName || 'Walk-in Customer'),
-    customerPhone: customerPhone || undefined,
-    items: items,
-    subtotal: Number(subtotal) || 0,
-    tax: Number(tax) || 0,
-    discountAmount: Number(discountAmount) || 0,
-    total: Number(total) || 0,
-    status: 'Draft',
-    notes: notes || undefined,
-    createdBy: authUser?.name,
+  if(!Number.isFinite(lineSubtotal)||lineSubtotal>9_000_000_000)
+    return res.status(400).json({error:'Quotation total exceeds allowed range.'});
+  const profile=db.settings.shopProfiles?.find(shop=>shop.id===activeShopId);
+  const {subtotal,tax,total}=invoiceTotals(lineSubtotal,profile?.taxRate??db.settings.taxRate,discountAmount);
+  if(!Number.isFinite(total)||total<0)return res.status(400).json({error:'Invalid quotation totals.'});
+  const quotation:Quotation={
+    id:'quo-'+randomUUID(),shopId:activeShopId,quoteNumber:'ARS-QUO-'+randomUUID().slice(0,12).toUpperCase(),
+    date:new Date().toISOString(),validUntil:dateRaw||undefined,
+    customerId:customer.id,customerName:customer.name,customerPhone:customer.phone||undefined,
+    items:normalizedItems,subtotal,tax,discountAmount,total,status:'Draft',
+    notes:notes||undefined,createdBy:auth?.name||'System'
   };
-  db.quotations.unshift(quotation);
-  await saveDb();
-  res.json(quotation);
+  try{
+    await pool.query(
+      `INSERT INTO quotations(id,shop_id,quote_number,date,valid_until,customer_id,customer_name,customer_phone,
+       items,subtotal,tax,discount_amount,total,status,notes,created_by)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,'Draft',$14,$15)`,
+      [quotation.id,activeShopId,quotation.quoteNumber,quotation.date,quotation.validUntil||null,
+       quotation.customerId,quotation.customerName,quotation.customerPhone||null,
+       JSON.stringify(quotation.items),quotation.subtotal,quotation.tax,quotation.discountAmount,
+       quotation.total,quotation.notes||null,quotation.createdBy]);
+  }catch(error){return res.status(409).json({error:'Could not save quotation.'});}
+  if(!(await refreshCommittedQuoteState(res)))return;
+  res.status(201).json(quotation);
 });
 
-app.put('/api/quotations/:id/status', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const { status } = req.body;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const idx = db.quotations.findIndex((q) => q.id === req.params.id && q.shopId === activeShopId);
-  if (idx === -1) return res.status(404).json({ error: 'Quotation not found' });
-  db.quotations[idx].status = status;
-  await saveDb();
-  res.json(db.quotations[idx]);
+app.put('/api/quotations/:id/status',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const status=String(req.body?.status||'');
+  // Conversion always uses the separate atomic sale endpoint.
+  const allowed:Record<string,string[]>={Draft:['Sent'],Sent:['Accepted','Expired'],Accepted:['Expired']};
+  const client=await pool.connect();
+  let changed:Quotation|undefined;
+  try{
+    await client.query('BEGIN');
+    const row=await client.query('SELECT status FROM quotations WHERE id=$1 AND shop_id=$2 FOR UPDATE',[req.params.id,activeShopId]);
+    if(!row.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Quotation not found.'});}
+    if(!(allowed[row.rows[0].status]||[]).includes(status)){
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Invalid quotation state change.'});
+    }
+    await client.query('UPDATE quotations SET status=$1 WHERE id=$2 AND shop_id=$3',[status,req.params.id,activeShopId]);
+    await client.query('COMMIT');
+  }catch(error){
+    await client.query('ROLLBACK').catch(()=>{});
+    return res.status(409).json({error:'Quotation status change failed.'});
+  }finally{client.release();}
+  if(!(await refreshCommittedQuoteState(res)))return;
+  changed=db.quotations.find(q=>q.id===req.params.id&&q.shopId===activeShopId);
+  res.json(changed);
 });
 
-app.post('/api/quotations/:id/convert', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const authUser = (req as AppRequest).authUser;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const { paymentMethod } = req.body;
-  const qIdx = db.quotations.findIndex((q) => q.id === req.params.id && q.shopId === activeShopId);
-  if (qIdx === -1) return res.status(404).json({ error: 'Quotation not found' });
-  const q = db.quotations[qIdx];
-  if (q.status === 'Converted') return res.status(400).json({ error: 'Already converted' });
-
-  const txItems = [];
-  for (const item of q.items) {
-    const product = db.products.find((p) => p.id === item.productId && p.shopId === activeShopId);
-    if (!product) {
-      return res.status(400).json({ error: `Product ${item.productName} not found in active shop catalog` });
+app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId,activeShopName}=getActiveShopContext(db,req);
+  const auth=(req as AppRequest).authUser;
+  const q=db.quotations.find(item=>item.id===req.params.id&&item.shopId===activeShopId);
+  if(!q)return res.status(404).json({error:'Quotation not found.'});
+  if(q.status!=='Accepted'||q.convertedToTxId)return res.status(409).json({error:'Accept the quotation before invoicing, and do not invoice it twice.'});
+  const customer=db.customers.find(row=>row.id===q.customerId&&row.shopId===activeShopId);
+  if(!customer)return res.status(409).json({error:'Quotation customer is no longer available.'});
+  const paymentMethod=String(req.body?.paymentMethod||'Bank Transfer');
+  if(!['Cash','Bank Transfer','Credit Account'].includes(paymentMethod))
+    return res.status(400).json({error:'Unsupported quotation payment method.'});
+  const items:SalesTransaction['items']=[];
+  for(const line of q.items){
+    const product=db.products.find(p=>p.id===line.productId&&p.shopId===activeShopId);
+    if(!product||product.status==='Inactive'||product.variants?.length){
+      return res.status(409).json({error:'Product missing, inactive or variant-managed. Use standard checkout for this product.'});
     }
-    if (product.quantity < item.quantity) {
-      return res.status(400).json({ error: `Insufficient stock for ${item.productName}. Available: ${product.quantity}, requested: ${item.quantity}` });
-    }
-    txItems.push({ ...item, costPrice: product.costPrice || 0 });
+    if(!Number.isSafeInteger(line.quantity)||line.quantity<1||
+       !Number.isFinite(line.sellingPrice)||line.sellingPrice<0)
+      return res.status(409).json({error:'Quotation contains invalid line quantities or prices.'});
+    items.push({...line,costPrice:product.costPrice||0});
   }
-
-  for (const item of txItems) {
-    const pIdx = db.products.findIndex((p) => p.id === item.productId && p.shopId === activeShopId);
-    if (pIdx !== -1) {
-      db.products[pIdx].quantity = Math.max(0, db.products[pIdx].quantity - item.quantity);
-      db.stockLogs.unshift({
-        id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        shopId: activeShopId,
-        date: new Date().toISOString(),
-        productId: item.productId,
-        productName: item.productName,
-        type: 'Stock Out',
-        quantity: -item.quantity,
-        reason: `Quotation converted to invoice`,
-        user: authUser?.name || 'Cashier',
-      });
-    }
-  }
-  const txId = `tx-${Date.now()}`;
-  const tx: SalesTransaction = {
-    id: txId, shopId: activeShopId, invoiceNumber: `${db.settings.invoicePrefix}-${Date.now()}`,
-    date: new Date().toISOString(), customerName: q.customerName, customerId: q.customerId,
-    cashierName: authUser?.name || 'Cashier', items: txItems,
-    subtotal: q.subtotal, tax: q.tax, discountAmount: q.discountAmount, total: q.total,
-    paymentMethod: paymentMethod || 'Cash', status: 'Completed',
+  const tx:SalesTransaction={
+    id:'tx-'+randomUUID(),shopId:activeShopId,
+    invoiceNumber:`${db.settings.invoicePrefix}-${Date.now()}-${randomUUID().slice(0,6).toUpperCase()}`,
+    date:new Date().toISOString(),customerId:customer.id,customerName:customer.name,
+    customerPhone:customer.phone||undefined,customerAddress:customer.address||undefined,
+    cashierName:auth?.name||'Cashier',items,subtotal:q.subtotal,tax:q.tax,
+    discountAmount:q.discountAmount,total:q.total,
+    paymentMethod:paymentMethod as SalesTransaction['paymentMethod'],
+    cashReceived:paymentMethod==='Cash'?q.total:undefined,
+    changeDue:paymentMethod==='Cash'?0:undefined,
+    paymentStatus:paymentMethod==='Credit Account'?'CREDIT SALE':'PAID',
+    status:'Completed'
   };
-  db.transactions.unshift(tx);
-  db.quotations[qIdx].status = 'Converted';
-  db.quotations[qIdx].convertedToTxId = txId;
-  await saveDb();
-  res.json({ transaction: tx, quotation: db.quotations[qIdx] });
+  try{
+    await checkoutTransaction(tx,auth?.role||'Cashier',activeShopName,q.id);
+  }catch(error){
+    return res.status(409).json({error:(error as Error).message||'Quotation conversion failed.'});
+  }
+  if(!(await refreshCommittedQuoteState(res)))return;
+  const recorded=db.transactions.find(item=>item.id===tx.id&&item.shopId===activeShopId);
+  const updated=db.quotations.find(item=>item.id===q.id&&item.shopId===activeShopId);
+  res.json({transaction:recorded||tx,quotation:updated});
 });
 
-app.delete('/api/quotations/:id', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
-  const { activeShopId } = getActiveShopContext(db, req);
-  const idx = db.quotations.findIndex((q) => q.id === req.params.id && q.shopId === activeShopId);
-  if (idx === -1) return res.status(404).json({ error: 'Quotation not found' });
-  db.quotations.splice(idx, 1);
-  await saveDb();
-  res.json({ success: true });
+app.delete('/api/quotations/:id',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  let result;
+  try{
+    result=await pool.query(
+      "DELETE FROM quotations WHERE id=$1 AND shop_id=$2 AND status IN ('Draft','Expired') AND converted_to_tx_id IS NULL",
+      [req.params.id,activeShopId]);
+  }catch(error){return res.status(409).json({error:'Quotation deletion failed.'});}
+  if(!result.rowCount)return res.status(409).json({error:'Only an unconverted draft or expired quotation can be removed.'});
+  if(!(await refreshCommittedQuoteState(res)))return;
+  res.json({success:true});
 });
 
 // ── Cash Shift Routes ────────────────────────────────────────────────────────
