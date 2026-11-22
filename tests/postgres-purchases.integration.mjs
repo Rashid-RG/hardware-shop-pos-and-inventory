@@ -7,7 +7,7 @@ if (!['localhost', '127.0.0.1'].includes(connection.hostname) || connection.path
   throw new Error('Refusing integration test outside local hardware_pos_ci database');
 }
 
-const { pool, initDbTables, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus } =
+const { pool, initDbTables, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, insertSupplierPayment } =
   await import('../backend/db.ts');
 
 test('purchase creation and receiving commits stock exactly once, isolated by shop', async () => {
@@ -64,6 +64,38 @@ test('purchase creation and receiving commits stock exactly once, isolated by sh
       "SELECT COUNT(*)::int AS count FROM stock_logs WHERE reference_id=$1 AND type='Stock In'", [poId]
     );
     assert.equal(stockLogs.rows[0].count, 1);
+
+    const supplierPayment = (id, amount, linkedPo = poId, supplier = supplierId, shop = shopId) => ({
+      id, shopId: shop, supplierId: supplier, supplierName: 'Test Supplier Co',
+      purchaseOrderId: linkedPo, amount, paymentMethod: 'Bank Transfer',
+      date: new Date().toISOString().slice(0, 10), createdBy: 'CI Manager',
+    });
+    await assert.rejects(
+      () => insertSupplierPayment(supplierPayment('ci-wrong-supplier-' + suffix, 20, poId, 'other-supplier')),
+      /Supplier not found/
+    );
+    await assert.rejects(
+      () => insertSupplierPayment(supplierPayment('ci-overpay-' + suffix, 121)),
+      /exceeds the remaining/
+    );
+    const firstSupplierPayment = 'ci-supplier-payment-' + suffix;
+    await insertSupplierPayment(supplierPayment(firstSupplierPayment, 70));
+    const supplierPayments = await pool.query(
+      'SELECT amount FROM supplier_payments WHERE id = $1', [firstSupplierPayment]
+    );
+    assert.equal(Number(supplierPayments.rows[0].amount), 70);
+    await assert.rejects(
+      () => insertSupplierPayment(supplierPayment('ci-overpay-after-' + suffix, 51)),
+      /exceeds the remaining/
+    );
+    await assert.rejects(
+      () => insertSupplierPayment(supplierPayment(firstSupplierPayment, 30)),
+      /duplicate key/
+    );
+    const paidTotal = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) AS total FROM supplier_payments WHERE purchase_order_id = $1', [poId]
+    );
+    assert.equal(Number(paidTotal.rows[0].total), 70);
   } finally {
     await pool.end();
   }
