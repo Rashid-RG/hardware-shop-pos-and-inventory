@@ -5237,46 +5237,103 @@ app.get('/api/shifts/current', (_req, res) => {
   res.json(open || null);
 });
 
-app.post('/api/shifts/open', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const authUser = (req as AppRequest).authUser;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const alreadyOpen = db.cashShifts.find((s) => s.shopId === activeShopId && s.status === 'Open');
-  if (alreadyOpen) return res.status(400).json({ error: 'A shift is already open', shift: alreadyOpen });
-  const { openingFloat } = req.body;
-  const shift: CashShift = {
-    id: `shift-${Date.now()}`,
-    shopId: activeShopId,
-    cashierName: authUser?.name || 'Cashier',
-    openedAt: new Date().toISOString(),
-    openingFloat: Number(openingFloat) || 0,
-    status: 'Open',
-  };
-  db.cashShifts.unshift(shift);
-  db.activityLogs.unshift({ id: `act-${Date.now()}`, shopId: activeShopId, date: shift.openedAt, user: shift.cashierName, role: authUser?.role || 'Cashier', action: 'Shift Opened', details: `Shift started with float Rs.${shift.openingFloat.toFixed(2)}.` });
-  await saveDb();
-  res.json(shift);
+// Cash shift changes use short transactional SQL writes and serializable shop locks.
+// The shift is tied to the cashier who actually signs in, never a user-entered rep.
+app.post('/api/shifts/open', requireRole(['Super Admin','Store Manager','Cashier']), async(req,res)=>{
+  if(!databaseWriteHealthy) return res.status(503).json({error:'Database writes are disabled.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const authUser=(req as AppRequest).authUser;
+  const openingFloat=Number(req.body?.openingFloat);
+  if(!Number.isFinite(openingFloat)||openingFloat<0||openingFloat>1_000_000_000||
+     Math.abs(openingFloat*100-Math.round(openingFloat*100))>0.00001)
+    return res.status(400).json({error:'Opening cash must be a valid nonnegative amount.'});
+  const client=await pool.connect();
+  let shift:CashShift|undefined;
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('ars-cash-shifts'),hashtext($1))",[activeShopId]);
+    const current=await client.query("SELECT id FROM cash_shifts WHERE shop_id=$1 AND status='Open' LIMIT 1",[activeShopId]);
+    if(current.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'A cash shift is already open.'});
+    }
+    shift={id:'shift-'+randomUUID(),shopId:activeShopId,cashierName:authUser?.name||'Cashier',
+      openedAt:new Date().toISOString(),openingFloat,status:'Open'};
+    await client.query(
+      `INSERT INTO cash_shifts(id,shop_id,cashier_name,opened_at,opening_float,status)
+       VALUES($1,$2,$3,$4,$5,'Open')`,
+       [shift.id,activeShopId,shift.cashierName,shift.openedAt,openingFloat]);
+    await client.query(
+      `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+       VALUES($1,$2,NOW(),$3,$4,'Shift Opened',$5)`,
+      ['act-'+randomUUID(),activeShopId,shift.cashierName,authUser?.role||'Cashier',
+       `Shift started with float Rs.${openingFloat.toFixed(2)}.`]);
+    await client.query('COMMIT');
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>{});
+    return res.status(409).json({error:'Unable to open shift safely.'});
+  } finally {client.release();}
+  try {
+    const fresh=await loadStateFromNormalized();
+    if(!fresh)throw Error('Refresh failed');
+    db=fresh;
+    res.status(201).json(shift);
+  } catch(error) {
+    databaseWriteHealthy=false;
+    res.status(503).json({error:'Shift opened but reload failed. Reconcile before retrying.'});
+  }
 });
 
-app.post('/api/shifts/:id/close', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const authUser = (req as AppRequest).authUser;
-  const { activeShopId } = getActiveShopContext(db, req);
-  const idx = db.cashShifts.findIndex((s) => s.id === req.params.id && s.shopId === activeShopId);
-  if (idx === -1) return res.status(404).json({ error: 'Shift not found in this shop' });
-  if (db.cashShifts[idx].status === 'Closed') return res.status(400).json({ error: 'Shift already closed' });
-  const { closingCash, notes } = req.body;
-  const shift = db.cashShifts[idx];
-  // Calculate expected: opening float + cash sales since shift open
-  const shiftStart = new Date(shift.openedAt);
-  const cashSalesSinceOpen = db.transactions
-    .filter((t) => t.shopId === activeShopId && t.status !== 'Refunded' && t.paymentMethod === 'Cash' && new Date(t.date) >= shiftStart)
-    .reduce((sum, t) => sum + t.total, 0);
-  const expectedCash = Math.round((shift.openingFloat + cashSalesSinceOpen) * 100) / 100;
-  const actualCash = Number(closingCash) || 0;
-  const cashDifference = Math.round((actualCash - expectedCash) * 100) / 100;
-  db.cashShifts[idx] = { ...shift, closedAt: new Date().toISOString(), closingCash: actualCash, expectedCash, cashDifference, status: 'Closed', notes: notes || undefined };
-  db.activityLogs.unshift({ id: `act-${Date.now()}`, shopId: activeShopId, date: new Date().toISOString(), user: authUser?.name || 'Cashier', role: authUser?.role || 'Cashier', action: 'Shift Closed', details: `Shift closed. Expected: Rs.${expectedCash.toFixed(2)}, Actual: Rs.${actualCash.toFixed(2)}, Diff: Rs.${cashDifference.toFixed(2)}.` });
-  await saveDb();
-  res.json(db.cashShifts[idx]);
+app.post('/api/shifts/:id/close',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const authUser=(req as AppRequest).authUser;
+  const closingCash=Number(req.body?.closingCash);
+  const notes=String(req.body?.notes||'');
+  if(!Number.isFinite(closingCash)||closingCash<0||closingCash>1_000_000_000||
+     Math.abs(closingCash*100-Math.round(closingCash*100))>0.00001||notes.length>2000)
+    return res.status(400).json({error:'Invalid closing cash or notes.'});
+  const client=await pool.connect();
+  let result:CashShift|undefined;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext(\'ars-cash-shifts\'),hashtext($1))',[activeShopId]);
+    const rows=await client.query("SELECT * FROM cash_shifts WHERE id=$1 AND shop_id=$2 FOR UPDATE",[req.params.id,activeShopId]);
+    if(!rows.rowCount) {await client.query('ROLLBACK');return res.status(404).json({error:'Shift not found in this branch.'});}
+    const shift=rows.rows[0];
+    if(shift.status!=='Open') {await client.query('ROLLBACK');return res.status(409).json({error:'Shift is already closed.'});}
+    const totals=await client.query(
+      `SELECT COALESCE(SUM(total),0) AS sales FROM sales_transactions
+       WHERE shop_id=$1 AND payment_method='Cash' AND COALESCE(status,'Completed')<>'Refunded'
+       AND date >= $2 AND date <= NOW()`,[activeShopId,shift.opened_at]);
+    const expectedCash=Math.round((Number(shift.opening_float)+Number(totals.rows[0].sales))*100)/100;
+    const cashDifference=Math.round((closingCash-expectedCash)*100)/100;
+    const closedAt=new Date().toISOString();
+    await client.query(
+      `UPDATE cash_shifts SET closed_at=$1,closing_cash=$2,expected_cash=$3,
+       cash_difference=$4,status='Closed',notes=$5 WHERE id=$6 AND shop_id=$7 AND status='Open'`,
+      [closedAt,closingCash,expectedCash,cashDifference,notes,req.params.id,activeShopId]);
+    await client.query(
+      `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+       VALUES($1,$2,NOW(),$3,$4,'Shift Closed',$5)`,
+      ['act-'+randomUUID(),activeShopId,authUser?.name||'Cashier',authUser?.role||'Cashier',
+       `Shift closed. Expected Rs.${expectedCash.toFixed(2)}, actual Rs.${closingCash.toFixed(2)}, difference Rs.${cashDifference.toFixed(2)}.`]);
+    await client.query('COMMIT');
+    result={id:shift.id,shopId:activeShopId,cashierName:shift.cashier_name,openedAt:shift.opened_at,
+      closedAt,openingFloat:Number(shift.opening_float),closingCash,expectedCash,cashDifference,status:'Closed',notes};
+  } catch(error) {
+    await client.query('ROLLBACK').catch(()=>{});
+    return res.status(409).json({error:'Unable to close shift safely.'});
+  } finally {client.release();}
+  try{
+    const fresh=await loadStateFromNormalized();
+    if(!fresh)throw Error('Refresh failed');
+    db=fresh;
+    res.json(result);
+  }catch(error){
+    databaseWriteHealthy=false;
+    res.status(503).json({error:'Shift close committed but reload failed. Reconcile before retrying.'});
+  }
 });
 
 // ── Reports Route ────────────────────────────────────────────────────────────
