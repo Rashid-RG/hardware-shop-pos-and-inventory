@@ -3017,7 +3017,7 @@ app.post(
   }
 );
 
-app.post('/api/db/sync-normalized', requireRole(['Super Admin']), async (_req, res) => {
+app.post('/api/db/sync-normalized', requireRole(['Super Admin']), requireExplicitDataReset, async (_req, res) => {
   const appStateResult = await pool.query<{ state: DBState }>('SELECT state FROM app_state WHERE id = $1', [DB_STATE_KEY]);
   if (!appStateResult.rowCount || !appStateResult.rows[0]) {
     return res.status(404).json({ error: 'No app_state row found to sync from' });
@@ -3100,8 +3100,11 @@ app.get('/api/db', (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   const byActiveShop = <T extends { shopId?: string }>(items: T[]) => items.filter((item) => item.shopId === activeShopId);
 
+  // User credentials are only exposed through role-checked user-management APIs.
+  // The hydration response must never include password hashes.
+  const { users: _privateUsers, ...publicState } = db;
   res.json({
-    ...db,
+    ...publicState,
     products: byActiveShop(db.products),
     suppliers: byActiveShop(db.suppliers),
     customers: byActiveShop(db.customers),
@@ -3120,14 +3123,25 @@ app.get('/api/db', (req, res) => {
 });
 
 // Reset database to initial defaults
-app.post('/api/db/reset', requireRole(['Super Admin']), async (req, res) => {
+const allowDestructiveAdminTools = !IS_PRODUCTION && process.env.ENABLE_DESTRUCTIVE_ADMIN_TOOLS === 'true';
+const requireExplicitDataReset: express.RequestHandler = (req, res, next) => {
+  if (!allowDestructiveAdminTools) {
+    return res.status(403).json({ error: 'Database reset tools are disabled. Enable only in an isolated non-production environment.' });
+  }
+  if (req.body?.confirmation !== 'DELETE ALL TEST DATA') {
+    return res.status(400).json({ error: 'Explicit confirmation phrase required: DELETE ALL TEST DATA' });
+  }
+  next();
+};
+
+app.post('/api/db/reset', requireRole(['Super Admin']), requireExplicitDataReset, async (req, res) => {
   db = getInitialDbState();
   await saveDb();
   res.json({ success: true, message: 'Database reset to initial template state successfully', data: db });
 });
 
 // Clear all test data (transactions, inventory, suppliers, customers, etc.) but keep users and settings
-app.post('/api/db/clear-test-data', requireRole(['Super Admin']), async (req, res) => {
+app.post('/api/db/clear-test-data', requireRole(['Super Admin']), requireExplicitDataReset, async (req, res) => {
   try {
     const currentUsers = db.users || [];
     const currentSettings = db.settings;
