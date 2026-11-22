@@ -23,3 +23,15 @@ test('dangerous database reset endpoints fail closed by default', () => {
     assert.match(server, new RegExp(`app.post\\('/api/db/${route}',[^\\n]*requireExplicitDataReset`));
   }
 });
+
+test('failed database save reloads committed state and prevents unsafe follow-up writes', () => {
+  const saveDbSection = server.split('const saveDb = async () => {')[1]?.split('type AppRequest')[0] || '';
+  assert.match(saveDbSection, /await syncNormalizedFromState\(nextState\)/);
+  assert.match(saveDbSection, /const committedState = await loadStateFromNormalized\(\)/);
+  assert.match(saveDbSection, /db = committedState/);
+  assert.match(saveDbSection, /databaseWriteHealthy = false/);
+  const queue = server.split('let writeQueue: Promise<void>')[1]?.split('--- API Implementation ---')[0] || '';
+  assert.match(queue, /if \(!databaseWriteHealthy\)/);
+  assert.match(queue, /res\.status\(503\)/);
+  assert.match(server, /database: 'recovery-required'/);
+});
