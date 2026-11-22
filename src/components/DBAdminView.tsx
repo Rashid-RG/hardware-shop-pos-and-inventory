@@ -438,7 +438,7 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
               type="password"
               value={userForm.password}
               onChange={(e) => setUserForm((current) => ({ ...current, password: e.target.value }))}
-              placeholder={editingUserId ? 'Leave blank to keep current password' : 'Minimum 8 characters'}
+              placeholder={editingUserId ? 'Leave blank to keep current password' : 'Minimum 12 characters'}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
               required={!editingUserId}
             />
