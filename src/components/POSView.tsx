@@ -1143,6 +1143,17 @@ export default function POSView({
                     </div>
                   </div>
 
+                  <div style="break-inside:avoid;page-break-inside:avoid;border-top:1px solid #cbd5e1;margin-top:18px;padding-top:12px;">
+                    <div style="font-size:11px;font-weight:800;text-align:center;letter-spacing:.08em;margin-bottom:24px;">GOODS VERIFICATION & RECEIPT</div>
+                    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;text-align:center;font-size:9px;">
+                      ${['Prepared By','Checked By','Authorized By','Received By'].map((label) => `<div><div style="border-bottom:1px solid #64748b;height:22px;"></div><div style="padding-top:7px;">${label} / Signature</div></div>`).join('')}
+                    </div>
+                    <div style="display:flex;justify-content:space-between;gap:16px;font-size:9px;margin-top:20px;">
+                      <span>Receiving Date / Time: __________________</span>
+                      <span>Customer Stamp (if applicable): __________________</span>
+                    </div>
+                    <div style="text-align:center;font-size:9px;margin-top:12px;">${invoiceFooter.acknowledgement}</div>
+                  </div>
                   <div class="footer">
                     <div>${invoiceFooter.goods}</div>
                     <div><strong>${invoiceFooter.thanks}</strong></div>
@@ -2408,6 +2419,23 @@ export default function POSView({
                   )}
                 </div>
 
+                {/* Goods receipt proof is shown in preview and on the printed A4 invoice. */}
+                <div className="mt-5 border-t border-slate-300 pt-3">
+                  <h4 className="text-center text-[10px] font-extrabold tracking-wider text-slate-700">GOODS VERIFICATION &amp; RECEIPT</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 text-center">
+                    {['Prepared By', 'Checked By', 'Authorized By', 'Received By'].map((label) => (
+                      <div key={label} className="min-w-0">
+                        <div className="border-b border-slate-400 h-5" />
+                        <p className="text-[9px] text-slate-600 mt-1">{label} / Signature</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 text-[9px] text-slate-600 mt-4">
+                    <span>Receiving Date / Time: __________________</span>
+                    <span>Customer Stamp: __________________</span>
+                  </div>
+                  <p className="text-center text-[9px] text-slate-600 mt-3">{invoiceFooter.acknowledgement}</p>
+                </div>
                 {/* Footer notes */}
                 <div className="text-center pt-4 border-t border-dashed border-slate-200 text-[10px] text-slate-500">
                   <p>{invoiceFooter.goods}</p>
