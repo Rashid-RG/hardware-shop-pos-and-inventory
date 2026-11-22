@@ -1,6 +1,6 @@
 import { invoiceFooter } from './src/utils/invoiceFooter';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4866,39 +4866,68 @@ app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager'])
 
 // ── Customer Credit Routes ───────────────────────────────────────────────────
 app.put('/api/customers/:id/credit', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
-  const { creditLimit } = req.body;
   const { activeShopId } = getActiveShopContext(db, req);
-  const idx = db.customers.findIndex((c) => c.id === req.params.id && c.shopId === activeShopId);
-  if (idx === -1) return res.status(404).json({ error: 'Customer not found' });
-  db.customers[idx].creditLimit = Math.max(0, Number(creditLimit) || 0);
-  await saveDb();
-  res.json(db.customers[idx]);
+  const creditLimit = Number(req.body?.creditLimit);
+  if (!Number.isFinite(creditLimit) || creditLimit < 0 ||
+      Math.abs(creditLimit * 100 - Math.round(creditLimit * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Credit limit must be a nonnegative amount with up to two decimal places.' });
+  }
+  const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
+  if (!customer) return res.status(404).json({ error: 'Customer not found in this shop' });
+  try {
+    await updateCustomerCreditLimit(customer.id, activeShopId, creditLimit);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  const result = { ...customer, creditLimit };
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload credit limit');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Credit limit saved but refresh failed; writes disabled', error);
+  }
+  res.json(result);
 });
 
 app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const { amount, paymentMethod, note } = req.body;
-  const idx = db.customers.findIndex((c) => c.id === req.params.id && c.shopId === activeShopId);
-  if (idx === -1) return res.status(404).json({ error: 'Customer not found' });
-  if (Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be positive' });
-  const customer = db.customers[idx];
+  const { amount, paymentMethod, note } = req.body || {};
+  const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
+  if (!customer) return res.status(404).json({ error: 'Customer not found in this shop' });
+  const normalizedAmount = Number(amount);
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0 ||
+      Math.abs(normalizedAmount * 100 - Math.round(normalizedAmount * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Payment amount must be positive with up to two decimal places.' });
+  }
   const payment: CustomerCreditPayment = {
-    id: `cpay-${Date.now()}`,
+    id: 'cpay-' + randomUUID(),
     shopId: activeShopId,
     customerId: customer.id,
     customerName: customer.name,
-    amount: Number(amount),
+    amount: normalizedAmount,
     date: new Date().toISOString().split('T')[0],
     paymentMethod: String(paymentMethod || 'Cash'),
-    note: note || undefined,
+    note: typeof note === 'string' ? note.slice(0, 500) : undefined,
     createdBy: authUser?.name,
   };
-  db.customers[idx].creditBalance = Math.max(0, (customer.creditBalance || 0) - payment.amount);
-  db.customerCreditPayments.unshift(payment);
-  db.activityLogs.unshift({ id: `act-${Date.now()}`, shopId: activeShopId, date: new Date().toISOString(), user: authUser?.name || 'Cashier', role: authUser?.role || 'Cashier', action: 'Credit Payment', details: `${customer.name} paid Rs.${payment.amount.toFixed(2)} towards credit balance.` });
-  await saveDb();
-  res.json({ customer: db.customers[idx], payment });
+  try {
+    await addCustomerCreditPayment(payment);
+  } catch (error) {
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  const result = { ...customer, creditBalance: Math.round(Math.max(0, customer.creditBalance - normalizedAmount) * 100) / 100 };
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Cannot reload committed customer credit payment');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Credit payment committed but refresh failed; writes disabled', error);
+  }
+  res.json({ customer: result, payment });
 });
 
 app.get('/api/customer-credit-payments', (_req, res) => {
