@@ -52,6 +52,23 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
     }
     assert.ok(started, 'New database POS startup failed: ' + output.slice(-2000));
 
+    // Opening a newly created company database must never populate example
+    // inventory, people, orders or financial records from the old demo.
+    const freshProbe = new Client({ connectionString: scratchUrl.href });
+    try {
+      await freshProbe.connect();
+      for (const table of ['users', 'products', 'customers', 'suppliers', 'employees',
+        'sales_transactions', 'purchase_orders', 'manual_expenses']) {
+        const count = await freshProbe.query('SELECT COUNT(*)::int AS n FROM "' + table + '"');
+        assert.equal(count.rows[0].n, 0, 'Unexpected demo rows in fresh table ' + table);
+      }
+      const shop = await freshProbe.query("SELECT store_name FROM store_settings WHERE id='default'");
+      assert.equal(shop.rows[0]?.store_name, 'ARS Hardware');
+    } finally {
+      await freshProbe.end().catch(() => {});
+    }
+
+
     const status = await fetch(origin + '/api/auth/setup-status');
     assert.equal(status.status, 200);
     assert.equal((await status.json()).setupRequired, true);
