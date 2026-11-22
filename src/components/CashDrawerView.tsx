@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { notify } from '../utils/notifications';
 import {
   Timer,
   ArrowDownCircle,
@@ -49,13 +50,13 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
 
   const handleOpenShift = async () => {
     const float = parseFloat(floatAmount);
-    if (isNaN(float) || float < 0) return alert('Enter a valid opening float amount.');
+    if (isNaN(float) || float < 0) return notify.warning('Enter a valid opening float amount.');
     setIsBusy(true);
     try {
       const res = await authFetch('/api/shifts/open', { method: 'POST', body: JSON.stringify({ openingFloat: float }) });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to open shift' }));
-        alert(data.error || 'Failed to open shift.');
+        notify.warning(data.error || 'Failed to open shift.');
         return;
       }
       setFloatAmount('');
@@ -68,7 +69,7 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
   const handleCloseShift = async () => {
     if (!openShift) return;
     const actual = parseFloat(actualCash);
-    if (isNaN(actual) || actual < 0) return alert('Enter the actual cash amount in drawer.');
+    if (isNaN(actual) || actual < 0) return notify.warning('Enter the actual cash amount in drawer.');
     setIsBusy(true);
     try {
       const res = await authFetch(`/api/shifts/${openShift.id}/close`, {
@@ -77,7 +78,7 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to close shift' }));
-        alert(data.error || 'Failed to close shift.');
+        notify.warning(data.error || 'Failed to close shift.');
         return;
       }
       setActualCash('');
