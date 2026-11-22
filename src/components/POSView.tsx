@@ -1084,7 +1084,7 @@ export default function POSView({
                       <div class="row"><span>Due Date</span><strong>${escapeHtml(formatDate(dueDate))}</strong></div>
                       <div class="row"><span>Sales Rep</span><strong>${escapeHtml(tx.salesRepName || 'Not recorded')}</strong></div>
                       <span class="badge ${statusClass}">${escapeHtml(statusLabel)}</span>
-                      <div class="reprint-note">${escapeHtml(copyLabel)}${printMeta?.isReprint ? ` | Reprint: ${escapeHtml(new Date(printMeta?.printedAt || new Date().toISOString()).toLocaleString())} by ${escapeHtml(printMeta?.printedBy || tx.cashierName)}` : ''}</div>
+                      <div class="reprint-note">${escapeHtml(copyLabel)}${printMeta?.isReprint ? ` | Reprint: ${escapeHtml(new Date(printMeta?.printedAt || new Date().toISOString()).toLocaleString())}` : ''}</div>
                     </div>
                   </div>
                 </div>
