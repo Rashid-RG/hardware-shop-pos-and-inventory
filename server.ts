@@ -4371,6 +4371,38 @@ app.post('/api/transactions/:id/refund', requireRole(['Super Admin', 'Store Mana
     return res.status(400).json({ error: 'Transaction already refunded' });
   }
 
+  // Validate the entire return before changing any stock or customer balance.
+  // A missing SKU/variant must not produce a "refunded" invoice with no restock.
+  for (const item of tx.items) {
+    const product = db.products.find((p) => p.id === item.productId && p.shopId === tx.shopId);
+    if (!product) {
+      return res.status(409).json({ error: `Cannot refund: product ${item.productName} is missing from this shop` });
+    }
+    if (!Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) <= 0) {
+      return res.status(409).json({ error: 'Cannot refund an invoice with invalid item quantities' });
+    }
+    if (item.variantId && !product.variants?.some((variant) => variant.id === item.variantId)) {
+      return res.status(409).json({ error: `Cannot refund: product variant ${item.variantName || item.variantId} is missing` });
+    }
+  }
+
+  const refundCustomer = tx.customerId && tx.customerId !== 'cust-walkin'
+    ? db.customers.find((c) => c.id === tx.customerId && c.shopId === tx.shopId)
+    : undefined;
+  if (tx.paymentMethod === 'Credit Account') {
+    if (!refundCustomer) {
+      return res.status(409).json({ error: 'Cannot refund credit sale: customer account is missing' });
+    }
+    // Credit payments are currently recorded against the customer account rather
+    // than a specific invoice. Do not reverse paid credit without reconciliation.
+    if (!Number.isFinite(Number(refundCustomer.creditBalance)) ||
+        Number(refundCustomer.creditBalance) + 0.005 < Number(tx.total)) {
+      return res.status(409).json({
+        error: 'Credit balance is below this invoice total. Reconcile customer payments before refunding.',
+      });
+    }
+  }
+
   for (const item of tx.items) {
     const productIndex = db.products.findIndex((p) => p.id === item.productId && p.shopId === tx.shopId);
     if (productIndex !== -1) {
@@ -4406,6 +4438,10 @@ app.post('/api/transactions/:id/refund', requireRole(['Super Admin', 'Store Mana
       db.customers[customerIndex].purchaseCount = Math.max(0, db.customers[customerIndex].purchaseCount - 1);
       const revertedPoints = Math.floor(tx.total / 10);
       db.customers[customerIndex].loyaltyBalance = Math.max(0, db.customers[customerIndex].loyaltyBalance - revertedPoints);
+      if (tx.paymentMethod === 'Credit Account') {
+        db.customers[customerIndex].creditBalance =
+          Math.round((Number(db.customers[customerIndex].creditBalance || 0) - Number(tx.total)) * 100) / 100;
+      }
     }
   }
 
