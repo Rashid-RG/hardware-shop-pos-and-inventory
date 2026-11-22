@@ -30,3 +30,13 @@ test('legacy whole-state rewrite fails closed after receipt batches exist', () =
   assert.match(legacy, /ars_receipt_batches/);
   assert.match(legacy, /Legacy full-state rewrite blocked/);
 });
+
+test('manual expenses commit with an audit entry and no whole-state rewrite', () => {
+  const expenses=server.split("app.post('/api/manual-expenses'")[1]?.split('// Products Routes')[0] || '';
+  assert.match(expenses,/INSERT INTO manual_expenses/);
+  assert.match(expenses,/INSERT INTO activity_logs/);
+  assert.match(expenses,/await client\.query\('BEGIN'\)/);
+  assert.match(expenses,/await client\.query\('COMMIT'\)/);
+  assert.match(expenses,/await client\.query\('ROLLBACK'\)/);
+  assert.doesNotMatch(expenses,/await saveDb\(\)/);
+});
