@@ -3487,8 +3487,9 @@ const validateCheckoutPayload = (cartItems: any[]): string | null => {
       return `${label} is missing product reference`;
     }
     const quantity = Number(item.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      return `${label} quantity must be greater than 0`;
+    // Quantities use PostgreSQL INTEGER columns. Do not silently round fractions.
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      return `${label} quantity must be a positive whole number`;
     }
     const discountPct = Number(item.discount || 0);
     if (!Number.isFinite(discountPct) || discountPct < 0 || discountPct > 100) {
@@ -3780,14 +3781,25 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     }
 
     const variantId = String(item.variantId || '').trim();
-    const targetVariant = variantId && Array.isArray(dbProduct.variants)
-      ? dbProduct.variants.find((variant) => variant.id === variantId)
+    const variants = Array.isArray(dbProduct.variants) ? dbProduct.variants : [];
+    const targetVariant = variantId
+      ? variants.find((variant) => variant.id === variantId)
       : undefined;
+    // Never turn a missing/invalid variant into a sale of another stock keeping unit.
+    if (variantId && !targetVariant) {
+      return res.status(400).json({ error: `Selected variant is not available for ${dbProduct.name}` });
+    }
+    if (!variantId && variants.length > 0) {
+      return res.status(400).json({ error: `Select a variant for ${dbProduct.name} before checkout` });
+    }
 
     const quantity = Number(item.quantity) || 0;
     const availableQty = targetVariant ? Number(targetVariant.quantity || 0) : Number(dbProduct.quantity || 0);
     const stockKey = targetVariant ? `${dbProduct.id}:${targetVariant.id}` : dbProduct.id;
     const requestedQty = (requestedQtyByStockKey.get(stockKey) || 0) + quantity;
+    if (!Number.isSafeInteger(requestedQty)) {
+      return res.status(400).json({ error: 'Requested stock quantity exceeds supported limits' });
+    }
     if (availableQty < requestedQty) {
       const stockLabel = targetVariant ? `${dbProduct.name} (${targetVariant.name})` : dbProduct.name;
       return res.status(400).json({
