@@ -1422,10 +1422,28 @@ export const updateStoreSettings = async (s: StoreSettings) => {
  * 5) Update Customer credit/loyalty balances.
  * 6) Write ActivityLogs.
  */
-export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string) => {
+export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (quotationId) {
+      // Hold the quote row lock through the sale commit to make conversion
+      // exactly once even with simultaneous customer-service requests.
+      const quote=await client.query(
+        'SELECT * FROM quotations WHERE id=$1 AND shop_id=$2 FOR UPDATE',
+        [quotationId,tx.shopId]);
+      if(!quote.rowCount)throw new Error('Quotation not found in this branch.');
+      const saved=quote.rows[0];
+      if(saved.status!=='Accepted'||saved.converted_to_tx_id)
+        throw new Error('Only an accepted, unconverted quotation may be invoiced.');
+      const savedItems=Array.isArray(saved.items)?saved.items:[];
+      if(savedItems.length!==tx.items.length||Math.round(Number(saved.total)*100)!==Math.round(tx.total*100)||
+         saved.customer_id!==tx.customerId||
+         savedItems.some((row:any,i:number)=>row.productId!==tx.items[i].productId||
+           Number(row.quantity)!==tx.items[i].quantity||
+           Number(row.sellingPrice)!==tx.items[i].sellingPrice))
+        throw new Error('Quotation was modified. Reload it before converting.');
+    }
 
     // 1) Verify and update stock using SELECT FOR UPDATE to lock rows
     for (const item of tx.items) {
@@ -1571,6 +1589,13 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       [activityId, tx.shopId, tx.cashierName, cashierRole, `Billed sales transaction ${tx.invoiceNumber} for ${activeShopName}, total Rs.${tx.total.toFixed(2)}.`]
     );
 
+    if (quotationId) {
+      const converted=await client.query(
+        `UPDATE quotations SET status='Converted',converted_to_tx_id=$1
+         WHERE id=$2 AND shop_id=$3 AND status='Accepted' AND converted_to_tx_id IS NULL`,
+        [tx.id,quotationId,tx.shopId]);
+      if(converted.rowCount!==1)throw new Error('Quotation was already converted.');
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
