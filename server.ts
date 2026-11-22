@@ -3807,6 +3807,11 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   const txId = `tx-${randomUUID()}`;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
 
+  // ARS distributes exclusively to registered trade customers.
+  // Enforce this on the server, not just with the browser's shop selector.
+  if (!customerId || customerId === 'cust-walkin') {
+    return res.status(400).json({ error: 'Select a registered wholesale customer shop before issuing an invoice.' });
+  }
   // Checkout is always tied to the signed-in operator's active shop.
   const checkoutCustomer = customerId && customerId !== 'cust-walkin'
     ? db.customers.find((c) => c.id === customerId && c.shopId === activeShopId)
@@ -3814,6 +3819,11 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   if (customerId && customerId !== 'cust-walkin' && !checkoutCustomer) {
     return res.status(400).json({ error: 'Customer is not available in this shop' });
   }
+  const buyerName = checkoutCustomer?.name?.trim();
+  if (!buyerName) {
+    return res.status(400).json({ error: 'Wholesale buyer requires a valid registered shop name.' });
+  }
+
   if (paymentMethod === 'Credit Account' && !checkoutCustomer) {
     return res.status(400).json({ error: 'A registered customer is required for credit sales' });
   }
@@ -3957,10 +3967,10 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     shopId: activeShopId,
     invoiceNumber: invoiceNum,
     date: new Date().toISOString(),
-    customerName: customerName || 'Walk-in Customer',
-    customerPhone: customerPhone || undefined,
-    customerAddress: customerAddress || undefined,
-    customerId: customerId || 'cust-walkin',
+    customerName: buyerName,
+    customerPhone: checkoutCustomer?.phone || undefined,
+    customerAddress: checkoutCustomer?.address || undefined,
+    customerId: checkoutCustomer.id,
     cashierName: cashierName || 'Cashier',
     items: completedItems,
     subtotal: Math.round(subtotal * 100) / 100,
