@@ -86,6 +86,8 @@ Never place passwords in a command line, shell history, GitHub repository or
 CI secret output. Only perform this procedure on a new, approved staging
 database or with explicit owner authorization for a new business environment.
 
+**Do not deploy with an uninitialized login flow.** The administrator must be created and verified using the approved console-only procedure on hosted Docker before employees access ARS.
+
 ## Approval-controlled release sequence (no automatic production deploy)
 
 1. Develop on `codex/shop-opening-pilot`. Validate TypeScript, regression, PostgreSQL integration and build in GitHub Actions.
