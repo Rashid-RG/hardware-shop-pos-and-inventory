@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Customer, Employee, Role, CustomerCreditPayment, SalesTransaction } from '../types';
 import { CustomerLedgerPanel } from './CustomerLedgerPanel';
+import { CustomerReportsView } from './CustomerReportsView';
 
 interface CustomerEmployeeViewProps {
   viewMode: 'customers' | 'employees';
@@ -50,6 +51,7 @@ export default function CustomerEmployeeView({
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editDetails, setEditDetails] = useState({ name: '', phone: '', email: '', address: '' });
   const [isEditingCustomer, setIsEditingCustomer] = useState(false);
@@ -368,6 +370,10 @@ export default function CustomerEmployeeView({
               <option value="clear">No outstanding</option>
             </select>
             <span className="text-xs text-slate-500">{filteredCustomers.length} matching customer(s)</span>
+            <button type="button" id="ars-open-customer-reports" onClick={() => setIsReportsOpen(true)}
+              className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-800">
+              Open customer reports
+            </button>
             <button type="button" onClick={exportCustomerDirectory}
               className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
               Export all matching customers (CSV)
@@ -519,6 +525,11 @@ export default function CustomerEmployeeView({
             </div>
           )}
         </div>
+      )}
+
+      {activeTab === 'customers' && isReportsOpen && (
+        <CustomerReportsView customers={customers} invoices={transactions}
+          payments={customerCreditPayments} onClose={() => setIsReportsOpen(false)} />
       )}
 
       {activeTab === 'customers' && selectedCustomer && (
