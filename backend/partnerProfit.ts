@@ -130,6 +130,11 @@ export const recordArsProfitAllocation=async(pool:Pool,args:ProfitAllocationArgs
       if(anyAgreement.rowCount)throw new Error('No ownership agreement covers this accounting period; backdated allocations require a reviewed agreement.');
     }
     if(!partners.rows.length)throw new Error('At least one partner is required for allocation.');
+    if(agreements.rowCount){
+      const activeIds=new Set(legacyPartners.rows.map(p=>p.id));
+      if(activeIds.size!==partners.rows.length || partners.rows.some(p=>!activeIds.has(p.id)))
+        throw new Error('Active partner roster changed; approve a new ownership agreement before allocating profit.');
+    }
     const basisPoints=partners.rows.map(p=>{
       if(p.ownership_percent===null)throw new Error('All partners need ownership percentages.');
       const pct=Number(p.ownership_percent);
