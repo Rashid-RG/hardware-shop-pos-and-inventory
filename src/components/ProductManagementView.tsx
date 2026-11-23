@@ -419,7 +419,7 @@ export default function ProductManagementView({
   // Open form for editing
   const handleOpenEdit = (p: Product) => {
     setEditingProduct(p);
-    setShowAdvancedProduct(true); // Editing exposes current optional information before saving.
+    setShowAdvancedProduct(false); // Advanced fields remain accessible without overwhelming staff.
     setName(p.name);
     setSku(p.sku);
     setBarcode(p.barcode);
@@ -480,7 +480,7 @@ export default function ProductManagementView({
     e.preventDefault();
     const finalCategory = category.trim();
     if (!name.trim() || !sku.trim() || !barcode.trim()) {
-      notify.warning('Please fill out Name, SKU, and Barcode fields.');
+      notify.warning('Enter a product name. Product codes are generated automatically.');
       return;
     }
     if (!finalCategory) {
@@ -840,7 +840,7 @@ export default function ProductManagementView({
       {/* FORM MODAL PANEL (DRAWER overlay style) */}
       {isFormOpen && (
         <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
             <button
               type="button"
               aria-label="Close product editor"
@@ -854,7 +854,12 @@ export default function ProductManagementView({
               <h3 className="font-heading font-semibold text-slate-900 text-lg">
                 {editingProduct ? 'Edit product' : 'Add product'}
               </h3>
-              <p className="text-xs text-slate-500">Basic details first. Advanced specifications only when needed.</p>
+              <p className="mt-1 text-sm text-slate-500">Enter the product name, category, prices and quantity. ARS creates the product code automatically.</p>
+               <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
+                 <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5">1 · Product details</span>
+                 <span className="rounded-full bg-indigo-50 text-indigo-700 px-3 py-1.5">2 · Price & stock</span>
+                 <span className="rounded-full bg-slate-100 text-slate-600 px-3 py-1.5">3 · Save</span>
+               </div>
             </div>
 
             <form id="ars-product-editor" onSubmit={handleSubmit} className="min-h-0 flex flex-1 flex-col text-xs font-sans">
@@ -862,7 +867,16 @@ export default function ProductManagementView({
               <div className="grid grid-cols-2 gap-3">
                 {/* Store Department Category at the very top (full width) */}
                 <div className="col-span-2 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-150 shadow-2xs">
-                  <label className="block text-indigo-950 font-bold mb-1.5 text-xs">Store Department Category *</label>
+                  <label className="block text-indigo-950 font-bold mb-1.5 text-sm">What type of product is this? *</label>
+                   <div className="flex flex-wrap gap-2 mb-3">
+                     {['Electrical', 'Plumbing', 'Tools', 'Paints', 'Construction'].map((suggestion) => (
+                       <button key={suggestion} type="button" onClick={() => handleCategoryChange(suggestion)}
+                         aria-pressed={category === suggestion}
+                         className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${category === suggestion ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-400'}`}>
+                         {suggestion}
+                       </button>
+                     ))}
+                   </div>
                   <input
                     id="input-prod-category"
                     type="text"
@@ -870,7 +884,7 @@ export default function ProductManagementView({
                     value={category}
                     onChange={(e) => handleCategoryChange(e.target.value)}
                     list="catalog-category-suggestions"
-                    placeholder="Type or select a category (e.g. Paints, Electrical, Tools, Plumbing...)"
+                    placeholder="Or type another category"
                     className="w-full bg-white border border-slate-250 p-2.5 rounded-lg text-sm text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
                   />
                   <datalist id="catalog-category-suggestions">
@@ -883,41 +897,21 @@ export default function ProductManagementView({
                 {/* Core fields are always visible: staff can complete them in any order. */}
                   <>
                     <div className="col-span-2">
-                      <label className="block text-slate-500 font-semibold mb-1">Product Display Name *</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Product name *</label>
                       <input
                         id="input-prod-name"
                         type="text"
                         required
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g. Galvanized Steel Fence Mesh (100ft)"
+                        placeholder="e.g. PVC Pipe 1 inch"
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
                       />
                     </div>
 
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Product SKU *</label>
-                      <input
-                        id="input-prod-sku"
-                        type="text"
-                        required
-                        value={sku}
-                        onChange={(e) => setSku(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 uppercase font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Barcode / Internal Scan Code *</label>
-                      <input
-                        id="input-prod-barcode"
-                        type="text"
-                        required
-                        value={barcode}
-                        onChange={(e) => setBarcode(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
-                      />
-                    </div>
+                    <div className="col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-800">
+                       <strong>No product code to remember.</strong> ARS creates a code for you. Use More product options when you have a barcode or special specifications.
+                     </div>
 
                     <div>
                       <label className="block text-slate-500 font-semibold mb-1">Cost unit Price ({currencySymbol})</label>
@@ -963,12 +957,38 @@ export default function ProductManagementView({
                   <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
                     aria-expanded={showAdvancedProduct}
                     className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100">
-                    <span>Advanced options · variants, specifications and images</span>
+                    <span>More product options (optional)</span>
                     <span aria-hidden="true">{showAdvancedProduct ? '−' : '+'}</span>
                   </button>
                 </div>
                 {showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3">
                   <p className="col-span-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Optional product details</p>
+                     <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">ARS codes can be replaced if your product has a supplier barcode. Keep them unique for accurate stock tracking.</div>
+                     <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Product SKU *</label>
+                      <input
+                        id="input-prod-sku"
+                        type="text"
+                        required
+                        value={sku}
+                        onChange={(e) => setSku(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 uppercase font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Barcode / Internal Scan Code *</label>
+                      <input
+                        id="input-prod-barcode"
+                        type="text"
+                        required
+                        value={barcode}
+                        onChange={(e) => setBarcode(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                    
                     <div>
                       <label className="block text-slate-500 font-semibold mb-1">Manufacturer Brand</label>
                       <input
@@ -1350,7 +1370,7 @@ export default function ProductManagementView({
                   disabled={isSubmitting}
                   className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition"
                 >
-                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : 'Save Product'}
+                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : 'Save Product & Finish'}
                 </button>
               </div>
             </form>
