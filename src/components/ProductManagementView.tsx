@@ -564,7 +564,8 @@ export default function ProductManagementView({
       notify.success(editingProduct ? 'Product updated successfully.' : 'Product saved and ready for billing.');
       setIsFormOpen(false);
     } catch (err) {
-      notify.error('Failed to commit catalog data: ' + err);
+      const message = err instanceof Error ? err.message : String(err);
+      notify.error(message.includes('already used') ? message : 'Could not save product. ' + message);
     } finally {
       setIsSubmitting(false);
     }
