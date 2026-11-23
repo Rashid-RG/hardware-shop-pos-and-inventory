@@ -36,6 +36,7 @@ test('advanced product fields remain available but optional for simple goods', (
   assert.match(product, /showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3"/);
   assert.match(product, /Product Variants \(Unit-Based Pricing\)/);
   assert.match(product, /Product Image Upload/);
-  assert.match(product, /setShowAdvancedProduct\(true\)/);
+  assert.match(product, /setShowAdvancedProduct\(false\)/);
+  assert.match(product, /setShowAdvancedProduct\(value => !value\)/);
   assert.match(product, /notify\.success\(editingProduct/);
 });
