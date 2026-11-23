@@ -154,11 +154,19 @@ export const renderArsInvoicePdf = async (
   tableHeader(y);
   y += 25;
   tx.items.forEach((item, i) => {
-    const desc = item.productName + (item.variantName ? ' (' + item.variantName + ')' : '');
+    // Name and description are immutable snapshots saved when the sale was issued.
+    // The product name already contains the selected variant for newly issued invoices.
+    const desc = safe(item.productName);
+    const detail = String(item.invoiceDescription || '').trim();
+    const textWidth = columns[2] - columns[1] - 10;
+    doc.font('Helvetica-Bold').fontSize(7.8);
+    const nameHeight = Math.ceil(doc.heightOfString(desc, { width: textWidth, lineGap: 1 }));
+    doc.font('Helvetica').fontSize(7.3);
+    const detailHeight = detail ? Math.ceil(doc.heightOfString(detail, { width: textWidth, lineGap: 1 })) : 0;
     const gross = Number(item.quantity) * Number(item.sellingPrice);
     const lineDisc = gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0);
     const amount = Math.max(0, gross - lineDisc);
-    const height = Math.max(21, Math.ceil(desc.length / 42) * 11 + 9);
+    const height = Math.max(24, nameHeight + detailHeight + (detail ? 15 : 12));
     // Keep enough room for the notes, totals and all three signatures on the final page.
     // If another item would exceed the item region, continue on a new A4 page.
     if (y + height > 570) {
@@ -169,7 +177,7 @@ export const renderArsInvoicePdf = async (
     }
     if (i % 2) doc.rect(LEFT, y, WIDTH, height).fill('#f0f5fa');
     const values = [
-      String(i + 1), desc, safe(item.variantSku, item.productId),
+      String(i + 1), '', safe(item.variantSku, item.productId),
       String(item.quantity) + (item.variantUnit ? ' ' + item.variantUnit : ''),
       Number(item.sellingPrice).toFixed(2),
       lineDisc.toFixed(2),
@@ -178,6 +186,15 @@ export const renderArsInvoicePdf = async (
     values.forEach((value, index) =>
       label(value, columns[index] + 3, y + 6, columns[index + 1] - columns[index] - 6,
         7.6, index === 0 ? 'center' : index >= 4 ? 'right' : 'left'));
+    // Wrap product name and optional invoice-specific description inside the
+    // description column; never truncate a customer's hardware specifications.
+    doc.font('Helvetica-Bold').fontSize(7.8).fillColor(INK)
+      .text(desc, columns[1] + 4, y + 5, { width: textWidth, lineGap: 1 });
+    if (detail) {
+      doc.font('Helvetica').fontSize(7.3).fillColor('#46566b')
+        .text(detail, columns[1] + 4, y + 7 + nameHeight,
+          { width: textWidth, lineGap: 1 });
+    }
     doc.moveTo(LEFT, y + height).lineTo(RIGHT, y + height).strokeColor(LINE).lineWidth(0.45).stroke();
     y += height;
   });
