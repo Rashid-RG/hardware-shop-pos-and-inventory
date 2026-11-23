@@ -1499,10 +1499,10 @@ export default function POSView({
             : ((Number(cashReceived || 0) <= 0 && paymentMethod === 'Cash')
               ? 'UNPAID'
               : ((paymentMethod === 'Cash' && Number(cashReceived || 0) < total) ? 'PARTIALLY PAID' : 'PAID')),
-          wholesaleMeta: isWholesaleShop
-            ? {
-                invoiceDiscountMode: discountMode,
-                invoiceDiscountPercent: discountMode === 'percent' ? Math.min(100, normalizedDiscountInput) : undefined,
+          wholesaleMeta: {
+            invoiceDiscountMode: discountMode,
+            invoiceDiscountPercent: discountMode === 'percent' ? Math.min(100, normalizedDiscountInput) : undefined,
+            ...(isWholesaleShop ? {
                 transportCharges: Number(wholesaleMetaDraft.transportCharges || 0),
                 deliveryCharges: Number(wholesaleMetaDraft.deliveryCharges || 0),
                 warrantyInformation: wholesaleMetaDraft.warrantyInformation.trim() || undefined,
@@ -1512,8 +1512,8 @@ export default function POSView({
                 batchNumber: wholesaleMetaDraft.batchNumber.trim() || undefined,
                 supplierReference: wholesaleMetaDraft.supplierReference.trim() || undefined,
                 deliveryStatus: wholesaleMetaDraft.deliveryStatus.trim() || undefined,
-              }
-            : undefined,
+              } : {}),
+          },
           discountAmount: cashDiscount,
           cashReceived: paymentMethod === 'Cash' ? numericCashReceived : undefined,
         }),
