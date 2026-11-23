@@ -45,3 +45,21 @@ test('full customer file lets staff open invoice items and price breakdown', () 
   assert.match(customer, /selectedInvoice\.tax/);
   assert.match(customer, /selectedInvoice\.total/);
 });
+
+test('customer contact editing is a dedicated manager-only modal', () => {
+  const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
+  const db = readFileSync(new URL('../backend/db.ts', import.meta.url), 'utf8');
+  assert.match(server, /app\.put\('\/api\/customers\/:id\/profile', requireRole\(\['Super Admin', 'Store Manager'\]\)/);
+  assert.match(server, /updateCustomerContact\(customer\.id, activeShopId, details/);
+  assert.match(db, /UPDATE customers SET name=\$1, phone=\$2, email=\$3, address=\$4/);
+  assert.match(customer, /aria-label="Edit customer shop details"/);
+  assert.match(customer, /onUpdateCustomer\(editingCustomer\.id/);
+});
+
+test('customer directory and customer file export complete filtered results', () => {
+  assert.match(customer, /filteredCustomers\.map\(\(customer\) => \[/);
+  assert.match(customer, /historyRows\.map\(\(row\) => \[/);
+  assert.match(customer, /Export all matching customers \(CSV\)/);
+  assert.match(customer, /Export filtered statement \(CSV\)/);
+  assert.match(customer, /safe\.replace\(\/"\/g, '""'\)/);
+});
