@@ -20,7 +20,7 @@ test('customer and representative registration stays within the visible laptop v
 });
 test('warehouse shipment listings remain searchable and progressively render without hiding receiving',()=>{
   assert.match(shipments,/const visibleRows=rows\.filter/);
-  assert.match(shipments,/const displayedRows=showAll\?visibleRows:visibleRows\.slice\(0,12\)/);
+  assert.match(shipments,/const displayedRows=hasActiveFilters\|\|showAll\?visibleRows:visibleRows\.slice\(0,12\)/);
   assert.match(shipments,/Search shipments or purchase orders/);
   assert.match(shipments,/Show fewer shipments/);
   assert.match(shipments,/Receive quantities/);
