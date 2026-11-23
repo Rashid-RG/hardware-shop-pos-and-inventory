@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import pg from 'pg';
+import { provisionFirstAdmin } from '../scripts/provision-first-admin.mjs';
 
 const sourceUrl = new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
 if (!['127.0.0.1', 'localhost'].includes(sourceUrl.hostname) || sourceUrl.pathname !== '/hardware_pos_ci') {
@@ -144,6 +145,14 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
     const scratch = new Client({ connectionString: scratchUrl.href });
     try {
       await scratch.connect();
+      await assert.rejects(
+        provisionFirstAdmin(scratch, {
+          name: 'Unexpected second owner', email: 'second-owner@example.invalid',
+          password: 'Second-Strong-Owner-2026#',
+        }),
+        /First administrator already exists/,
+        'Console provisioning must honor the same permanent one-owner bootstrap rule',
+      );
       const result = await scratch.query('SELECT email, role FROM users');
       assert.equal(result.rowCount, 1);
       assert.equal(result.rows[0].email, email);
