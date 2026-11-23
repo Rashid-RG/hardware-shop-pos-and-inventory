@@ -59,9 +59,14 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
    }catch(e:any){setError(e.message)}finally{setBusy(false);}
  };
  const updateOwnership=async(partner:Partner,value:string)=>{
+   const reference=window.prompt(`Approval/reason for updating ${partner.name}'s ownership:`);
+   if(reference===null)return;
+   if(reference.trim().length<3||reference.trim().length>160){
+     setError('Enter an ownership approval/reference between 3 and 160 characters.');return;
+   }
    setBusy(true);setError('');setNotice('');
    try{await call(`/api/ars/partners/${encodeURIComponent(partner.id)}/ownership`,{
-     method:'PUT',body:JSON.stringify({ownershipPercent:value===''?null:Number(value)})});
+     method:'PUT',body:JSON.stringify({ownershipPercent:value===''?null:Number(value),reference:reference.trim()})});
      setNotice('Ownership updated; no profit distribution was posted.');await refresh();
    }catch(e:any){setError(e.message)}finally{setBusy(false);}
  };
