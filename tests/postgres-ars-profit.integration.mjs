@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { initArsProfitLedger, recordArsProfitAllocation } from '../backend/partnerProfit.ts';
 
-test('three-partner allocations reconcile to the cent and reject duplicates on isolated CI PostgreSQL', async()=>{
+test('dynamic partner allocations reconcile to the cent and reject duplicate accounting periods on isolated PostgreSQL', async()=>{
   const url=process.env.DATABASE_URL||'';
   assert.match(url,/^postgres(?:ql)?:\/\/[^\s]+@127\.0\.0\.1:5432\/hardware_pos_ci$/);
   const pool=new Pool({connectionString:url});
@@ -12,7 +12,7 @@ test('three-partner allocations reconcile to the cent and reject duplicates on i
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS ars_business_partners(
       id TEXT PRIMARY KEY, shop_id TEXT NOT NULL, name TEXT NOT NULL,
-      ownership_percent NUMERIC(5,2),created_by TEXT NOT NULL,
+      ownership_percent NUMERIC(5,2),is_active BOOLEAN NOT NULL DEFAULT TRUE,created_by TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
     await initArsProfitLedger(pool);
     const ids=[0,1,2].map(()=>'partner-'+randomUUID());
@@ -36,5 +36,29 @@ test('three-partner allocations reconcile to the cent and reject duplicates on i
     await assert.rejects(recordArsProfitAllocation(pool,{...options,periodKey:'2026-12'}),/total exactly 100%/);
     const aborted=await pool.query('SELECT COUNT(*)::integer AS n FROM ars_partner_profit_allocations WHERE shop_id=$1',[shop]);
     assert.equal(aborted.rows[0].n,1);
+
+    // New investors can join without reconfiguring or rewriting earlier allocations.
+    const fourthId='partner-'+randomUUID();
+    await pool.query(`INSERT INTO ars_business_partners(id,shop_id,name,ownership_percent,created_by)
+      VALUES($1,$2,'Partner 4',10,'ci')`,[fourthId,shop]);
+    for(let i=0;i<3;i++)await pool.query(
+      'UPDATE ars_business_partners SET ownership_percent=$1 WHERE id=$2',
+      [30,ids[i]]);
+    const four=await recordArsProfitAllocation(pool,{...options,periodKey:'2026-12'});
+    assert.equal(four.shares.length,4);
+    assert.equal(four.shares.reduce((sum,share)=>Math.round(sum+share.allocatedLkr*100),0),101);
+    const previous=await pool.query('SELECT COUNT(*)::integer AS n FROM ars_partner_profit_shares WHERE allocation_id=$1',
+      [allocation.allocationId]);
+    assert.equal(previous.rows[0].n,3,'Historical approval remains frozen at its original three partners');
+
+    // An inactive partner is excluded from future splits, but preserved in prior approvals.
+    await pool.query('UPDATE ars_business_partners SET ownership_percent=0,is_active=FALSE WHERE id=$1',[fourthId]);
+    await pool.query('UPDATE ars_business_partners SET ownership_percent=40 WHERE id=$1',[ids[2]]);
+    const rebalanced=await recordArsProfitAllocation(pool,{...options,periodKey:'2027-01'});
+    assert.equal(rebalanced.shares.length,3);
+    assert.equal(Math.round(rebalanced.shares.reduce((sum,share)=>sum+share.allocatedLkr,0)*100),101);
+    const fourStill=await pool.query('SELECT COUNT(*)::integer AS n FROM ars_partner_profit_shares WHERE allocation_id=$1',
+      [four.allocationId]);
+    assert.equal(fourStill.rows[0].n,4);
   } finally { await pool.end(); }
 });
