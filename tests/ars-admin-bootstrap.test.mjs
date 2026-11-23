@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import bcrypt from 'bcryptjs';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { provisionFirstAdmin, validateFirstAdmin } from '../scripts/provision-first-admin.mjs';
+import { provisionFirstAdmin, validateFirstAdmin, secretPrompt } from '../scripts/provision-first-admin.mjs';
 
 test('first admin validates name, email and strong non-placeholder password', () => {
   assert.deepEqual(validateFirstAdmin({
@@ -63,4 +64,26 @@ test('bootstrap script requires local interactive console and explicit flag', ()
   assert.match(script, /!stdin\.isTTY \|\| !stdout\.isTTY/);
   assert.match(script, /Password \(input hidden\)/);
   assert.doesNotMatch(script, /process\.argv\[2\]|--password|CREATE TABLE|DROP TABLE|TRUNCATE/);
+});
+
+test('two hidden terminal prompts work consecutively without echoing the passwords', async () => {
+  const input = new EventEmitter();
+  input.isTTY = true;
+  let raw = false;
+  input.setRawMode = state => { raw = state; };
+  input.resume = () => {};
+  input.pause = () => {};
+  let printed = '';
+  const output = { isTTY: true, write(value) { printed += String(value); } };
+  const first = secretPrompt('Password: ', input, output);
+  input.emit('data', 'Secret1!\\r');
+  assert.equal(await first, 'Secret1!');
+  assert.equal(raw, false);
+  const second = secretPrompt('Confirm: ', input, output);
+  input.emit('data', 'Secret1!\\r');
+  assert.equal(await second, 'Secret1!');
+  assert.equal(raw, false);
+  assert.equal(input.listenerCount('data'), 0);
+  assert.equal(input.listenerCount('end'), 0);
+  assert.equal(printed.includes('Secret1!'), false, 'Passwords must never be echoed');
 });
