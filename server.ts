@@ -2007,10 +2007,10 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
     for (const item of tx.items) {
       await client.query(
         `
-        INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode, invoice_description)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         `,
-        [tx.id, item.productId, item.productName, item.quantity, item.sellingPrice, item.discount, item.discountAmount || 0, item.costPrice || 0, item.variantId || null, item.variantName || null, item.variantUnit || null, item.variantSku || null, item.variantBarcode || null]
+        [tx.id, item.productId, item.productName, item.quantity, item.sellingPrice, item.discount, item.discountAmount || 0, item.costPrice || 0, item.variantId || null, item.variantName || null, item.variantUnit || null, item.variantSku || null, item.variantBarcode || null, item.invoiceDescription ?? null]
       );
     }
   }
