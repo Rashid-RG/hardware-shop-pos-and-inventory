@@ -230,6 +230,7 @@ export const initDbTables = async () => {
         transaction_id TEXT NOT NULL REFERENCES sales_transactions(id) ON DELETE CASCADE,
         product_id TEXT NOT NULL REFERENCES products(id),
         product_name TEXT NOT NULL,
+        invoice_description TEXT,
         quantity INTEGER NOT NULL,
         selling_price NUMERIC(12,2) NOT NULL,
         discount NUMERIC(5,2) NOT NULL DEFAULT 0,
@@ -336,6 +337,7 @@ export const initDbTables = async () => {
       ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS customer_address TEXT;
       ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS payment_status TEXT;
       ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS wholesale_meta JSONB;
+      ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS invoice_description TEXT;
       ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
       ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0;
       ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
@@ -629,6 +631,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       items: (txItemsByTransaction.get(row.id) || []).map((item) => ({
         productId: item.product_id,
         productName: item.product_name,
+        invoiceDescription: item.invoice_description ?? undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
         costPrice: Number(item.cost_price || 0),
@@ -1540,8 +1543,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
     // 3) Save Transaction items
     for (const item of tx.items) {
       await client.query(
-        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode, invoice_description)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           tx.id,
           item.productId,
@@ -1556,6 +1559,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
           item.variantUnit || null,
           item.variantSku || null,
           item.variantBarcode || null,
+          item.invoiceDescription ?? null,
         ]
       );
     }
