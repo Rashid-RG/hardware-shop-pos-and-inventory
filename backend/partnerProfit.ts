@@ -43,8 +43,8 @@ export const recordArsProfitAllocation=async(pool:Pool,args:ProfitAllocationArgs
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('ars-profit-allocation'),hashtext($1))",[shopId]);
     const partners=await client.query(
-      'SELECT id,name,ownership_percent FROM ars_business_partners WHERE shop_id=$1 ORDER BY id FOR UPDATE',[shopId]);
-    if(partners.rowCount!==3)throw new Error('Exactly three registered partners are required.');
+      'SELECT id,name,ownership_percent FROM ars_business_partners WHERE shop_id=$1 AND is_active=TRUE ORDER BY id FOR UPDATE',[shopId]);
+    if(!partners.rowCount)throw new Error('At least one active partner is required for allocation.');
     const basisPoints=partners.rows.map(p=>{
       if(p.ownership_percent===null)throw new Error('All partners need ownership percentages.');
       const pct=Number(p.ownership_percent);
