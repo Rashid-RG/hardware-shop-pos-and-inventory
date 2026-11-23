@@ -4011,6 +4011,25 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     });
   }
 
+  // Validate the persisted display mode against the server-computed invoice subtotal.
+  // A discount label must never misrepresent the actual amount charged.
+  if (wholesaleMeta && typeof wholesaleMeta === 'object' && wholesaleMeta.invoiceDiscountMode != null) {
+    const mode = wholesaleMeta.invoiceDiscountMode;
+    if (mode !== 'amount' && mode !== 'percent') {
+      return res.status(400).json({ error: 'Invalid invoice discount type' });
+    }
+    if (mode === 'percent') {
+      const percent = Number(wholesaleMeta.invoiceDiscountPercent);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+        return res.status(400).json({ error: 'Invoice discount percentage must be between 0 and 100' });
+      }
+      const expectedAmount = Math.round((subtotal * percent / 100) * 100) / 100;
+      if (Math.abs(expectedAmount - Number(discountAmount || 0)) > 0.011) {
+        return res.status(400).json({ error: 'Invoice percentage discount does not match the discounted amount' });
+      }
+    }
+  }
+
   // Calculate taxes and totals
   const shopProfile = db.settings.shopProfiles?.find(shop => shop.id === activeShopId);
   const { tax, total } = invoiceTotals(subtotal, shopProfile?.taxRate ?? db.settings.taxRate, discountAmount);
