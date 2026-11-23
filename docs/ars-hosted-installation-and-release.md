@@ -34,23 +34,24 @@ The container expects the following **host-managed** runtime configuration:
 - `DATABASE_URL` pointing to the **isolated staging PostgreSQL** database, never to a live or CI database.
 - `JWT_SECRET` unique, strong, and provided through the host's secret management.
 - `ARS_RELEASE_ID` identifying the exact approved Git commit.
+- `ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true` (default in Dockerfile and checked before startup): disables both HTTP first-admin endpoints, including when requests appear loopback via a reverse proxy.
 - `ARS_UPLOADS_MOUNT_REQUIRED=true`. The `/app/uploads` directory must be a **dedicated, writable, persistent Linux mount** (network disk or managed persistent disk). The startup preflight checks the mount and refuses an ephemeral container directory.
 
 **Do not start the image without the actual mounted storage, backup schedule and database access controls.** This is a single-instance application. Explicitly disable horizontal autoscaling and overlapping deployments. The container's `/api/ready` healthcheck proves database readiness, not that automatic backup or physical Windows printing is set up.
 
-The approved staging host must support a **secure loopback-only first-admin setup** (e.g. a local tunnel into the container's network namespace or a trusted internal reverse proxy). Do not weaken this restriction for convenience.
+**Hosted-container first-admin protection:** the image sets `ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true` and its startup preflight requires it. Thus `GET /api/auth/setup-status` and `POST /api/auth/setup-admin` are disabled even through a local reverse proxy. Use the console-only provisioning procedure below. Direct-local non-container development retains the separate loopback-only setup path.
 
 ## First administrator: important safety rule
 
-The first Super Admin can only be created through the server's **loopback** connection. The public hosted URL cannot create the first administrator. This prevents anonymous remote takeover of a fresh installation.
+For the **local non-container app**, the first Super Admin is created only from the server's loopback connection. For the **hosted Docker image**, HTTP setup is entirely disabled to prevent reverse-proxy address confusion. Use the console procedure in the next section.
 
-1. Provision **a fresh, empty staging database** without real business data.
-2. Access `http://127.0.0.1:<PORT>` **on the host itself or through a trusted SSH local tunnel** to the running service. Choose a hosting provider that supports this securely, or arrange an approved one-time provisioning method first.
+1. For a **local non-container installation only**, provision a fresh empty database without real business data.
+2. Access `http://127.0.0.1:<PORT>` on the local host only. **Do not use a reverse proxy or public tunnel** for HTTP bootstrap; use the console procedure for hosted Docker.
 3. Open the first-time admin setup, use a unique name/email and strong password, then sign in.
 4. Confirm subsequent setup attempts are refused. Create cashier/inventory accounts from the authenticated admin interface.
 5. Never expose the setup endpoint publicly or bypass its loopback check to make hosting easier.
 
-If the chosen hosting provider cannot offer this secure initial access, **do not deploy with an uninitialized login flow**. Select a compatible host or implement and test a separate secure one-time provisioning command before deployment.
+For hosted Docker, do not attempt the HTTP setup procedure: its routes are disabled. Use the approved console-only provisioning command below.
 
 ## Alternative: one-time server-console administrator provisioning
 
