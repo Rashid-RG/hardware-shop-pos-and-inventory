@@ -66,18 +66,18 @@ export function secretPrompt(label, input = stdin, output = stdout) {
     };
     const onData = chunk => {
       for (const character of String(chunk)) {
-        if (character === '\\r' || character === '\\n') {
+        if (character === '\r' || character === '\n') {
           cleanup();
-          output.write('\\n');
+          output.write('\n');
           resolve(chars.join(''));
           return;
         }
-        if (character === '\\u0003') {
+        if (character === '\u0003') {
           cleanup();
           reject(new Error('Cancelled by operator.'));
           return;
         }
-        if (character === '\\u007f' || character === '\\b') chars.pop();
+        if (character === '\u007f' || character === '\b') chars.pop();
         else if (character >= ' ' && chars.length < 128) chars.push(character);
       }
     };
