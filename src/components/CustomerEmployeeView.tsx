@@ -47,6 +47,7 @@ export default function CustomerEmployeeView({
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [customerHistorySearch, setCustomerHistorySearch] = useState('');
   const [customerHistoryFrom, setCustomerHistoryFrom] = useState('');
   const [customerHistoryTo, setCustomerHistoryTo] = useState('');
@@ -165,6 +166,7 @@ export default function CustomerEmployeeView({
         payment.customerId === selectedCustomer.id && matchesShop(payment.shopId))
     : [];
 
+  const selectedInvoice = selectedInvoices.find((invoice) => invoice.id === selectedInvoiceId);
   const normalizedHistorySearch = customerHistorySearch.trim().toLowerCase();
   const historyRows = [
     ...(customerHistoryType === 'payments' ? [] : selectedInvoices.map((tx) => ({
@@ -187,6 +189,7 @@ export default function CustomerEmployeeView({
 
   const openCustomerFile = (customerId: string) => {
     setSelectedCustomerId(customerId);
+    setSelectedInvoiceId(null);
     setCustomerHistorySearch('');
     setCustomerHistoryFrom('');
     setCustomerHistoryTo('');
@@ -502,7 +505,12 @@ export default function CustomerEmployeeView({
                         <tr key={`${row.type}-${row.id}`} className="border-t border-slate-100">
                           <td className="whitespace-nowrap p-3">{String(row.date).slice(0, 10)}</td>
                           <td className="p-3 font-semibold">{row.type}</td>
-                          <td className="p-3">{row.reference}</td>
+                          <td className="p-3">{row.type === 'Invoice' ? (
+                            <button type="button" onClick={() => setSelectedInvoiceId(row.id)}
+                              className="font-semibold text-indigo-700 underline-offset-2 hover:underline">
+                              {row.reference} · View items
+                            </button>
+                          ) : row.reference}</td>
                           <td className="p-3">{row.description}</td>
                           <td className="p-3">{row.status}</td>
                           <td className="p-3 text-right font-semibold">{formatMoney(row.amount)}</td>
@@ -512,6 +520,43 @@ export default function CustomerEmployeeView({
                   </table>
                   {historyRows.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No records match these filters.</p>}
                 </div>
+                {selectedInvoice && (
+                  <section aria-label="Selected customer invoice details" className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+                    <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-indigo-700">Invoice details</p>
+                        <h4 className="text-base font-bold">{selectedInvoice.invoiceNumber}</h4>
+                        <p className="text-xs text-slate-600">{String(selectedInvoice.date).slice(0, 10)} · {selectedInvoice.paymentMethod} · {selectedInvoice.status || 'Completed'}</p>
+                      </div>
+                      <button type="button" onClick={() => setSelectedInvoiceId(null)}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">Close invoice details</button>
+                    </div>
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                      <table className="w-full min-w-[600px] text-left text-sm">
+                        <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
+                          <th className="p-2">Product</th><th className="p-2">Description</th>
+                          <th className="p-2 text-right">Qty</th><th className="p-2 text-right">Price</th>
+                          <th className="p-2 text-right">Discount</th>
+                        </tr></thead>
+                        <tbody>{selectedInvoice.items.map((item, index) => (
+                          <tr key={`${item.productId}-${index}`} className="border-t border-slate-100">
+                            <td className="p-2 font-semibold">{item.productName}{item.variantName ? ` · ${item.variantName}` : ''}</td>
+                            <td className="p-2 text-slate-600">{item.invoiceDescription || '—'}</td>
+                            <td className="p-2 text-right">{item.quantity}</td>
+                            <td className="p-2 text-right">{formatMoney(Number(item.sellingPrice || 0))}</td>
+                            <td className="p-2 text-right">{Number(item.discount || 0)}%{Number(item.discountAmount || 0) > 0 ? ` + ${formatMoney(Number(item.discountAmount))}` : ''}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                      <p>Subtotal: <strong>{formatMoney(Number(selectedInvoice.subtotal || 0))}</strong></p>
+                      <p>Invoice discount: <strong>{formatMoney(Number(selectedInvoice.discountAmount || 0))}</strong></p>
+                      <p>Tax: <strong>{formatMoney(Number(selectedInvoice.tax || 0))}</strong></p>
+                      <p>Total: <strong>{formatMoney(Number(selectedInvoice.total || 0))}</strong></p>
+                    </div>
+                  </section>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
