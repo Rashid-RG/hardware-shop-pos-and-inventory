@@ -914,7 +914,7 @@ export default function ProductManagementView({
                      </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Cost unit Price ({currencySymbol})</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Buying cost ({currencySymbol})</label>
                       <input
                         id="input-prod-cost"
                         type="number"
@@ -927,7 +927,7 @@ export default function ProductManagementView({
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Retail Selling Price ({currencySymbol})</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Selling price ({currencySymbol})</label>
                       <input
                         id="input-prod-sell"
                         type="number"
@@ -940,7 +940,7 @@ export default function ProductManagementView({
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">In-Stock Quantity</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Opening stock quantity</label>
                       <input
                         id="input-prod-qty"
                         type="number"
