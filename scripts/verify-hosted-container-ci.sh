@@ -15,10 +15,17 @@ name="ars-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 volume="ars-smoke-uploads-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 port=39741
 created_db=false
+created_volume=false
+created_restore_volume=false
+restore_volume="ars-smoke-restore-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+backup_dir="$(mktemp -d)"
+chmod 700 "$backup_dir"
 
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
-  docker volume rm "$volume" >/dev/null 2>&1 || true
+  if [[ "$created_volume" == "true" ]]; then docker volume rm "$volume" >/dev/null 2>&1 || true; fi
+  if [[ "$created_restore_volume" == "true" ]]; then docker volume rm "$restore_volume" >/dev/null 2>&1 || true; fi
+  rm -rf -- "$backup_dir"
   if [[ "$created_db" == "true" ]]; then
     ARS_SMOKE_ADMIN_URL="$admin_url" ARS_SMOKE_DB_NAME="$db_name" node --input-type=module <<'EOF' || true
 import pg from 'pg';
@@ -48,7 +55,13 @@ try {
 EOF
 
 created_db=true
+# Never reuse an existing named uploads volume or erase anything pre-existing.
+if docker volume inspect "$volume" >/dev/null 2>&1 || docker volume inspect "$restore_volume" >/dev/null 2>&1; then
+  echo 'Refusing to reuse an existing Docker upload or restore volume.' >&2
+  exit 1
+fi
 docker volume create "$volume" >/dev/null
+created_volume=true
 start_container() {
   docker run --rm -d --name "$name" --network host \
     --mount "type=volume,source=$volume,target=/app/uploads" \
@@ -94,6 +107,37 @@ start_container
 wait_ready
 curl -fsS --max-time 5 "http://127.0.0.1:$port/uploads/shops/ci-smoke-file.txt" | grep -qx 'ars-ci-upload-preservation'
 echo 'Mounted uploads survive full container replacement.'
+
+# Verify an independently usable uploads backup, not only the live volume.
+# Stop the app before taking this sample archive so the file set is stable.
+docker exec "$name" sh -c "printf 'ars-ci-product-image' > /app/uploads/products/ci-product-file.txt"
+docker stop -t 15 "$name" >/dev/null
+# Archive content comes exclusively from the isolated CI-owned volume.
+docker run --rm --mount "type=volume,source=$volume,target=/source,readonly" \\
+  node:22-bookworm-slim tar -C /source -cf - shops products > "$backup_dir/uploads.tar"
+test -s "$backup_dir/uploads.tar"
+tar -tf "$backup_dir/uploads.tar" | grep -qx 'shops/ci-smoke-file.txt'
+tar -tf "$backup_dir/uploads.tar" | grep -qx 'products/ci-product-file.txt'
+# Restore to a new and previously nonexistent volume. Never restore in place.
+docker volume create "$restore_volume" >/dev/null
+created_restore_volume=true
+docker run --rm -i --mount "type=volume,source=$restore_volume,target=/restore" \\
+  node:22-bookworm-slim tar -C /restore -xf - < "$backup_dir/uploads.tar"
+# Compare the two separately mounted volumes without writing either source.
+original_hashes="$(docker run --rm --mount "type=volume,source=$volume,target=/volume,readonly" \\
+  node:22-bookworm-slim sh -c 'cd /volume && sha256sum shops/ci-smoke-file.txt products/ci-product-file.txt')"
+restored_hashes="$(docker run --rm --mount "type=volume,source=$restore_volume,target=/volume,readonly" \\
+  node:22-bookworm-slim sh -c 'cd /volume && sha256sum shops/ci-smoke-file.txt products/ci-product-file.txt')"
+[[ "$original_hashes" == "$restored_hashes" ]] || {
+  echo 'Restored upload files differ from the archived originals.' >&2
+  exit 1
+}
+# Restart ARS on its original volume, proving the backup drill did not replace
+# or mutate the runtime upload store.
+start_container
+wait_ready
+curl -fsS --max-time 5 "http://127.0.0.1:$port/uploads/products/ci-product-file.txt" | grep -qx 'ars-ci-product-image'
+echo 'Separate-volume upload archive restore and SHA-256 verification passed.'
 
 ARS_SMOKE_DB_URL="$db_url" node --input-type=module <<'EOF'
 import pg from 'pg';
