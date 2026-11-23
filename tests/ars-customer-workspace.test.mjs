@@ -35,3 +35,13 @@ test('history filters by text, record type and date with reset action', () => {
   }
   assert.match(customer, /setCustomerHistoryType\('all'\)/);
 });
+
+test('full customer file lets staff open invoice items and price breakdown', () => {
+  assert.match(customer, /setSelectedInvoiceId\(row\.id\)/);
+  assert.match(customer, /Selected customer invoice details/);
+  assert.match(customer, /selectedInvoice\.items\.map/);
+  assert.match(customer, /item\.invoiceDescription/);
+  assert.match(customer, /selectedInvoice\.discountAmount/);
+  assert.match(customer, /selectedInvoice\.tax/);
+  assert.match(customer, /selectedInvoice\.total/);
+});
