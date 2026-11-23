@@ -76,11 +76,11 @@ test('two hidden terminal prompts work consecutively without echoing the passwor
   let printed = '';
   const output = { isTTY: true, write(value) { printed += String(value); } };
   const first = secretPrompt('Password: ', input, output);
-  input.emit('data', 'Secret1!\\r');
+  input.emit('data', 'Secret1!\r');
   assert.equal(await first, 'Secret1!');
   assert.equal(raw, false);
   const second = secretPrompt('Confirm: ', input, output);
-  input.emit('data', 'Secret1!\\r');
+  input.emit('data', 'Secret1!\r');
   assert.equal(await second, 'Secret1!');
   assert.equal(raw, false);
   assert.equal(input.listenerCount('data'), 0);
