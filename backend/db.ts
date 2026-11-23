@@ -1230,6 +1230,37 @@ export const insertCustomer = async (c: Customer) => {
   );
 };
 
+/** Edit contact fields only; financial balances and historical invoice snapshots are immutable here. */
+export const updateCustomerContact = async (
+  customerId: string,
+  shopId: string,
+  details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>,
+  actor: string
+) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const updated = await client.query(
+      `UPDATE customers SET name=$1, phone=$2, email=$3, address=$4, updated_at=NOW()
+       WHERE id=$5 AND shop_id=$6 RETURNING id`,
+      [details.name, details.phone, details.email, details.address, customerId, shopId]
+    );
+    if (!updated.rowCount) throw new Error('Customer not found in this shop.');
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1,$2,NOW(),$3,'Store Manager','Updated Customer',$4)`,
+      ['customer-edit-' + customerId + '-' + Date.now(), shopId, actor,
+       'Updated customer contact details: ' + customerId]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 export const updateCustomerCreditLimit = async (customerId: string, shopId: string, creditLimit: number) => {
   if (!Number.isFinite(creditLimit) || creditLimit < 0 || Math.round(creditLimit * 100) !== creditLimit * 100) {
     throw new Error('Invalid credit limit.');
