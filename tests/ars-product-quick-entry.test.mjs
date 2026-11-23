@@ -30,3 +30,10 @@ test('product details stay optional without removing saved descriptions and vari
   assert.match(editor, /await onEditProduct/);
   assert.match(editor, /await onAddProduct/);
 });
+
+test('quick entry warns staff about an existing product name', () => {
+  assert.match(editor, /matchingProducts\.length > 0/);
+  assert.match(editor, /This product name is already in your catalog/);
+  assert.match(editor, /Edit existing:/);
+  assert.match(editor, /handleOpenEdit\(match\)/);
+});
