@@ -66,7 +66,7 @@ test('product registration saves stock and audit atomically and rolls back dupli
     const rejectedId = 'ci-product-rejected-' + uid;
     await assert.rejects(
       () => createProductWithIntake(fixture(rejectedId), 'CI Manager', 'Store Manager', 'CI Shop'),
-      /duplicate key/
+      /Product code already used|duplicate key/
     );
     const rejectedProduct = await pool.query('SELECT id FROM products WHERE id=$1', [rejectedId]);
     const rejectedLogs = await pool.query('SELECT id FROM stock_logs WHERE product_id=$1', [rejectedId]);
