@@ -144,6 +144,8 @@ export default function POSView({
   const [selectedSalesRepId, setSelectedSalesRepId] = useState('');
   const activeSalesReps = employees.filter(rep => rep.shopId === taxConfig.activeShopId && rep.name.trim());
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [editingDescriptionKey, setEditingDescriptionKey] = useState<string | null>(null);
+  const [descriptionDraft, setDescriptionDraft] = useState('');
   const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>('amount');
   const [discountInput, setDiscountInput] = useState<string>('0');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Cash');
@@ -388,6 +390,7 @@ export default function POSView({
       ...cart,
       {
         product,
+        invoiceDescription: String(product.description || product.longDescription || '').trim().slice(0, 250),
         quantity: 1,
         discount: 0,
         variantId: resolvedVariant?.id,
@@ -399,6 +402,16 @@ export default function POSView({
         unitCostPrice: resolvedVariant?.costPrice,
       },
     ]);
+  };
+
+  // A customer-specific description applies to this invoice line only.
+  const saveInvoiceLineDescription = () => {
+    if (!editingDescriptionKey) return;
+    const clean = descriptionDraft.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 250);
+    setCart(current => current.map(item =>
+      getCartKey(item) === editingDescriptionKey ? { ...item, invoiceDescription: clean } : item));
+    setEditingDescriptionKey(null);
+    setDescriptionDraft('');
   };
 
   // Modify cart item quantity
@@ -1907,6 +1920,12 @@ export default function POSView({
                         {item.variantName}{item.variantUnit ? ` (${item.variantUnit})` : ''}
                       </p>
                     )}
+                    <button type="button"
+                      aria-label={`Edit invoice description for ${item.product.name}`}
+                      onClick={() => {setEditingDescriptionKey(lineKey);setDescriptionDraft(item.invoiceDescription || '');}}
+                      className="mt-1 block max-w-full truncate text-left text-[10px] font-medium text-indigo-600 hover:underline">
+                      {item.invoiceDescription ? `Description: ${item.invoiceDescription}` : '+ Add invoice description'}
+                    </button>
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono mt-0.5">
                       <span>{formatMoney(basePrice)} ea</span>
                       {pricing.percentDiscount > 0 && <span className="text-emerald-600">(-{pricing.percentDiscount}%)</span>}
@@ -2134,7 +2153,10 @@ export default function POSView({
                   {cart.map(item => {
                     const line = getLinePricing(item);
                     return <div key={getCartKey(item)} className="flex justify-between gap-3 text-xs text-slate-700">
-                      <span className="min-w-0 truncate">{item.product.name} × {item.quantity}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{item.product.name} × {item.quantity}</span>
+                        {item.invoiceDescription && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{item.invoiceDescription}</span>}
+                      </span>
                       <strong className="shrink-0 font-mono">{formatMoney(line.lineTotal)}</strong>
                     </div>;
                   })}
