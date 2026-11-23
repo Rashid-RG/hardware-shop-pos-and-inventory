@@ -319,7 +319,7 @@ export default function CustomerEmployeeView({
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredCustomers.slice(0, visibleCount).map((c) => (
+          {(searchTerm.trim() || balanceFilter !== 'all' ? filteredCustomers : filteredCustomers.slice(0, visibleCount)).map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
@@ -424,7 +424,7 @@ export default function CustomerEmployeeView({
             </div>
           ))}
 
-          {filteredCustomers.length > visibleCount && (
+          {!searchTerm.trim() && balanceFilter === 'all' && filteredCustomers.length > visibleCount && (
             <button type="button" className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={() => setVisibleCount(value => value + 12)}>
               Show 12 more customer shops ({filteredCustomers.length - visibleCount} remaining)
