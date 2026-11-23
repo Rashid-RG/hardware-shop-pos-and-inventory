@@ -126,7 +126,7 @@ export default function InventoryView({
     // CSV formula injection protection for staff-entered product names and notes.
     const csvCell = (value: string | number) => {
       const text = String(value ?? '');
-      const escaped = typeof value === 'number' || !/^\\s*[=+@-]/.test(text) ? text : "'" + text;
+      const escaped = typeof value === 'number' || !/^\s*[=+@-]/.test(text) ? text : "'" + text;
       return '"' + escaped.replace(/"/g, '""') + '"';
     };
     const headers = ['Date', 'Product ID', 'Product', 'Type', 'Quantity', 'Operator', 'Reason', 'Reference'];
