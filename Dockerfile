@@ -15,6 +15,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/scripts/hosted-preflight.mjs ./scripts/hosted-preflight.mjs
+COPY --from=build /app/scripts/provision-first-admin.mjs ./scripts/provision-first-admin.mjs
 RUN mkdir -p /app/uploads && chown -R node:node /app
 USER node
 EXPOSE 3000
