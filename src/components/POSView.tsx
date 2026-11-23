@@ -2030,6 +2030,43 @@ export default function POSView({
         </div>
       </div>
 
+      {editingDescriptionKey && (
+        <div id="pos-description-backdrop" className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-description-title"
+            className="flex max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">This invoice only</p>
+                <h2 id="pos-description-title" className="text-base font-bold text-slate-900">Edit product description</h2>
+                <p className="mt-1 text-xs text-slate-500">{cart.find(item => getCartKey(item) === editingDescriptionKey)?.product.name || 'Product'}</p>
+              </div>
+              <button type="button" aria-label="Cancel description changes"
+                onClick={() => setEditingDescriptionKey(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+                <X className="h-5 w-5"/>
+              </button>
+            </header>
+            <div className="px-4 py-4">
+              <label htmlFor="pos-description-input" className="mb-2 block text-xs font-semibold text-slate-700">
+                Description shown below the item name on the A4 invoice
+              </label>
+              <textarea id="pos-description-input" rows={3} maxLength={250} value={descriptionDraft}
+                onChange={event => setDescriptionDraft(event.target.value)}
+                placeholder="Example: 50mm, 4m length, heavy duty"
+                className="w-full resize-none rounded-xl border border-slate-300 p-3 text-sm text-slate-900 outline-none focus:border-indigo-500"/>
+              <p className="mt-2 text-[11px] text-slate-500">
+                {descriptionDraft.length}/250 characters. Editing this invoice never changes the product catalog.
+              </p>
+            </div>
+            <footer className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
+              <button type="button" onClick={() => setEditingDescriptionKey(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700">Cancel</button>
+              <button type="button" id="pos-description-save" onClick={saveInvoiceLineDescription}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white">Apply to invoice</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
       {setupDialog && (
         <div id="pos-setup-backdrop" className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
           <section role="dialog" aria-modal="true" aria-labelledby="pos-setup-title"
