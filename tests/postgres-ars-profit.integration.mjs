@@ -89,5 +89,22 @@ test('dynamic partner allocations reconcile to the cent and reject duplicate acc
       'SELECT ownership_basis_points FROM ars_partner_profit_shares WHERE allocation_id=$1 ORDER BY partner_id',
       [allocation.allocationId]);
     assert.deepEqual(frozen.rows.map(p=>Number(p.ownership_basis_points)),[3333,3333,3334]);
+
+    // An agreement cannot silently leave out a newly reactivated business partner.
+    await pool.query('UPDATE ars_business_partners SET is_active=TRUE WHERE id=$1',[fourthId]);
+    await assert.rejects(recordArsProfitAllocation(pool,{...options,periodKey:'2027-04'}),
+      /Active partner roster changed/);
+    await recordArsOwnershipAgreement(pool,{
+      shopId:shop,effectivePeriod:'2027-04',approvalReference:'SIGNED-2027-04',
+      approvedBy:'CI Super Admin',shares:[
+        {partnerId:ids[0],ownershipPercent:20},
+        {partnerId:ids[1],ownershipPercent:20},
+        {partnerId:ids[2],ownershipPercent:50},
+        {partnerId:fourthId,ownershipPercent:10},
+      ]
+    });
+    const afterRosterUpdate=await recordArsProfitAllocation(pool,{...options,periodKey:'2027-04'});
+    assert.equal(afterRosterUpdate.shares.length,4);
+    assert.equal(Math.round(afterRosterUpdate.shares.reduce((sum,p)=>sum+p.allocatedLkr,0)*100),101);
   } finally { await pool.end(); }
 });
