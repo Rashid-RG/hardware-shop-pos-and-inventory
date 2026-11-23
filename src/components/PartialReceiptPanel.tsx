@@ -10,6 +10,8 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   const [overview, setOverview] = useState<Overview | null>(null);
   const [quantities, setQuantities] = useState<Record<number, string>>({});
   const [note, setNote] = useState('');
+  const [productSearch, setProductSearch] = useState('');
+  const [showOnlyOutstanding, setShowOnlyOutstanding] = useState(false);
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -29,6 +31,16 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
     finally { setLoading(false); }
   };
   useEffect(() => { void refresh(); }, [poId, authToken, shopId]);
+  const visibleLines = (overview?.items || []).filter(line =>
+    (!showOnlyOutstanding || line.remaining > 0)
+    && [line.productName, line.productId, String(line.purchaseOrderItemId)]
+      .some(value => value.toLowerCase().includes(productSearch.trim().toLowerCase()))
+  );
+  const fillAllOutstanding = () => {
+    if (!overview || saving) return;
+    setQuantities(Object.fromEntries(overview.items.filter(line=>line.remaining>0)
+      .map(line=>[line.purchaseOrderItemId,String(line.remaining)])));
+  };
   const selected = useMemo(() => (overview?.items || []).flatMap(line => {
     const raw = quantities[line.purchaseOrderItemId] || '';
     if (!raw.trim() || raw === '0') return [];
@@ -59,7 +71,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   };
   return (
     <div role="dialog" aria-modal="true" aria-label="Receive purchase order goods" className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-3 sm:p-6">
-      <section className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <section className="flex max-h-[94dvh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <header className="flex items-center justify-between border-b border-slate-200 bg-slate-900 px-5 py-4 text-white">
           <div><p className="text-xs font-bold uppercase tracking-wider text-amber-300">ARS Warehouse / Goods Received Note</p><h3 className="text-lg font-bold">{poNumber}</h3></div>
           <button type="button" aria-label="Close receiving" onClick={onClose} disabled={saving} className="rounded-lg p-2 hover:bg-slate-700"><X className="h-5 w-5" /></button>
@@ -70,11 +82,32 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
           {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
           {loading && <p className="text-sm text-slate-500">Loading receiving balances…</p>}
           {!loading && overview && <>
+            <div className="grid gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm sm:grid-cols-3">
+              <div><p className="text-xs text-emerald-800">Ordered units</p><strong>{overview.items.reduce((total,line)=>total+line.ordered,0)}</strong></div>
+              <div><p className="text-xs text-emerald-800">Already received</p><strong>{overview.items.reduce((total,line)=>total+line.received,0)}</strong></div>
+              <div><p className="text-xs text-emerald-800">Still outstanding</p><strong>{overview.items.reduce((total,line)=>total+line.remaining,0)}</strong></div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input id="ars-receiving-product-search" type="search" aria-label="Search purchase order items"
+                value={productSearch} onChange={e=>setProductSearch(e.target.value)}
+                placeholder="Search product or item code..." className="min-w-[180px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold">
+                <input type="checkbox" checked={showOnlyOutstanding} onChange={e=>setShowOnlyOutstanding(e.target.checked)}/>
+                Remaining only
+              </label>
+              <button id="ars-receiving-fill-outstanding" type="button" disabled={saving}
+                onClick={fillAllOutstanding} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-900">
+                Fill all outstanding quantities
+              </button>
+              <button type="button" disabled={saving} onClick={()=>setQuantities({})}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold">Clear quantities</button>
+            </div>
+            <p className="text-xs text-slate-600">{visibleLines.length} matching products (all displayed). Enter actual accepted quantities only. Bulk fill is a draft until you confirm.</p>
             <div className="flex flex-wrap justify-between gap-2 text-sm"><strong>Status: {overview.status}</strong><button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 text-slate-600 underline"><RefreshCcw className="h-4 w-4" /> Refresh</button></div>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full min-w-[540px] text-left text-sm">
                 <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
-                <tbody>{overview.items.map(line => <tr key={line.purchaseOrderItemId} className="border-t border-slate-100">
+                <tbody>{visibleLines.map(line => <tr key={line.purchaseOrderItemId} className="border-t border-slate-100">
                   <td className="p-3 font-semibold text-slate-800">{line.productName}</td>
                   <td className="p-3 text-right">{line.ordered}</td><td className="p-3 text-right">{line.received}</td><td className="p-3 text-right font-bold">{line.remaining}</td>
                   <td className="p-3"><input aria-label={`Receive ${line.productName}`} type="number" min="0" max={line.remaining} step="1" disabled={saving || line.remaining === 0}
@@ -82,11 +115,12 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
                     placeholder={line.remaining ? '0' : 'Complete'} className="w-28 rounded-lg border border-slate-300 p-2 disabled:bg-slate-100" /></td>
                 </tr>)}</tbody>
               </table>
+              {visibleLines.length===0&&<p className="p-5 text-center text-sm text-slate-500">No matching purchase-order products.</p>}
             </div>
             <label className="block text-xs font-semibold text-slate-700">Receiving note / container details
               <textarea maxLength={1000} rows={2} value={note} onChange={e => setNote(e.target.value)} placeholder="Delivery batch, shortages, damaged packages or document reference" className="mt-1 block w-full rounded-xl border border-slate-200 p-3 text-sm" />
             </label>
-            <div className="rounded-xl bg-slate-50 p-3"><h4 className="mb-2 text-xs font-bold uppercase text-slate-600">Previous receiving batches</h4>
+            <div className="rounded-xl bg-slate-50 p-3"><h4 className="mb-2 text-xs font-bold uppercase text-slate-600">Complete receiving batch history ({overview.batches.length})</h4>
               {overview.batches.length === 0 ? <p className="text-sm text-slate-500">No goods received yet.</p> :
                 <ul className="space-y-2">{overview.batches.map(batch => <li key={batch.id} className="text-xs text-slate-600"><strong>{new Date(batch.created_at).toLocaleString()}</strong> · {batch.received_by}{batch.note ? ' · ' + batch.note : ''}</li>)}</ul>}
             </div>
