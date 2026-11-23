@@ -81,3 +81,5 @@ jobs:
         run: npm run build
       - name: Build isolated hosted container image (no deployment)
         run: docker build --tag ars-hardware-pos:ci .
+      - name: Smoke test hosted container and persistent uploads (isolated PostgreSQL)
+        run: bash scripts/verify-hosted-container-ci.sh
