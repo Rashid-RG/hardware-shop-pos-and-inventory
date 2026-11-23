@@ -5667,7 +5667,11 @@ app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
   finally{client.release();}
 });
 app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const {activeShopId}=getActiveShopContext(db,req);
+  const reference=String(req.body?.reference||'').trim();
+  if(reference.length<3||reference.length>160)
+    return res.status(400).json({error:'Ownership changes require an approval or reason reference (3–160 characters).'});
   const pctRaw=req.body?.ownershipPercent;
   const pct=pctRaw===null||pctRaw===''?null:Number(pctRaw);
   if(pct!==null && (!Number.isFinite(pct)||pct<0||pct>100||Math.abs(pct*100-Math.round(pct*100))>0.00001)) {
@@ -5688,7 +5692,7 @@ app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req
       (id,shop_id,partner_id,old_percent,new_percent,change_type,reference,changed_by)
       VALUES($1,$2,$3,$4,$5,'Updated',$6,$7)`,
       ['ownership-audit-'+randomUUID(),activeShopId,req.params.id,existing.ownership_percent,pct,
-        String(req.body?.reference||'Ownership revised').trim().slice(0,160),(req as AppRequest).authUser!.email]);
+        reference,(req as AppRequest).authUser!.email]);
     await client.query('COMMIT');
     res.json({id:req.params.id,ownership_percent:pct});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Ownership update failed.'});}
