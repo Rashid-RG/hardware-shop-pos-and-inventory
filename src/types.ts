@@ -10,6 +10,9 @@ export type InvoiceCopyType =
   | 'Reprinted Invoice';
 
 export interface WholesaleInvoiceMeta {
+  /** Original whole-invoice discount entry, retained for audited reprints. */
+  invoiceDiscountMode?: 'amount' | 'percent';
+  invoiceDiscountPercent?: number;
   transportCharges?: number;
   deliveryCharges?: number;
   warrantyInformation?: string;
