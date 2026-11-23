@@ -30,3 +30,30 @@ test('invoice discount type resets for a new customer invoice and includes a vis
   assert.match(pos,/Invoice discount percentage/);
   assert.match(pos,/Invoice discount amount in rupees/);
 });
+
+test('A4 reprints retain the exact entered discount type through the persisted invoice metadata',()=>{
+  const pdf=readFileSync(new URL('../src/utils/arsInvoicePdf.ts',import.meta.url),'utf8');
+  const db=readFileSync(new URL('../backend/db.ts',import.meta.url),'utf8');
+  const types=readFileSync(new URL('../src/types.ts',import.meta.url),'utf8');
+  assert.match(types,/invoiceDiscountMode\?: 'amount' \| 'percent'/);
+  assert.match(types,/invoiceDiscountPercent\?: number/);
+  assert.match(pos,/wholesaleMeta: \{/);
+  assert.match(pos,/invoiceDiscountMode: discountMode/);
+  assert.match(pos,/invoiceDiscountPercent: discountMode === 'percent'/);
+  assert.match(db,/wholesale_meta JSONB/);
+  assert.match(db,/tx\.wholesaleMeta \? JSON\.stringify\(tx\.wholesaleMeta\) : null/);
+  assert.match(db,/wholesaleMeta: row\.wholesale_meta \|\| undefined/);
+  assert.match(pdf,/tx\.wholesaleMeta\?\.invoiceDiscountMode === 'percent'/);
+  assert.match(pdf,/Discount \(Fixed\)/);
+  assert.match(pdf,/invoiceDiscountPercent/);
+});
+test('server verifies percent discount label corresponds with authoritative line subtotal',()=>{
+  assert.match(server,/if \(mode === 'percent'\)/);
+  assert.match(server,/Invoice discount percentage must be between 0 and 100/);
+  assert.match(server,/Invoice percentage discount does not match the discounted amount/);
+});
+test('desktop product workspace is larger than compact invoice panel and supports four product columns',()=>{
+  assert.match(pos,/lg:col-span-8 flex flex-col space-y-3/);
+  assert.match(pos,/lg:col-span-4 bg-white rounded-xl/);
+  assert.match(pos,/sm:grid-cols-3 xl:grid-cols-4/);
+});
