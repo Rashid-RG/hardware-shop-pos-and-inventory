@@ -2836,6 +2836,32 @@ app.get('/api/public/shops', (_req, res) => {
 
 app.use('/api', requireAuth);
 
+// Safe, read-only support snapshot. Requires an active authorized session and
+// deliberately excludes credentials, host names, customer records and tokens.
+app.get('/api/support/diagnostics', requireRole(['Super Admin', 'Store Manager']), async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  let database = 'unreachable';
+  try {
+    await pool.query('SELECT 1');
+    database = 'reachable';
+  } catch {
+    // Do not disclose database connection details or internal errors to clients.
+  }
+  const ready = database === 'reachable' && databaseWriteHealthy && singleWriterLease !== null;
+  res.status(ready ? 200 : 503).json({
+    service: 'ARS Hardware POS',
+    checkedAt: new Date().toISOString(),
+    release: String(process.env.ARS_RELEASE_ID || 'not-configured').slice(0, 64),
+    environment: NODE_ENV,
+    uptimeSeconds: Math.floor((Date.now() - PROCESS_STARTED_AT) / 1000),
+    database,
+    writes: databaseWriteHealthy && singleWriterLease !== null ? 'enabled' : 'disabled',
+    status: ready ? 'ready' : 'degraded',
+    // No request headers, account names, shop IDs, database URL or SQL logs.
+  });
+});
+
+
 app.post('/api/auth/logout', async (req, res) => {
   const sessionId = (req as AppRequest).authSessionId;
   if (!sessionId) return res.status(401).json({ error: 'No authenticated session.' });
