@@ -1501,6 +1501,8 @@ export default function POSView({
               : ((paymentMethod === 'Cash' && Number(cashReceived || 0) < total) ? 'PARTIALLY PAID' : 'PAID')),
           wholesaleMeta: isWholesaleShop
             ? {
+                invoiceDiscountMode: discountMode,
+                invoiceDiscountPercent: discountMode === 'percent' ? Math.min(100, normalizedDiscountInput) : undefined,
                 transportCharges: Number(wholesaleMetaDraft.transportCharges || 0),
                 deliveryCharges: Number(wholesaleMetaDraft.deliveryCharges || 0),
                 warrantyInformation: wholesaleMetaDraft.warrantyInformation.trim() || undefined,
