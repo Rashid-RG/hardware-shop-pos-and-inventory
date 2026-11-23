@@ -32,3 +32,11 @@ test('filtered stock searches show all matching products and movements', () => {
   assert.match(inventory, /ledger-export-csv/);
   assert.match(inventory, /filteredLogs\.map\(\(log\) => \[/);
 });
+
+test('stock history can open in its own full-height workspace without losing filters', () => {
+  assert.match(inventory, /id="ars-stock-ledger-workspace"/);
+  assert.match(inventory, /role=\{isLedgerFocused \? 'dialog'/);
+  assert.match(inventory, /id="ars-stock-ledger-focus-toggle"/);
+  assert.match(inventory, /Open full stock history/);
+  assert.match(inventory, /Back to stock overview/);
+});
