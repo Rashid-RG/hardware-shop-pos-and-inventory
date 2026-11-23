@@ -43,32 +43,47 @@ export async function provisionFirstAdmin(client, user) {
   }
 }
 
-async function secretPrompt(label) {
-  if (!stdin.isTTY || !stdout.isTTY || !stdin.setRawMode) throw new Error('Interactive host console required. Passwords via flags or pipes are refused.');
-  stdout.write(label);
-  const chars = [];
-  stdin.setRawMode(true);
-  stdin.resume();
-  try {
-    for await (const chunk of stdin) {
-      for (const character of String(chunk)) {
-        if (character === '\r' || character === '\n') {
-          stdout.write('\n');
-          return chars.join('');
-        }
-        if (character === '\u0003') throw new Error('Cancelled by operator.');
-        if (character === '\u007f' || character === '\b') {
-          chars.pop();
-        } else if (character >= ' ' && chars.length < 128) {
-          chars.push(character);
-        }
-      }
-    }
-    throw new Error('Interactive input closed.');
-  } finally {
-    stdin.setRawMode(false);
-    stdin.pause();
+export function secretPrompt(label, input = stdin, output = stdout) {
+  if (!input.isTTY || !output.isTTY || !input.setRawMode) {
+    return Promise.reject(new Error('Interactive host console required. Passwords via flags or pipes are refused.'));
   }
+  output.write(label);
+  const chars = [];
+  input.setRawMode(true);
+  input.resume();
+  return new Promise((resolve, reject) => {
+    // Never use 'for await' on stdin here: returning from a Readable iterator
+    // destroys the stream, preventing the second password confirmation prompt.
+    const cleanup = () => {
+      input.off('data', onData);
+      input.off('end', onEnd);
+      input.setRawMode(false);
+      input.pause();
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new Error('Interactive input closed.'));
+    };
+    const onData = chunk => {
+      for (const character of String(chunk)) {
+        if (character === '\\r' || character === '\\n') {
+          cleanup();
+          output.write('\\n');
+          resolve(chars.join(''));
+          return;
+        }
+        if (character === '\\u0003') {
+          cleanup();
+          reject(new Error('Cancelled by operator.'));
+          return;
+        }
+        if (character === '\\u007f' || character === '\\b') chars.pop();
+        else if (character >= ' ' && chars.length < 128) chars.push(character);
+      }
+    };
+    input.on('data', onData);
+    input.once('end', onEnd);
+  });
 }
 
 async function run() {
