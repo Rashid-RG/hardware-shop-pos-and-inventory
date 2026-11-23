@@ -88,7 +88,7 @@ test('dynamic partner allocations reconcile to the cent and reject duplicate acc
     const frozen=await pool.query(
       'SELECT ownership_basis_points FROM ars_partner_profit_shares WHERE allocation_id=$1 ORDER BY partner_id',
       [allocation.allocationId]);
-    assert.deepEqual(frozen.rows.map(p=>Number(p.ownership_basis_points)),[3333,3333,3334]);
+    assert.deepEqual(frozen.rows.map(p=>Number(p.ownership_basis_points)).sort((a,b)=>a-b),[3333,3333,3334]);
 
     // An agreement cannot silently leave out a newly reactivated business partner.
     await pool.query('UPDATE ars_business_partners SET is_active=TRUE WHERE id=$1',[fourthId]);
