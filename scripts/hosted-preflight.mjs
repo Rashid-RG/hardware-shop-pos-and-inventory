@@ -19,6 +19,9 @@ export function validateHostedConfiguration(env = process.env, options = {}) {
   } catch {
     issues.push('DATABASE_URL must be configured in the host secret store.');
   }
+  if (env.ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP !== 'true') {
+    issues.push('ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true is required behind a hosted reverse proxy.');
+  }
   if (env.ARS_UPLOADS_MOUNT_REQUIRED !== 'true') {
     issues.push('ARS_UPLOADS_MOUNT_REQUIRED=true is required for the production container.');
   }
