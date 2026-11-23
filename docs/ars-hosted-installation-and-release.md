@@ -51,11 +51,26 @@ temporary Docker uploads volume. It checks that:
 - The container starts, holds a single-writer lease, and reports `/api/ready`.
 - HTTP first-admin status and account creation are both forbidden on hosted Docker.
 - An uploaded test file remains available after stopping and replacing the container.
+- A second test archive containing both a shop logo fixture and a product-image fixture is restored into a **separate disposable volume**, then verified against the originals with SHA-256 checksums. The live CI uploads volume is not overwritten.
 - No example administrator account is silently created.
 
-The test refuses to drop a database that existed before it started. CI
+The test refuses to drop a database that existed before it started and refuses to reuse existing Docker uploads volumes. CI
 verification is **not** a substitute for checking the selected staging host's
 storage persistence, backups, printing, networking, costs, and recovery.
+
+## Production backup and restoration requirement (still pending)
+
+The CI drill proves that uploaded files *can* be archived and restored correctly.
+It does **not** configure automatic backups at the future hosting provider.
+Before live use, the approved staging installation needs:
+
+1. Scheduled, encrypted PostgreSQL backups with tested retention.
+2. Scheduled, encrypted backups of the persistent `/app/uploads` volume, including company logos and product images. Perform a consistent snapshot or stop writes while archiving.
+3. Off-host storage under restricted access, with a tested recovery into an **isolated** environment. Never overwrite business data as part of a test.
+4. Restore checks that confirm invoice/customer/stock values **and** image files, plus documented recovery responsibility and frequency.
+5. Explicit owner approval before any business-database or uploads restore.
+
+**Passing CI does not mean backups are running for your father's business.**
 
 ## First administrator: important safety rule
 
