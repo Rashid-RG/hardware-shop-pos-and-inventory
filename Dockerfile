@@ -9,6 +9,7 @@ RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
+ENV ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true
 ENV PORT=3000
 WORKDIR /app
 COPY package.json package-lock.json ./
