@@ -220,6 +220,15 @@ export default function ProductManagementView({
   const [isCategorySubmitting, setIsCategorySubmitting] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Show a clear warning before staff accidentally register the same item
+  // under another automatically generated product code.
+  const matchingProducts = name.trim().length >= 3
+    ? products.filter((product) =>
+        product.id !== editingProduct?.id
+        && product.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase()
+      ).slice(0, 3)
+    : [];
+
 
   const [simpleProductAttributes, setSimpleProductAttributes] = useState<Record<string, string>>({});
 
@@ -909,6 +918,18 @@ export default function ProductManagementView({
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
                       />
                     </div>
+                    {matchingProducts.length > 0 && (
+                      <div role="alert" className="col-span-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                        <div className="font-bold">This product name is already in your catalog.</div>
+                        <p className="mt-1 text-xs">Check the existing product before adding another one.</p>
+                        {matchingProducts.map((match) => (
+                          <button key={match.id} type="button" onClick={() => handleOpenEdit(match)}
+                            className="mt-2 block w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-left text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                            Edit existing: {match.name} · {match.sku}
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
                     <div className="col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-800">
                        <strong>No product code to remember.</strong> ARS creates a code for you. Use More product options when you have a barcode or special specifications.
