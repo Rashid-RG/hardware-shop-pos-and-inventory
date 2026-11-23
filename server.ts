@@ -1822,9 +1822,23 @@ const initPostgres = async () => {
       shop_id TEXT NOT NULL,
       name TEXT NOT NULL,
       ownership_percent NUMERIC(5,2),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
       created_by TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    ALTER TABLE ars_business_partners ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+    CREATE TABLE IF NOT EXISTS ars_partner_ownership_audit (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      partner_id TEXT NOT NULL REFERENCES ars_business_partners(id),
+      old_percent NUMERIC(5,2),
+      new_percent NUMERIC(5,2),
+      change_type TEXT NOT NULL CHECK(change_type IN ('Registered','Updated','Deactivated','Reactivated')),
+      reference TEXT NOT NULL,
+      changed_by TEXT NOT NULL,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ars_partner_ownership_audit_shop_idx ON ars_partner_ownership_audit(shop_id,changed_at DESC);
     CREATE TABLE IF NOT EXISTS ars_partner_capital_entries (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -5619,7 +5633,7 @@ app.get('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
   const {activeShopId}=getActiveShopContext(db,req);
   try {
     const [partners,entries]=await Promise.all([
-      pool.query('SELECT * FROM ars_business_partners WHERE shop_id=$1 ORDER BY created_at,id',[activeShopId]),
+      pool.query('SELECT * FROM ars_business_partners WHERE shop_id=$1 ORDER BY is_active DESC,created_at,id',[activeShopId]),
       pool.query('SELECT * FROM ars_partner_capital_entries WHERE shop_id=$1 ORDER BY entry_date DESC,created_at DESC LIMIT 500',[activeShopId])
     ]);
     res.json({partners:partners.rows,entries:entries.rows});
@@ -5638,12 +5652,15 @@ app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
     const partners=await client.query('SELECT ownership_percent FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
-    if(partners.rowCount>=3){await client.query('ROLLBACK');return res.status(409).json({error:'ARS has a maximum of three partners.'});}
     const allocated=partners.rows.reduce((sum,row)=>sum+Number(row.ownership_percent||0),0);
     if(pct!==null && allocated+pct>100.000001){await client.query('ROLLBACK');return res.status(409).json({error:'Total partner ownership cannot exceed 100%.'});}
     const id='partner-'+randomUUID();
     await client.query('INSERT INTO ars_business_partners (id,shop_id,name,ownership_percent,created_by) VALUES ($1,$2,$3,$4,$5)',
       [id,activeShopId,name,pct,(req as AppRequest).authUser!.email]);
+    await client.query(`INSERT INTO ars_partner_ownership_audit
+      (id,shop_id,partner_id,old_percent,new_percent,change_type,reference,changed_by)
+      VALUES($1,$2,$3,NULL,$4,'Registered',$5,$6)`,
+      ['ownership-audit-'+randomUUID(),activeShopId,id,pct,'New partner registration',(req as AppRequest).authUser!.email]);
     await client.query('COMMIT');
     res.status(201).json({id,name,ownership_percent:pct});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Could not register partner.'});}
@@ -5660,16 +5677,70 @@ app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req
   try{
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
-    const partners=await client.query('SELECT id,ownership_percent FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
-    if(!partners.rows.some(p=>p.id===req.params.id)){await client.query('ROLLBACK');return res.status(404).json({error:'Partner not found.'});}
-    const others=partners.rows.filter(p=>p.id!==req.params.id).reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
+    const partners=await client.query('SELECT id,ownership_percent,is_active FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
+    const existing=partners.rows.find(p=>p.id===req.params.id);
+    if(!existing){await client.query('ROLLBACK');return res.status(404).json({error:'Partner not found.'});}
+    if(!existing.is_active){await client.query('ROLLBACK');return res.status(409).json({error:'Reactivate this partner before changing ownership.'});}
+    const others=partners.rows.filter(p=>p.id!==req.params.id && p.is_active).reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
     if(pct!==null && others+pct>100.000001){await client.query('ROLLBACK');return res.status(409).json({error:'Total partner ownership cannot exceed 100%.'});}
     await client.query('UPDATE ars_business_partners SET ownership_percent=$1 WHERE id=$2 AND shop_id=$3',[pct,req.params.id,activeShopId]);
+    await client.query(`INSERT INTO ars_partner_ownership_audit
+      (id,shop_id,partner_id,old_percent,new_percent,change_type,reference,changed_by)
+      VALUES($1,$2,$3,$4,$5,'Updated',$6,$7)`,
+      ['ownership-audit-'+randomUUID(),activeShopId,req.params.id,existing.ownership_percent,pct,
+        String(req.body?.reference||'Ownership revised').trim().slice(0,160),(req as AppRequest).authUser!.email]);
     await client.query('COMMIT');
     res.json({id:req.params.id,ownership_percent:pct});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Ownership update failed.'});}
   finally{client.release();}
 });
+// Historical allocations and capital entries always retain the original partner ID.
+// A deactivated partner is never deleted and cannot receive new distributions.
+app.post('/api/ars/partners/:id/status',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const isActive=req.body?.isActive;
+  const reference=String(req.body?.reference||'').trim();
+  if(typeof isActive!=='boolean'||reference.length<3||reference.length>160)
+    return res.status(400).json({error:'Provide partner status and a change reference (3–160 characters).'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
+    const partner=await client.query(
+      'SELECT id,is_active,ownership_percent FROM ars_business_partners WHERE id=$1 AND shop_id=$2 FOR UPDATE',
+      [req.params.id,activeShopId]);
+    if(!partner.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Partner not found.'});}
+    const old=partner.rows[0];
+    if(old.is_active===isActive){await client.query('ROLLBACK');return res.status(409).json({error:'Partner already has this status.'});}
+    if(!isActive && old.ownership_percent!==null && Number(old.ownership_percent)!==0){
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Set this partner ownership to 0% or unassigned before deactivating. Rebalance active shares first.'});
+    }
+    await client.query('UPDATE ars_business_partners SET is_active=$1 WHERE id=$2 AND shop_id=$3',
+      [isActive,req.params.id,activeShopId]);
+    await client.query(`INSERT INTO ars_partner_ownership_audit
+      (id,shop_id,partner_id,old_percent,new_percent,change_type,reference,changed_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+      ['ownership-audit-'+randomUUID(),activeShopId,req.params.id,old.ownership_percent,
+        old.ownership_percent,isActive?'Reactivated':'Deactivated',reference,(req as AppRequest).authUser!.email]);
+    await client.query('COMMIT');
+    res.json({id:req.params.id,is_active:isActive});
+  }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Partner status update failed.'});}
+  finally{client.release();}
+});
+
+app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try{
+    const result=await pool.query(`SELECT a.id,a.partner_id,p.name AS partner_name,a.old_percent,a.new_percent,
+      a.change_type,a.reference,a.changed_by,a.changed_at
+      FROM ars_partner_ownership_audit a JOIN ars_business_partners p ON p.id=a.partner_id
+      WHERE a.shop_id=$1 ORDER BY a.changed_at DESC LIMIT 200`,[activeShopId]);
+    res.json(result.rows);
+  }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
+});
+
 app.post('/api/ars/partner-capital',requireRole(['Super Admin']),async(req,res)=>{
   const {activeShopId}=getActiveShopContext(db,req);
   const partnerId=String(req.body?.partnerId||'').trim();
