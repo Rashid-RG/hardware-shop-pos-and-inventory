@@ -26,6 +26,7 @@ interface CustomerEmployeeViewProps {
   transactions: SalesTransaction[];
   currentRole: Role;
   onAddCustomer: (custData: Omit<Customer, 'id' | 'purchaseCount'>) => Promise<void>;
+  onUpdateCustomer: (customerId: string, details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>) => Promise<void>;
   onAddEmployee: (empData: Omit<Employee, 'id' | 'performanceScore'>) => Promise<void>;
   onSetCreditLimit: (customerId: string, creditLimit: number) => Promise<void>;
   onAddCreditPayment: (payload: { customerId: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<void>;
@@ -39,6 +40,7 @@ export default function CustomerEmployeeView({
   transactions,
   currentRole,
   onAddCustomer,
+  onUpdateCustomer,
   onAddEmployee,
   onSetCreditLimit,
   onAddCreditPayment,
@@ -47,6 +49,10 @@ export default function CustomerEmployeeView({
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [editDetails, setEditDetails] = useState({ name: '', phone: '', email: '', address: '' });
+  const [isEditingCustomer, setIsEditingCustomer] = useState(false);
+
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [customerHistorySearch, setCustomerHistorySearch] = useState('');
   const [customerHistoryFrom, setCustomerHistoryFrom] = useState('');
@@ -80,6 +86,34 @@ export default function CustomerEmployeeView({
   const [empSalary, setEmpSalary] = useState(3000);
   const [empAttendance, setEmpAttendance] = useState<'Present' | 'Absent' | 'On Leave'>('Present');
   const [isEmpSubmitting, setIsEmpSubmitting] = useState(false);
+
+  const beginCustomerEdit = (customer: Customer) => {
+    setEditingCustomer(customer);
+    setEditDetails({ name: customer.name, phone: customer.phone, email: customer.email, address: customer.address });
+  };
+
+  const saveCustomerEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingCustomer || !editDetails.name.trim()) {
+      notify.warning('Customer shop name is required.');
+      return;
+    }
+    setIsEditingCustomer(true);
+    try {
+      await onUpdateCustomer(editingCustomer.id, {
+        name: editDetails.name.trim(),
+        phone: editDetails.phone.trim(),
+        email: editDetails.email.trim(),
+        address: editDetails.address.trim(),
+      });
+      setEditingCustomer(null);
+      notify.success('Customer details updated.');
+    } catch (error) {
+      notify.error(error instanceof Error ? error.message : 'Could not update customer.');
+    } finally {
+      setIsEditingCustomer(false);
+    }
+  };
 
   // Hiding sensitive salaries based on logged-in role permissions
   const hidesSalaries = ['Cashier', 'Inventory Staff'].includes(currentRole);
@@ -203,6 +237,45 @@ export default function CustomerEmployeeView({
       e.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const downloadCsv = (filename: string, headers: string[], rows: (string | number)[][]) => {
+    // Escape spreadsheet formulas so customer-entered data cannot execute on open.
+    const cell = (value: string | number) => {
+      const raw = String(value ?? '');
+      const safe = /^[\\s]*[=+@-]/.test(raw) && typeof value !== 'number' ? "'" + raw : raw;
+      return '"' + safe.replace(/"/g, '""') + '"';
+    };
+    const content = '\\uFEFF' + [headers, ...rows].map((row) => row.map(cell).join(',')).join('\\r\\n');
+    const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const exportCustomerDirectory = () => {
+    downloadCsv('ars-customer-directory.csv',
+      ['Customer ID', 'Shop name', 'Phone', 'Email', 'Address', 'Credit limit (LKR)', 'Outstanding (LKR)', 'Invoice count'],
+      filteredCustomers.map((customer) => [
+        customer.id, customer.name, customer.phone, customer.email, customer.address,
+        Number(customer.creditLimit || 0), Number(customer.creditBalance || 0), customer.purchaseCount,
+      ])
+    );
+  };
+
+  const exportCustomerStatement = () => {
+    if (!selectedCustomer) return;
+    downloadCsv('ars-customer-statement-' + selectedCustomer.id.replace(/[^a-zA-Z0-9_-]/g, '') + '.csv',
+      ['Customer ID', 'Shop name', 'Date', 'Record type', 'Reference', 'Details', 'Status', 'Amount (LKR)'],
+      historyRows.map((row) => [
+        selectedCustomer.id, selectedCustomer.name, String(row.date).slice(0, 10),
+        row.type, row.reference, row.description, row.status, row.amount,
+      ])
+    );
+  };
+
   const formatSalary = (amount: number) => `Rs.${amount.toLocaleString('en-US')}`;
   const formatMoney = (amount: number) => `Rs.${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -294,6 +367,10 @@ export default function CustomerEmployeeView({
               <option value="clear">No outstanding</option>
             </select>
             <span className="text-xs text-slate-500">{filteredCustomers.length} matching customer(s)</span>
+            <button type="button" onClick={exportCustomerDirectory}
+              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
+              Export all matching customers (CSV)
+            </button>
           </div>
         )}
         <div>
@@ -451,6 +528,12 @@ export default function CustomerEmployeeView({
               <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Customer file</p>
               <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">{selectedCustomer.name}</h2>
               <p className="text-xs text-slate-500">Customer ID: {selectedCustomer.id}</p>
+              {canOnboard && selectedCustomer.id !== 'cust-walkin' && (
+                <button type="button" onClick={() => beginCustomerEdit(selectedCustomer)}
+                  className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-800">
+                  Edit shop details
+                </button>
+              )}
             </div>
             <button type="button" onClick={() => setSelectedCustomerId(null)}
               className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100">
@@ -558,6 +641,10 @@ export default function CustomerEmployeeView({
                   </section>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={exportCustomerStatement}
+                    className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
+                    Export filtered statement (CSV)
+                  </button>
                   <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
                   {selectedCustomer.id !== 'cust-walkin' && (
@@ -568,6 +655,47 @@ export default function CustomerEmployeeView({
               </section>
             </div>
           </div>
+        </div>
+      )}
+
+      {editingCustomer && (
+        <div role="dialog" aria-modal="true" aria-label="Edit customer shop details"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3">
+          <form onSubmit={saveCustomerEdit}
+            className="flex max-h-[90dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 p-4">
+              <div><h2 className="text-lg font-bold">Edit customer shop</h2>
+                <p className="text-xs text-slate-500">Contact details only. Invoice history and balances stay unchanged.</p></div>
+              <button type="button" onClick={() => setEditingCustomer(null)} aria-label="Close customer editor"
+                className="rounded-lg p-2 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="grid min-h-0 grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2">
+              <div className="sm:col-span-2"><label htmlFor="customer-edit-name" className="mb-1 block text-sm font-semibold">Shop name *</label>
+                <input id="customer-edit-name" required maxLength={160} value={editDetails.name}
+                  onChange={(e) => setEditDetails((d) => ({ ...d, name: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 p-3 text-sm" /></div>
+              <div><label htmlFor="customer-edit-phone" className="mb-1 block text-sm font-semibold">Phone</label>
+                <input id="customer-edit-phone" maxLength={60} value={editDetails.phone}
+                  onChange={(e) => setEditDetails((d) => ({ ...d, phone: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 p-3 text-sm" /></div>
+              <div><label htmlFor="customer-edit-email" className="mb-1 block text-sm font-semibold">Email</label>
+                <input id="customer-edit-email" type="email" maxLength={254} value={editDetails.email}
+                  onChange={(e) => setEditDetails((d) => ({ ...d, email: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 p-3 text-sm" /></div>
+              <div className="sm:col-span-2"><label htmlFor="customer-edit-address" className="mb-1 block text-sm font-semibold">Shop address</label>
+                <textarea id="customer-edit-address" maxLength={1000} rows={3} value={editDetails.address}
+                  onChange={(e) => setEditDetails((d) => ({ ...d, address: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 p-3 text-sm" /></div>
+            </div>
+            <div className="flex gap-2 border-t border-slate-200 p-4">
+              <button type="button" onClick={() => setEditingCustomer(null)}
+                className="flex-1 rounded-lg border border-slate-300 p-3 text-sm font-semibold">Cancel</button>
+              <button type="submit" disabled={isEditingCustomer}
+                className="flex-1 rounded-lg bg-indigo-700 p-3 text-sm font-bold text-white disabled:opacity-50">
+                {isEditingCustomer ? 'Saving...' : 'Save customer'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
