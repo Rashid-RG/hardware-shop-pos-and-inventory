@@ -17,6 +17,29 @@ On the employee PC, only a current Microsoft Edge or Chrome browser and working 
 - Independent automatic PostgreSQL backups **and** uploads backups with retention, encryption, access controls and regularly verified restore. Never run a restore against production without separate, explicit authorization.
 - Restrict administrative access, database inbound traffic and server logs. Run a tested, modest single-instance plan rather than a free service that sleeps during billing.
 
+## Prepared single-container hosting image (not deployed)
+
+The repository now includes a portable `Dockerfile` and a fail-closed startup preflight.
+These files **do not create a server, database, storage volume, or backup**.
+
+Build only after choosing the host and approving an isolated staging setup:
+
+```bash
+docker build -t ars-hardware-pos:approved-staging .
+```
+
+The container expects the following **host-managed** runtime configuration:
+
+- `NODE_ENV=production` and `PORT=3000` (or the approved hosting port).
+- `DATABASE_URL` pointing to the **isolated staging PostgreSQL** database, never to a live or CI database.
+- `JWT_SECRET` unique, strong, and provided through the host's secret management.
+- `ARS_RELEASE_ID` identifying the exact approved Git commit.
+- `ARS_UPLOADS_MOUNT_REQUIRED=true`. The `/app/uploads` directory must be a **dedicated, writable, persistent Linux mount** (network disk or managed persistent disk). The startup preflight checks the mount and refuses an ephemeral container directory.
+
+**Do not start the image without the actual mounted storage, backup schedule and database access controls.** This is a single-instance application. Explicitly disable horizontal autoscaling and overlapping deployments. The container's `/api/ready` healthcheck proves database readiness, not that automatic backup or physical Windows printing is set up.
+
+The approved staging host must support a **secure loopback-only first-admin setup** (e.g. a local tunnel into the container's network namespace or a trusted internal reverse proxy). Do not weaken this restriction for convenience.
+
 ## First administrator: important safety rule
 
 The first Super Admin can only be created through the server's **loopback** connection. The public hosted URL cannot create the first administrator. This prevents anonymous remote takeover of a fresh installation.
