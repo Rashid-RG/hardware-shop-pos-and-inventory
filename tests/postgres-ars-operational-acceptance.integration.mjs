@@ -20,6 +20,7 @@ test('ARS quotation-to-invoice: registered customer, rep snapshot, shop isolatio
   const tomorrow=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
   const yesterday='2020-01-01';
   const item=(quantity)=>({productId,productName:'ARS test hardware item',
+    invoiceDescription:'4m length · 50mm heavy-duty pipe (invoice-specific)',
     quantity,sellingPrice:100,costPrice:50,discount:0,discountAmount:0});
   const sale=(txId,quantity=2,shop=shopId)=>({
     id:txId,shopId:shop,invoiceNumber:'CI-ARS-'+txId,date:new Date().toISOString(),
@@ -103,6 +104,12 @@ test('ARS quotation-to-invoice: registered customer, rep snapshot, shop isolatio
       'SELECT COUNT(*)::integer AS count FROM sales_transaction_items WHERE transaction_id=$1',
       [saved.rows[0].id]);
     assert.equal(items.rows[0].count,1);
+    const printedDescription=await pool.query(
+      'SELECT invoice_description FROM sales_transaction_items WHERE transaction_id=$1',
+      [saved.rows[0].id]);
+    assert.equal(printedDescription.rows[0].invoice_description,
+      '4m length · 50mm heavy-duty pipe (invoice-specific)',
+      'Reprint must use saved invoice description and not the current product master.');
     const logs=await pool.query(
       `SELECT action FROM activity_logs WHERE shop_id=$1 AND user_name='Test Operator (internal only)' AND action='Invoice Created'`,[shopId]);
     assert.equal(logs.rowCount,1,'Successful conversion has exactly one operator-audit entry');
