@@ -21,7 +21,8 @@ test('discount percentage becomes money before API checkout and cannot exceed th
   assert.match(pos,/invoiceTotals\(subtotal, taxConfig.taxRate, cashDiscount\)/);
   assert.match(pos,/discountAmount: cashDiscount/);
   assert.match(server,/invoiceTotals\(subtotal, shopProfile\?\.taxRate \?\? db\.settings\.taxRate, discountAmount\)/);
-  assert.match(totals,/subtotal - Math\.max\(0, discount\)/);
+  assert.match(totals,/const appliedDiscount = Math\.min\(subtotal, nonNegativeMoney\(discount\)\)/);
+  assert.match(totals,/subtotal - appliedDiscount \+ tax/);
 });
 test('invoice discount type resets for a new customer invoice and includes a visible amount preview',()=>{
   assert.match(pos,/setDiscountMode\('amount'\)/);
