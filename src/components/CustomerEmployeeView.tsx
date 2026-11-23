@@ -16,13 +16,14 @@ import {
   Wallet,
   Receipt,
 } from 'lucide-react';
-import { Customer, Employee, Role, CustomerCreditPayment } from '../types';
+import { Customer, Employee, Role, CustomerCreditPayment, SalesTransaction } from '../types';
 
 interface CustomerEmployeeViewProps {
   viewMode: 'customers' | 'employees';
   customers: Customer[];
   employees: Employee[];
   customerCreditPayments: CustomerCreditPayment[];
+  transactions: SalesTransaction[];
   currentRole: Role;
   onAddCustomer: (custData: Omit<Customer, 'id' | 'purchaseCount'>) => Promise<void>;
   onAddEmployee: (empData: Omit<Employee, 'id' | 'performanceScore'>) => Promise<void>;
@@ -35,6 +36,7 @@ export default function CustomerEmployeeView({
   customers,
   employees,
   customerCreditPayments,
+  transactions,
   currentRole,
   onAddCustomer,
   onAddEmployee,
@@ -44,6 +46,13 @@ export default function CustomerEmployeeView({
   const activeTab = viewMode;
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [customerHistorySearch, setCustomerHistorySearch] = useState('');
+  const [customerHistoryFrom, setCustomerHistoryFrom] = useState('');
+  const [customerHistoryTo, setCustomerHistoryTo] = useState('');
+  const [customerHistoryType, setCustomerHistoryType] = useState<'all' | 'invoices' | 'payments'>('all');
+  const [balanceFilter, setBalanceFilter] = useState<'all' | 'owing' | 'clear'>('all');
+
 
   // Customer Form states
   const [isCustOpen, setIsCustOpen] = useState(false);
@@ -134,13 +143,55 @@ export default function CustomerEmployeeView({
     }
   };
 
-  // Searching logic
-  const filteredCustomers = customers.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.phone.includes(searchTerm) ||
-      c.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // The customer directory shows only matching customers, but the detail
+  // workspace always uses the complete scoped records, not the card preview.
+  const normalizedCustomerSearch = searchTerm.trim().toLowerCase();
+  const filteredCustomers = customers.filter((c) => {
+    const matchesText = [c.name, c.id, c.phone, c.email, c.address]
+      .some((value) => String(value || '').toLowerCase().includes(normalizedCustomerSearch));
+    const matchesBalance = balanceFilter === 'all'
+      || (balanceFilter === 'owing' ? Number(c.creditBalance || 0) > 0 : Number(c.creditBalance || 0) <= 0);
+    return matchesText && matchesBalance;
+  });
+
+  const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
+  const matchesShop = (recordShopId?: string) =>
+    !selectedCustomer?.shopId || recordShopId === selectedCustomer.shopId;
+  const selectedInvoices = selectedCustomer
+    ? transactions.filter((tx) => tx.customerId === selectedCustomer.id && matchesShop(tx.shopId))
+    : [];
+  const selectedPayments = selectedCustomer
+    ? customerCreditPayments.filter((payment) =>
+        payment.customerId === selectedCustomer.id && matchesShop(payment.shopId))
+    : [];
+
+  const normalizedHistorySearch = customerHistorySearch.trim().toLowerCase();
+  const historyRows = [
+    ...(customerHistoryType === 'payments' ? [] : selectedInvoices.map((tx) => ({
+      id: tx.id, type: 'Invoice' as const, date: tx.date, reference: tx.invoiceNumber,
+      description: `${tx.items.length} product line(s) · ${tx.paymentMethod}`,
+      amount: Number(tx.total || 0), status: tx.status || 'Completed',
+    }))),
+    ...(customerHistoryType === 'invoices' ? [] : selectedPayments.map((payment) => ({
+      id: payment.id, type: 'Payment' as const, date: payment.date,
+      reference: payment.paymentMethod, description: payment.note || 'Credit repayment',
+      amount: Number(payment.amount || 0), status: 'Received',
+    }))),
+  ].filter((row) => {
+    const date = String(row.date || '').slice(0, 10);
+    const text = [row.reference, row.description, row.status, row.type].join(' ').toLowerCase();
+    return (!customerHistoryFrom || date >= customerHistoryFrom)
+      && (!customerHistoryTo || date <= customerHistoryTo)
+      && (!normalizedHistorySearch || text.includes(normalizedHistorySearch));
+  }).sort((left, right) => String(right.date).localeCompare(String(left.date)));
+
+  const openCustomerFile = (customerId: string) => {
+    setSelectedCustomerId(customerId);
+    setCustomerHistorySearch('');
+    setCustomerHistoryFrom('');
+    setCustomerHistoryTo('');
+    setCustomerHistoryType('all');
+  };
 
   const filteredEmployees = employees.filter(
     (e) =>
@@ -229,6 +280,19 @@ export default function CustomerEmployeeView({
           />
         </div>
 
+        {activeTab === 'customers' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="ars-customer-balance-filter" className="text-xs font-semibold text-slate-600">Balance</label>
+            <select id="ars-customer-balance-filter" value={balanceFilter}
+              onChange={(e) => { setBalanceFilter(e.target.value as typeof balanceFilter); setVisibleCount(12); }}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+              <option value="all">All customers</option>
+              <option value="owing">Outstanding</option>
+              <option value="clear">No outstanding</option>
+            </select>
+            <span className="text-xs text-slate-500">{filteredCustomers.length} matching customer(s)</span>
+          </div>
+        )}
         <div>
           {activeTab === 'customers' ? (
             <button
@@ -350,6 +414,10 @@ export default function CustomerEmployeeView({
                 )}
               </div>
 
+              <button type="button" onClick={() => openCustomerFile(c.id)}
+                className="mt-3 w-full rounded-xl bg-indigo-700 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700">
+                Open customer details & full history
+              </button>
               <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
                 <span>Invoiced Checkouts: <strong className="text-slate-800">{c.purchaseCount}</strong></span>
               </div>
@@ -369,6 +437,92 @@ export default function CustomerEmployeeView({
               <p className="text-xs font-semibold mt-2">Zero matching customers in register</p>
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'customers' && selectedCustomer && (
+        <div id="ars-customer-workspace" role="dialog" aria-modal="true" aria-label="Customer details and full history"
+          className="fixed inset-0 z-40 flex flex-col bg-slate-50 font-sans">
+          <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-8">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Customer file</p>
+              <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">{selectedCustomer.name}</h2>
+              <p className="text-xs text-slate-500">Customer ID: {selectedCustomer.id}</p>
+            </div>
+            <button type="button" onClick={() => setSelectedCustomerId(null)}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100">
+              <X className="mr-1 inline-block h-4 w-4" /> Close customer file
+            </button>
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8">
+            <div className="mx-auto max-w-6xl space-y-5">
+              <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div><p className="text-xs text-slate-500">Phone</p><p className="break-words font-semibold">{selectedCustomer.phone || 'Not provided'}</p></div>
+                <div><p className="text-xs text-slate-500">Email</p><p className="break-words font-semibold">{selectedCustomer.email || 'Not provided'}</p></div>
+                <div><p className="text-xs text-slate-500">Address</p><p className="break-words font-semibold">{selectedCustomer.address || 'Not provided'}</p></div>
+                <div><p className="text-xs text-slate-500">Recorded purchases</p><p className="font-semibold">{selectedInvoices.length} invoices</p></div>
+              </section>
+              <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Credit limit</p><p className="mt-1 text-lg font-bold">{formatMoney(Number(selectedCustomer.creditLimit || 0))}</p></div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Outstanding balance</p><p className="mt-1 text-lg font-bold text-rose-700">{formatMoney(Number(selectedCustomer.creditBalance || 0))}</p></div>
+                <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Recorded credit payments</p><p className="mt-1 text-lg font-bold">{formatMoney(selectedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</p></div>
+              </section>
+              <section className="rounded-xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <div><h3 className="text-lg font-bold">Complete customer activity</h3>
+                    <p className="text-xs text-slate-500">All matching records are shown; no recent-only limit. Invoice amounts and credit payments are different record types.</p></div>
+                  <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-800">{historyRows.length} matching records</span>
+                </div>
+                <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div><label htmlFor="customer-history-search" className="mb-1 block text-xs font-semibold">Search activity</label>
+                    <input id="customer-history-search" value={customerHistorySearch} onChange={(e) => setCustomerHistorySearch(e.target.value)}
+                      placeholder="Invoice, reference or notes" className="w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></div>
+                  <div><label htmlFor="customer-history-type" className="mb-1 block text-xs font-semibold">Record type</label>
+                    <select id="customer-history-type" value={customerHistoryType}
+                      onChange={(e) => setCustomerHistoryType(e.target.value as typeof customerHistoryType)}
+                      className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm">
+                      <option value="all">Invoices and payments</option><option value="invoices">Invoices only</option><option value="payments">Payments only</option>
+                    </select></div>
+                  <div><label htmlFor="customer-history-from" className="mb-1 block text-xs font-semibold">From date</label>
+                    <input id="customer-history-from" type="date" value={customerHistoryFrom}
+                      onChange={(e) => setCustomerHistoryFrom(e.target.value)} className="w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></div>
+                  <div><label htmlFor="customer-history-to" className="mb-1 block text-xs font-semibold">To date</label>
+                    <input id="customer-history-to" type="date" value={customerHistoryTo}
+                      onChange={(e) => setCustomerHistoryTo(e.target.value)} className="w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></div>
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full min-w-[650px] text-left text-sm">
+                    <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
+                      <th className="p-3">Date</th><th className="p-3">Record</th>
+                      <th className="p-3">Reference</th><th className="p-3">Details</th>
+                      <th className="p-3">Status</th><th className="p-3 text-right">Amount</th>
+                    </tr></thead>
+                    <tbody>
+                      {historyRows.map((row) => (
+                        <tr key={`${row.type}-${row.id}`} className="border-t border-slate-100">
+                          <td className="whitespace-nowrap p-3">{String(row.date).slice(0, 10)}</td>
+                          <td className="p-3 font-semibold">{row.type}</td>
+                          <td className="p-3">{row.reference}</td>
+                          <td className="p-3">{row.description}</td>
+                          <td className="p-3">{row.status}</td>
+                          <td className="p-3 text-right font-semibold">{formatMoney(row.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {historyRows.length === 0 && <p className="p-6 text-center text-sm text-slate-500">No records match these filters.</p>}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
+                    className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
+                  {selectedCustomer.id !== 'cust-walkin' && (
+                    <button type="button" onClick={() => { setPaymentDraft(selectedCustomer); setPaymentAmount(''); setPaymentMethod('Cash'); setPaymentDate(new Date().toISOString().split('T')[0]); }}
+                      className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800">Record credit repayment</button>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       )}
 
