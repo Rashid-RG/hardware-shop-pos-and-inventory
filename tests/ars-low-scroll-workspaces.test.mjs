@@ -21,7 +21,7 @@ test('customer and rep registration dialogs stay within laptop viewport',()=>{
 });
 test('warehouse receiving remains searchable and history progressively renders',()=>{
   assert.match(shipments,/const visibleRows=rows\.filter/);
-  assert.match(shipments,/const displayedRows=showAll\?visibleRows:visibleRows\.slice\(0,12\)/);
+  assert.match(shipments,/const displayedRows=hasActiveFilters\|\|showAll\?visibleRows:visibleRows\.slice\(0,12\)/);
   assert.match(shipments,/Search shipments or purchase orders/);
   assert.match(shipments,/Receive quantities/);
   assert.match(shipments,/PartialReceiptPanel/);
