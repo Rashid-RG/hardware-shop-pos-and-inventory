@@ -1,7 +1,7 @@
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initArsProfitLedger, recordArsProfitAllocation } from './backend/partnerProfit';
+import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
@@ -5594,6 +5594,31 @@ app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','St
 
 // Recording a profit allocation is not a payout or confirmation of money sent.
 // Only the Super Admin may record an allocation supported by approved statements.
+// Immutable partner agreements: each applies from its accounting month onward.
+app.get('/api/ars/ownership-agreements',requireRole(['Super Admin']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try{
+    const rows=await pool.query(
+      'SELECT id,effective_period,approval_reference,approved_by,approved_at,shares FROM ars_partner_ownership_agreements WHERE shop_id=$1 ORDER BY effective_period DESC LIMIT 100',
+      [activeShopId]);
+    res.json(rows.rows);
+  }catch{res.status(503).json({error:'Could not load ownership agreements.'});}
+});
+app.post('/api/ars/ownership-agreements',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  try{
+    const result=await recordArsOwnershipAgreement(pool,{
+      shopId:activeShopId,
+      effectivePeriod:String(req.body?.effectivePeriod||''),
+      approvalReference:String(req.body?.approvalReference||''),
+      approvedBy:(req as AppRequest).authUser?.email||'System',
+      shares:req.body?.shares,
+    });
+    res.status(201).json(result);
+  }catch(error){res.status(409).json({error:(error as Error).message});}
+});
+
 app.get('/api/ars/partner-profits',requireRole(['Super Admin']),async(req,res)=>{
   const {activeShopId}=getActiveShopContext(db,req);
   try {
