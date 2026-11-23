@@ -36,6 +36,7 @@ export default function InventoryView({
   const [logLimit, setLogLimit] = useState(25);
   const [logDateFrom, setLogDateFrom] = useState('');
   const [logDateTo, setLogDateTo] = useState('');
+  const [isLedgerFocused, setIsLedgerFocused] = useState(false);
 
   // Manual Adjust Modal
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
@@ -216,13 +217,22 @@ export default function InventoryView({
       </div>
 
       {/* RIGHT: Detailed Logs Ledger Chronology (7 cols) */}
-      <div className="lg:col-span-7 flex flex-col space-y-4">
+      <div id="ars-stock-ledger-workspace" role={isLedgerFocused ? 'dialog' : undefined} aria-label={isLedgerFocused ? 'Full stock movement history' : undefined}
+        className={isLedgerFocused
+          ? 'fixed inset-0 z-40 flex min-h-0 flex-col gap-3 overflow-y-auto bg-slate-50 p-3 sm:p-6'
+          : 'lg:col-span-7 flex min-h-0 flex-col space-y-4'}>
         {/* Logs Timeline Search Controls */}
         <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs space-y-4">
           <div>
-            <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-              Stock Ledger & Movement History
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
+                Stock Ledger & Movement History
+              </h2>
+              <button type="button" id="ars-stock-ledger-focus-toggle" onClick={() => setIsLedgerFocused(value => !value)}
+                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
+                {isLedgerFocused ? 'Back to stock overview' : 'Open full stock history'}
+              </button>
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Audits warehouse intake logs and points-of-sale deduction feeds.
             </p>
@@ -280,8 +290,8 @@ export default function InventoryView({
         </div>
 
         {/* Chronological log feed */}
-        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden flex-1">
-          <div className="overflow-x-auto">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
+          <div className={isLedgerFocused ? 'h-full overflow-auto' : 'overflow-x-auto'}>
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 font-medium font-sans">
