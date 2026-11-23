@@ -34,6 +34,8 @@ export default function InventoryView({
   const [productSearch, setProductSearch] = useState('');
   const [productLimit, setProductLimit] = useState(12);
   const [logLimit, setLogLimit] = useState(25);
+  const [logDateFrom, setLogDateFrom] = useState('');
+  const [logDateTo, setLogDateTo] = useState('');
 
   // Manual Adjust Modal
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
@@ -109,13 +111,39 @@ export default function InventoryView({
 
   // Filter Stock Ledger Logs
   const filteredLogs = stockLogs.filter((log) => {
-    const matchesSearch =
-      log.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.reason.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.user.toLowerCase().includes(searchTerm.toLowerCase());
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const matchesSearch = [log.productName, log.productId, log.reason, log.user, log.referenceId, log.type]
+      .some((field) => String(field || '').toLowerCase().includes(normalizedSearch));
     const matchesType = logTypeFilter === 'All' || log.type === logTypeFilter;
-    return matchesSearch && matchesType;
+    const logDay = String(log.date || '').slice(0, 10);
+    const matchesDate = (!logDateFrom || logDay >= logDateFrom) && (!logDateTo || logDay <= logDateTo);
+    return matchesSearch && matchesType && matchesDate;
   });
+  const isLedgerFiltered = Boolean(searchTerm.trim() || logTypeFilter !== 'All' || logDateFrom || logDateTo);
+  const isProductFiltered = Boolean(productSearch.trim());
+
+  const exportLedgerCsv = () => {
+    // CSV formula injection protection for staff-entered product names and notes.
+    const csvCell = (value: string | number) => {
+      const text = String(value ?? '');
+      const escaped = typeof value === 'number' || !/^\\s*[=+@-]/.test(text) ? text : "'" + text;
+      return '"' + escaped.replace(/"/g, '""') + '"';
+    };
+    const headers = ['Date', 'Product ID', 'Product', 'Type', 'Quantity', 'Operator', 'Reason', 'Reference'];
+    const rows = filteredLogs.map((log) => [
+      log.date, log.productId, log.productName, log.type, Number(log.quantity),
+      log.user, log.reason, log.referenceId || '',
+    ]);
+    const csv = '\uFEFF' + [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    link.href = url;
+    link.download = 'ars-stock-movements.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())));
   return (
@@ -134,7 +162,7 @@ export default function InventoryView({
             onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
             placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
           <div className="space-y-2">
-            {matchingProducts.slice(0,productLimit).map((p) => {
+            {(isProductFiltered ? matchingProducts : matchingProducts.slice(0,productLimit)).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
 
@@ -178,7 +206,7 @@ export default function InventoryView({
                 </div>
               );
             })}
-            {matchingProducts.length>productLimit&&<button type="button"
+            {!isProductFiltered&&matchingProducts.length>productLimit&&<button type="button"
               onClick={()=>setProductLimit(v=>v+12)}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
               Show more shelf products ({matchingProducts.length-productLimit} remaining)
@@ -231,6 +259,26 @@ export default function InventoryView({
           </div>
         </div>
 
+        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3">
+          <div><label htmlFor="ledger-from" className="block text-xs font-semibold text-slate-600">From date</label>
+            <input id="ledger-from" type="date" value={logDateFrom}
+              onChange={event => setLogDateFrom(event.target.value)}
+              className="rounded-lg border border-slate-200 p-2 text-xs" /></div>
+          <div><label htmlFor="ledger-to" className="block text-xs font-semibold text-slate-600">To date</label>
+            <input id="ledger-to" type="date" value={logDateTo}
+              onChange={event => setLogDateTo(event.target.value)}
+              className="rounded-lg border border-slate-200 p-2 text-xs" /></div>
+          <span className="mr-auto text-xs font-semibold text-slate-600">{filteredLogs.length} matching movement(s)</span>
+          <button type="button" onClick={() => {setSearchTerm(''); setLogTypeFilter('All'); setLogDateFrom(''); setLogDateTo(''); setLogLimit(25);}}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50">
+            Clear filters
+          </button>
+          <button type="button" id="ledger-export-csv" onClick={exportLedgerCsv}
+            className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-800">
+            Export all matching movements
+          </button>
+        </div>
+
         {/* Chronological log feed */}
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden flex-1">
           <div className="overflow-x-auto">
@@ -246,7 +294,7 @@ export default function InventoryView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-sans">
-                {filteredLogs.slice(0,logLimit).map((log) => {
+                {(isLedgerFiltered ? filteredLogs : filteredLogs.slice(0,logLimit)).map((log) => {
                   const qtyVal = Number(log.quantity);
                   const isPos = qtyVal > 0;
 
@@ -300,7 +348,7 @@ export default function InventoryView({
               </tbody>
             </table>
           </div>
-          {filteredLogs.length>logLimit&&<div className="border-t border-slate-100 p-3 text-center">
+          {!isLedgerFiltered&&filteredLogs.length>logLimit&&<div className="border-t border-slate-100 p-3 text-center">
             <button type="button" onClick={()=>setLogLimit(v=>v+25)}
               className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold">
               Show more stock movements ({filteredLogs.length-logLimit} remaining)
