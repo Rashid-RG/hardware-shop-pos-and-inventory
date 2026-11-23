@@ -934,7 +934,7 @@ export const archiveProduct = async (
  * All writes through createProductWithIntake and updateProductWithAudit use it.
  */
 const assertUniqueProductCodes = async (
-  client: Awaited<ReturnType<typeof pool.connect>>,
+  client: PoolClient,
   product: Product
 ) => {
   if (!product.shopId) throw new Error('Product must belong to a shop.');
