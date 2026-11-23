@@ -2324,6 +2324,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       items: (txItemsByTransaction.get(row.id) || []).map((item) => ({
         productId: item.product_id,
         productName: item.product_name,
+        invoiceDescription: item.invoice_description ?? undefined,
         variantId: item.variant_id || undefined,
         variantName: item.variant_name || undefined,
         variantUnit: item.variant_unit || undefined,
@@ -3980,9 +3981,22 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     pendingStockUpdates.push({ product: dbProduct, variantId: targetVariant?.id, quantity });
 
     const lineProductName = targetVariant ? `${dbProduct.name} (${targetVariant.name})` : dbProduct.name;
+    // Invoice descriptions are snapshots; never mutate product master records.
+    // The product's saved description is used when the cashier does not explicitly edit it.
+    if (item.invoiceDescription != null && typeof item.invoiceDescription !== 'string') {
+      return res.status(400).json({ error: 'Invoice item description must be text.' });
+    }
+    const descriptionSource = item.invoiceDescription == null
+      ? String(dbProduct.description || dbProduct.longDescription || '')
+      : item.invoiceDescription;
+    const invoiceDescription = descriptionSource.replace(/[\r\n\t]+/g, ' ').trim();
+    if (invoiceDescription.length > 250) {
+      return res.status(400).json({ error: 'Invoice description must be 250 characters or less.' });
+    }
     completedItems.push({
       productId: dbProduct.id,
       productName: lineProductName,
+      invoiceDescription,
       variantId: targetVariant?.id,
       variantName: targetVariant?.name,
       variantUnit: targetVariant?.unit,
