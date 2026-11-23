@@ -241,10 +241,10 @@ export default function CustomerEmployeeView({
     // Escape spreadsheet formulas so customer-entered data cannot execute on open.
     const cell = (value: string | number) => {
       const raw = String(value ?? '');
-      const safe = /^[\\s]*[=+@-]/.test(raw) && typeof value !== 'number' ? "'" + raw : raw;
+      const safe = /^\s*[=+@-]/.test(raw) && typeof value !== 'number' ? "'" + raw : raw;
       return '"' + safe.replace(/"/g, '""') + '"';
     };
-    const content = '\\uFEFF' + [headers, ...rows].map((row) => row.map(cell).join(',')).join('\\r\\n');
+    const content = '\uFEFF' + [headers, ...rows].map((row) => row.map(cell).join(',')).join('\r\n');
     const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
