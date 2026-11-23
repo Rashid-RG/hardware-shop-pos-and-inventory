@@ -2695,6 +2695,11 @@ app.get('/api/ready', async (_req, res) => {
 // One-time setup is only available on a machine's loopback connection.
 // PostgreSQL is checked directly rather than trusting the in-memory mirror.
 const requireLocalSetup: express.RequestHandler = (req, res, next) => {
+  // Reverse proxies can forward external traffic with a loopback peer address.
+  // Hosted containers disable HTTP bootstrap entirely; use trusted console setup.
+  if (process.env.ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP === 'true') {
+    return res.status(403).json({ error: 'HTTP administrator setup is disabled on this hosted server.' });
+  }
   const remote = req.socket.remoteAddress || '';
   if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
     return res.status(403).json({ error: 'Initial administrator setup is only available on localhost.' });
