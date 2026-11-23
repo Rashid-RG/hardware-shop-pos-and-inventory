@@ -2,7 +2,7 @@ import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -4724,6 +4724,49 @@ app.post('/api/customers', requireRole(['Super Admin', 'Store Manager', 'Cashier
     console.error('Customer saved but cache refresh failed; writes disabled', error);
   }
   res.json(customer);
+});
+
+// Customer profile edits are deliberately limited to contact details.
+// Existing invoice snapshots, credit balances and payments are never rewritten.
+app.put('/api/customers/:id/profile', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
+  const { activeShopId } = getActiveShopContext(db, req);
+  const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
+  if (!customer) return res.status(404).json({ error: 'Customer not found in this shop.' });
+  if (customer.id === 'cust-walkin') {
+    return res.status(400).json({ error: 'Default walk-in customer cannot be edited.' });
+  }
+  const details = {
+    name: String(req.body?.name ?? '').trim(),
+    phone: String(req.body?.phone ?? '').trim(),
+    email: String(req.body?.email ?? '').trim(),
+    address: String(req.body?.address ?? '').trim(),
+  };
+  if (!details.name || details.name.length > 160) {
+    return res.status(400).json({ error: 'Customer name must be 1–160 characters.' });
+  }
+  if (details.phone.length > 60 || details.email.length > 254 || details.address.length > 1000) {
+    return res.status(400).json({ error: 'Customer contact details exceed the allowed length.' });
+  }
+  if (details.email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(details.email)) {
+    return res.status(400).json({ error: 'Enter a valid email or leave it blank.' });
+  }
+  try {
+    await updateCustomerContact(customer.id, activeShopId, details,
+      (req as AppRequest).authUser?.name || 'Manager');
+  } catch (error) {
+    console.error('Unable to update customer profile:', error);
+    return res.status(409).json({ error: (error as Error).message });
+  }
+  try {
+    const refreshed = await loadStateFromNormalized();
+    if (!refreshed) throw new Error('Could not reload updated customer');
+    db = refreshed;
+  } catch (error) {
+    databaseWriteHealthy = false;
+    console.error('Customer edit committed but refresh failed; writes disabled', error);
+    return res.status(503).json({ error: 'Customer saved, but refresh failed. Reload before editing again.' });
+  }
+  return res.json({ customer: db.customers.find((c) => c.id === customer.id) });
 });
 
 // Employees Routes
