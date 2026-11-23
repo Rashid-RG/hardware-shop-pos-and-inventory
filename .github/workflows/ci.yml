@@ -79,3 +79,5 @@ jobs:
         run: bash scripts/verify-postgres-backup-ci.sh
       - name: Frontend and server production build
         run: npm run build
+      - name: Build isolated hosted container image (no deployment)
+        run: docker build --tag ars-hardware-pos:ci .
