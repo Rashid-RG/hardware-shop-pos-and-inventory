@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { SalesTransaction, PurchaseOrder, Role, ManualExpense, StoreSettings } from '../types';
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
+import SupportHealthPanel from './SupportHealthPanel';
 
 interface AccountingSettingsViewProps {
   initialView?: 'accounting' | 'settings';
@@ -787,6 +788,10 @@ export default function AccountingSettingsView({
             </div>
           </form>
         </div>
+      )}
+
+      {activeTab === 'settings' && ['Super Admin', 'Store Manager'].includes(currentRole) && (
+        <SupportHealthPanel authToken={authToken} />
       )}
 
       {/* FIXED LOG OVERHEAD EXPENSE DRAWER MODAL */}
