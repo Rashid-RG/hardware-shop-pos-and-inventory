@@ -927,6 +927,41 @@ export const archiveProduct = async (
   }
 };
 
+/**
+ * Serialize product-code writes per shop and validate the complete product/variant
+ * code set inside the same database transaction as the product mutation.
+ * Unlike an API-only check, concurrent ARS saves cannot both pass this guard.
+ * All writes through createProductWithIntake and updateProductWithAudit use it.
+ */
+const assertUniqueProductCodes = async (
+  client: Awaited<ReturnType<typeof pool.connect>>,
+  product: Product
+) => {
+  if (!product.shopId) throw new Error('Product must belong to a shop.');
+  await client.query('SELECT pg_advisory_xact_lock(61421, hashtext($1::text))', [product.shopId]);
+  const existing = await client.query(
+    'SELECT id, name, sku, barcode, variants_json FROM products WHERE shop_id = $1 AND id <> $2',
+    [product.shopId, product.id]
+  );
+  const normalizeCode = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const candidateCodes = [
+    product.sku,
+    product.barcode,
+    ...(product.variants || []).flatMap((variant) => [variant.sku, variant.barcode]),
+  ].map(normalizeCode).filter(Boolean);
+  for (const row of existing.rows) {
+    const variants: Array<{ sku?: string; barcode?: string }> =
+      Array.isArray(row.variants_json) ? row.variants_json : [];
+    const existingCodes = [
+      row.sku, row.barcode,
+      ...variants.flatMap((variant) => [variant.sku, variant.barcode]),
+    ].map(normalizeCode);
+    if (candidateCodes.some((code) => existingCodes.includes(code))) {
+      throw new Error(`Product code already used by "${row.name}". Find and edit the existing product, or choose another code.`);
+    }
+  }
+};
+
 /** Atomically edit a single SKU, its stock ledger and its audit record. */
 export const updateProductWithAudit = async (
   product: Product, expectedQuantity: number, actor: string, role: string,
@@ -965,6 +1000,8 @@ export const updateProductWithAudit = async (
     )) {
       throw new Error('Cannot remove or replace existing variant IDs during product editing.');
     }
+
+    await assertUniqueProductCodes(client, product);
 
     await client.query(
       `UPDATE products SET
@@ -1020,6 +1057,7 @@ export const createProductWithIntake = async (
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await assertUniqueProductCodes(client, product);
     await client.query(
       `INSERT INTO products
        (id, shop_id, name, sku, barcode, qr_code, internal_code, image_url,
