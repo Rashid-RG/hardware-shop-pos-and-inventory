@@ -117,6 +117,8 @@ export interface Employee {
 
 export interface CartItem {
   product: Product;
+  /** Editable description for this invoice only; never updates the product master. */
+  invoiceDescription?: string;
   quantity: number;
   discount: number; // percentage
   discountAmount?: number;
@@ -144,6 +146,8 @@ export interface SalesTransaction {
   items: {
     productId: string;
     productName: string;
+    /** Snapshot printed on original and duplicate invoices. */
+    invoiceDescription?: string;
     variantId?: string;
     variantName?: string;
     variantUnit?: string;
