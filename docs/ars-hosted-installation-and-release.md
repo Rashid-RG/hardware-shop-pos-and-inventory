@@ -52,6 +52,39 @@ The first Super Admin can only be created through the server's **loopback** conn
 
 If the chosen hosting provider cannot offer this secure initial access, **do not deploy with an uninitialized login flow**. Select a compatible host or implement and test a separate secure one-time provisioning command before deployment.
 
+## Alternative: one-time server-console administrator provisioning
+
+For a container platform that cannot offer reliable loopback browser access, ARS
+now includes a **console-only**, one-time first-admin command. It is not a
+public HTTP endpoint and cannot overwrite an existing account.
+
+1. Start the approved staging server on an empty, isolated database so the
+   application can create its schema. Confirm the database is otherwise empty.
+2. From the **trusted host administrator terminal**, open an interactive console
+   in the already-running ARS container, using the provider's equivalent of:
+
+   ```bash
+   docker exec -it -e ARS_ALLOW_FIRST_ADMIN_BOOTSTRAP=true <ars-container> node scripts/provision-first-admin.mjs
+   ```
+
+   This is an **example command**, not a command already executed. The flag is
+   applied only to this console invocation; never leave it enabled for the
+   permanently running application.
+3. Enter the first administrator's name, email, and password interactively.
+   The tool hides password input, refuses non-interactive secrets, checks for
+   existing users, and creates a bcrypt-hashed Super Admin inside a
+   serialized PostgreSQL transaction.
+4. **Restart the single ARS application instance** after successful console
+   provisioning, because the existing login layer loads its user snapshot at
+   startup. Do not start a second simultaneous instance against the same DB.
+5. Sign in through HTTPS using the new administrator account and verify
+   a second attempt to bootstrap is refused. Create additional staff users
+   from authenticated system administration.
+
+Never place passwords in a command line, shell history, GitHub repository or
+CI secret output. Only perform this procedure on a new, approved staging
+database or with explicit owner authorization for a new business environment.
+
 ## Approval-controlled release sequence (no automatic production deploy)
 
 1. Develop on `codex/shop-opening-pilot`. Validate TypeScript, regression, PostgreSQL integration and build in GitHub Actions.
