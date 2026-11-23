@@ -22,13 +22,13 @@ test('customer contact edits are shop-scoped and preserve financial balances and
     await assert.rejects(
       () => updateCustomerContact(customerId, 'another-shop', {
         name: 'Wrong Tenant', phone: '', email: '', address: '',
-      }, 'CI Manager'),
+      }, 'CI Manager', 'Store Manager'),
       /Customer not found in this shop/
     );
     await updateCustomerContact(customerId, shopId, {
       name: 'Updated Wholesale Shop', phone: '0771234567',
       email: 'shop@example.test', address: 'New Lane',
-    }, 'CI Manager');
+    }, 'CI Manager', 'Store Manager');
     const result = await pool.query(
       'SELECT name, phone, email, address, credit_limit, credit_balance, loyalty_balance, purchase_count FROM customers WHERE id=$1 AND shop_id=$2',
       [customerId, shopId]
