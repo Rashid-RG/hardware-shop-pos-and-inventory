@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
-import { initArsProfitLedger, recordArsProfitAllocation } from '../backend/partnerProfit.ts';
+import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from '../backend/partnerProfit.ts';
 
 test('dynamic partner allocations reconcile to the cent and reject duplicate accounting periods on isolated PostgreSQL', async()=>{
   const url=process.env.DATABASE_URL||'';
@@ -60,5 +60,34 @@ test('dynamic partner allocations reconcile to the cent and reject duplicate acc
     const fourStill=await pool.query('SELECT COUNT(*)::integer AS n FROM ars_partner_profit_shares WHERE allocation_id=$1',
       [four.allocationId]);
     assert.equal(fourStill.rows[0].n,4);
+
+    // New agreement applies only from its effective month; earlier approval rows are immutable.
+    const agreement=await recordArsOwnershipAgreement(pool,{
+      shopId:shop,effectivePeriod:'2027-02',approvalReference:'SIGNED-2027-02',
+      approvedBy:'CI Super Admin',shares:[
+        {partnerId:ids[0],ownershipPercent:20},
+        {partnerId:ids[1],ownershipPercent:20},
+        {partnerId:ids[2],ownershipPercent:60},
+      ]
+    });
+    assert.equal(agreement.shares.length,3);
+    const newPeriod=await recordArsProfitAllocation(pool,{...options,periodKey:'2027-02'});
+    assert.deepEqual(newPeriod.shares.map(p=>p.ownershipPercent),[20,20,60]);
+    await pool.query('UPDATE ars_business_partners SET ownership_percent=50 WHERE id=$1',[ids[0]]);
+    const following=await recordArsProfitAllocation(pool,{...options,periodKey:'2027-03'});
+    assert.deepEqual(following.shares.map(p=>p.ownershipPercent),[20,20,60],
+      'Already approved agreement must override later direct ownership edits');
+    await assert.rejects(recordArsOwnershipAgreement(pool,{
+      shopId:shop,effectivePeriod:'2027-02',approvalReference:'LATE CHANGE',
+      approvedBy:'CI Super Admin',shares:[
+        {partnerId:ids[0],ownershipPercent:30},
+        {partnerId:ids[1],ownershipPercent:30},
+        {partnerId:ids[2],ownershipPercent:40},
+      ]
+    }),/after the latest approved profit allocation month/);
+    const frozen=await pool.query(
+      'SELECT ownership_basis_points FROM ars_partner_profit_shares WHERE allocation_id=$1 ORDER BY partner_id',
+      [allocation.allocationId]);
+    assert.deepEqual(frozen.rows.map(p=>Number(p.ownership_basis_points)),[3333,3333,3334]);
   } finally { await pool.end(); }
 });
