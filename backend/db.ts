@@ -1235,7 +1235,8 @@ export const updateCustomerContact = async (
   customerId: string,
   shopId: string,
   details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>,
-  actor: string
+  actor: string,
+  role: string
 ) => {
   const client = await pool.connect();
   try {
@@ -1248,8 +1249,8 @@ export const updateCustomerContact = async (
     if (!updated.rowCount) throw new Error('Customer not found in this shop.');
     await client.query(
       `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
-       VALUES ($1,$2,NOW(),$3,'Store Manager','Updated Customer',$4)`,
-      ['customer-edit-' + customerId + '-' + Date.now(), shopId, actor,
+       VALUES ($1,$2,NOW(),$3,$4,'Updated Customer',$5)`,
+      ['customer-edit-' + customerId + '-' + Date.now(), shopId, actor, role,
        'Updated customer contact details: ' + customerId]
     );
     await client.query('COMMIT');
