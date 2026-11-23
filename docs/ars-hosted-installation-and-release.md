@@ -41,6 +41,22 @@ The container expects the following **host-managed** runtime configuration:
 
 **Hosted-container first-admin protection:** the image sets `ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true` and its startup preflight requires it. Thus `GET /api/auth/setup-status` and `POST /api/auth/setup-admin` are disabled even through a local reverse proxy. Use the console-only provisioning procedure below. Direct-local non-container development retains the separate loopback-only setup path.
 
+## Automated deployment-package smoke verification (CI only)
+
+GitHub Actions now builds the same production image and runs
+`scripts/verify-hosted-container-ci.sh` **only in GitHub Actions**, against
+its own disposable `hardware_pos_hosted_smoke_ci` PostgreSQL database and a
+temporary Docker uploads volume. It checks that:
+
+- The container starts, holds a single-writer lease, and reports `/api/ready`.
+- HTTP first-admin status and account creation are both forbidden on hosted Docker.
+- An uploaded test file remains available after stopping and replacing the container.
+- No example administrator account is silently created.
+
+The test refuses to drop a database that existed before it started. CI
+verification is **not** a substitute for checking the selected staging host's
+storage persistence, backups, printing, networking, costs, and recovery.
+
 ## First administrator: important safety rule
 
 For the **local non-container app**, the first Super Admin is created only from the server's loopback connection. For the **hosted Docker image**, HTTP setup is entirely disabled to prevent reverse-proxy address confusion. Use the console procedure in the next section.
