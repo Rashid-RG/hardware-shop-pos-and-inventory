@@ -771,6 +771,7 @@ export default function POSView({
           return `
             <div class="item-row">
               <div class="item-name">${escapeHtml(itm.productName)}</div>
+              ${itm.invoiceDescription ? `<div class="item-meta">${escapeHtml(itm.invoiceDescription)}</div>` : ''}
               <div class="item-meta">${lineQty} x ${escapeHtml(formatMoney(lineUnit))} ${discountPct > 0 ? `@-${discountPct.toFixed(0)}%` : ''} ${lineDiscountAmount > 0 ? `@-${escapeHtml(formatMoney(lineDiscountAmount))}` : ''}</div>
               <div class="item-line-total">${escapeHtml(formatMoney(lineTotal))}</div>
             </div>
@@ -1024,7 +1025,7 @@ export default function POSView({
             return `
               <tr>
                 <td>${escapeHtml(itemCode)}</td>
-                <td>${escapeHtml(itm.productName)}</td>
+                <td>${escapeHtml(itm.productName)}${itm.invoiceDescription ? `<div class="item-code">${escapeHtml(itm.invoiceDescription)}</div>` : ''}</td>
                 <td>${escapeHtml(brandLabel)}</td>
                 <td>${escapeHtml(variantLabel)}</td>
                 <td>${escapeHtml(unitLabel)}</td>
@@ -1225,7 +1226,7 @@ export default function POSView({
         const lineTotal = Math.max(0, percentAdjusted - lineDiscountAmount);
         return `
           <tr>
-            <td>${escapeHtml(itm.productName)}${isWholesaleShop ? `<div class="item-code">Product Code: ${escapeHtml(itm.productId)}</div>` : ''}</td>
+            <td>${escapeHtml(itm.productName)}${itm.invoiceDescription ? `<div class="item-code">${escapeHtml(itm.invoiceDescription)}</div>` : ''}${isWholesaleShop ? `<div class="item-code">Product Code: ${escapeHtml(itm.productId)}</div>` : ''}</td>
             <td class="right">${lineQty}</td>
             <td class="right">${escapeHtml(formatMoney(lineUnit))}</td>
             <td class="right">${discountPct > 0 ? `${discountPct.toFixed(0)}%` : '-'}${lineDiscountAmount > 0 ? ` / ${escapeHtml(formatMoney(lineDiscountAmount))}` : ''}</td>
@@ -2563,6 +2564,7 @@ export default function POSView({
                           <div key={i} className="grid grid-cols-3 text-[11px] leading-tight">
                             <span className="col-span-2 text-slate-900">
                               {itm.productName} <br />
+                              {itm.invoiceDescription && <span className="block text-[10px] text-slate-500">{itm.invoiceDescription}</span>}
                               <span className="text-[10px] text-slate-500 font-mono">
                                 {itm.quantity} x {currencySymbol}{itm.sellingPrice.toFixed(2)}
                                 {itm.discount > 0 && ` (Disc: -${itm.discount}%)`}
