@@ -1622,11 +1622,11 @@ export default function POSView({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
-        {/* LEFT: Products, Searches, Filters (7 Cols) */}
-        <div className={`lg:col-span-6 flex flex-col space-y-3 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+        {/* Primary product workspace: 8 of 12 desktop columns */}
+        <div className={`lg:col-span-8 flex flex-col space-y-3 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Search header bar */}
-        <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 flex flex-col sm:flex-row gap-2 items-center justify-between">
-          <div className="relative w-full sm:w-80">
+        <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 flex flex-wrap gap-2 items-center justify-between">
+          <div className="relative min-w-[190px] flex-1">
             <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
             <input
               id="pos-search-input"
@@ -1688,7 +1688,7 @@ export default function POSView({
         </div>
 
         {/* Dynamic Products Grid */}
-        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 gap-2 overflow-y-auto max-h-[580px] pr-1">
+        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 overflow-y-auto max-h-[min(65dvh,680px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
             const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
@@ -1841,8 +1841,8 @@ export default function POSView({
         )}
       </div>
 
-      {/* RIGHT: Register Cart panel & Checkout Checkout (5 Cols) */}
-      <div className={`lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm p-3 sm:p-4 flex flex-col min-h-[400px] lg:h-[calc(100dvh-238px)] lg:min-h-[390px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+      {/* Compact order summary: 4 of 12 desktop columns */}
+      <div className={`lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-3 sm:p-4 flex flex-col min-h-[400px] lg:h-[calc(100dvh-238px)] lg:min-h-[390px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           {/* Active Operator Banner */}
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
@@ -1863,7 +1863,7 @@ export default function POSView({
           )}
 
           {/* Required bill assignment is shown in summary, edited in focused dialogs. */}
-          <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2" aria-label="Invoice assignment">
+          <div className="mb-3 grid grid-cols-1 gap-2 xl:grid-cols-2" aria-label="Invoice assignment">
             <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setDraftCustomerId(selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id);setSetupDialog('customer');}}
               className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
