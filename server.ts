@@ -4752,7 +4752,8 @@ app.put('/api/customers/:id/profile', requireRole(['Super Admin', 'Store Manager
   }
   try {
     await updateCustomerContact(customer.id, activeShopId, details,
-      (req as AppRequest).authUser?.name || 'Manager');
+      (req as AppRequest).authUser?.name || 'Manager',
+      (req as AppRequest).authUser?.role || 'Store Manager');
   } catch (error) {
     console.error('Unable to update customer profile:', error);
     return res.status(409).json({ error: (error as Error).message });
