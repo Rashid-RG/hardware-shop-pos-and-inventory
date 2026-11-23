@@ -126,7 +126,10 @@ export const renderArsInvoicePdf = async (
         : String(tx.paymentStatus || '').toUpperCase() === 'PAID' ? Number(tx.total) : null;
     const summary: [string, string][] = [
       ['Subtotal', formatMoney(Number(tx.subtotal || 0))],
-      ['Discount', formatMoney(Number(tx.discountAmount || 0))],
+      [tx.wholesaleMeta?.invoiceDiscountMode === 'percent' && Number.isFinite(Number(tx.wholesaleMeta.invoiceDiscountPercent))
+        ? `Discount (${Number(tx.wholesaleMeta.invoiceDiscountPercent).toLocaleString('en-US', { maximumFractionDigits: 2 })}%)`
+        : tx.wholesaleMeta?.invoiceDiscountMode === 'amount' ? 'Discount (Fixed)' : 'Discount',
+        formatMoney(Number(tx.discountAmount || 0))],
       ['Tax', formatMoney(Number(tx.tax || 0))],
       ['Grand Total', formatMoney(Number(tx.total || 0))],
       ['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)],
