@@ -1144,6 +1144,7 @@ export default function App() {
                   customers={customers}
                   employees={employees}
                   customerCreditPayments={customerCreditPayments}
+                  transactions={transactions}
                   currentRole={currentRole}
                   onAddCustomer={handleAddCustomer}
                   onAddEmployee={handleAddEmployee}
