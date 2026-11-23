@@ -113,7 +113,7 @@ echo 'Mounted uploads survive full container replacement.'
 docker exec "$name" sh -c "printf 'ars-ci-product-image' > /app/uploads/products/ci-product-file.txt"
 docker stop -t 15 "$name" >/dev/null
 # Archive content comes exclusively from the isolated CI-owned volume.
-docker run --rm --mount "type=volume,source=$volume,target=/source,readonly" \\
+docker run --rm --mount "type=volume,source=$volume,target=/source,readonly" \
   node:22-bookworm-slim tar -C /source -cf - shops products > "$backup_dir/uploads.tar"
 test -s "$backup_dir/uploads.tar"
 tar -tf "$backup_dir/uploads.tar" | grep -qx 'shops/ci-smoke-file.txt'
@@ -121,12 +121,12 @@ tar -tf "$backup_dir/uploads.tar" | grep -qx 'products/ci-product-file.txt'
 # Restore to a new and previously nonexistent volume. Never restore in place.
 docker volume create "$restore_volume" >/dev/null
 created_restore_volume=true
-docker run --rm -i --mount "type=volume,source=$restore_volume,target=/restore" \\
+docker run --rm -i --mount "type=volume,source=$restore_volume,target=/restore" \
   node:22-bookworm-slim tar -C /restore -xf - < "$backup_dir/uploads.tar"
 # Compare the two separately mounted volumes without writing either source.
-original_hashes="$(docker run --rm --mount "type=volume,source=$volume,target=/volume,readonly" \\
+original_hashes="$(docker run --rm --mount "type=volume,source=$volume,target=/volume,readonly" \
   node:22-bookworm-slim sh -c 'cd /volume && sha256sum shops/ci-smoke-file.txt products/ci-product-file.txt')"
-restored_hashes="$(docker run --rm --mount "type=volume,source=$restore_volume,target=/volume,readonly" \\
+restored_hashes="$(docker run --rm --mount "type=volume,source=$restore_volume,target=/volume,readonly" \
   node:22-bookworm-slim sh -c 'cd /volume && sha256sum shops/ci-smoke-file.txt products/ci-product-file.txt')"
 [[ "$original_hashes" == "$restored_hashes" ]] || {
   echo 'Restored upload files differ from the archived originals.' >&2
