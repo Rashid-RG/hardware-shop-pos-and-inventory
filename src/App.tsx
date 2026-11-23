@@ -405,6 +405,21 @@ export default function App() {
     await handleRefreshDb();
   };
 
+  const handleUpdateCustomer = async (
+    customerId: string,
+    details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>
+  ) => {
+    const res = await apiRequest(`/api/customers/${encodeURIComponent(customerId)}/profile`, {
+      method: 'PUT',
+      body: JSON.stringify(details),
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.error || 'Could not update customer details');
+    }
+    await handleRefreshDb();
+  };
+
   // Employee Add
   const handleAddEmployee = async (payload: Omit<Employee, 'id' | 'performanceScore'>) => {
     const res = await apiRequest('/api/employees', {
@@ -1147,6 +1162,7 @@ export default function App() {
                   transactions={transactions}
                   currentRole={currentRole}
                   onAddCustomer={handleAddCustomer}
+                  onUpdateCustomer={handleUpdateCustomer}
                   onAddEmployee={handleAddEmployee}
                   onSetCreditLimit={handleSetCreditLimit}
                   onAddCreditPayment={handleAddCreditPayment}
