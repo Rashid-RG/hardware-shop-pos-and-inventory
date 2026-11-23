@@ -10,7 +10,7 @@ test('ARS partner registration does not enforce a fixed maximum',()=>{
   assert.doesNotMatch(server,/ARS has a maximum of three partners/);
   assert.doesNotMatch(server,/partners.rowCount>=3/);
   assert.doesNotMatch(ledger,/Exactly three registered partners are required/);
-  assert.match(ledger,/At least one active partner is required for allocation/);
+  assert.match(ledger,/At least one partner is required for allocation/);
   assert.match(ledger,/AND is_active=TRUE ORDER BY id FOR UPDATE/);
   assert.match(ui,/Partners \(\{activePartners.length\} active/);
   assert.doesNotMatch(ui,/partners.length<3/);
