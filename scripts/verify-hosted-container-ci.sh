@@ -14,11 +14,13 @@ admin_url='postgresql://postgres:ci-test-only-password@127.0.0.1:5432/postgres'
 name="ars-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 volume="ars-smoke-uploads-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 port=39741
+created_db=false
 
 cleanup() {
   docker rm -f "$name" >/dev/null 2>&1 || true
   docker volume rm "$volume" >/dev/null 2>&1 || true
-  ARS_SMOKE_ADMIN_URL="$admin_url" ARS_SMOKE_DB_NAME="$db_name" node --input-type=module <<'EOF' || true
+  if [[ "$created_db" == "true" ]]; then
+    ARS_SMOKE_ADMIN_URL="$admin_url" ARS_SMOKE_DB_NAME="$db_name" node --input-type=module <<'EOF' || true
 import pg from 'pg';
 const dbName=process.env.ARS_SMOKE_DB_NAME;
 if (dbName !== 'hardware_pos_hosted_smoke_ci') process.exit(1);
@@ -28,6 +30,7 @@ try {
   await client.query('DROP DATABASE IF EXISTS "' + dbName + '" WITH (FORCE)');
 } finally { await client.end(); }
 EOF
+  fi
 }
 trap cleanup EXIT
 
@@ -44,6 +47,7 @@ try {
 } finally { await client.end(); }
 EOF
 
+created_db=true
 docker volume create "$volume" >/dev/null
 start_container() {
   docker run --rm -d --name "$name" --network host \
