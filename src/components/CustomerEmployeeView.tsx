@@ -565,8 +565,10 @@ export default function CustomerEmployeeView({
                 <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Outstanding balance</p><p className="mt-1 text-lg font-bold text-rose-700">{formatMoney(Number(selectedCustomer.creditBalance || 0))}</p></div>
                 <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Recorded credit payments</p><p className="mt-1 text-lg font-bold">{formatMoney(selectedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</p></div>
               </section>
-              <CustomerLedgerPanel key={selectedCustomer.id} customer={selectedCustomer}
-                invoices={selectedInvoices} payments={selectedPayments} />
+              <div key={selectedCustomer.id}>
+                <CustomerLedgerPanel customer={selectedCustomer}
+                  invoices={selectedInvoices} payments={selectedPayments} />
+              </div>
               <section className="rounded-xl border border-slate-200 bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div><h3 className="text-lg font-bold">Complete customer activity</h3>
