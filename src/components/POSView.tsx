@@ -8,7 +8,6 @@ import {
   Trash2,
   Plus,
   Minus,
-  Sparkles,
   Ticket,
   UserCheck,
   CreditCard,
@@ -16,7 +15,6 @@ import {
   DollarSign,
   Printer,
   X,
-  PlusSquare,
   BadgeAlert,
   ScanLine,
   BookUser,
@@ -126,18 +124,12 @@ export default function POSView({
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
 
   // Customer & Cart states
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer>(
-    customers.find((c) => c.id !== 'cust-walkin') || {
-      id: '',
-      name: '',
-      phone: '-',
-      email: '-',
-      address: '-',
-      loyaltyBalance: 0,
-      purchaseCount: 0,
-    }
-  );
-  const [billingCustomerName, setBillingCustomerName] = useState<string>(customers.find((c) => c.id !== 'cust-walkin')?.name || '');
+  // Never silently assign an invoice to the first customer in the database.
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer>({
+    id: '', name: '', phone: '', email: '', address: '',
+    loyaltyBalance: 0, purchaseCount: 0,
+  });
+  const [billingCustomerName, setBillingCustomerName] = useState<string>('');
   const [customerSearch, setCustomerSearch] = useState('');
   const [billingCustomerPhone, setBillingCustomerPhone] = useState<string>('');
   const [billingCustomerAddress, setBillingCustomerAddress] = useState<string>('');
@@ -165,10 +157,6 @@ export default function POSView({
   const [barcodeNotification, setBarcodeNotification] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
   const [lastScannedItem, setLastScannedItem] = useState<{ label: string; code: string } | null>(null);
   const [showQRFeature, setShowQRFeature] = useState(false);
-
-  // AI Cross sell state
-  const [aiCrossSells, setAiCrossSells] = useState<any[]>([]);
-  const [isLoadingCross, setIsLoadingCross] = useState(false);
 
   // Completed transaction receipt modal
   const [receiptModel, setReceiptModel] = useState<SalesTransaction | null>(null);
@@ -214,7 +202,7 @@ export default function POSView({
     setBillingCustomerAddress(normalize(selectedCustomer.address));
   }, [selectedCustomer.id]);
 
-  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId && (c.name + ' ' + c.phone + ' ' + c.address).toLowerCase().includes(customerSearch.trim().toLowerCase()));
+  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId && [c.name, c.id, c.phone, c.email, c.address].some((value) => String(value || '').toLowerCase().includes(customerSearch.trim().toLowerCase())));
 
   const categories = [
     'All',
@@ -246,38 +234,6 @@ export default function POSView({
     const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
-
-  // Fetch AI cross sells when the cart contents change
-  useEffect(() => {
-    if (cart.length === 0) {
-      setAiCrossSells([]);
-      return;
-    }
-
-    const fetchCrossSells = async () => {
-      setIsLoadingCross(true);
-      try {
-        const itemIds = cart.map((i) => i.product.id);
-        const res = await authFetch('/api/ai/predict-complementary', {
-          method: 'POST',
-          body: JSON.stringify({ currentCartIds: itemIds }),
-        });
-        const data = await res.json();
-        setAiCrossSells(data.suggestions || []);
-      } catch (err) {
-        console.error('Failed to generate complementary products suggestions:', err);
-      } finally {
-        setIsLoadingCross(false);
-      }
-    };
-
-    // Debounce a little bit
-    const delay = setTimeout(() => {
-      fetchCrossSells();
-    }, 450);
-
-    return () => clearTimeout(delay);
-  }, [cart]);
 
   useEffect(() => {
     let lastKeyAt = 0;
@@ -1599,14 +1555,6 @@ export default function POSView({
     }
   };
 
-  // Quick action: quick add complementary suggestion item
-  const handleAddSuggested = (productId: string) => {
-    const match = products.find((p) => p.id === productId);
-    if (match) {
-      addToCart(match, match.variants?.[0]);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-3 min-h-0 select-none motion-safe:animate-fade-in">
       {/* Mobile view selector (visible only on lg:hidden) */}
@@ -1808,53 +1756,6 @@ export default function POSView({
           )}
         </div>
 
-        {/* AI Cross Selling Widget (Only shows up when items are in cart) */}
-        {cart.length > 0 && (
-          <div id="ai-smart-suggest-section" className="bg-slate-900 text-slate-100 rounded-xl p-4 border border-slate-800 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full pointer-events-none"></div>
-
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-              <h4 className="text-xs font-sans font-bold text-slate-100 uppercase tracking-wider">
-                Partner AI Companion Sales Matches
-              </h4>
-            </div>
-
-            {isLoadingCross ? (
-              <div className="text-center py-3 text-slate-400 text-xs flex items-center justify-center gap-2 font-mono">
-                <div className="h-3 w-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                Analyzing customer builder cycle trends...
-              </div>
-            ) : aiCrossSells.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {aiCrossSells.map((sug: any) => (
-                  <div
-                    key={sug.productId}
-                    onClick={() => handleAddSuggested(sug.productId)}
-                    className="p-2.5 bg-slate-950/70 hover:bg-slate-950 rounded-lg border border-slate-800 shadow-xs hover:border-indigo-400/40 cursor-pointer text-left transition group"
-                  >
-                    <p className="font-sans font-semibold text-slate-200 text-[11px] truncate group-hover:text-indigo-400">
-                      {sug.name}
-                    </p>
-                    <p className="text-[9px] text-slate-500 font-mono mt-0.5 line-clamp-2">
-                      {sug.reason}
-                    </p>
-                    <div className="mt-2 flex items-center justify-between text-[10px]">
-                      <span className="font-mono text-indigo-400 font-bold">{formatMoney(Number(sug.sellingPrice || 0))}</span>
-                      <span className="text-slate-400 uppercase font-bold tracking-tight text-[8px] flex items-center gap-0.5">
-                        <PlusSquare className="w-3 h-3 text-indigo-400" /> Quick Add
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[11px] text-slate-400 font-sans">
-                Cart contains specialized builder elements. Cross-selling predictions standby.
-              </p>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Compact order summary: 4 of 12 desktop columns */}
@@ -2086,7 +1987,7 @@ export default function POSView({
               {setupDialog === 'customer' ? (
                 <div className="space-y-3">
                   <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-search">
-                    Search shop by name, phone or address
+                    Search shop by name, customer ID, phone, email or address
                   </label>
                   <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
                     onChange={event => setCustomerSearch(event.target.value)}
