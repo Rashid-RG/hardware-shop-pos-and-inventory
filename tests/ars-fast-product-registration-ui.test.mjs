@@ -24,7 +24,7 @@ test('simple product creation does not silently override entered price or stock 
   assert.match(open, /setVariants\(\[\]\)/);
   assert.doesNotMatch(open, /Default Variant/);
   assert.match(product, /const totalVariantQty = hasVariants/);
-  assert.match(product, /costPrice: Number\(primaryVariant\?\.costPrice \|\| costPrice\)/);
+  assert.match(product, /costPrice: Number\(primaryVariant\?\.costPrice \?\? costPrice\)/);
   assert.match(server, /const quantity = variants\.length > 0 \? variants\.reduce/);
 });
 test('basic form uses internal generated scan codes without inventing manufacturer EAN', () => {
