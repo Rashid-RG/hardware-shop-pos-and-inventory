@@ -29,8 +29,8 @@ test('filtered stock searches show all matching products and movements', () => {
   assert.match(inventory, /isLedgerFiltered \? filteredLogs : filteredLogs\.slice/);
   assert.match(inventory, /logDateFrom/);
   assert.match(inventory, /logDateTo/);
-  assert.match(inventory, /ledger-export-csv/);
-  assert.match(inventory, /filteredLogs\.map\(\(log\) => \[/);
+  assert.match(inventory, /report=\{ledgerReport\}/);
+  assert.match(inventory, /rows:filteredLogs\.map/);
 });
 
 test('stock history can open in its own full-height workspace without losing filters', () => {
