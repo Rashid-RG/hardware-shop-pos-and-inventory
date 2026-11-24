@@ -61,6 +61,7 @@ ars_tables=(
   ars_import_shipments ars_business_partners ars_partner_capital_entries
   ars_receipt_batches ars_receipt_batch_items
   ars_packaging_drafts
+  ars_legacy_sale_return_units
   ars_partner_profit_allocations ars_partner_profit_shares
 )
 for table in "${ars_tables[@]}"; do
