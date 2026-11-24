@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Copy, DatabaseBackup } from 'lucide-react';
+import { Copy, DatabaseBackup, ShieldCheck, Cloud, HardDrive, RefreshCw } from 'lucide-react';
 
 const backupScript = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-local-postgres.ps1';
 
@@ -25,6 +25,36 @@ function Command({ command }: { command: string }) {
 }
 
 export default function BackupRecoveryView({ authToken }: { authToken: string }) {
+  const [local, setLocal] = useState<{enabled: boolean; running: boolean; platform: string} | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{archive: string; verifiedAt: string} | null>(null);
+  const [error, setError] = useState('');
+  const headers = { Authorization: 'Bearer ' + authToken };
+  React.useEffect(() => {
+    const controller = new AbortController();
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/backup/local-status', { headers, signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!controller.signal.aborted) setLocal(data);
+      } catch { if (!controller.signal.aborted) setLocal(null); }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [authToken]);
+  async function runBackup() {
+    if (busy || !local?.enabled || local.running) return;
+    setBusy(true); setError(''); setResult(null);
+    try {
+      const response = await fetch('/api/backup/local-run', { method: 'POST', headers });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Backup failed.');
+      setResult({ archive: data.archive, verifiedAt: data.verifiedAt });
+    } catch (err) { setError(err instanceof Error ? err.message : 'Backup failed.'); }
+    finally { setBusy(false); }
+  }
   const [status, setStatus] = useState<{phase: string; verifiedAt: string | null; attemptedAt: string | null} | null>(null);
   React.useEffect(() => {
     const controller = new AbortController();
@@ -57,8 +87,21 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
   return <div className="space-y-4 text-sm text-slate-700">
     <header className="rounded-xl bg-[#152945] p-5 text-white">
       <h2 className="flex items-center gap-2 text-xl font-bold"><DatabaseBackup /> Backup &amp; recovery</h2>
-      <p className="mt-2 text-slate-200">Run these commands from the ARS project folder on the database computer.</p>
+      <p className="mt-1 text-slate-200">Protect business records and uploaded files. Create and verify a local backup from this workspace.</p>
     </header>
+    <div className="grid gap-3 lg:grid-cols-3">
+      <section className="rounded-xl border border-slate-200 bg-white p-4 lg:col-span-2">
+        <div className="flex items-start gap-3"><HardDrive className="h-6 w-6 text-amber-700"/><div className="flex-1"><h3 className="font-bold text-slate-900">Local database backup</h3><p className="mt-1 text-xs text-slate-600">Creates the database archive and available uploads, then verifies their checksums.</p></div></div>
+        <button type="button" disabled={busy || !local?.enabled || local.running} onClick={runBackup} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-3 font-bold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><DatabaseBackup size={18}/>{busy || local?.running ? 'Backup in progress…' : 'Back up now'}</button>
+        {!local?.enabled && <p className="mt-2 text-xs text-slate-600">{local ? 'One-click backup is disabled on this host. Enable it in the server configuration first.' : 'Checking backup service availability…'}</p>}
+        {busy && <p role="status" className="mt-2 flex items-center gap-2 text-xs"><RefreshCw className="h-4 w-4 animate-spin"/> Creating and verifying the backup. Keep this page open.</p>}
+        {error && <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p>}
+        {result && <div role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-900"><strong className="flex items-center gap-2"><ShieldCheck size={16}/> Backup created and checksums verified</strong><p className="mt-1 break-all">{result.archive}</p><p>{new Date(result.verifiedAt).toLocaleString()} · Saved on database computer</p><p className="mt-1">A separate recovery test is still recommended.</p></div>}
+      </section>
+      <section className="rounded-xl border border-slate-200 bg-white p-4"><Cloud className="h-6 w-6 text-slate-600"/><h3 className="mt-2 font-bold text-slate-900">Google Drive backup</h3><p className="mt-1 text-xs">{status ? labels[status.phase] || 'Unknown status' : 'Checking status…'}</p><p className="mt-2 text-xs text-slate-500">Cloud setup and scheduling remain separate from the local backup button.</p></section>
+    </div>
+    <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-slate-800">Advanced setup, verification and recovery tools</summary>
+    <div className="mt-4 space-y-4">
     <label className="block text-sm font-semibold">Database computer
       <select value={mint ? 'mint' : 'windows'} onChange={event => setMint(event.target.value === 'mint')} className="ml-2 rounded border px-2 py-1">
         <option value="mint">Linux Mint</option><option value="windows">Windows</option>
@@ -116,5 +159,6 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <aside className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
       <strong>Recovering after a failure?</strong> Stop entering transactions, preserve the original database, and review the isolated copy before switching the POS connection. The drill leaves the working database and uploads in place.
     </aside>
+    </div></details>
   </div>;
 }
