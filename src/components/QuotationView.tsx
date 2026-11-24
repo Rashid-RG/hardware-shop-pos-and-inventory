@@ -14,7 +14,11 @@ import {
 } from 'lucide-react';
 import { Product, Customer, Employee, Quotation, QuotationItem, StoreSettings } from '../types';
 
+import type { EstimateDraft } from './CalculatorsView';
+
 interface QuotationViewProps {
+  initialDraft?: EstimateDraft | null;
+  onDraftOpened?: () => void;
   products: Product[];
   customers: Customer[];
   employees: Employee[];
@@ -34,6 +38,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function QuotationView({
+  initialDraft,
+  onDraftOpened,
   products,
   customers,
   employees,
@@ -62,15 +68,18 @@ export default function QuotationView({
     });
   };
 
-  const [isComposing, setIsComposing] = useState(false);
+  const [isComposing, setIsComposing] = useState(!!initialDraft);
+  React.useEffect(() => {
+    if (initialDraft) onDraftOpened?.();
+  }, [initialDraft, onDraftOpened]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
   // Form state
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [quoteItems, setQuoteItems] = useState<QuotationItem[]>([]);
+  const [quoteItems, setQuoteItems] = useState<QuotationItem[]>(initialDraft ? [initialDraft.item] : []);
   const [quoteDiscount, setQuoteDiscount] = useState(0);
-  const [quoteNotes, setQuoteNotes] = useState('');
+  const [quoteNotes, setQuoteNotes] = useState(initialDraft?.notes ?? '');
   const [validUntil, setValidUntil] = useState('');
   const [prodSearch, setProdSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);

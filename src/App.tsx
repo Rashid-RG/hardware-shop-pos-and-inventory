@@ -19,6 +19,7 @@ const DBAdminView = lazy(() => import('./components/DBAdminView'));
 const ReportsView = lazy(() => import('./components/ReportsView'));
 const QuotationView = lazy(() => import('./components/QuotationView'));
 const CashDrawerView = lazy(() => import('./components/CashDrawerView'));
+import type { EstimateDraft } from './components/CalculatorsView';
 const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
@@ -28,6 +29,7 @@ const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 
 export default function App() {
+  const [estimateDraft, setEstimateDraft] = useState<EstimateDraft | null>(null);
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('ars_sidebar_collapsed') === 'true');
@@ -1179,6 +1181,8 @@ export default function App() {
 
               {activeTab === 'quotations' && (
                 <QuotationView
+                  initialDraft={estimateDraft}
+                  onDraftOpened={() => setEstimateDraft(null)}
                   products={products}
                   customers={customers}
                   employees={employees}
@@ -1220,6 +1224,10 @@ export default function App() {
 
               {activeTab === 'calculators' && (
                 <CalculatorsView
+                  onQuote={['Super Admin', 'Store Manager', 'Cashier'].includes(currentRole) ? draft => {
+                    setEstimateDraft(draft);
+                    setActiveTab('quotations');
+                  } : undefined}
                   products={products}
                   taxConfig={taxConfig}
                 />
