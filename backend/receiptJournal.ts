@@ -1,10 +1,10 @@
+import {buildImportReceiptJournal,verifiedImportChargeBalance} from './importCapitalization';
 import {supplierReceiptCredits} from './supplierAdvance';
 import type {PoolClient} from 'pg';
 import {moneyCents} from './generalLedger';
 import {postJournal} from './ledgerPosting';
 
 const signed=(s:string)=>s.startsWith('-')?-moneyCents(s.slice(1)):moneyCents(s);
-const decimal=(n:bigint)=>(n/100n).toString()+'.'+(n%100n).toString().padStart(2,'0');
 /** Post one receipt batch, never the entire PO again on final receipt.
  * Freight/customs counterparties and inventory rounding need explicit classification;
  * do not silently treat them as goods supplier debt. */
@@ -20,7 +20,7 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
  WHERE r.batch_id=$2`,[shopId,batchId,batch.purchase_order_id])).rows;
  const count=(await client.query('SELECT count(*)::int AS n FROM ars_receipt_batch_items WHERE batch_id=$1',[batchId])).rows[0].n;
  if(!rows.length||rows.length!==count)throw Error('Receipt accounting line coverage incomplete.');
- let goods=0n,landed=0n;
+ let goods=0n,landed=0n,rounding=0n;
  for(const row of rows){
   const quantity=Number(row.quantity),factor=Number(row.base_units_per_purchase_unit??1);
   if(!Number.isSafeInteger(quantity)||quantity<=0||!Number.isSafeInteger(factor)||factor<=0)throw Error('Invalid receipt unit conversion.');
@@ -29,7 +29,8 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
   goods+=cost;
   if(row.landed_cost!==null){
    const amount=moneyCents(row.landed_cost);
-   if(amount<cost||signed(row.rounding)!==0n)throw Error('Landed cost rounding or valuation adjustment requires verified accounting.');
+   if(amount<cost||row.rounding===null)throw Error('Verified landed cost and rounding required.');
+   rounding+=signed(row.rounding);
    landed+=amount;
   }else{
    const variant=row.variant_id&&Array.isArray(row.variants_json)?row.variants_json.find((v:any)=>v.id===row.variant_id):null;
@@ -38,11 +39,14 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
    landed+=cost;
   }
  }
- if(landed!==goods)throw Error('Import charges require documented payable or paid-cost allocation before posting.');
  const map=async(kind:string,classification:string)=>{
   const r=(await client.query("SELECT a.code FROM ars_gl_account_mappings m JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code WHERE m.shop_id=$1 AND m.mapping_kind=$2 AND m.source_id='control' AND a.kind=$3 AND a.active FOR SHARE OF a",[shopId,kind,classification])).rows[0];
   if(!r)throw Error('Missing receipt accounting mapping: '+kind);return r.code as string;
  };
  const inventory=await map('inventory','Asset'),credits=await supplierReceiptCredits(client,shopId,batch.purchase_order_id,goods);
- return {posted:true,...await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines:[{accountCode:inventory,debit:decimal(goods),credit:'0.00'},...credits]})};
+ const expense=landed>goods?await map('operatingExpense','Expense'):'';
+ const roundingAccount=rounding!==0n?await map('inventoryRounding','Expense'):'';
+ const verifiedUnusedCharges=landed>goods?await verifiedImportChargeBalance(client,shopId,batch.purchase_order_id,expense):0n;
+ const lines=buildImportReceiptJournal({goods,landed,rounding,verifiedUnusedCharges,goodsCredits:credits,inventoryAccount:inventory,expenseAccount:expense,roundingAccount});
+ return {posted:true,...await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines})};
 }
