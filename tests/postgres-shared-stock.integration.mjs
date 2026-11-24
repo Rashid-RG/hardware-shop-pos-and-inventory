@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci')throw Error('Refusing shared-stock test outside local hardware_pos_ci');
-const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder}=await import('../backend/db.ts');
+const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder,checkoutTransaction,refundTransaction}=await import('../backend/db.ts');
 const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation}=await import('../backend/packagingDrafts.ts');
 const {initSharedStockSchema,deductSharedSale,restoreSharedSale}=await import('../backend/sharedStock.ts');
 test('shared packaging activation, purchase, mixed sale and rollback against PostgreSQL',async()=>{
@@ -48,5 +48,20 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
    await assert.rejects(()=>deductSharedSale(client,'other-shop',product,'piece',1),/unavailable/);
    await client.query('ROLLBACK');
   }finally{await client.query('ROLLBACK').catch(()=>{});client.release();}
+  const invoiceId='shared-invoice-'+suffix;
+  const tx={id:invoiceId,shopId:shop,invoiceNumber:invoiceId,date:new Date().toISOString(),customerName:'Walk-in Customer',cashierName:'CI Cashier',items:[
+    {productId:product,productName:'Door lock',sellingUnitId:'box',quantity:2,sellingPrice:5400,costPrice:3600,discount:0},
+    {productId:product,productName:'Door lock',sellingUnitId:'piece',quantity:4,sellingPrice:500,costPrice:300,discount:0}
+  ],subtotal:12800,tax:0,discountAmount:0,total:12800,paymentMethod:'Cash',paymentStatus:'PAID',status:'Completed',cashReceived:12800,changeDue:0};
+  await checkoutTransaction(tx,'Cashier','CI Shop');
+  assert.equal(await stock(),76);
+  const lines=(await pool.query('SELECT selling_unit_id,selling_unit_label,base_units_per_sale_unit,quantity,selling_price,cost_price FROM sales_transaction_items WHERE transaction_id=$1 ORDER BY selling_unit_id',[invoiceId])).rows;
+  assert.equal(lines.length,2);
+  assert.deepEqual(lines.map(l=>[l.selling_unit_id,l.selling_unit_label,Number(l.base_units_per_sale_unit),Number(l.quantity),Number(l.selling_price),Number(l.cost_price)]),[['box','Box',12,2,5400,3600],['piece','Piece',1,4,500,300]]);
+  assert.equal(lines.reduce((sum,l)=>sum+Number(l.quantity)*(Number(l.selling_price)-Number(l.cost_price)),0),4400);
+  await refundTransaction(invoiceId,shop,'CI full invoice return','CI Manager','Store Manager');
+  assert.equal(await stock(),104);
+  await assert.rejects(()=>refundTransaction(invoiceId,shop,'Duplicate return','CI Manager','Store Manager'),/already been refunded/);
+  assert.equal(await stock(),104);
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
