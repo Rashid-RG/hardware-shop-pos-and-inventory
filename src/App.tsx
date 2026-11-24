@@ -27,6 +27,15 @@ import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder,
 type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
+const ACTIVE_TAB_SESSION_KEY = 'ars_active_workspace';
+const permittedTabs = (role: Role): AppTab[] => {
+  const tabs: AppTab[] = ['dashboard', 'calculators'];
+  if (['Super Admin', 'Store Manager', 'Cashier'].includes(role)) tabs.push('pos', 'quotations', 'shifts', 'customers', 'reports');
+  if (['Super Admin', 'Store Manager', 'Inventory Staff'].includes(role)) tabs.push('products', 'inventory', 'purchases', 'warehouse-receiving');
+  if (['Super Admin', 'Store Manager'].includes(role)) tabs.push('imports', 'shipments', 'staff', 'accounting', 'company-profile');
+  if (role === 'Super Admin') tabs.push('partners', 'backup-recovery', 'db-admin');
+  return tabs;
+};
 
 export default function App() {
   const [estimateDraft, setEstimateDraft] = useState<EstimateDraft | null>(null);
@@ -175,6 +184,10 @@ export default function App() {
       if (parsed?.token && parsed?.user) {
         setSessionToken(parsed.token);
         setAuthUser(parsed.user);
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(ACTIVE_TAB_SESSION_KEY) || 'null');
+          if (saved?.owner === parsed.user.email && permittedTabs(parsed.user.role).includes(saved.tab)) setActiveTab(saved.tab);
+        } catch { /* Invalid workspace preference falls back to dashboard. */ }
         setSelectedShopId(parsed.user.scopedShopId || parsed.user.allowedShopIds?.[0] || sessionStorage.getItem(SHOP_SESSION_KEY) || '');
       }
     } catch {
@@ -197,6 +210,17 @@ export default function App() {
     handleRefreshDb();
   }, [selectedShopId]);
 
+  useEffect(() => {
+    if (!authUser || !sessionToken) return;
+    if (!permittedTabs(authUser.role).includes(activeTab)) {
+      setActiveTab('dashboard');
+      return;
+    }
+    try {
+      sessionStorage.setItem(ACTIVE_TAB_SESSION_KEY, JSON.stringify({ owner: authUser.email, tab: activeTab }));
+    } catch { /* Navigation still works when browser storage is unavailable. */ }
+  }, [authUser, sessionToken, activeTab]);
+
   const handleLogout = () => {
     // Revoke this exact session on the server before clearing its browser copy.
     // The server keeps the revocation in PostgreSQL across restarts.
@@ -210,6 +234,7 @@ export default function App() {
     }
     sessionStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(SHOP_SESSION_KEY);
+    sessionStorage.removeItem(ACTIVE_TAB_SESSION_KEY);
     setSessionToken('');
     setSelectedShopId('');
     setAuthUser(null);
