@@ -435,7 +435,9 @@ export const initDbTables = async () => {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
-      CREATE TABLE IF NOT EXISTS invoice_print_logs (
+      ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS invoice_id TEXT;
+
+    CREATE TABLE IF NOT EXISTS invoice_print_logs (
         id TEXT PRIMARY KEY,
         shop_id TEXT,
         transaction_id TEXT NOT NULL REFERENCES sales_transactions(id) ON DELETE CASCADE,
@@ -776,6 +778,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
     })),
     customerCreditPayments: creditPaymentsRes.rows.map((row) => ({
       id: row.id,
+      invoiceId: row.invoice_id || undefined,
       shopId: row.shop_id || undefined,
       customerId: row.customer_id,
       customerName: row.customer_name,
