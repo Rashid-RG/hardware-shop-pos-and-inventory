@@ -1,4 +1,4 @@
-import { arsPrintLogoPath, isArsPrintBrand } from './arsPrintLogo.ts';
+import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { invoiceFooter } from './invoiceFooter.ts';
 import type { SalesTransaction, InvoiceCompanyMeta } from '../types';
@@ -37,6 +37,7 @@ export const renderArsInvoicePdf = async (
   company?: InvoiceCompanyMeta,
   contact?: Contact,
 ): Promise<Buffer> => new Promise((resolve, reject) => {
+  shopName = arsDisplayName(shopName);
   const doc = new PDFDocument({
     size: 'A4', layout: 'portrait', margin: 0, bufferPages: true,
     info: { Title: 'Invoice ' + tx.invoiceNumber, Author: shopName },
@@ -85,7 +86,7 @@ export const renderArsInvoicePdf = async (
       try { doc.image(logo, left, 14, { fit: [48, 48] }); }
       catch { text(shopName, left, 24, 74, 12, true); }
     }
-    text(safe(company?.companyLegalName, shopName), 85, 18, 218, 16, true);
+    text(arsDisplayName(safe(company?.companyLegalName, shopName)), 85, 18, 218, 16, true);
     doc.font('Helvetica').fontSize(9).fillColor(ink)
       .text(contact?.address || '', 85, 42, { width: 213, height: 28, ellipsis: true });
     text([contact?.phone, company?.supportEmail || contact?.email].filter(Boolean).join('   |   '), 85, 72, 216, 7.8);
