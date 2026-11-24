@@ -54,6 +54,22 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       PRIMARY KEY(shop_id,employee_id),
       FOREIGN KEY(shop_id,employee_id) REFERENCES ars_representative_accounts(shop_id,employee_id)
     );
+    CREATE TABLE IF NOT EXISTS ars_invoice_cost_corrections (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      transaction_id TEXT NOT NULL,
+      item_id BIGINT NOT NULL,
+      original_cost NUMERIC(12,2) NOT NULL,
+      previous_cost NUMERIC(12,2) NOT NULL,
+      corrected_cost NUMERIC(12,2) NOT NULL CHECK(corrected_cost>0),
+      evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+      reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 1 AND 500),
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      revision BIGINT GENERATED ALWAYS AS IDENTITY,
+      UNIQUE(shop_id,transaction_id,item_id,revision)
+    );
+    CREATE INDEX IF NOT EXISTS ars_invoice_cost_correction_lookup ON ars_invoice_cost_corrections(shop_id,transaction_id,item_id,revision DESC);
     CREATE TABLE IF NOT EXISTS ars_cash_handovers (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -551,9 +567,11 @@ export async function financialProfitReport(db:Pool|PoolClient,shopId:string,fro
  SELECT t.id,-1 AS sign,(t.total-t.tax) AS revenue FROM sales_transactions t
  WHERE t.shop_id=$1 AND t.status='Refunded' AND (t.refunded_at AT TIME ZONE 'Asia/Colombo')::date BETWEEN $2::date AND $3::date
  ), costs AS (
- SELECT e.id,e.sign,e.revenue,COALESCE(SUM(i.cost_price*i.quantity),0) AS cost,
- COUNT(*) FILTER(WHERE i.id IS NULL OR i.cost_price IS NULL OR i.cost_price<=0 OR i.quantity<=0) AS missing
- FROM events e LEFT JOIN sales_transaction_items i ON i.transaction_id=e.id GROUP BY e.id,e.sign,e.revenue
+ SELECT e.id,e.sign,e.revenue,COALESCE(SUM(COALESCE(c.corrected_cost,i.cost_price)*i.quantity),0) AS cost,
+ COUNT(*) FILTER(WHERE i.id IS NULL OR COALESCE(c.corrected_cost,i.cost_price) IS NULL OR COALESCE(c.corrected_cost,i.cost_price)<=0 OR i.quantity<=0) AS missing
+ FROM events e LEFT JOIN sales_transaction_items i ON i.transaction_id=e.id
+ LEFT JOIN LATERAL (SELECT corrected_cost FROM ars_invoice_cost_corrections WHERE shop_id=$1 AND transaction_id=e.id AND item_id=i.id AND original_cost=i.cost_price ORDER BY revision DESC LIMIT 1) c ON TRUE
+ GROUP BY e.id,e.sign,e.revenue
  ), expense AS (
  SELECT COALESCE(SUM(amount),0) AS amount FROM manual_expenses WHERE shop_id=$1 AND date::date BETWEEN $2::date AND $3::date
  )
@@ -569,4 +587,29 @@ export async function financialProfitReport(db:Pool|PoolClient,shopId:string,fro
  const round=(n:number)=>Math.round(n*100)/100;
  const netSales=round(sales-refunds),complete=missing===0&&undatedRefunds===0;
  return {fromDate,toDate,sales,refunds,netSales,knownCost,expenses,missing,affected,undatedRefunds,complete,grossProfit:complete?round(netSales-knownCost):null,operatingEstimate:complete?round(netSales-knownCost-expenses):null};
+}
+
+/** Append-only historical costing correction; never modifies invoice or inventory records. */
+export async function correctHistoricalInvoiceCost(db:Pool,input:{id:string;shopId:string;transactionId:string;itemId:string;expectedCost:number;correctedCost:number;evidence:string;reason:string;recordedBy:string}){
+ const {id,shopId,transactionId,itemId,expectedCost,correctedCost,recordedBy}=input;
+ const reason=input.reason.trim(),evidence=input.evidence.trim();
+ const validMoney=(n:number)=>Number.isFinite(n)&&n>=0&&n<=9999999999.99&&Math.abs(n*100-Math.round(n*100))<0.001;
+ if(!id||!shopId||!transactionId||!/^\d{1,18}$/.test(itemId)||!recordedBy||!validMoney(expectedCost)||!validMoney(correctedCost)||correctedCost<=0||!reason||reason.length>500||!evidence||evidence.length>500)throw Error('Invalid historical cost correction.');
+ const client=await db.connect();
+ try{
+  await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['invoice-cost-'+id]);
+  const prior=await client.query('SELECT * FROM ars_invoice_cost_corrections WHERE id=$1',[id]);
+  if(prior.rowCount){const p=prior.rows[0];if(p.shop_id!==shopId||p.transaction_id!==transactionId||String(p.item_id)!==itemId||Number(p.previous_cost)!==expectedCost||Number(p.corrected_cost)!==correctedCost||p.evidence!==evidence||p.reason!==reason||p.recorded_by!==recordedBy)throw Error('Correction request identifier already used for different details.');await client.query('COMMIT');return {id,replayed:true};}
+  const line=await client.query("SELECT i.cost_price,i.quantity FROM sales_transaction_items i JOIN sales_transactions t ON t.id=i.transaction_id WHERE t.shop_id=$1 AND t.id=$2 AND i.id=$3::bigint AND t.status IN ('Completed','Refunded') FOR UPDATE OF i",[shopId,transactionId,itemId]);
+  if(!line.rowCount||Number(line.rows[0].quantity)<=0)throw Error('Invoice item not found in this shop.');
+  const original=Number(line.rows[0].cost_price);
+  const latest=await client.query('SELECT corrected_cost FROM ars_invoice_cost_corrections WHERE shop_id=$1 AND transaction_id=$2 AND item_id=$3::bigint AND original_cost=$4 ORDER BY revision DESC LIMIT 1',[shopId,transactionId,itemId,original]);
+  const current=latest.rowCount?Number(latest.rows[0].corrected_cost):original;
+  if(current!==expectedCost)throw Error('Historical cost changed. Refresh before correcting.');
+  if(current===correctedCost)throw Error('Corrected cost must differ from the current cost.');
+  await client.query('INSERT INTO ars_invoice_cost_corrections(id,shop_id,transaction_id,item_id,original_cost,previous_cost,corrected_cost,evidence,reason,recorded_by) VALUES($1,$2,$3,$4::bigint,$5,$6,$7,$8,$9,$10)',[id,shopId,transactionId,itemId,original,current,correctedCost,evidence,reason,recordedBy]);
+  await client.query("INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,'Super Admin','Historical Invoice Cost Corrected',$4)",['cost-correction-'+id,shopId,recordedBy,transactionId+' / item '+itemId+' / '+current+' -> '+correctedCost+' / '+reason]);
+  await client.query('COMMIT');return {id,replayed:false};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
