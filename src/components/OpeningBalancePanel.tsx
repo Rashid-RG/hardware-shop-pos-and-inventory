@@ -63,7 +63,7 @@ function OpeningComparison({authToken,shopId,proposalId,canManage}:{authToken:st
 type Evidence={kind:string;source:string;reference:string;explanation:string};
 type DocumentSubmission={id:string;snapshotHash:string;evidence:Evidence[]};
 type DocumentRecord=DocumentSubmission&{recorded_by:string;recorded_at:string};
-function DocumentaryReview({authToken,shopId,data,canManage}:{authToken:string;shopId:string;data:Comparison;canManage:boolean}){
+function DocumentaryReview({authToken,shopId,data,canManage}:{authToken:string;shopId:string;data:Comparison;canManage:boolean;key?:string}){
  const [history,setHistory]=useState<DocumentRecord[]>([]),[revision,setRevision]=useState(0),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[open,setOpen]=useState(false);
  const [draft,setDraft]=useState<Evidence[]>(()=>data.rows.map(r=>({kind:r.kind,source:r.source,reference:'',explanation:''})));
  const [pending,setPending]=useState<DocumentSubmission|null>(null);
