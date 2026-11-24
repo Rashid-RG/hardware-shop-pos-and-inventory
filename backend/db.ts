@@ -2,6 +2,7 @@ import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
 import { initReceivableAging } from './receivableAging';
 import { initPayableAging } from './payableAging';
+import { initPositionRegisters } from './positionRegisters';
 import { baseQuantity } from '../src/utils/unitConversion';
 import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
 import { getLegacyReturnFactor } from './packagingDrafts';
@@ -471,6 +472,7 @@ export const initDbTables = async () => {
 
     await initReceivableAging(client);
     await initPayableAging(client);
+    await initPositionRegisters(client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
