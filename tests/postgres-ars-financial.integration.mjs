@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.port!=='5432'||url.pathname!=='/hardware_pos_ci')throw Error('Refusing financial test outside isolated CI database');
 const {pool,initDbTables,addCustomerCreditPayment,insertSupplierPayment,insertSupplier}=await import('../backend/db.ts');
-const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements,recordPaidExpense}=await import('../backend/financialAccounts.ts');
+const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements,recordPaidExpense,assignRepresentativeAccount,linkRepresentativeLogin,resolveRepresentativeFinancialIdentity,requestCashHandover,decideCashHandover}=await import('../backend/financialAccounts.ts');
 
 test('financial accounts, collections, handovers, cheque clearance, reconciliation and statements on real PostgreSQL',async()=>{
   const shopId='finance-ci-'+randomUUID(),otherShop='finance-other-'+randomUUID();
@@ -88,6 +88,45 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     await pool.query("INSERT INTO manual_expenses(id,description,amount,date,category) VALUES($1,'Legacy CI',10,$2,'Other')",[legacyId,day]);
     await initDbTables();
     assert.equal((await pool.query('SELECT shop_id FROM manual_expenses WHERE id=$1',[legacyId])).rows[0].shop_id,null);
+    // Independent representative identity and cash custody fixtures.
+    const employee=id(),repUser=id(),managerUser=id(),repCash=id();
+    await pool.query("INSERT INTO employees(id,shop_id,name,role,salary,attendance_status,performance_score) VALUES($1,$2,'CI Representative','Cashier',0,'Present',0)",[employee,shopId]);
+    await pool.query("INSERT INTO users(id,email,name,role,password_hash) VALUES($1,$2,'CI Representative','Cashier','test-only'),($3,$4,'CI Manager','Store Manager','test-only')",[repUser,repUser+'@example.invalid',managerUser,managerUser+'@example.invalid']);
+    await createFinancialAccount(pool,{id:repCash,shopId,name:'CI assigned cash',kind:'Representative Cash',recordedBy});
+    await assert.rejects(assignRepresentativeAccount(pool,{shopId:otherShop,employeeId:employee,accountId:repCash,recordedBy}),/registered sales representative/);
+    await assignRepresentativeAccount(pool,{shopId,employeeId:employee,accountId:repCash,recordedBy});
+    await assert.rejects(linkRepresentativeLogin(pool,{shopId,employeeId:employee,userId:managerUser,recordedBy}),/existing sales representative login/);
+    await linkRepresentativeLogin(pool,{shopId,employeeId:employee,userId:repUser,recordedBy});
+    assert.equal((await resolveRepresentativeFinancialIdentity(pool,shopId,repUser)).accountId,repCash);
+    assert.equal(await resolveRepresentativeFinancialIdentity(pool,otherShop,repUser),null);
+    const ownPayment={...payment,id:'cpay-'+id(),amount:100,createdBy:'CI Representative'};
+    await assert.rejects(addCustomerCreditPayment(ownPayment,true,rep,undefined,{userId:repUser}),/authorization changed/);
+    await addCustomerCreditPayment(ownPayment,true,repCash,undefined,{userId:repUser});
+    await addCustomerCreditPayment(ownPayment,true,repCash,undefined,{userId:repUser});
+    assert.equal((await balances())[repCash],100);
+    assert.equal(await debt(),450);
+    const request={id:id(),shopId,userId:repUser,toAccountId:cash,amount:70,note:'Counted cash'};
+    const race=await Promise.allSettled([requestCashHandover(pool,request),requestCashHandover(pool,{...request,id:id()})]);
+    assert.equal(race.filter(r=>r.status==='fulfilled').length,1);
+    const winner=race.find(r=>r.status==='fulfilled').value.id;
+    assert.equal((await requestCashHandover(pool,{...request,id:winner})).replayed,true);
+    assert.equal((await balances())[repCash],100);
+    await assert.rejects(recordFinancialTransfer(pool,{...transfer,requestId:id(),fromAccountId:repCash,amount:31}),/Insufficient/);
+    const decision={id:winner,shopId,decision:'Confirmed',managerUserId:managerUser,recordedBy,effectiveDate:day,note:'Cash received'};
+    await assert.rejects(decideCashHandover(pool,{...decision,shopId:otherShop}),/not found/);
+    await assert.rejects(decideCashHandover(pool,{...decision,managerUserId:repUser}),/Manager authorization/);
+    const approvals=await Promise.all([decideCashHandover(pool,decision),decideCashHandover(pool,decision)]);
+    assert.deepEqual(approvals.map(r=>r.replayed).sort(),[false,true]);
+    assert.equal((await balances())[repCash],30);assert.equal((await balances())[cash],330);
+    const rejected={...request,id:id(),amount:20};
+    await requestCashHandover(pool,rejected);
+    await assert.rejects(decideCashHandover(pool,{...decision,id:rejected.id,decision:'Rejected',note:''}),/Invalid handover decision/);
+    await decideCashHandover(pool,{...decision,id:rejected.id,decision:'Rejected',note:'Cash not received'});
+    assert.equal((await balances())[repCash],30);assert.equal((await balances())[cash],330);
+    await assert.rejects(decideCashHandover(pool,{...decision,id:rejected.id}),/already decided/);
+    const retryAfterRejection={...request,id:id(),amount:30};
+    await requestCashHandover(pool,retryAfterRejection);
+    assert.equal((await balances())[repCash],30);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
