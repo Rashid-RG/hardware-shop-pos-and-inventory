@@ -4,7 +4,7 @@ export const controlMappings={
  supplierAdvances:'Asset',receivables:'Asset',inventory:'Asset',cheques:'Asset',fixedAssets:'Asset',
  supplierPayables:'Liability',customerCredits:'Liability',loans:'Liability',tax:'Liability',
  capital:'Equity',retainedEarnings:'Equity',sales:'Revenue',costOfGoods:'Expense',
- operatingExpense:'Expense',salary:'Expense'
+ inventoryRounding:'Expense',operatingExpense:'Expense',salary:'Expense'
 } as const;
 type Kind=keyof typeof controlMappings|'financialAccount';
 type Mapping={kind:Kind;sourceId:string;accountCode:string;evidence:string};
