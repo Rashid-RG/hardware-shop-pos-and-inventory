@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { invoiceFooter } from './invoiceFooter';
 import type { SalesTransaction, InvoiceCompanyMeta } from '../types';
 
 type InvoiceMeta = {
@@ -61,10 +62,11 @@ export const renderArsInvoicePdf = async (
   };
   const footer = (pageNumber: number, totalPages: number) => {
     // Repeat the footer on every printed sheet, including continuation pages.
-    doc.moveTo(LEFT, 803).lineTo(RIGHT, 803).lineWidth(0.55).strokeColor(LINE).stroke();
-    label('Generated with RS Nextward Business Systems', LEFT, 811, 282, 8.2, 'left', true);
-    label('Reliable POS  •  Inventory  •  Wholesale Billing', 320, 811, 240, 8.2, 'right');
-    label(`Page ${pageNumber} of ${totalPages}`, 448, 785, 112, 8, 'right', true);
+    doc.moveTo(LEFT, 780).lineTo(RIGHT, 780).lineWidth(0.55).strokeColor(LINE).stroke();
+    label('Printed by '+shopName+'.', LEFT, 785, WIDTH, 7.4);
+    doc.font('Helvetica').fontSize(7.2).fillColor(INK).text(invoiceFooter.goods+' '+invoiceFooter.thanks, LEFT, 795, {width:WIDTH,lineGap:0});
+    label(`Page ${pageNumber} of ${totalPages}`, LEFT, 824, 110, 7.2);
+    label(invoiceFooter.credit, 320, 824, 240, 8, 'right', true);
   };
   const header = (continuation: boolean) => {
     if (logo) {
@@ -98,15 +100,16 @@ export const renderArsInvoicePdf = async (
     label(safe(tx.paymentMethod), 469, 197, 79, 7.5, 'right');
     return 226;
   };
-  const columns = [35, 56, 277, 339, 377, 439, 495, 560];
+  const showDiscount = tx.items.some(i=>Number(i.discount||0)>0||Number(i.discountAmount||0)>0);
+  const columns = showDiscount ? [35,98,200,316,357,386,440,494,560] : [35,100,218,350,393,425,488,560];
   const tableHeader = (y: number) => {
     doc.rect(LEFT, y, WIDTH, 25).fill(NAVY);
-    const headers = ['#', 'Item Description', 'SKU', 'Qty', 'Unit Price', 'Discount', 'Amount'];
+    const headers = ['Product Code','Item Name','Description','U/M','Qty','Rate',...(showDiscount?['Discount']:[]),'Amount'];
     for (let i = 0; i < headers.length; i++) {
       doc.font('Helvetica-Bold').fontSize(i === 1 ? 8.1 : 7.6).fillColor('#ffffff')
       .text(headers[i], columns[i] + 3, y + 8, {
         width: columns[i + 1] - columns[i] - 6,
-        align: i === 0 ? 'center' : i >= 4 ? 'right' : 'left',
+        align: i >= 4 ? 'right' : 'left',
         lineBreak: false, ellipsis: true,
       });
       doc.strokeColor('#7e9bb7').lineWidth(0.4)
@@ -115,11 +118,10 @@ export const renderArsInvoicePdf = async (
     doc.moveTo(RIGHT, y).lineTo(RIGHT, y + 25).strokeColor(LINE).stroke();
   };
   const notesAndTotals = (y: number) => {
-    const top = Math.max(y + 16, 581);
+    const top = y + 14;
     section(LEFT, top, 260, 114, 'Notes');
-    label('Goods once sold will be exchanged only with', 45, top + 31, 242, 8.2);
-    label('the original invoice and management approval.', 45, top + 44, 242, 8.2);
-    label('Thank you for your business.', 45, top + 75, 242, 8.2);
+    label('Please verify quantities and condition upon receipt.', 45, top + 30, 242, 8.2);
+    label('Thank you for your business.', 45, top + 43, 242, 8.2);
     box(305, top, 255, 114);
     const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
       : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
@@ -142,11 +144,11 @@ export const renderArsInvoicePdf = async (
       label(name, 313, yy + 5, 117, 8.6, 'left', i === 3 || i === 5);
       label(amount, 428, yy + 5, 123, 8.6, 'right', i === 3 || i === 5);
     });
-    const signatureY = top + 130;
+    const signatureY = top + 124;
     const sigs: [string, number][] = [['Prepared By', LEFT], ['Received By', 214], ['Authorized By', 393]];
     sigs.forEach(([name, x]) => {
-      section(x, signatureY, 167, 59, name);
-      doc.moveTo(x + 16, signatureY + 47).lineTo(x + 151, signatureY + 47)
+      section(x, signatureY, 167, 43, name);
+      doc.moveTo(x + 16, signatureY + 34).lineTo(x + 151, signatureY + 34)
         .lineWidth(0.6).strokeColor('#475569').stroke();
     });
   };
@@ -156,50 +158,27 @@ export const renderArsInvoicePdf = async (
   tx.items.forEach((item, i) => {
     // Name and description are immutable snapshots saved when the sale was issued.
     // The product name already contains the selected variant for newly issued invoices.
-    const desc = safe(item.productName);
-    const detail = String(item.invoiceDescription || '').trim();
-    const textWidth = columns[2] - columns[1] - 10;
-    doc.font('Helvetica-Bold').fontSize(7.8);
-    const nameHeight = Math.ceil(doc.heightOfString(desc, { width: textWidth, lineGap: 1 }));
-    doc.font('Helvetica').fontSize(7.3);
-    const detailHeight = detail ? Math.ceil(doc.heightOfString(detail, { width: textWidth, lineGap: 1 })) : 0;
     const gross = Number(item.quantity) * Number(item.sellingPrice);
-    const lineDisc = gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0);
+    const lineDisc = Math.min(gross, Math.max(0,gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
     const amount = Math.max(0, gross - lineDisc);
-    const height = Math.max(24, nameHeight + detailHeight + (detail ? 15 : 12));
-    // Keep enough room for the notes, totals and all three signatures on the final page.
-    // If another item would exceed the item region, continue on a new A4 page.
-    if (y + height > 570) {
-      doc.addPage();
-      y = header(true);
-      tableHeader(y);
-      y += 25;
-    }
-    if (i % 2) doc.rect(LEFT, y, WIDTH, height).fill('#f0f5fa');
-    const values = [
-      String(i + 1), '', safe(item.variantSku, item.productId),
-      String(item.quantity) + (item.variantUnit ? ' ' + item.variantUnit : ''),
-      Number(item.sellingPrice).toFixed(2),
-      lineDisc.toFixed(2),
-      amount.toFixed(2),
-    ];
-    values.forEach((value, index) =>
-      label(value, columns[index] + 3, y + 6, columns[index + 1] - columns[index] - 6,
-        7.6, index === 0 ? 'center' : index >= 4 ? 'right' : 'left'));
-    // Wrap product name and optional invoice-specific description inside the
-    // description column; never truncate a customer's hardware specifications.
-    doc.font('Helvetica-Bold').fontSize(7.8).fillColor(INK)
-      .text(desc, columns[1] + 4, y + 5, { width: textWidth, lineGap: 1 });
-    if (detail) {
-      doc.font('Helvetica').fontSize(7.3).fillColor('#46566b')
-        .text(detail, columns[1] + 4, y + 7 + nameHeight,
-          { width: textWidth, lineGap: 1 });
-    }
+    const values = [safe(item.variantSku,item.productId),safe(item.productName),String(item.invoiceDescription||''),safe(item.variantUnit,'-'),String(item.quantity),Number(item.sellingPrice).toFixed(2),...(showDiscount?[lineDisc.toFixed(2)]:[]),amount.toFixed(2)];
+    const heights=values.map((v,index)=>{
+      doc.font(index===1?'Helvetica-Bold':'Helvetica').fontSize(7.5);
+      return Math.ceil(doc.heightOfString(v,{width:columns[index+1]-columns[index]-6,lineGap:0}));
+    });
+    const height=Math.max(19,...heights.map(h=>h+8));
+    if(y+height>590){doc.addPage();y=header(true);tableHeader(y);y+=25;}
+    if(i%2)doc.rect(LEFT,y,WIDTH,height).fill('#f0f5fa');
+    values.forEach((v,index)=>{
+      doc.font(index===1?'Helvetica-Bold':'Helvetica').fontSize(7.5).fillColor(INK).text(v,columns[index]+3,y+4,{width:columns[index+1]-columns[index]-6,lineGap:0,align:index>=4?'right':'left'});
+      doc.moveTo(columns[index],y).lineTo(columns[index],y+height).lineWidth(.35).strokeColor(LINE).stroke();
+    });
+    doc.moveTo(RIGHT,y).lineTo(RIGHT,y+height).strokeColor(LINE).stroke();
     doc.moveTo(LEFT, y + height).lineTo(RIGHT, y + height).strokeColor(LINE).lineWidth(0.45).stroke();
     y += height;
   });
   // One or multiple pages: fit summary and signatures without collision.
-  if (Math.max(y + 16, 581) + 130 + 59 >= 793) {
+  if (y + 14 + 124 + 43 >= 775) {
     doc.addPage();
     y = header(true);
   }
