@@ -54,6 +54,28 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       PRIMARY KEY(shop_id,employee_id),
       FOREIGN KEY(shop_id,employee_id) REFERENCES ars_representative_accounts(shop_id,employee_id)
     );
+    CREATE TABLE IF NOT EXISTS ars_cash_handovers (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      from_account_id TEXT NOT NULL,
+      to_account_id TEXT NOT NULL,
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      request_note TEXT,
+      status TEXT NOT NULL DEFAULT 'Pending' CHECK(status IN ('Pending','Confirmed','Rejected')),
+      decided_by TEXT,
+      decided_at TIMESTAMPTZ,
+      decision_note TEXT,
+      effective_date DATE,
+      FOREIGN KEY(shop_id,from_account_id) REFERENCES ars_financial_accounts(shop_id,id),
+      FOREIGN KEY(shop_id,to_account_id) REFERENCES ars_financial_accounts(shop_id,id),
+      CHECK(from_account_id<>to_account_id),
+      CHECK((status='Pending')=(decided_at IS NULL)),
+      CHECK((status='Confirmed')=(effective_date IS NOT NULL))
+    );
+    CREATE INDEX IF NOT EXISTS ars_cash_handover_queue ON ars_cash_handovers(shop_id,status,requested_at);
     CREATE TABLE IF NOT EXISTS ars_invoice_requests (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -442,4 +464,57 @@ export async function resolveRepresentativeFinancialIdentity(db:Pool|PoolClient,
     WHERE l.shop_id=$1 AND l.user_id=$2`,[shopId,userId]);
   const row=result.rows[0];
   return row?{employeeId:row.employee_id,accountId:row.account_id,accountName:row.account_name,employeeName:row.employee_name}:null;
+}
+
+export async function requestCashHandover(db:Pool,input:{id:string;shopId:string;userId:string;toAccountId:string;amount:number;note?:string}){
+ const {id,shopId,userId,toAccountId,amount}=input,note=input.note?.trim()||null;
+ if(!id||!shopId||!userId||!toAccountId||!Number.isFinite(amount)||amount<=0||amount>999999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.001||(note&&note.length>500))throw Error('Invalid cash handover request.');
+ const client=await db.connect();
+ try{
+  await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['handover-'+id]);
+  const identity=await resolveRepresentativeFinancialIdentity(client,shopId,userId);
+  if(!identity)throw Error('Representative cash account authorization required.');
+  const prior=await client.query('SELECT * FROM ars_cash_handovers WHERE id=$1',[id]);
+  if(prior.rowCount){
+    const p=prior.rows[0];
+    if(p.shop_id!==shopId||p.user_id!==userId||p.employee_id!==identity.employeeId||p.from_account_id!==identity.accountId||p.to_account_id!==toAccountId||Number(p.amount)!==amount||(p.request_note||null)!==note)throw Error('Handover request identifier already used for different details.');
+    await client.query('COMMIT');return {id,status:p.status,replayed:true};
+  }
+  const accounts=await client.query('SELECT id,kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=ANY($2::text[]) AND active ORDER BY id FOR UPDATE',[shopId,[identity.accountId,toAccountId]]);
+  if(accounts.rows.find(r=>r.id===identity.accountId)?.kind!=='Representative Cash'||accounts.rows.find(r=>r.id===toAccountId)?.kind!=='Office Cash')throw Error('Select an active office cash account in this shop.');
+  const available=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_cash_handovers WHERE shop_id=$1 AND from_account_id=$2 AND status='Pending') >= $3::numeric AS sufficient`,[shopId,identity.accountId,amount]);
+  if(!available.rows[0]?.sufficient)throw Error('Handover exceeds cash balance after pending requests.');
+  await client.query('INSERT INTO ars_cash_handovers(id,shop_id,employee_id,user_id,from_account_id,to_account_id,amount,request_note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,shopId,identity.employeeId,userId,identity.accountId,toAccountId,amount,note]);
+  await client.query('COMMIT');return {id,status:'Pending',replayed:false};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function decideCashHandover(db:Pool,input:{id:string;shopId:string;decision:'Confirmed'|'Rejected';recordedBy:string;managerUserId:string;effectiveDate:string;note?:string}){
+ const {id,shopId,decision,recordedBy,managerUserId,effectiveDate}=input,note=input.note?.trim()||null;
+ if(!id||!shopId||!recordedBy||!managerUserId||!['Confirmed','Rejected'].includes(decision)||!validChequeDay(effectiveDate)||(decision==='Rejected'&&!note)||(note&&note.length>500))throw Error('Invalid handover decision.');
+ const client=await db.connect();
+ try{
+  await client.query('BEGIN');
+  const manager=await client.query("SELECT id FROM users WHERE id=$1 AND role IN ('Super Admin','Store Manager')",[managerUserId]);
+  if(!manager.rowCount)throw Error('Manager authorization required.');
+  const result=await client.query('SELECT * FROM ars_cash_handovers WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,id]);
+  const h=result.rows[0];if(!h)throw Error('Handover not found in this shop.');
+  if(h.user_id===managerUserId)throw Error('A representative cannot approve their own handover.');
+  if(h.status!=='Pending'){
+    if(h.status===decision&&h.decided_by===recordedBy&&(h.decision_note||null)===note){await client.query('COMMIT');return {id,status:h.status,replayed:true};}
+    throw Error('Handover already decided.');
+  }
+  if(decision==='Confirmed'){
+    const accounts=await client.query('SELECT id,kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=ANY($2::text[]) AND active ORDER BY id FOR UPDATE',[shopId,[h.from_account_id,h.to_account_id]]);
+    if(accounts.rows.find(r=>r.id===h.from_account_id)?.kind!=='Representative Cash'||accounts.rows.find(r=>r.id===h.to_account_id)?.kind!=='Office Cash')throw Error('Handover accounts are unavailable.');
+    const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,h.from_account_id,h.amount]);
+    if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds to confirm handover.');
+    const source='handover-'+id;
+    await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+     VALUES($1,$2,$3,-$5::numeric,'Transfer Out',$6,$7,$8,$9),($4,$2,$10,$5::numeric,'Transfer In',$6,$7,$8,$9)`,[source+'-out',shopId,h.from_account_id,source+'-in',h.amount,source,recordedBy,effectiveDate,'Confirmed representative handover',h.to_account_id]);
+  }
+  await client.query('UPDATE ars_cash_handovers SET status=$3,decided_by=$4,decided_at=NOW(),decision_note=$5,effective_date=$6 WHERE shop_id=$1 AND id=$2',[shopId,id,decision,recordedBy,note,decision==='Confirmed'?effectiveDate:null]);
+  await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,'Store Manager',$4,$5)`,['handover-decision-'+id,shopId,recordedBy,'Cash Handover '+decision,id+' / '+h.amount]);
+  await client.query('COMMIT');return {id,status:decision,replayed:false};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
