@@ -76,14 +76,15 @@ export async function registerFinancialOpeningBalance(db:Pool,input:{
 /** Move recorded funds without creating revenue or expense. All movement writers
  * must lock the affected account rows before inserting ledger entries. */
 export async function recordFinancialTransfer(db:Pool,input:{
-  requestId:string;shopId:string;fromAccountId:string;toAccountId:string;amount:number;effectiveDate:string;recordedBy:string;note?:string;
+  requestId:string;shopId:string;fromAccountId:string;toAccountId:string;amount:number;effectiveDate:string;recordedBy:string;note?:string;currentBusinessDate?:string;handover?:boolean;
 }){
   const {requestId,shopId,fromAccountId,toAccountId,amount,effectiveDate,recordedBy}=input;
-  const note=input.note?.trim()||null;
+  const rawNote=input.note?.trim()||'';
+  const note=input.handover?'Representative cash handover: '+rawNote:rawNote||null;
   if(!requestId||!shopId||!fromAccountId||!toAccountId||fromAccountId===toAccountId||!recordedBy||
     !Number.isFinite(amount)||amount<=0||amount>999999999999.99||
     Math.abs(amount*100-Math.round(amount*100))>0.001||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
-    (note&&note.length>500))throw Error('Invalid financial transfer details.');
+    (note&&note.length>500)||(input.handover&&!rawNote))throw Error('Invalid financial transfer details.');
   const client=await db.connect();
   const sourceId='transfer-'+shopId+'-'+requestId;
   try{
@@ -99,9 +100,11 @@ export async function recordFinancialTransfer(db:Pool,input:{
       await client.query('COMMIT');
       return {sourceId,replayed:true};
     }
+    if(input.currentBusinessDate&&effectiveDate!==input.currentBusinessDate)throw Error('Only previously committed transfers can be retried for earlier dates.');
     const accounts=await client.query('SELECT id,kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=ANY($2::text[]) AND active=TRUE ORDER BY id FOR UPDATE',[shopId,[fromAccountId,toAccountId]]);
     if(accounts.rowCount!==2)throw Error('Select two active financial accounts in this shop.');
     if(accounts.rows.some(r=>!['Office Cash','Bank','Representative Cash'].includes(r.kind)))throw Error('Settlement accounts are not supported for fund transfers.');
+    if(input.handover&&(accounts.rows.find(r=>r.id===fromAccountId)?.kind!=='Representative Cash'||accounts.rows.find(r=>r.id===toAccountId)?.kind!=='Office Cash'))throw Error('Handover requires a representative cash account and an office cash account.');
     const balance=await client.query('SELECT COALESCE(SUM(amount),0) >= $3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,fromAccountId,amount]);
     if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in source account.');
     await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
