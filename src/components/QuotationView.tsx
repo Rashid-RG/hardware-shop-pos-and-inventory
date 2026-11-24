@@ -1,3 +1,5 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import { notify } from '../utils/notifications';
 import React, { useState, useMemo } from 'react';
@@ -266,6 +268,7 @@ export default function QuotationView({
         ))}
       </div>
 
+      <ReportExportMenu settings={taxConfig} report={()=>({title:'Quotation register',filename:'ars-quotations',period:'Matching quotations | '+statusFilter,headers:['Quotation','Date','Valid until','Customer','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Status','Converted invoice ID'],moneyColumns:[4,5,6,7],rows:displayed.map(q=>[q.quoteNumber,q.date,q.validUntil||'',q.customerName,q.subtotal,q.tax,q.discountAmount,q.total,q.status,q.convertedToTxId||'']),summary:[{label:'Matching quotes',value:displayed.length},{label:'Converted quotes',value:displayed.filter(q=>q.status==='Converted').length}]})}/>
       {/* Quotations list */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
         {displayed.length === 0 ? (
