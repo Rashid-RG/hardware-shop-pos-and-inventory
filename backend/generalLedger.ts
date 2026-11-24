@@ -140,6 +140,18 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_account_audit_immutable ON ars_gl_account_audit;
  CREATE TRIGGER ars_gl_account_audit_immutable BEFORE UPDATE OR DELETE ON ars_gl_account_audit
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_opening_proposals(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,cutover_date DATE NOT NULL,
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  lines JSONB NOT NULL CHECK(jsonb_typeof(lines)='array'),
+  total_cents NUMERIC(20,0) NOT NULL CHECK(total_cents>0),
+  submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_opening_proposal_immutable ON ars_gl_opening_proposals;
+ CREATE TRIGGER ars_gl_opening_proposal_immutable BEFORE UPDATE OR DELETE ON ars_gl_opening_proposals
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
  `);
