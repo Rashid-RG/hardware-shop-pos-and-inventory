@@ -19,7 +19,7 @@ test('secondary buyer details stay in the setup dialog and final payment is sepa
   assert.match(pos,/max-h-\[min\(88dvh,700px\)\]/);
   assert.match(pos,/id="pos-setup-confirm"/);
   assert.match(pos,/Delivery, transport and warranty details \(optional\)/);
-  assert.match(pos,/lg:h-\[calc\(100dvh-238px\)\]/);
+  assert.match(pos,/lg:h-\[calc\(100dvh-115px\)\]/);
   assert.match(pos,/id="pos-pay-trigger"/);
   assert.match(pos,/id="pos-review-backdrop"/);
 });
