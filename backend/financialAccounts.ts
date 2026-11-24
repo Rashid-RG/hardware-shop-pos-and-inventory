@@ -518,3 +518,23 @@ export async function decideCashHandover(db:Pool,input:{id:string;shopId:string;
   await client.query('COMMIT');return {id,status:decision,replayed:false};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
+
+/** Recorded cash and bank movement summary; not an accrual income statement.
+ * Opening balances and transfers involving noncash settlement accounts are disclosed separately.
+ */
+export async function financialCashFlow(db:Pool|PoolClient,shopId:string,fromDate:string,toDate:string){
+ if(!shopId||!validChequeDay(fromDate)||!validChequeDay(toDate)||fromDate>toDate)throw Error('Invalid cash flow period.');
+ const result=await db.query(`WITH cash AS (
+ SELECT m.* FROM ars_financial_movements m JOIN ars_financial_accounts a ON a.shop_id=m.shop_id AND a.id=m.account_id
+ WHERE m.shop_id=$1 AND a.kind IN ('Office Cash','Bank','Representative Cash') AND m.effective_date<=$3::date
+ ), period AS (SELECT * FROM cash WHERE effective_date >= $2::date),
+ groups AS (SELECT movement_kind AS kind, SUM(CASE WHEN amount>0 THEN amount ELSE 0 END) AS inflow,
+ SUM(CASE WHEN amount<0 THEN -amount ELSE 0 END) AS outflow,COUNT(*) AS count FROM period GROUP BY movement_kind)
+ SELECT (SELECT COALESCE(SUM(amount),0) FROM cash WHERE effective_date<$2::date) AS opening,
+ (SELECT COALESCE(SUM(amount),0) FROM cash) AS closing,
+ (SELECT COALESCE(json_agg(groups ORDER BY kind),'[]'::json) FROM groups) AS groups`,[shopId,fromDate,toDate]);
+ const row=result.rows[0];
+ const groups=row.groups.map((g:any)=>({kind:g.kind,inflow:Number(g.inflow),outflow:Number(g.outflow),count:Number(g.count)}));
+ const net=(kinds:string[])=>groups.filter((g:any)=>kinds.includes(g.kind)).reduce((s:number,g:any)=>s+g.inflow-g.outflow,0);
+ return {fromDate,toDate,opening:Number(row.opening),closing:Number(row.closing),groups,operating:net(['Invoice Payment','Invoice Refund','Customer Collection','Supplier Payment','Expense']),openingRegistrations:net(['Opening Balance']),netTransfers:net(['Transfer In','Transfer Out']),adjustments:net(['Adjustment'])};
+}
