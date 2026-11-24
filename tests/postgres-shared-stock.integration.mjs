@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci')throw Error('Refusing shared-stock test outside local hardware_pos_ci');
 const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder,checkoutTransaction,refundTransaction}=await import('../backend/db.ts');
-const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices}=await import('../backend/packagingDrafts.ts');
+const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices,getPackagingDraft}=await import('../backend/packagingDrafts.ts');
 const {initSharedStockSchema,deductSharedSale,restoreSharedSale}=await import('../backend/sharedStock.ts');
 test('shared packaging activation, purchase, mixed sale and rollback against PostgreSQL',async()=>{
  const suffix=randomUUID(),shop='ci-shared-'+suffix,product='prod-'+suffix,supplier='supplier-'+suffix,po='po-'+suffix;
@@ -103,6 +103,12 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   await updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced);
   assert.equal(await stock(),164);
   await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced),/Reload/);
+  await assert.rejects(()=>savePackagingDraft(pool,shop,product,'CI Manager',config),/Active packaging cannot be changed/);
+  await assert.rejects(()=>getPackagingDraft(pool,'other-shop',product),/not found/);
+  const current=await getPackagingDraft(pool,shop,product);
+  assert.equal(current.units.find(u=>u.id==='box').sellingPrice,5800);
+  assert.equal(current.units.find(u=>u.id==='box').baseUnits,12);
+  assert.equal(await stock(),164);
   const historic=(await pool.query('SELECT selling_price FROM sales_transaction_items WHERE transaction_id=$1 AND selling_unit_id=$2',[invoiceId,'box'])).rows[0];
   assert.equal(Number(historic.selling_price),5400);
   assert.equal(Number((await pool.query('SELECT selling_price FROM products WHERE id=$1',[product])).rows[0].selling_price),550);
