@@ -1,8 +1,9 @@
-import { arsPrintLogoPath, isArsPrintBrand } from './arsPrintLogo';
+import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo';
 import PDFDocument from 'pdfkit';
 import type { BusinessReport } from './businessReport';
 
 export function renderBusinessReportPdf(report:BusinessReport, brand:{name:string;address:string;phone:string}, logo:Buffer|null):Promise<Buffer>{
+ brand={...brand,name:arsDisplayName(brand.name)};
  return new Promise((resolve,reject)=>{
   const doc=new PDFDocument({size:'A4',layout:'landscape',margin:0,bufferPages:true,info:{Title:report.title,Author:brand.name,Creator:'RS Nextward'}});
   const chunks:Buffer[]=[];
