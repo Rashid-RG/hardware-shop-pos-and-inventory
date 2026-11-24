@@ -147,11 +147,11 @@ export async function updatePackagingPrices(pool: Pool, shopId: string, productI
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-/** Conservative conversion of stocked SKUs with no invoice, PO or quotation history.
+/** Conservative conversion of stocked SKUs with explicitly reconciled invoice history and no PO or quotation history.
  * Existing stock logs are preserved; the unit boundary is recorded in the audit.
  * No conversion of independently stocked variants or historical financial records.
  */
-export async function convertLegacyPackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, request: {confirmed?:unknown;legacyUnitId?:unknown;expected?:unknown;configuration?:unknown}) {
+export async function convertLegacyPackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, request: {confirmed?:unknown;legacyUnitId?:unknown;expected?:unknown;configuration?:unknown;historicalUnits?:unknown}) {
   if(process.env.ARS_SHARED_STOCK_PILOT!=='true')throw Error('Shared-stock conversion is disabled.');
   if(!['Super Admin','Store Manager'].includes(role)||request.confirmed!==true)throw Error('Manager confirmation required.');
   if(typeof request.legacyUnitId!=='string')throw Error('Select the current stock unit.');
@@ -168,7 +168,7 @@ export async function convertLegacyPackaging(pool: Pool, shopId: string, product
       FROM products p WHERE p.id=$1 AND p.shop_id=$2 FOR UPDATE OF p`,[productId,shopId]);
     const p=result.rows[0];
     if(!p || p.status==='Inactive'||p.shared_stock_units||p.variants_json?.length)throw Error('Product is not eligible for legacy conversion.');
-    if(p.has_sales||p.has_purchases||p.has_quotes)throw Error('Historical transactions require a separate reconciliation workflow.');
+    if(p.has_purchases||p.has_quotes)throw Error('Historical purchases or quotations require a separate reconciliation workflow.');
     if(Number(p.wholesale_price||0)!==0||Number(p.dealer_price||0)!==0)throw Error('Reconcile existing wholesale and dealer price tiers before conversion.');
     const snapshot={quantity:Number(p.quantity),reorderLevel:Number(p.reorder_level),costPrice:Number(p.cost_price),sellingPrice:Number(p.selling_price)};
     if(Object.entries(snapshot).some(([key,value])=>expected[key]!==value))throw Error('Product stock or prices changed. Reload before conversion.');
@@ -176,6 +176,22 @@ export async function convertLegacyPackaging(pool: Pool, shopId: string, product
     if(!draft.rowCount||JSON.stringify(parsePackagingDraft(draft.rows[0].configuration))!==JSON.stringify(config))throw Error('Save the current packaging draft before conversion.');
     const preview=previewLegacyPackaging({...snapshot,legacyUnitId:request.legacyUnitId,configuration:config});
     if(!preview.eligible)throw Error(preview.reasons.join(' '));
+    const historical=await listLegacyInvoiceLines(client,shopId,productId);
+    const mappings=request.historicalUnits===undefined?[]:request.historicalUnits;
+    if(!Array.isArray(mappings)||mappings.length!==historical.length)throw Error('Review and confirm every historical invoice line before conversion.');
+    const mapped=new Map<string,string>();
+    for(const entry of mappings){
+      if(!entry||typeof entry.saleItemId!=='string'||typeof entry.unitId!=='string'||mapped.has(entry.saleItemId))throw Error('Invalid or duplicate historical invoice mapping.');
+      mapped.set(entry.saleItemId,entry.unitId);
+    }
+    for(const line of historical){
+      if(line.variantId||line.hasSharedSnapshot)throw Error('Historical variant or shared-unit invoice requires separate reconciliation.');
+      const unit=config.units.find(u=>u.id===mapped.get(line.saleItemId));
+      if(!unit)throw Error('Select a verified unit for every historical invoice line.');
+      if(!Number.isSafeInteger(line.quantity)||line.quantity<=0||line.quantity*unit.baseUnits>2147483647)throw Error('Historical return quantity exceeds the supported range.');
+      await client.query(`INSERT INTO ars_legacy_sale_return_units(sale_item_id,shop_id,product_id,legacy_unit_label,base_units,recorded_by)
+        VALUES($1,$2,$3,$4,$5,$6)`,[line.saleItemId,shopId,productId,unit.label,unit.baseUnits,actor]);
+    }
     const base=config.units.find(u=>u.baseUnits===1)!;
     if(base.sellingPrice>9999999999.99 || Math.abs(base.sellingPrice*100-Math.round(base.sellingPrice*100))>0.00001)throw Error('Base selling price exceeds currency precision.');
     await client.query('UPDATE products SET quantity=$1,reorder_level=$2,cost_price=$3,selling_price=$4,shared_stock_units=$5::jsonb,updated_at=NOW() WHERE id=$6 AND shop_id=$7',[preview.newQuantity,preview.newReorderLevel,preview.newCostPrice,base.sellingPrice,JSON.stringify(config),productId,shopId]);
@@ -193,4 +209,14 @@ export async function getLegacyReturnFactor(client: PoolClient, shopId: string, 
   const factor=Number(result.rows[0]?.base_units);
   if(!Number.isSafeInteger(factor)||factor<=0)throw Error('Legacy invoice requires a verified stock migration before refund.');
   return factor;
+}
+
+
+/** Read-only list of original invoice lines for explicit manager reconciliation. */
+export async function listLegacyInvoiceLines(pool: Pool | PoolClient, shopId:string, productId:string) {
+  const result=await pool.query(`SELECT s.id::text AS id,t.invoice_number,t.date,t.status,s.quantity,s.selling_price,s.variant_id,s.variant_unit,s.selling_unit_id,s.selling_unit_label,s.base_units_per_sale_unit
+    FROM sales_transaction_items s JOIN sales_transactions t ON t.id=s.transaction_id
+    JOIN products p ON p.id=s.product_id AND p.shop_id=t.shop_id
+    WHERE p.id=$1 AND p.shop_id=$2 ORDER BY t.date,s.id`,[productId,shopId]);
+  return result.rows.map(row=>({saleItemId:row.id,invoiceNumber:row.invoice_number,date:row.date,status:row.status,quantity:Number(row.quantity),sellingPrice:Number(row.selling_price),originalUnit:row.variant_unit||null,variantId:row.variant_id||null,hasSharedSnapshot:row.selling_unit_id!=null||row.selling_unit_label!=null||row.base_units_per_sale_unit!=null}));
 }
