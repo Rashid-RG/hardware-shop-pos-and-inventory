@@ -71,3 +71,19 @@ test('supplier refund receipt prints A4 with incoming payment wording and ARS br
  }
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('import charge recovery receipt preserves A4 branding and incoming payment terminology',async()=>{
+ const {renderArsDisbursementVoucherPdf}=await import('../src/utils/arsDisbursementVoucherPdf.ts');
+ const dir=await mkdtemp(join(tmpdir(),'ars-import-recovery-ci-'));
+ try{
+ const pdf=await renderArsDisbursementVoucherPdf({id:'recovery-ci-001',kind:'Import Charge Recovery',date:'2026-11-25',amount:12500,payee:'CI Freight Agent',reference:'PO-001 / RETURN-001 / Freight / DOC-001',method:'Bank Transfer',account:'Main Bank',recordedBy:'CI Manager',note:'BANK-REF-001'},'ARS Distributor',null,{address:'CI address',phone:'0700000000'});
+ assert.equal(pdf.subarray(0,5).toString(),'%PDF-');
+ const file=join(dir,'recovery.pdf');await writeFile(file,pdf);
+ const info=execFileSync('pdfinfo',[file],{encoding:'utf8'});
+ assert.match(info,/Pages:\s+1\b/);
+ assert.match(info,/Page size:\s+595(?:\.\d+)? x 841(?:\.\d+)? pts \(A4\)/);
+ const body=execFileSync('pdftotext',['-layout',file,'-'],{encoding:'utf8'});
+ for(const label of ['ARS Distributor','IMPORT CHARGE RECOVERY RECEIPT','Recovery date','CI Freight Agent','DOC-001','12,500.00','Received into','Amount received','Main Bank','BANK-REF-001','Powered by RS Nextward'])assert.ok(body.includes(label),label);
+ assert.doesNotMatch(body,/Amount paid|Paid from|SUPPLIER REFUND RECEIPT/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
