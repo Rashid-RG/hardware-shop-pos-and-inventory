@@ -146,6 +146,29 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     await refundTransaction(bankPaid.id,shopId,'Bank refund','CI Manager','Store Manager');
     assert.equal(await balance(bank),0);assert.equal(await quantity(),10);
 
+    // Historical profit must remain independent of current catalogue costs.
+    const {financialProfitReport,financialCashFlow}=await import('../backend/financialAccounts.ts');
+    const businessDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const profitSale={...tx(2,'ci-profit-'+randomUUID()),paymentMethod:'Cash',paymentStatus:'PAID',subtotal:200,discountAmount:20,tax:18,total:198,cashReceived:198,changeDue:0};
+    await checkoutTransaction(profitSale,'Store Manager','CI Shop');
+    const beforeProfit=await financialProfitReport(pool,shopId,businessDay,businessDay);
+    assert.equal(beforeProfit.complete,true);
+    await pool.query('UPDATE products SET cost_price=999 WHERE id=$1',[productId]);
+    const afterCostChange=await financialProfitReport(pool,shopId,businessDay,businessDay);
+    assert.deepEqual(afterCostChange,beforeProfit);
+    await pool.query('UPDATE sales_transaction_items SET cost_price=0 WHERE transaction_id=$1',[profitSale.id]);
+    const incomplete=await financialProfitReport(pool,shopId,businessDay,businessDay);
+    assert.equal(incomplete.complete,false);assert.equal(incomplete.grossProfit,null);assert.equal(incomplete.operatingEstimate,null);
+    await pool.query('UPDATE sales_transaction_items SET cost_price=60 WHERE transaction_id=$1',[profitSale.id]);
+    await refundTransaction(profitSale.id,shopId,'Profit report fixture return','CI Manager','Store Manager');
+    const afterRefund=await financialProfitReport(pool,shopId,businessDay,businessDay);
+    assert.equal(afterRefund.netSales,beforeProfit.netSales-180);
+    assert.equal(afterRefund.knownCost,beforeProfit.knownCost-120);
+    const otherProfit=await financialProfitReport(pool,'ci-nonexistent-'+suffix,businessDay,businessDay);
+    assert.equal(otherProfit.netSales,0);assert.equal(otherProfit.knownCost,0);
+    const flow=await financialCashFlow(pool,shopId,'2026-01-01','2099-12-31');
+    assert.equal(flow.netTransfers,0);
+    assert.equal(flow.closing,flow.opening+flow.operating+flow.openingRegistrations+flow.netTransfers+flow.adjustments);
     // Historical invoices and returned stock must survive archiving a SKU.
     await assert.rejects(
       () => archiveProduct(productId, 'other-shop', 'CI Manager', 'Super Admin'),
