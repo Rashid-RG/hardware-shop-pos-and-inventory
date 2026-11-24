@@ -34,6 +34,8 @@ def download(stem):
     if root.is_symlink():
         raise ValueError("Unexpected recovery folder link.")
     files=[stem+".dump",stem+".dump.sha256"]
+    if "-v2-" in stem:
+        files.extend([stem+".manifest.json",stem+".manifest.json.sha256"])
     if stem.endswith("-with-uploads"):
         files.extend([stem+"-uploads.zip",stem+"-uploads.zip.sha256"])
     with tempfile.TemporaryDirectory(prefix=".download-",dir=root) as tmp:

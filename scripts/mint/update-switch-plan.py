@@ -34,7 +34,7 @@ def plan(folder):
     if str(current)!=meta.get("previousProject"):
         raise ValueError("Active installation changed; prepare a new backup.")
     archive=meta.get("archive","")
-    if not isinstance(archive,str) or not re.fullmatch(r"ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(with-uploads|database-only)\.dump",archive):
+    if not isinstance(archive,str) or not re.fullmatch(r"ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(?:v2-)?(with-uploads|database-only)\.dump",archive):
         raise ValueError("Invalid archive reference.")
     dump=folder/archive
     subprocess.run([str(STATE/"node"),str(current/"scripts/verify-backup.mjs"),str(dump)],check=True)

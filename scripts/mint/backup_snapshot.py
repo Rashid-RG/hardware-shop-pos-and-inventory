@@ -1,10 +1,11 @@
 """Read-only fingerprints; caller supplies a PostgreSQL command for the intended database."""
+from contextlib import contextmanager
 import hashlib
 import json
 import re
 import subprocess
 
-def fingerprints(command,snapshot=None):
+def fingerprints(command,snapshot=None, *, cwd=None):
     if snapshot is not None and not re.fullmatch(r"[0-9A-Fa-f-]+",snapshot):
         raise ValueError("Invalid exported snapshot identifier.")
     prefix="BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
@@ -12,7 +13,7 @@ def fingerprints(command,snapshot=None):
         prefix+="SET TRANSACTION SNAPSHOT '"+snapshot+"';\n"
     prefix+="SET LOCAL TIME ZONE 'UTC'; SET LOCAL DateStyle='ISO, YMD'; SET LOCAL extra_float_digits=3; SET LOCAL bytea_output='hex';\n"
     def query(sql):
-        return subprocess.run(command,input=prefix+sql+";\nCOMMIT;\n",text=True,capture_output=True,check=True,timeout=300).stdout.strip()
+        return subprocess.run(command,cwd=cwd,input=prefix+sql+";\nCOMMIT;\n",text=True,capture_output=True,check=True,timeout=300).stdout.strip()
     tables=json.loads(query("SELECT COALESCE(json_agg(tablename ORDER BY tablename COLLATE \"C\"),'[]'::json) FROM pg_tables WHERE schemaname='public'"))
     result={}
     for table in tables:
@@ -20,7 +21,7 @@ def fingerprints(command,snapshot=None):
         sql="SELECT row_to_json(t)::text FROM public."+quoted+' t ORDER BY row_to_json(t)::text COLLATE "C"'
         digest=hashlib.sha256()
         count=0
-        with subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE) as proc:
+        with subprocess.Popen(command,cwd=cwd,stdin=subprocess.PIPE,stdout=subprocess.PIPE) as proc:
             proc.stdin.write((prefix+sql+";\nCOMMIT;\n").encode())
             proc.stdin.close()
             for row in proc.stdout:
@@ -30,3 +31,25 @@ def fingerprints(command,snapshot=None):
                 raise RuntimeError("Snapshot fingerprint query failed.")
         result[table]={"rows":count,"sha256":digest.hexdigest()}
     return result
+
+@contextmanager
+def exported_snapshot(command, *, cwd=None):
+    """Keep the exporting connection alive while pg_dump and readers import it."""
+    with subprocess.Popen(command, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          text=True, bufsize=1) as session:
+        try:
+            session.stdin.write("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\n"
+                                "SELECT pg_export_snapshot();\n")
+            session.stdin.flush()
+            snapshot = session.stdout.readline().strip()
+            if not re.fullmatch(r"[0-9A-Fa-f-]+", snapshot):
+                raise RuntimeError("PostgreSQL did not export a snapshot.")
+            yield snapshot
+        finally:
+            session.stdin.close()
+            if session.wait(timeout=30) != 0:
+                raise RuntimeError("PostgreSQL snapshot session failed.")
+
+
+def psql_command(prefix, user, database):
+    return [*prefix, "psql", "-XqAt", "-v", "ON_ERROR_STOP=1", "-U", user, "-d", database]

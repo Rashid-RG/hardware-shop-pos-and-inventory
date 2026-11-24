@@ -23,6 +23,7 @@ export async function uploadSet(dump, run) {
   }
   const stem = name.slice(0, -5);
   const files = [name, name + '.sha256'];
+  if (stem.includes('-v2-')) files.push(stem + '.manifest.json', stem + '.manifest.json.sha256');
   if (name.endsWith('-with-uploads.dump')) files.push(stem + '-uploads.zip', stem + '-uploads.zip.sha256');
   const types = await run(['listremotes', '--long']);
   if (!/^ars-drive:\s+drive\s*$/m.test(types) || !/^ars-encrypted:\s+crypt\s*$/m.test(types)) {

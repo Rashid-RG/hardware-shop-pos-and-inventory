@@ -1,4 +1,5 @@
 """Rehearse recovery from a verified backup without touching the running database."""
+from backup_snapshot import fingerprints, psql_command
 import argparse
 import datetime
 import hashlib
@@ -87,6 +88,15 @@ def rehearse(source):
             result=run("docker","exec",name,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",'SELECT count(*) FROM public."'+table+'"',capture_output=True,text=True)
             counts[table]=int(result.stdout.strip())
         finance=financial_checks(name)
+        comparison = {"status": "legacy-no-manifest"}
+        if "-v2-" in source.stem:
+            manifest = json.loads(source.with_suffix(".manifest.json").read_text())
+            actual = fingerprints(psql_command(["docker", "exec", "-i", name], "restore_admin", "ars_rehearsal"))
+            expected = manifest["tables"]
+            mismatches = sorted(t for t in actual.keys() | expected.keys() if actual.get(t) != expected.get(t))
+            if mismatches:
+                raise ValueError("Restored rows differ from the backup snapshot: " + ", ".join(mismatches))
+            comparison = {"status": "matched", "publicTableCount": len(actual)}
         run(str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(source))
         with source.open("rb") as stream:
             if hashlib.file_digest(stream,"sha256").hexdigest()!=digest:
@@ -97,7 +107,7 @@ def rehearse(source):
     reports=STATE/"recovery-reports"
     reports.mkdir(mode=0o700,exist_ok=True)
     if reports.is_symlink(): raise ValueError("Unexpected report directory.")
-    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"financialChecks":finance,"liveRestoreApproved":False}
+    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"sourceComparison":comparison,"financialChecks":finance,"liveRestoreApproved":False}
     with tempfile.NamedTemporaryFile(mode="w",prefix="rehearsal-",suffix=".json",dir=reports,delete=False) as stream:
         json.dump(report,stream,indent=2)
         print("Recovery rehearsal report:",stream.name)

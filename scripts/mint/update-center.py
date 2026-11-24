@@ -106,7 +106,11 @@ def view_history(folder,kind):
             missing=finance.get("missingTables",[])
             if isinstance(missing,list) and missing:
                 details.append("Missing ledger tables: "+", ".join(map(str,missing)))
-            details.append("Original-source reconciliation: not verified.")
+            comparison = data.get("sourceComparison", {})
+            if comparison.get("status") == "matched":
+                details.append(f"Original backup snapshot matched all {comparison['publicTableCount']} public tables.")
+            else:
+                details.append("Original backup snapshot comparison unavailable for this report.")
         details.append("Live database replacement is not approved.")
     else:
         details.append("Last verified cloud backup at this attempt: "+str(data.get("verifiedAt") or "None"))

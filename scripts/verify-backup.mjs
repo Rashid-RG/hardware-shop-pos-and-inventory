@@ -23,12 +23,23 @@ async function verifyFile(path) {
   if (!/^[a-f0-9]{64}$/i.test(checksum)) throw new Error('Invalid checksum for ' + basename(path));
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk);
-  if (hash.digest('hex') !== checksum.toLowerCase()) throw new Error('Checksum mismatch for ' + basename(path));
+  const digest = hash.digest('hex');
+  if (digest !== checksum.toLowerCase()) throw new Error('Checksum mismatch for ' + basename(path));
+  return digest;
 }
 
 export async function verifyBackup(path) {
   if (!path.toLowerCase().endsWith('.dump')) throw new Error('Choose a PostgreSQL .dump file.');
-  await verifyFile(path);
+  const digest = await verifyFile(path);
+  if (basename(path).includes('-v2-')) {
+    const manifestPath = path.slice(0, -5) + '.manifest.json';
+    await verifyFile(manifestPath);
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    if (manifest.version !== 1 || manifest.archive !== basename(path) || manifest.dumpSha256 !== digest ||
+        !manifest.tables || Array.isArray(manifest.tables) || typeof manifest.tables !== 'object') {
+      throw new Error('Fingerprint manifest does not match the database archive.');
+    }
+  }
   const zip = path.slice(0, -5) + '-uploads.zip';
   const withAssets = /-with-uploads\.dump$/i.test(path);
   if (withAssets || await exists(zip) || await exists(zip + '.sha256')) {

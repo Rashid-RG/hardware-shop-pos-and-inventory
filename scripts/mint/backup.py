@@ -3,6 +3,8 @@ import argparse
 import datetime
 import fcntl
 import hashlib
+import json
+from backup_snapshot import exported_snapshot, fingerprints, psql_command
 import os
 from pathlib import Path
 import re
@@ -17,7 +19,7 @@ BACKUPS = ROOT / 'backups'
 DATABASE = 'hardware_pos_ars'
 COMPOSE = ['docker', 'compose', '-p', 'ars-mint', '--env-file', '.env.local',
            '-f', 'scripts/mint/compose.yaml']
-MANAGED = re.compile(r'ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(with-uploads|database-only)\.dump')
+MANAGED = re.compile(r'ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(?:v2-)?(with-uploads|database-only)\.dump')
 
 
 def db(*args, **kwargs):
@@ -46,15 +48,25 @@ def backup():
             raise ValueError('Unexpected uploads storage link.')
         uploads = expected
     scope = 'with-uploads' if uploads.is_dir() else 'database-only'
-    stem = f'ars-mint-{stamp}-{uuid.uuid4().hex}-{scope}'
+    stem = f'ars-mint-{stamp}-{uuid.uuid4().hex}-v2-{scope}'
     with tempfile.TemporaryDirectory(dir=BACKUPS) as tmp:
         folder = Path(tmp)
         dump = folder / (stem + '.dump')
-        with dump.open('wb') as out:
-            db('pg_dump', '-U', 'ars', '-d', DATABASE, '-Fc', stdout=out)
+        command = psql_command(COMPOSE + ['exec', '-T', 'postgres'], 'ars', DATABASE)
+        with exported_snapshot(command, cwd=ROOT) as snapshot:
+            with dump.open('wb') as out:
+                db('pg_dump', '-U', 'ars', '-d', DATABASE, '-Fc', '--snapshot', snapshot, stdout=out)
+            tables = fingerprints(command, snapshot, cwd=ROOT)
         with dump.open('rb') as source:
             db('pg_restore', '--list', stdin=source, stdout=subprocess.DEVNULL)
         checksum(dump)
+        manifest = dump.with_suffix('.manifest.json')
+        manifest.write_text(json.dumps({
+            'version': 1, 'archive': dump.name,
+            'dumpSha256': Path(str(dump) + '.sha256').read_text().split()[0],
+            'tables': tables,
+        }, sort_keys=True) + '\n')
+        checksum(manifest)
         if uploads.is_dir():
             archive = folder / (stem + '-uploads.zip')
             with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
@@ -71,7 +83,7 @@ def backup():
     completed = sorted((p for p in BACKUPS.glob('ars-mint-*.dump') if MANAGED.fullmatch(p.name)
                         and Path(str(p) + '.sha256').is_file()), reverse=True)
     for old in completed[30:]:
-        for suffix in ['.dump', '.dump.sha256', '-uploads.zip', '-uploads.zip.sha256']:
+        for suffix in ['.dump', '.dump.sha256', '.manifest.json', '.manifest.json.sha256', '-uploads.zip', '-uploads.zip.sha256']:
             (BACKUPS / (old.stem + suffix)).unlink(missing_ok=True)
     print('ARS_ARCHIVE=' + str(BACKUPS / dump.name))
 

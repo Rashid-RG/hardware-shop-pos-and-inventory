@@ -39,7 +39,7 @@ def test(folder, compatibility=False):
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         metadata=json.loads((folder/"recovery.json").read_text())
         name=metadata.get("archive","")
-        if not isinstance(name,str) or not re.fullmatch(r"ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(with-uploads|database-only)\.dump",name):
+        if not isinstance(name,str) or not re.fullmatch(r"ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(?:v2-)?(with-uploads|database-only)\.dump",name):
             raise ValueError("Invalid pinned archive name.")
         dump=folder/name
         project=(STATE/"project").resolve(strict=True)

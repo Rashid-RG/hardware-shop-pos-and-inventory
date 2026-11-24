@@ -42,6 +42,9 @@ def prepare(version):
             folder=Path(tmp)/"snapshot"
             folder.mkdir(mode=0o700)
             files=[dump,Path(str(dump)+".sha256")]
+            if "-v2-" in dump.stem:
+                manifest = dump.with_suffix(".manifest.json")
+                files.extend([manifest, Path(str(manifest) + ".sha256")])
             if dump.name.endswith("-with-uploads.dump"):
                 archive=dump.with_name(dump.stem+"-uploads.zip")
                 files.extend([archive,Path(str(archive)+".sha256")])
