@@ -13,6 +13,7 @@ import { initLandedCostTables, previewLandedCost, approveLandedCost } from './ba
 import { inventoryValuation, inventoryCostHistory } from './backend/inventoryValuation';
 import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './backend/receivableAging';
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
+import { financialPosition } from './backend/financialPosition';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
@@ -6254,6 +6255,12 @@ app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async
  if(!validChequeRequestId(requestId)||typeof approvalId!=='string'||!approvalId||typeof expenseId!=='string'||!expenseId||!['Freight','Customs','Clearance'].includes(chargeKind)||typeof expectedAmount!=='number'||!Number.isFinite(expectedAmount)||expectedAmount<=0||typeof evidence!=='string'||!evidence.trim()||evidence.length>500)return res.status(400).json({error:'Select a verified payment, approved charge and evidence.'});
  try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
+});
+app.get('/api/financial-position',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Financial position access denied.'});
+ try{const data=await financialPosition(pool,scope.shopId);res.setHeader('Cache-Control','no-store');return res.json(data);}
+ catch(error){console.error('Financial position failed',error);return res.status(500).json({error:'Unable to load financial position.'});}
 });
 app.get('/api/supplier-payable-aging',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
