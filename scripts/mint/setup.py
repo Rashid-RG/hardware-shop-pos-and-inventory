@@ -50,15 +50,21 @@ def setup():
         except BlockingIOError:
             dialog("--error", "Another setup is already running.")
             return 1
-        if (Path.home()/".local/share/ars-hardware/project").exists():
-            dialog("--error", "An installation already exists. Use maintenance or update tools instead.")
-            return 1
+        project = Path.home()/".local/share/ars-hardware/project"
+        marker = state/"setup-incomplete"
+        if project.exists() or project.is_symlink():
+            if not (marker.is_file() and marker.read_text() == str(ROOT) and project.resolve() == ROOT):
+                dialog("--error", "An installation already exists. Use maintenance or update tools instead.")
+                return 1
+            if not dialog("--question", "Resume interrupted installation from this same source folder?"):
+                return 0
         problem = check_tools()
         if problem:
             dialog("--error", problem)
             return 1
         if not dialog("--question", "Install ARS Distributor POS on this computer? Internet is required for first setup. Existing database volumes will not be deleted."):
             return 0
+        marker.write_text(str(ROOT))
         log_path = None
         progress = None
         try:
@@ -71,7 +77,8 @@ def setup():
                                stdout=log, stderr=subprocess.STDOUT, check=True)
                 deadline = time.monotonic() + 180
                 while time.monotonic() < deadline:
-                    if ready():
+                    service = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "ars-hardware.service"], check=False)
+                    if service.returncode == 0 and ready():
                         break
                     time.sleep(2)
                 else:
@@ -86,6 +93,7 @@ def setup():
             if progress and progress.poll() is None:
                 progress.terminate()
                 progress.wait()
+        marker.unlink(missing_ok=True)
         if dialog("--question", "ARS Distributor POS is ready. Open the application now?"):
             subprocess.run(["python3", str(ROOT/"scripts/mint/open.py")], check=False)
         return 0
