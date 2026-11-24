@@ -5,6 +5,9 @@ from interrupted_switch import recovery_plan
 
 def startup_allowed(root):
     root=Path(root)
+    hold=root/"maintenance-hold.json"
+    if hold.exists() or hold.is_symlink():
+        return False
     journal=root/"switch-journal.json"
     if not journal.exists() and not journal.is_symlink():
         return True
