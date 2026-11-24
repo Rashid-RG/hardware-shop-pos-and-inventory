@@ -5795,9 +5795,10 @@ app.put('/api/customers/:id/credit', requireRole(['Super Admin', 'Store Manager'
 });
 
 app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const { activeShopId } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const { amount, paymentMethod, note } = req.body || {};
+  const { amount, paymentMethod, note, invoiceId, date } = req.body || {};
   const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
   if (!customer) return res.status(404).json({ error: 'Customer not found in this shop' });
   const normalizedAmount = Number(amount);
@@ -5805,14 +5806,21 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
       Math.abs(normalizedAmount * 100 - Math.round(normalizedAmount * 100)) > 0.00001) {
     return res.status(400).json({ error: 'Payment amount must be positive with up to two decimal places.' });
   }
+  if(invoiceId!==undefined && (typeof invoiceId!=='string'||!invoiceId.trim()||invoiceId.length>200))return res.status(400).json({error:'Invalid invoice reference.'});
+  const method=paymentMethod ?? 'Cash';
+  if(!['Cash','Bank Transfer','Credit Card','QR Code'].includes(method))return res.status(400).json({error:'Unsupported payment method.'});
+  const today=reportDay(new Date());
+  const paymentDay=date ?? today;
+  if(typeof paymentDay!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDay)||!Number.isFinite(Date.parse(paymentDay+'T00:00:00Z'))||new Date(paymentDay+'T00:00:00Z').toISOString().slice(0,10)!==paymentDay||paymentDay>today)return res.status(400).json({error:'Enter a valid payment date, not later than today.'});
   const payment: CustomerCreditPayment = {
+    invoiceId: invoiceId || undefined,
     id: 'cpay-' + randomUUID(),
     shopId: activeShopId,
     customerId: customer.id,
     customerName: customer.name,
     amount: normalizedAmount,
-    date: reportDay(new Date()),
-    paymentMethod: String(paymentMethod || 'Cash'),
+    date: paymentDay,
+    paymentMethod: method,
     note: typeof note === 'string' ? note.slice(0, 500) : undefined,
     createdBy: authUser?.name,
   };
@@ -5830,7 +5838,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     databaseWriteHealthy = false;
     console.error('Credit payment committed but refresh failed; writes disabled', error);
   }
-  res.json({ customer: result, payment });
+  res.json({ customer: db.customers.find(c=>c.id===customer.id&&c.shopId===activeShopId) || result, payment });
 });
 
 app.get('/api/customer-credit-payments', (_req, res) => {
