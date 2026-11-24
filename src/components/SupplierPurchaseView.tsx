@@ -128,6 +128,66 @@ export default function SupplierPurchaseView({
     try{localStorage.setItem(returnKey,JSON.stringify(request));}catch{setReturnError('Cannot safely save return request. Nothing posted.');return;}
     setReturnSaved(request);await postSavedReturn(request);
   }
+  type RefundRequest={requestId:string;returnId:string;accountId:string;amount:string;date:string;evidence:string};
+  type RefundAvailability={returnId:string;returnDate:string;returnCredit:string;refunded:string;orderAdvance:string;available:string;accounts:Array<{id:string;name:string;kind:string}>};
+  type RefundHistory={id:string;amount:string;refund_date:string;evidence:string;recorded_by:string;account_name:string|null;account_id:string};
+  const refundKey='ars:pending-supplier-refund:'+JSON.stringify([financialOwner||'',financialShopId||'']);
+  const [refundReturnId,setRefundReturnId]=useState('');
+  const [refundAvailability,setRefundAvailability]=useState<RefundAvailability|null>(null);
+  const [refundHistory,setRefundHistory]=useState<RefundHistory[]>([]);
+  const [refundAmount,setRefundAmount]=useState('');
+  const [refundAccount,setRefundAccount]=useState('');
+  const [refundDate,setRefundDate]=useState(reportDay(new Date()));
+  const [refundEvidence,setRefundEvidence]=useState('');
+  const [refundSaved,setRefundSaved]=useState<RefundRequest|null>(null);
+  const [refundStorageReady,setRefundStorageReady]=useState(false);
+  const [refundLoading,setRefundLoading]=useState(false);
+  const [refundBusy,setRefundBusy]=useState(false);
+  const [refundError,setRefundError]=useState('');
+  const [refundAvailabilityError,setRefundAvailabilityError]=useState('');
+  const [refundVersion,setRefundVersion]=useState(0);
+  const refundLock=useRef(false);
+  useEffect(()=>{
+    setRefundReturnId('');setRefundSaved(null);setRefundStorageReady(false);setRefundError('');
+    if(!canPostReturn)return;
+    try{const saved=JSON.parse(localStorage.getItem(refundKey)||'null') as RefundRequest|null;setRefundSaved(saved);if(saved)setRefundReturnId(saved.returnId);setRefundStorageReady(true);}
+    catch{setRefundError('Cannot read saved refund request. Check browser storage.');}
+  },[refundKey,canPostReturn,financialAuthToken]);
+  useEffect(()=>{
+    setRefundAvailability(null);setRefundHistory([]);setRefundAvailabilityError('');
+    if(!refundReturnId||!canViewReturns)return;
+    const controller=new AbortController();setRefundLoading(true);
+    const url='/api/ledger/supplier-refunds/'+encodeURIComponent(refundReturnId);
+    const load=async(path:string)=>{const response=await fetch(path,{headers:{Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},cache:'no-store',signal:controller.signal});const data=await response.json();if(!response.ok)throw Error(data.error||'Unable to load refund information.');return data;};
+    Promise.allSettled([load(url),load(url+'/availability')]).then(([history,availability])=>{
+      if(controller.signal.aborted)return;
+      if(history.status==='fulfilled'&&Array.isArray(history.value))setRefundHistory(history.value);else setRefundError('Unable to load refund history.');
+      if(availability.status==='fulfilled'&&availability.value.returnId===refundReturnId&&Array.isArray(availability.value.accounts))setRefundAvailability(availability.value);
+      else setRefundAvailabilityError(availability.status==='rejected'&&availability.reason instanceof Error?availability.reason.message:'Unable to calculate refundable credit.');
+    }).finally(()=>{if(!controller.signal.aborted)setRefundLoading(false);});
+    return ()=>controller.abort();
+  },[refundReturnId,canViewReturns,financialAuthToken,financialShopId,refundVersion]);
+  const openRefund=(id:string)=>{setRefundReturnId(id);setRefundAvailability(null);setRefundLoading(true);setRefundError('');setRefundAmount('');setRefundAccount('');setRefundEvidence('');setRefundDate(reportDay(new Date()));setRefundVersion(v=>v+1);};
+  async function postSavedRefund(request:RefundRequest){
+    if(refundLock.current||!canPostReturn||!refundStorageReady)return;
+    refundLock.current=true;setRefundBusy(true);setRefundError('');
+    try{
+      const response=await fetch('/api/ledger/supplier-refunds',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},body:JSON.stringify(request)});
+      const result=await response.json();if(!response.ok||result.id!==request.requestId)throw Error(result.error||'Refund not confirmed.');
+      localStorage.removeItem(refundKey);setRefundSaved(null);setRefundAmount('');setRefundEvidence('');setRefundAccount('');setRefundVersion(v=>v+1);notify.success('Supplier refund recorded.');
+    }catch(error){setRefundError((error instanceof Error?error.message:'Refund not confirmed.')+' Saved request retained; retry this exact request or reconcile with an administrator.');}
+    finally{refundLock.current=false;setRefundBusy(false);}
+  }
+  async function submitRefund(event:React.FormEvent){
+    event.preventDefault();
+    if(!canPostReturn||!refundStorageReady||refundSaved||refundLock.current||refundLoading||!refundAvailability||refundAvailability.returnId!==refundReturnId)return;
+    const amount=Number(refundAmount);
+    if(!/^\d{1,12}(\.\d{1,2})?$/.test(refundAmount)||!Number.isFinite(amount)||amount<=0||amount>Number(refundAvailability.available)||!refundAvailability.accounts.some(a=>a.id===refundAccount)||!refundEvidence.trim()||refundDate<refundAvailability.returnDate||refundDate>reportDay(new Date())){setRefundError('Enter a valid amount, destination, date and evidence.');return;}
+    if(!window.confirm('Confirm money actually received from the supplier into the selected account?'))return;
+    const request:RefundRequest={requestId:crypto.randomUUID(),returnId:refundReturnId,accountId:refundAccount,amount:refundAmount,date:refundDate,evidence:refundEvidence.trim()};
+    try{localStorage.setItem(refundKey,JSON.stringify(request));}catch{setRefundError('Cannot safely save refund request. Nothing posted.');return;}
+    setRefundSaved(request);await postSavedRefund(request);
+  }
   const currencySymbol = 'Rs.';
   const [activeTab, setActiveTab] = useState<'purchases' | 'suppliers'>('purchases');
 
@@ -436,10 +496,29 @@ export default function SupplierPurchaseView({
           <button disabled={returnLoading||returnBusy||!returnStorageReady||!returnCandidates.length} className="rounded bg-slate-900 text-white px-4 py-2 disabled:opacity-50">Confirm purchase return</button>
         </form>}
       </section>}
+      {canViewReturns&&(refundReturnId||refundSaved||refundError)&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Supplier refund">
+        <div className="flex justify-between gap-2"><div><h3 className="font-semibold">Supplier refunds</h3><p className="text-xs text-slate-600">Purchase return {refundReturnId||refundSaved?.returnId}</p></div>{!refundSaved&&<button type="button" onClick={()=>{setRefundReturnId('');setRefundError('');}} className="text-sm underline">Close</button>}</div>
+        {refundError&&<p role="alert" className="text-sm text-red-700">{refundError}</p>}
+        {refundSaved&&canPostReturn?<div className="space-y-2"><p className="text-sm">Unconfirmed saved refund {refundSaved.requestId} · Rs. {refundSaved.amount}. Retry the same request only.</p><button type="button" disabled={refundBusy||!refundStorageReady} onClick={()=>void postSavedRefund(refundSaved)} className="rounded bg-slate-900 text-white px-3 py-2 disabled:opacity-50">{refundBusy?'Submitting…':'Retry saved refund'}</button></div>:null}
+        {refundLoading?<p role="status">Loading supplier refund information…</p>:<>
+          {refundAvailabilityError&&<p role="alert" className="text-sm text-amber-800">{refundAvailabilityError}</p>}
+          {refundAvailability&&<div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">{[['Return advance credit',refundAvailability.returnCredit],['Refunded',refundAvailability.refunded],['Order advance',refundAvailability.orderAdvance],['Available refund',refundAvailability.available]].map(([label,value])=><div key={label} className="rounded border p-2"><p>{label}</p><p className="font-semibold">Rs. {value}</p></div>)}</div>}
+          {canPostReturn&&!refundSaved&&refundAvailability&&Number(refundAvailability.available)>0&&<form onSubmit={submitRefund} className="space-y-2">
+            <label className="block text-sm">Destination cash or bank account<select required value={refundAccount} onChange={e=>setRefundAccount(e.target.value)} className="block w-full rounded border p-2"><option value="">Select account</option>{refundAvailability.accounts.map(a=><option key={a.id} value={a.id}>{a.name} · {a.kind}</option>)}</select></label>
+            <label className="block text-sm">Refund amount (LKR)<input required inputMode="decimal" value={refundAmount} onChange={e=>setRefundAmount(e.target.value)} className="block w-full rounded border p-2"/></label>
+            <label className="block text-sm">Received date<input required type="date" min={refundAvailability.returnDate} max={reportDay(new Date())} value={refundDate} onChange={e=>setRefundDate(e.target.value)} className="block rounded border p-2"/></label>
+            <label className="block text-sm">Bank reference / cash receipt evidence<input required maxLength={500} value={refundEvidence} onChange={e=>setRefundEvidence(e.target.value)} className="block w-full rounded border p-2"/></label>
+            <p className="text-xs text-slate-600">Record only money actually received. This does not move inventory.</p>
+            <button disabled={refundBusy||!refundStorageReady||!refundAvailability.accounts.length} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50">Confirm supplier refund</button>
+          </form>}
+          <h4 className="text-sm font-semibold">Refund history</h4>
+          {!refundHistory.length?<p className="text-xs text-slate-600">No refund records loaded.</p>:refundHistory.map(f=><div key={f.id} className="rounded border p-2 text-xs"><p className="font-semibold">{f.refund_date} · Rs. {f.amount} · {f.account_name||f.account_id}</p><p>{f.evidence} · {f.recorded_by}</p></div>)}
+        </>}
+      </section>}
       {canViewReturns&&returnHistoryOrder&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return history">
         <div className="flex justify-between gap-3"><div><h3 className="font-semibold">Purchase return history</h3><p className="text-xs text-slate-600">{returnHistoryOrder.poNumber} · {returnHistoryOrder.supplierName}</p></div><button type="button" className="text-sm underline" onClick={()=>setReturnHistoryOrder(null)}>Close history</button></div>
         {returnHistoryLoading?<p role="status">Loading returns…</p>:returnHistoryError?<p role="alert" className="text-red-700">{returnHistoryError}</p>:returnHistory.length===0?<p className="text-sm text-slate-500">No recorded purchase returns.</p>:returnHistory.map(entry=><article key={entry.id} className="rounded-lg border p-3 text-sm space-y-1">
-          <p className="font-semibold">{entry.return_date} · {entry.id}</p><p>{entry.reason}</p><p>Evidence: {entry.evidence}</p><p>Recorded by: {entry.recorded_by}</p>
+          <p className="font-semibold">{entry.return_date} · {entry.id}</p><p>{entry.reason}</p><p>Evidence: {entry.evidence}</p><p>Recorded by: {entry.recorded_by}</p><button type="button" disabled={!!refundSaved||refundBusy} onClick={()=>openRefund(entry.id)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-50">View / record supplier refunds</button>
           <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>PO line ID</th><th>Base units returned</th><th>Inventory cost (LKR)</th><th>Supplier credit (LKR)</th></tr></thead><tbody>{entry.items.map(line=><tr key={line.itemId}><td>{line.itemId}</td><td>{line.baseQuantity}</td><td>{line.inventoryCost}</td><td>{line.supplierCredit}</td></tr>)}</tbody></table></div>
         </article>)}
       </section>}
