@@ -2,7 +2,7 @@ import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { notify } from '../utils/notifications';
 import {
   TrendingUp,
@@ -28,6 +28,8 @@ import FinancialReconciliationPanel from './FinancialReconciliationPanel';
 import FinancialStatementPanel from './FinancialStatementPanel';
 import type { Customer } from '../types';
 
+type ExpenseRequest=Omit<ManualExpense,'id'|'date'> & {sourceAccountId?:string;requestId?:string;paymentMethod?:string};
+type ExpenseAccount={id:string;name:string;kind:string;active:boolean;balance:number};
 interface AccountingSettingsViewProps {
   initialView?: 'accounting' | 'settings';
   transactions: SalesTransaction[];
@@ -41,7 +43,7 @@ interface AccountingSettingsViewProps {
   onFinancialRefresh?: () => Promise<void>;
   financialShopId?: string;
   onUpdateTaxConfig: (config: StoreSettings) => Promise<void>;
-  onAddManualExpense: (expense: Omit<ManualExpense, 'id' | 'date'>) => Promise<void>;
+  onAddManualExpense: (expense: ExpenseRequest) => Promise<void>;
 }
 
 export default function AccountingSettingsView({
@@ -79,7 +81,36 @@ export default function AccountingSettingsView({
   const [expDesc, setExpDesc] = useState('');
   const [expAmt, setExpAmt] = useState(0);
   const [expCat, setExpCat] = useState('Utilities');
-  const expenseCategories = ['Utilities', 'Maintenance', 'Rent', 'Wages', 'Freight', 'Marketing', 'Other'];
+  const expenseCategories = ['Utilities','Maintenance','Rent','Wages','Transport & distribution','Vehicle fuel','Freight','Customs & clearance','Warehouse handling','Packaging','Office supplies','Marketing','Bank charges','Professional fees','Other'];
+  const [expenseAccounts,setExpenseAccounts]=useState<ExpenseAccount[]>([]);
+  const [expenseSource,setExpenseSource]=useState('');
+  const [expenseMethod,setExpenseMethod]=useState('Cash');
+  const [expenseLoading,setExpenseLoading]=useState(false);
+  const [expenseBusy,setExpenseBusy]=useState(false);
+  const [expenseError,setExpenseError]=useState('');
+  const [expensePending,setExpensePending]=useState<ExpenseRequest|null>(null);
+  const [expenseReady,setExpenseReady]=useState(false);
+  const expenseLock=useRef(false);
+  const expenseShop=financialShopId||taxConfig.activeShopId||'';
+  const expenseKey='ars:pending-expense:'+JSON.stringify([financialOwner||'',expenseShop]);
+  const matchingExpenseAccounts=expenseAccounts.filter(a=>a.active&&a.kind===(expenseMethod==='Cash'?'Office Cash':'Bank'));
+  const chosenExpenseAccount=matchingExpenseAccounts.find(a=>a.id===expenseSource);
+  useEffect(()=>{
+    setExpenseReady(false);setExpensePending(null);setIsExpOpen(false);setExpenseError('');
+    if(!financialOwner||!expenseShop)return;
+    try{setExpensePending(JSON.parse(localStorage.getItem(expenseKey)||'null'));setExpenseReady(true);}catch{setExpenseError('Cannot read saved expense. Check browser storage.');}
+  },[expenseKey,financialOwner,expenseShop]);
+  useEffect(()=>{
+    setExpenseAccounts([]);setExpenseSource('');
+    if(!isExpOpen||!expenseShop)return;
+    const controller=new AbortController();setExpenseLoading(true);setExpenseError('');
+    fetch('/api/financial-accounts',{headers:{Authorization:'Bearer '+authToken,'X-Shop-Id':expenseShop},cache:'no-store',signal:controller.signal})
+      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load financial accounts.');return data;})
+      .then(data=>{if(!controller.signal.aborted)setExpenseAccounts(data);})
+      .catch(e=>{if(!controller.signal.aborted)setExpenseError(e.message);})
+      .finally(()=>{if(!controller.signal.aborted)setExpenseLoading(false);});
+    return ()=>controller.abort();
+  },[isExpOpen,expenseShop,authToken]);
 
   const toDefaultShopProfiles = (config: StoreSettings) => {
     if (Array.isArray(config.shopProfiles) && config.shopProfiles.length > 0) {
@@ -262,25 +293,25 @@ export default function AccountingSettingsView({
   const totalExpensesAmt = manualExpenses.reduce((sum, e) => sum + e.amount, 0) + purchaseExpenses;
   const netProfit = totalIncome - totalExpensesAmt;
 
+  const sendExpense=async(request:ExpenseRequest)=>{
+    if(expenseLock.current)return;
+    expenseLock.current=true;setExpenseBusy(true);setExpenseError('');
+    try{
+      await onAddManualExpense(request);
+      localStorage.removeItem(expenseKey);setExpensePending(null);setIsExpOpen(false);setExpDesc('');setExpAmt(0);
+      notify.success('Expense recorded.');
+    }catch(err){setExpenseError(err instanceof Error?err.message:'Unable to confirm expense. Retry the original request.');}
+    finally{expenseLock.current=false;setExpenseBusy(false);}
+  };
   const handleLogManualExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expDesc.trim() || expAmt <= 0) {
-      notify.warning('Description and positive amount are required.');
-      return;
+    if(expenseLock.current||expensePending||!expenseReady)return;
+    if(!expDesc.trim()||!Number.isFinite(expAmt)||expAmt<=0||!chosenExpenseAccount||chosenExpenseAccount.balance<expAmt){
+      setExpenseError('Enter valid expense details and select an account with sufficient recorded funds.');return;
     }
-
-    try {
-      await onAddManualExpense({
-        desc: expDesc,
-        amount: expAmt,
-        category: expCat,
-      });
-      setIsExpOpen(false);
-      setExpDesc('');
-      setExpAmt(0);
-    } catch (err: any) {
-      notify.warning(err.message || 'Failed to log expense');
-    }
+    const request:ExpenseRequest={desc:expDesc.trim(),amount:expAmt,category:expCat,sourceAccountId:expenseSource,paymentMethod:expenseMethod,requestId:crypto.randomUUID()};
+    try{localStorage.setItem(expenseKey,JSON.stringify(request));}catch{setExpenseError('Cannot safely preserve expense request.');return;}
+    setExpensePending(request);await sendExpense(request);
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -816,11 +847,13 @@ export default function AccountingSettingsView({
         <SupportHealthPanel authToken={authToken} />
       )}
 
+      {expensePending&&isManager&&<div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"><strong>Unconfirmed expense</strong><p>{expensePending.desc} · Rs. {expensePending.amount.toFixed(2)}</p><p>Retry the original request; do not enter another expense.</p>{expenseError&&<p role="alert">{expenseError}</p>}<button type="button" disabled={expenseBusy} className="rounded bg-slate-900 text-white px-3 py-2" onClick={()=>void sendExpense(expensePending)}>Retry exact expense</button></div>}
       {/* FIXED LOG OVERHEAD EXPENSE DRAWER MODAL */}
       {isExpOpen && (
         <div id="expense-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md max-h-[90dvh] overflow-y-auto border border-slate-250 font-sans relative">
             <button
+              disabled={expenseBusy}
               onClick={() => setIsExpOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
@@ -828,7 +861,7 @@ export default function AccountingSettingsView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">
-              Log Operations Overhead Expense
+              Record Business Expense
             </h3>
 
             <form onSubmit={handleLogManualExpense} className="space-y-4 text-xs font-sans">
@@ -852,7 +885,7 @@ export default function AccountingSettingsView({
                     id="input-exp-amount"
                     type="number"
                     step="0.01"
-                    min="0.1"
+                    min="0.01"
                     required
                     value={expAmt}
                     onChange={(e) => setExpAmt(Number(e.target.value))}
@@ -877,9 +910,16 @@ export default function AccountingSettingsView({
                 </div>
               </div>
 
+              <label className="block">Payment method<select value={expenseMethod} onChange={e=>{setExpenseMethod(e.target.value);setExpenseSource('');}} className="block w-full rounded border p-2"><option>Cash</option><option>Bank Transfer</option></select></label>
+              <label className="block">Paid from *<select required value={expenseSource} disabled={expenseLoading||expenseBusy} onChange={e=>setExpenseSource(e.target.value)} className="block w-full rounded border p-2"><option value="">{expenseLoading?'Loading accounts…':'Select financial account'}</option>{matchingExpenseAccounts.map(a=><option key={a.id} value={a.id}>{a.name} · Rs. {a.balance.toFixed(2)}</option>)}</select></label>
+              {!expenseLoading&&!matchingExpenseAccounts.length&&<p className="text-amber-800">Create a matching financial account first.</p>}
+              {chosenExpenseAccount&&<p className="rounded bg-slate-50 p-2">Estimated remaining balance: Rs. {(chosenExpenseAccount.balance-expAmt).toFixed(2)}</p>}
+              <p className="text-slate-500">Record only actual payments. Do not duplicate supplier payments or inventory costs as overhead expenses.</p>
+              {expenseError&&<p role="alert" className="text-red-700">{expenseError}</p>}
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button
                   type="button"
+                  disabled={expenseBusy}
                   onClick={() => setIsExpOpen(false)}
                   className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded"
                 >
@@ -888,9 +928,10 @@ export default function AccountingSettingsView({
                 <button
                   id="btn-log-expense-submit"
                   type="submit"
+                  disabled={expenseBusy||expenseLoading||!!expensePending||!expenseReady||!expenseSource}
                   className="flex-1 py-1.5 text-xs font-bold text-slate-150 bg-rose-500 hover:bg-rose-600 rounded shadow-3xs text-slate-100"
                 >
-                  Log Expense Debit
+                  {expenseBusy?'Recording…':'Record expense'}
                 </button>
               </div>
             </form>
