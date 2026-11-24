@@ -12,13 +12,6 @@ type InvoiceMeta = {
   printedAt?: string;
 };
 type Contact = { address?: string; phone?: string; email?: string; taxRate?: number };
-const NAVY = '#112e51';
-const BLUE = '#bcd8ef';
-const INK = '#14253f';
-const LINE = '#afc4d8';
-const LEFT = 35;
-const RIGHT = 560;
-const WIDTH = RIGHT - LEFT;
 const formatMoney = (amount: number) => 'Rs. ' + amount.toLocaleString('en-US', {
   minimumFractionDigits: 2, maximumFractionDigits: 2,
 });
@@ -34,165 +27,168 @@ export const renderArsInvoicePdf = async (
   contact?: Contact,
 ): Promise<Buffer> => new Promise((resolve, reject) => {
   const doc = new PDFDocument({
-    size: 'A4',
-    margin: 0,
-    autoFirstPage: true,
-    bufferPages: true,
+    size: 'A4', layout: 'portrait', margin: 0, bufferPages: true,
     info: { Title: 'Invoice ' + tx.invoiceNumber, Author: shopName },
   });
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
-  const label = (text: string, x: number, y: number, width: number, size = 9, align: 'left' | 'right' | 'center' = 'left', bold = false) => {
-    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica')
-      .fontSize(size).fillColor(INK).text(text, x, y, { width, align, lineBreak: false, ellipsis: true });
+  const left = 26, right = 569, width = right - left;
+  const navy = '#094785', pale = '#e5eff8', ink = '#121b26', rule = '#a6b9c9';
+  type Align = 'left' | 'center' | 'right';
+  const text = (value: string, x: number, y: number, w: number, size = 10,
+    bold = false, align: Align = 'left', color = ink) => {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color)
+      .text(value, x, y, { width: w, align, lineBreak: false });
   };
-  const box = (x: number, y: number, w: number, h: number) => {
-    doc.roundedRect(x, y, w, h, 5).lineWidth(0.8).strokeColor(LINE).stroke();
+  const line = (x: number, y: number, x2: number, y2: number) =>
+    doc.moveTo(x, y).lineTo(x2, y2).lineWidth(0.6).strokeColor(rule).stroke();
+  const fill = (x: number, y: number, w: number, h: number, color: string) =>
+    doc.roundedRect(x, y, w, h, 4).fill(color);
+  const field = (name: string, value: string, x: number, y: number, key: number, w: number) => {
+    text(name, x, y, key, 9);
+    text(':', x + key, y, 8, 9);
+    text(value, x + key + 12, y, w - key - 12, 9, false);
   };
-  const section = (x: number, y: number, w: number, h: number, title: string) => {
-    box(x, y, w, h);
-    doc.save().roundedRect(x, y, w, 21, 5).fill(BLUE).restore();
-    label(title, x + 11, y + 4, w - 22, 11, 'left', true);
-  };
-  const row = (k: string, v: string, x: number, y: number, w: number, keyW: number) => {
-    label(k, x, y, keyW, 8.2, 'left', true);
-    label(':', x + keyW, y, 8, 8.2);
-    label(v, x + keyW + 9, y, w - keyW - 9, 8.2);
-  };
-  const footer = (pageNumber: number, totalPages: number) => {
-    // Repeat the footer on every printed sheet, including continuation pages.
-    doc.moveTo(LEFT, 780).lineTo(RIGHT, 780).lineWidth(0.55).strokeColor(LINE).stroke();
-    label('Printed by '+shopName+'.', LEFT, 785, 350, 7.4,'left',true);
-    doc.font('Helvetica').fontSize(7.2).fillColor(INK).text(invoiceFooter.goods+' '+invoiceFooter.thanks, LEFT, 795, {width:350,lineGap:0});
-    label(`Page ${pageNumber} of ${totalPages}`, LEFT, 831, 110, 7.2);
-    label(invoiceFooter.credit, 320, 810, 240, 9, 'right', true);
-    label('Smart systems for business.',320,824,240,7.5,'right');
-  };
-  const header = (continuation: boolean) => {
-    if (isArsPrintBrand(shopName)) {
-      doc.save().translate(LEFT,22).scale(48/615).translate(-245,-320).path(arsPrintLogoPath).fill('#000000','even-odd').restore();
-    } else if (logo) {
-      try { doc.image(logo, LEFT, 22, { fit: [68, 48] }); }
-      catch { label('ARS', LEFT, 32, 68, 23, 'left', true); }
-    } else { label('ARS', LEFT, 32, 68, 23, 'left', true); }
-    doc.moveTo(110, 22).lineTo(110, 70).lineWidth(.7).strokeColor(LINE).stroke();
-    label(safe(company?.companyLegalName, shopName), 118, 22, 320, 12, 'left', true);
-    label(safe(contact?.address, ''), 118, 38, 320, 8);
-    label(safe(contact?.phone, ''), 118, 49, 320, 8);
-    if(company?.supportEmail) label(company.supportEmail, 118, 60, 320, 8);
-    doc.roundedRect(448, 34, 112, 24, 3).fill(NAVY);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff')
-      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'CUSTOMER INVOICE',452,41,{width:104,align:'center',lineBreak:false});
-    doc.moveTo(LEFT, 78).lineTo(RIGHT, 78).lineWidth(1.5).strokeColor('#2878bc').stroke();
-    section(LEFT, 88, 248, 76, 'Customer');
-    section(295, 88, 265, 76, 'Invoice Details');
-    row('Name', safe(tx.customerName, 'Walk-in Customer'), 46, 113, 225, 49);
-    row('Address', safe(tx.customerAddress), 46, 127, 225, 49);
-    row('Phone', safe(tx.customerPhone), 46, 141, 225, 49);
-    row('Invoice No', tx.invoiceNumber, 306, 112, 239, 61);
-    row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 124, 239, 61);
-    row('Sales Representative', safe(tx.salesRepName, 'Not recorded'), 306, 136, 239, 108);
-    // Print metadata and payment type remain visible but compact.
-    if (continuation) label('CONTINUED', 306, 150, 96, 7.5, 'left', true);
-    label('Payment', 410, 150, 59, 7.5, 'left', true);
-    label(safe(tx.paymentMethod), 469, 150, 79, 7.5, 'right');
-    return 175;
-  };
-  const showDiscount = tx.items.some(i=>Number(i.discount||0)>0||Number(i.discountAmount||0)>0);
-  const columns = showDiscount ? [35,98,200,316,357,386,440,494,560] : [35,100,218,350,393,425,488,560];
-  const tableHeader = (y: number) => {
-    doc.rect(LEFT, y, WIDTH, 25).fill(NAVY);
-    const headers = ['Product Code','Item Name','Description','U/M','Qty','Rate',...(showDiscount?['Discount']:[]),'Amount'];
-    for (let i = 0; i < headers.length; i++) {
-      doc.font('Helvetica-Bold').fontSize(i === 1 ? 8.1 : 7.6).fillColor('#ffffff')
-      .text(headers[i], columns[i] + 3, y + 8, {
-        width: columns[i + 1] - columns[i] - 6,
-        align: i >= 4 ? 'right' : 'left',
-        lineBreak: false, ellipsis: true,
-      });
-      doc.strokeColor('#7e9bb7').lineWidth(0.4)
-        .moveTo(columns[i], y).lineTo(columns[i], y + 25).stroke();
+  const sectionIcon = (kind: 'person' | 'calendar' | 'note', x: number, y: number) => {
+    doc.save().translate(x, y).lineWidth(1.2).strokeColor(navy).fillColor(navy);
+    if (kind === 'person') {
+      doc.circle(6, 3, 2.7).fill();
+      doc.roundedRect(0, 7, 12, 5, 2).fill();
+    } else if (kind === 'calendar') {
+      doc.roundedRect(0, 2, 12, 10, 1).stroke();
+      doc.moveTo(0, 5).lineTo(12, 5).moveTo(3, 0).lineTo(3, 3).moveTo(9, 0).lineTo(9, 3).stroke();
+      for (const dx of [3, 7]) doc.rect(dx, 7, 2, 2).fill();
+    } else {
+      doc.path('M1 0 L8 0 L12 4 L12 13 L1 13 Z M8 0 L8 4 L12 4 M3 7 L10 7 M3 10 L8 10').stroke();
     }
-    doc.moveTo(RIGHT, y).lineTo(RIGHT, y + 25).strokeColor(LINE).stroke();
+    doc.restore();
   };
-  const notesAndTotals = (y: number) => {
-    const top = y + 14;
-    section(LEFT, top, 260, 114, 'Notes');
-    doc.rect(45,top+31,3,3).fill('#2878bc');
-    doc.font('Helvetica').fontSize(8.2).fillColor(INK).text('Goods once sold will be exchanged only with original invoice and management approval.',55,top+28,{width:228,lineGap:1});
-    doc.rect(45,top+61,3,3).fill('#2878bc');
-    label('Thank you for your business.',55,top+58,228,8.2);
-    box(305, top, 255, 114);
-    const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
-      : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
-        : String(tx.paymentStatus || '').toUpperCase() === 'PAID' ? Number(tx.total) : null;
-    const summary: [string, string][] = [
-      ['Subtotal', formatMoney(Number(tx.subtotal || 0))],
-      [tx.wholesaleMeta?.invoiceDiscountMode === 'percent' && Number.isFinite(Number(tx.wholesaleMeta.invoiceDiscountPercent))
-        ? `Discount (${Number(tx.wholesaleMeta.invoiceDiscountPercent).toLocaleString('en-US', { maximumFractionDigits: 2 })}%)`
-        : tx.wholesaleMeta?.invoiceDiscountMode === 'amount' ? 'Discount (Fixed)' : 'Discount',
-        formatMoney(Number(tx.discountAmount || 0))],
-      ['Tax', formatMoney(Number(tx.tax || 0))],
-      ['Grand Total', formatMoney(Number(tx.total || 0))],
-      ...(tx.paymentMethod==='Cash'&&tx.cashReceived!=null
-        ? [['Cash Received',formatMoney(Number(tx.cashReceived))],['Change Due',formatMoney(Number(tx.changeDue??Math.max(0,tx.cashReceived-tx.total)))]] as [string,string][]
-        : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)],['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, Number(tx.total) - knownPaid))]] as [string,string][]),
-    ];
-    summary.forEach(([name, amount], i) => {
-      const yy = top + i * 19;
-      if (i === 3) doc.rect(305, yy, 255, 19).fill(NAVY);
-      else if(i>=4) doc.rect(305, yy, 255, 19).fill('#e6f1f9');
-      if (i !== 0) doc.moveTo(305, yy).lineTo(560, yy).lineWidth(0.4).strokeColor(LINE).stroke();
-      if(i===3){doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(name,313,yy+4,{width:117,lineBreak:false});doc.text(amount,428,yy+4,{width:123,align:'right',lineBreak:false});}
-      else {label(name,313,yy+5,117,8.6,'left',i>=4);label(amount,428,yy+5,123,8.6,'right',i>=4);}
-    });
-    const signatureY = top + 124;
-    const sigs: [string, number][] = [['Prepared By', LEFT], ['Received By', 214], ['Authorized By', 393]];
-    sigs.forEach(([name, x]) => {
-      section(x, signatureY, 167, 43, name);
-      doc.moveTo(x + 16, signatureY + 34).lineTo(x + 151, signatureY + 34)
-        .lineWidth(0.6).strokeColor('#475569').stroke();
-    });
+  const taxRate = Number(contact?.taxRate || 0);
+  const header = (continued: boolean) => {
+    if (isArsPrintBrand(shopName)) {
+      doc.save().translate(left, 23).scale(41 / 615).translate(-245, -320)
+        .path(arsPrintLogoPath).fill('#000000', 'even-odd').restore();
+    } else if (logo) {
+      try { doc.image(logo, left, 14, { fit: [48, 48] }); }
+      catch { text(shopName, left, 24, 74, 12, true); }
+    }
+    text(safe(company?.companyLegalName, shopName), 85, 18, 218, 16, true);
+    doc.font('Helvetica').fontSize(9).fillColor(ink)
+      .text(contact?.address || '', 85, 42, { width: 213, height: 28, ellipsis: true });
+    text([contact?.phone, company?.supportEmail || contact?.email].filter(Boolean).join('   |   '), 85, 72, 216, 7.8);
+    line(306, 16, 306, 106);
+    fill(318, 16, 251, 22, navy);
+    const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
+    text(title + (continued ? '  (CONTINUED)' : ''), 318, 20, 251, 12, true, 'center', '#ffffff');
+    field('Invoice No', tx.invoiceNumber, 324, 46, 52, 245);
+    field('Issued At', new Date(tx.date).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }), 324, 61, 52, 245);
+    field('Payment', safe(tx.paymentMethod), 324, 76, 52, 245);
+    field('Currency', 'LKR (Rs.)', 324, 91, 52, 245);
+    line(left, 116, right, 116);
+    fill(left, 131, 264, 21, pale);
+    fill(304, 131, 265, 21, pale);
+    sectionIcon('person', left + 8, 135);
+    text('Customer Details', left + 27, 135, 240, 12, true, 'left', navy);
+    sectionIcon('calendar', 313, 135);
+    text('Invoice Details', 331, 135, 245, 12, true, 'left', navy);
+    line(297, 131, 297, 223);
+    field('Customer', safe(tx.customerName, 'Walk-in Customer'), 36, 163, 48, 249);
+    field('Address', safe(tx.customerAddress), 36, 184, 48, 249);
+    field('Phone', safe(tx.customerPhone), 36, 207, 48, 249);
+    field('Sales Rep.', safe(tx.salesRepName, 'Not recorded'), 315, 162, 59, 245);
+    field('Line Items', String(tx.items.length), 315, 178, 59, 245);
+    field('Total Units', String(tx.items.reduce((sum, item) => sum + Number(item.quantity), 0)), 315, 194, 59, 245);
+    field('Tax Rate', taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%', 315, 210, 59, 245);
   };
-  let y = header(false);
-  tableHeader(y);
-  y += 25;
-  tx.items.forEach((item, i) => {
-    // Name and description are immutable snapshots saved when the sale was issued.
-    // The product name already contains the selected variant for newly issued invoices.
+  const cols = [left, 46, 110, 208, 292, 324, 348, 421, 493, right];
+  const headings = ['#', 'Product Code', 'Item Name', 'Description', 'U/M', 'Qty', 'Rate', 'Discount', 'Amount'];
+  const alignments: Align[] = ['center', 'left', 'left', 'left', 'center', 'center', 'right', 'right', 'right'];
+  const tableStart = (continued: boolean) => {
+    header(continued);
+    fill(left, 239, width, 22, navy);
+    headings.forEach((name, i) => text(name, cols[i] + 4, 246, cols[i+1] - cols[i] - 8, 7.6, true, alignments[i], '#ffffff'));
+    return 261;
+  };
+  const footerY = 768;
+  const summaryHeight = 212;
+  let y = tableStart(false);
+  tx.items.forEach((item, index) => {
     const gross = Number(item.quantity) * Number(item.sellingPrice);
-    const lineDisc = Math.min(gross, Math.max(0,gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
-    const amount = Math.max(0, gross - lineDisc);
-    const values = [safe(item.variantSku,item.productId),safe(item.productName),String(item.invoiceDescription||'').trim(),safe(item.variantUnit,'-'),String(item.quantity),Number(item.sellingPrice).toFixed(2),...(showDiscount?[lineDisc.toFixed(2)]:[]),amount.toFixed(2)];
-    const heights=values.map((v,index)=>{
-      doc.font(index===1?'Helvetica-Bold':'Helvetica').fontSize(7.5);
-      return Math.ceil(doc.heightOfString(v,{width:columns[index+1]-columns[index]-6,lineGap:0}));
+    const discount = Math.min(gross, Math.max(0, gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
+    const values = [String(index + 1), safe(item.variantSku, item.productId), safe(item.productName),
+      String(item.invoiceDescription || '').trim(), safe(item.variantUnit), String(item.quantity),
+      formatMoney(Number(item.sellingPrice)), discount ? formatMoney(discount) : '-', formatMoney(gross - discount)];
+    const heights = values.map((value, i) => doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4)
+      .heightOfString(value, { width: cols[i+1] - cols[i] - 8 }));
+    const height = Math.max(23, Math.ceil(Math.max(...heights)) + 8);
+    if (y + height > footerY - 8) { doc.addPage(); y = tableStart(true); }
+    if (index % 2) doc.rect(left, y, width, height).fill('#f5f8fb');
+    values.forEach((value, i) => {
+      doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4).fillColor(ink)
+        .text(value, cols[i]+4, y+4, { width: cols[i+1]-cols[i]-8, align: alignments[i] });
+      line(cols[i], y, cols[i], y+height);
     });
-    const height=Math.max(19,...heights.map(h=>h+8));
-    if(y+height>590){doc.addPage();y=header(true);tableHeader(y);y+=25;}
-    if(i%2)doc.rect(LEFT,y,WIDTH,height).fill('#f0f5fa');
-    values.forEach((v,index)=>{
-      doc.font(index===1?'Helvetica-Bold':'Helvetica').fontSize(7.5).fillColor(INK).text(v,columns[index]+3,y+4,{width:columns[index+1]-columns[index]-6,lineGap:0,align:index>=4?'right':'left'});
-      doc.moveTo(columns[index],y).lineTo(columns[index],y+height).lineWidth(.35).strokeColor(LINE).stroke();
-    });
-    doc.moveTo(RIGHT,y).lineTo(RIGHT,y+height).strokeColor(LINE).stroke();
-    doc.moveTo(LEFT, y + height).lineTo(RIGHT, y + height).strokeColor(LINE).lineWidth(0.45).stroke();
+    line(right, y, right, y+height);
     y += height;
+    line(left, y, right, y);
   });
-  // One or multiple pages: fit summary and signatures without collision.
-  if (y + 14 + 124 + 43 >= 775) {
-    doc.addPage();
-    y = header(true);
-  }
-  notesAndTotals(y);
-  // PDFKit buffers pages so we can print correct Page X of Y information.
-  // Render the complete ARS business header on every page before this stage.
+  if (y + summaryHeight > footerY) { doc.addPage(); header(true); y = 239; }
+  const top = y + 16;
+  fill(left, top, 264, 102, pale);
+  fill(left, top, 264, 24, '#d8eafb');
+  sectionIcon('note', 35, top+5);
+  text('Notes', 54, top + 6, 225, 12, true, 'left', navy);
+  doc.rect(36, top+37, 4, 4).fill('#1875cc');
+  doc.rect(36, top+80, 4, 4).fill('#1875cc');
+  doc.font('Helvetica').fontSize(10).fillColor(ink).text('Goods once sold will be exchanged only with original invoice and management approval.', 48, top+35, {width:232});
+  text('Thank you for your business.', 48, top+78, 232);
+  const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
+    : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
+    : String(tx.paymentStatus || '').toUpperCase() === 'PAID' ? Number(tx.total) : null;
+  const discountLabel = tx.wholesaleMeta?.invoiceDiscountMode === 'percent'
+    ? 'Discount (' + Number(tx.wholesaleMeta.invoiceDiscountPercent || 0) + '%)'
+    : tx.wholesaleMeta?.invoiceDiscountMode === 'amount' ? 'Discount (Fixed)' : 'Discount';
+  const summary = [
+    ['Subtotal', formatMoney(tx.subtotal)], [discountLabel, formatMoney(tx.discountAmount || 0)],
+    ['Tax (' + taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%)', formatMoney(tx.tax || 0)], ['Total', formatMoney(tx.total)],
+    ...(tx.paymentMethod === 'Cash' && tx.cashReceived != null
+      ? [['Cash Received', formatMoney(tx.cashReceived)], ['Change Due', formatMoney(tx.changeDue ?? Math.max(0, tx.cashReceived - tx.total))]]
+      : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)], ['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, tx.total - knownPaid))]]),
+  ];
+  doc.roundedRect(304, top, 265, 70, 4).lineWidth(0.6).strokeColor(rule).stroke();
+  fill(304, top+73, 265, 31, pale);
+  summary.forEach(([name, amount], i) => {
+    const yy = top + [4, 20, 36, 52, 76, 91][i];
+    if (i === 3) fill(304, yy-2, 265, 20, navy);
+    const color = i === 3 ? '#ffffff' : ink, size = i === 3 ? 13 : 10;
+    text(name, 314, yy, 124, size, i >= 3, 'left', color);
+    text(amount, 439, yy, 120, size, true, 'right', color);
+  });
+  const signatureY = footerY - 64;
+  ['Prepared By', 'Received By', 'Authorized By'].forEach((title, i) => {
+    const x = left + i * width / 3;
+    if (i > 0) line(x, signatureY-14, x, signatureY+34);
+    doc.moveTo(x+18, signatureY).lineTo(x+width/3-18, signatureY).lineWidth(0.9).strokeColor(ink).stroke();
+    text(title, x, signatureY+5, width/3, 10, true, 'center');
+    text(i === 1 ? 'Customer' : shopName, x, signatureY+19, width/3, 9, false, 'center');
+  });
   const range = doc.bufferedPageRange();
-  for (let offset = 0; offset < range.count; offset++) {
-    doc.switchToPage(range.start + offset);
-    footer(offset + 1, range.count);
+  for (let page = 0; page < range.count; page++) {
+    doc.switchToPage(range.start + page);
+    line(left, footerY, right, footerY);
+    text('Printed by ' + shopName + '.', left, footerY+6, 363, 10, true);
+    doc.font('Helvetica').fontSize(8).fillColor(ink).text(invoiceFooter.goods + ' ' + invoiceFooter.thanks,
+      left, footerY+20, {width: 355});
+    text(`Page ${page+1} of ${range.count}`, left, footerY+44, 110, 7);
+    line(400, footerY+8, 400, footerY+50);
+    text('Powered by', 411, footerY+6, 158, 8, false, 'right');
+    doc.font('Helvetica-BoldOblique').fontSize(16).fillColor(navy)
+      .text(invoiceFooter.credit.replace(/^Powered by /, ''), 411, footerY+18, {width:158,align:'right',lineBreak:false});
+    doc.moveTo(right-67, footerY+38).quadraticCurveTo(right-37, footerY+30, right, footerY+34)
+      .quadraticCurveTo(right-35, footerY+32, right-67, footerY+39).fill('#ee9115');
+    text('Smart systems for business.', 411, footerY+43, 158, 9, false, 'right');
   }
   doc.end();
 });

@@ -36,12 +36,3 @@ test('server accepts only bounded text, defaults to saved product data and saves
   assert.match(db,/invoiceDescription: item\.invoice_description \?\? undefined/);
   assert.match(server,/invoiceDescription: item\.invoice_description \?\? undefined/);
 });
-test('A4 invoice wraps product descriptions with row-aware page breaks and retains legacy empty lines',()=>{
-  assert.match(pdf,/String\(item\.invoiceDescription\|\|''\)\.trim\(\)/);
-  assert.match(pdf,/const heights=values\.map/);
-  assert.match(pdf,/doc\.heightOfString\(v,/);
-  assert.match(pdf,/Math\.max\(19,\.\.\.heights\.map/);
-  assert.match(pdf,/if\(y\+height>590\)/);
-  assert.match(pdf,/\.text\(v,columns\[index\]\+3/);
-  assert.match(pdf,/notesAndTotals\(y\)/);
-});

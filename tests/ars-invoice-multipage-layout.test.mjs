@@ -1,40 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
+import { renderArsInvoicePdf } from '../src/utils/arsInvoicePdf.ts';
 
-const pdf=readFileSync(new URL('../src/utils/arsInvoicePdf.ts',import.meta.url),'utf8');
+// PDFKit uses standard Helvetica fonts and hexadecimal text runs for this invoice.
+function pageTexts(pdf) {
+  return Array.from(pdf.toString('latin1').matchAll(/\bstream\r?\n([\s\S]*?)\r?\nendstream/g), stream => {
+    const instructions = inflateSync(Buffer.from(stream[1], 'latin1')).toString('latin1');
+    return Array.from(instructions.matchAll(/\[([^\]]*)\]\s*TJ/g), row =>
+      Array.from(row[1].matchAll(/<([\da-f]+)>/gi), run => Buffer.from(run[1], 'hex').toString('latin1')).join('')
+    ).join(' ');
+  });
+}
 
-test('every A4 invoice page uses the full configured ARS company and buyer header',()=>{
-  const header=pdf.split('const header = (continuation: boolean) => {')[1]?.split('const columns =')[0]||'';
-  assert.match(header,/doc\.image\(logo/);
-  assert.match(header,/company\?\.companyLegalName/);
-  assert.match(header,/contact\?\.address/);
-  assert.match(header,/contact\?\.phone/);
-  assert.match(header,/section\(LEFT, 88, 248, 76, 'Customer'\)/);
-  assert.match(header,/section\(295, 88, 265, 76, 'Invoice Details'\)/);
-  assert.match(header,/tx\.invoiceNumber/);
-  assert.match(header,/tx\.customerName/);
-  assert.match(header,/tx\.paymentMethod/);
-  assert.match(header,/CONTINUED/);
-  assert.doesNotMatch(header,/if \(continuation\) \{[\s\S]*?return 72;/);
-});
-test('page footer is repeated and numbered using buffered PDF pages',()=>{
-  assert.match(pdf,/const footer = \(pageNumber: number, totalPages: number\)/);
-  assert.match(pdf,/Page \$\{pageNumber\} of \$\{totalPages\}/);
-  assert.match(pdf,/invoiceFooter\.credit, 320, 810, 240, 9, 'right', true/);
-  assert.match(pdf,/'Smart systems for business\.',320,824,240,7\.5,'right'/);
-  assert.match(pdf,/invoiceFooter\.goods\+' '\+invoiceFooter\.thanks/);
-  assert.match(pdf,/doc\.bufferedPageRange\(\)/);
-  assert.match(pdf,/doc\.switchToPage\(range\.start \+ offset\)/);
-  assert.match(pdf,/footer\(offset \+ 1, range\.count\)/);
-});
-test('multipage invoice retains product codes, with totals and signatures on the last page',()=>{
-  assert.match(pdf,/doc\.addPage\(\)/);
-  assert.match(pdf,/y\s*=\s*header\(true\)/);
-  assert.match(pdf,/safe\(item\.variantSku,item\.productId\)/);
-  assert.match(pdf,/'Product Code','Item Name','Description','U\/M','Qty','Rate'/);
-  assert.match(pdf,/notesAndTotals\(y\)/);
-  assert.match(pdf,/\['Prepared By', LEFT\]/);
-  assert.match(pdf,/\['Received By', 214\]/);
-  assert.match(pdf,/\['Authorized By', 393\]/);
-});
+for (const count of [4, 48]) {
+  test('portrait invoice preserves layout and all saved rows for ' + count + ' items', async () => {
+    const items = Array.from({ length: count }, (_, i) => ({
+      productId: 'SKU-' + (i + 100), productName: 'Steel bolts',
+      invoiceDescription: i % 2 ? 'Original box with the full saved description' : undefined,
+      quantity: 1, sellingPrice: 100,
+    }));
+    const pdf = await renderArsInvoicePdf({
+      items, invoiceNumber: 'ARS-TEST', date: '2026-11-24T08:00:00Z', customerName: 'Test buyer',
+      salesRepName: 'Sales rep', paymentMethod: 'Cash', subtotal: count*100, total: count*100, cashReceived: count*100,
+    }, 'ARS Hardware', { watermarkText:'SHOP STAMP / PAID / AUTHORIZED' }, null);
+    assert.match(pdf.toString('latin1'), /\/MediaBox \[0 0 595\.28 841\.89\]/);
+    const pages = pageTexts(pdf);
+    if (count === 4) assert.equal(pages.length, 1);
+    else assert.ok(pages.length > 1);
+    pages.forEach((page, i) => {
+      for (const label of ['ARS Hardware', 'CUSTOMER INVOICE', 'ARS-TEST', 'Test buyer', 'Sales rep',
+        'RS Nextward', 'Smart systems for business.', 'Page ' + (i+1) + ' of ' + pages.length]) assert.ok(page.includes(label), label);
+      for (const label of ['Prepared By', 'Received By', 'Authorized By', 'Cash Received', 'Change Due']) {
+        assert.equal(page.includes(label), i === pages.length-1, label);
+      }
+      assert.doesNotMatch(page, /SHOP STAMP/);
+    });
+    const printed = pages.join(' ').replace(/\s+/g, ' ');
+    assert.deepEqual(printed.match(/SKU-\d+/g), items.map(item => item.productId));
+    assert.equal(printed.match(/Original box with the full saved description/g)?.length, count / 2);
+  });
+}

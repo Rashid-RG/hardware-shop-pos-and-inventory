@@ -2,7 +2,7 @@ import { arsPrintLogoUrl, isArsPrintBrand } from '../utils/arsPrintLogo';
 import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search,
@@ -28,6 +28,38 @@ import {
 } from 'lucide-react';
 import { Product, ProductVariant, Customer, Employee, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
 import { QRFeatureView } from './QRFeatureView';
+
+function A4InvoicePreview({ id, request }: {
+  id: string;
+  request: (url: string, init?: RequestInit) => Promise<Response>;
+}) {
+  const [url, setUrl] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl = '';
+    const load = async () => {
+      try {
+        const response = await request('/api/transactions/' + encodeURIComponent(id) + '/pdf', { signal: controller.signal });
+        if (!response.ok || !response.headers.get('Content-Type')?.includes('application/pdf')) throw new Error();
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [id, request]);
+  return url
+    ? <iframe title="A4 customer invoice" src={url + '#view=FitH'} className="w-full h-[65vh] rounded border border-slate-200" />
+    : <p role="status">{failed ? 'Preview unavailable. Use Download PDF below to open this invoice.' : 'Loading invoice…'}</p>;
+}
 
 interface POSViewProps {
   products: Product[];
@@ -110,7 +142,7 @@ export default function POSView({
   const thermalShopLogoMarkup = printableShopLogoUrl
     ? `<img src="${escapeHtml(printableShopLogoUrl)}" alt="Store logo" style="display:block;max-width:72px;max-height:36px;object-fit:contain;margin:0 auto 6px;" />`
     : '';
-  const authFetch = (url: string, init?: RequestInit) => {
+  const authFetch = useCallback((url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers || {});
     headers.set('Authorization', `Bearer ${authToken}`);
     if (taxConfig.activeShopId) {
@@ -120,7 +152,7 @@ export default function POSView({
       headers.set('Content-Type', 'application/json');
     }
     return fetch(url, { ...init, headers });
-  };
+  }, [authToken, taxConfig.activeShopId]);
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedInvoice, setExpandedInvoice] = useState(true);
@@ -2003,7 +2035,11 @@ export default function POSView({
               </button>
 
               <div className="overflow-y-auto">
-                {/* Enterprise Invoice Preview */}
+                {effectivePrintFormat === 'a4' && (
+                  <div key={taxConfig.activeShopId + ':' + receiptModel.id}><A4InvoicePreview id={receiptModel.id} request={authFetch} /></div>
+                )}
+                <details key={receiptModel.id} open={effectivePrintFormat === 'thermal'}>
+                  <summary className="my-2 cursor-pointer text-sm font-semibold text-slate-700">Transaction details</summary>
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="bg-slate-50 p-4 border-b border-slate-200">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2213,6 +2249,7 @@ export default function POSView({
                   <p>{invoiceCompanyMeta.websiteUrl || '-'}{invoiceCompanyMeta.socialLinks ? ` | ${invoiceCompanyMeta.socialLinks}` : ''}</p>
                 </div>
 
+                </details>
                 <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Invoice Copy History</h4>
                   {isLoadingPrintHistory ? (
