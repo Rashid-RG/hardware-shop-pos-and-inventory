@@ -397,7 +397,19 @@ export default function POSView({
     return () => window.removeEventListener('keydown', handler);
   }, [products, cart, selectedVariantByProduct]);
 
-  const getCartKey = (item: CartItem) => `${item.product.id}::${item.variantId || 'base'}`;
+  const getCartKey = (item: CartItem) => `${item.product.id}::${item.sellingUnitId ? 'unit:'+item.sellingUnitId : item.variantId || 'base'}`;
+
+  const getDefaultSellingUnit = (product: Product) => product.sharedStockUnits?.units.find(unit => unit.baseUnits === 1);
+  const fitsSharedStock = (product: Product, lines: CartItem[]) => {
+    let required = 0;
+    for (const line of lines.filter(entry=>entry.product.id===product.id)) {
+      const unit = product.sharedStockUnits?.units.find(entry=>entry.id===line.sellingUnitId);
+      if (!unit || !Number.isSafeInteger(line.quantity) || line.quantity<=0 || !Number.isSafeInteger(unit.baseUnits) || unit.baseUnits<=0) return false;
+      required += line.quantity * unit.baseUnits;
+      if (!Number.isSafeInteger(required) || required > product.quantity) return false;
+    }
+    return true;
+  };
 
   const getSelectedVariant = (product: Product): ProductVariant | undefined => {
     if (!Array.isArray(product.variants) || product.variants.length === 0) {
@@ -435,6 +447,19 @@ export default function POSView({
 
   // Handle adding a product (or variant) to register cart
   const addToCart = (product: Product, variant?: ProductVariant) => {
+    if (product.sharedStockUnits) {
+      const unit = getDefaultSellingUnit(product);
+      if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return; }
+      const existing = cart.find(entry=>entry.product.id===product.id && entry.sellingUnitId===unit.id);
+      const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+1}:entry) : [...cart,{
+        product, quantity:1, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
+        unitPrice:unit.sellingPrice, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
+        invoiceDescription:String(product.description || product.longDescription || '').trim().slice(0,250)
+      }];
+      if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock.'); return; }
+      setCart(next);
+      return;
+    }
     const resolvedVariant = variant || getSelectedVariant(product);
     const productStock = Number(product.quantity || 0);
     const variantStock = resolvedVariant ? Number(resolvedVariant.quantity || 0) : productStock;
@@ -493,6 +518,20 @@ export default function POSView({
     } : entry));
   };
 
+  const changeSharedSellingUnit = (itemKey: string, unitId: string) => {
+    const item = cart.find(entry=>getCartKey(entry)===itemKey);
+    const product = products.find(entry=>entry.id===item?.product.id);
+    const unit = product?.sharedStockUnits?.units.find(entry=>entry.id===unitId);
+    if (!item || !product || !unit || item.sellingUnitId===unit.id) return;
+    if (cart.some(entry=>entry!==item && entry.product.id===product.id && entry.sellingUnitId===unit.id)) {
+      notify.warning('This selling unit is already on the invoice. Adjust its quantity separately.'); return;
+    }
+    const next = cart.map(entry=>entry===item?{...entry,product,sellingUnitId:unit.id,variantUnit:unit.label,
+      unitPrice:unit.sellingPrice,unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,discount:0,discountAmount:0}:entry);
+    if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock for this unit.'); return; }
+    setCart(next);
+  };
+
   // Modify cart item quantity
   const updateCartQty = (itemKey: string, numericNewQty: number) => {
     const nextQty = Math.floor(Number(numericNewQty) || 0);
@@ -506,6 +545,8 @@ export default function POSView({
       }
       return item;
     });
+    const product = products.find(entry=>entry.id===cart.find(item=>getCartKey(item)===itemKey)?.product.id);
+    if (product?.sharedStockUnits && !fitsSharedStock(product,updated)) { notify.warning('Insufficient shared stock.'); return; }
     setCart(updated);
   };
 
@@ -1302,7 +1343,7 @@ export default function POSView({
             const selectedVariant = getSelectedVariant(p);
             const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
             const activeReorderLevel = Number(selectedVariant?.reorderLevel ?? p.reorderLevel);
-            const activePrice = Number(selectedVariant?.sellingPrice ?? p.sellingPrice);
+            const activePrice = Number(getDefaultSellingUnit(p)?.sellingPrice ?? selectedVariant?.sellingPrice ?? p.sellingPrice);
             const isLowStock = activeStock <= activeReorderLevel;
             const isOut = activeStock <= 0;
 
@@ -1515,7 +1556,7 @@ export default function POSView({
 
                   </div>
 
-                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit || inferUnitLabel(item.product.name) || '—'}</span>}</div>
+                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.sharedStockUnits ? <select aria-label={`Shared selling unit for ${item.product.name}`} value={item.sellingUnitId || ''} onChange={e=>changeSharedSellingUnit(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs">{item.product.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select> : item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit || inferUnitLabel(item.product.name) || '—'}</span>}</div>
                   {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
                   {/* selectors and quantities */}
                   <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
