@@ -1,7 +1,7 @@
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { notify } from '../utils/notifications';
 import {
   Users,
@@ -24,9 +24,12 @@ import { CustomerLedgerPanel } from './CustomerLedgerPanel';
 import { CustomerReportsView } from './CustomerReportsView';
 
 
-type PendingCollection = {requestId:string;customerId:string;invoiceId?:string;amount:number;paymentMethod:string;date:string;note?:string};
+type PendingCollection = {requestId:string;customerId:string;invoiceId?:string;amount:number;paymentMethod:string;date:string;note?:string;destinationAccountId?:string};
+type CollectionAccount={id:string;name:string;kind:string;active:boolean};
 interface CustomerEmployeeViewProps {
   paymentDraftOwner:string;
+  collectionAuthToken?:string;
+  collectionShopId?:string;
   taxConfig: StoreSettings;
   viewMode: 'customers' | 'employees';
   customers: Customer[];
@@ -55,6 +58,8 @@ export default function CustomerEmployeeView({
   onAddEmployee,
   onSetCreditLimit,
   paymentDraftOwner,
+  collectionAuthToken,
+  collectionShopId,
   onAddCreditPayment,
   onFetchPaymentReceipt,
 }: CustomerEmployeeViewProps) {
@@ -94,6 +99,25 @@ export default function CustomerEmployeeView({
   const paymentStorageKey='ars:pending-collection:'+JSON.stringify([paymentDraftOwner,taxConfig.activeShopId]);
   const [pendingCollection,setPendingCollection]=useState<PendingCollection|null>(()=>{try{return JSON.parse(localStorage.getItem(paymentStorageKey)||'null');}catch{return null;}});
   const paymentLock=useRef(false);
+  const [destinationAccountId,setDestinationAccountId]=useState('');
+  const [collectionAccounts,setCollectionAccounts]=useState<CollectionAccount[]>([]);
+  const [destinationError,setDestinationError]=useState('');
+  const [destinationLoading,setDestinationLoading]=useState(false);
+  const destinationEnabled=!!collectionAuthToken&&!!collectionShopId&&['Super Admin','Store Manager'].includes(currentRole);
+  const compatibleDestinations=collectionAccounts.filter(a=>a.active&&(paymentMethod==='Cash'?['Office Cash','Representative Cash'].includes(a.kind):paymentMethod==='Bank Transfer'?a.kind==='Bank':false));
+  useEffect(()=>{
+    setDestinationAccountId('');setCollectionAccounts([]);setDestinationError('');
+    if(!paymentDraft||!destinationEnabled)return;
+    const controller=new AbortController();
+    setDestinationLoading(true);
+    fetch('/api/financial-accounts',{headers:{Authorization:'Bearer '+collectionAuthToken,'X-Shop-Id':collectionShopId||''},cache:'no-store',signal:controller.signal})
+      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load destinations.');return data as CollectionAccount[];})
+      .then(data=>{if(!controller.signal.aborted)setCollectionAccounts(data);})
+      .catch(error=>{if(!controller.signal.aborted)setDestinationError(error.message||'Unable to load destinations.');})
+      .finally(()=>{if(!controller.signal.aborted)setDestinationLoading(false);});
+    return ()=>controller.abort();
+  },[paymentDraft?.id,destinationEnabled,collectionAuthToken,collectionShopId]);
+
 
   // Employee Form states
   const [isEmpOpen, setIsEmpOpen] = useState(false);
@@ -340,6 +364,7 @@ export default function CustomerEmployeeView({
       notify.warning('Enter a valid payment amount.');
       return;
     }
+    if(destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod)&&!compatibleDestinations.some(a=>a.id===destinationAccountId)){notify.warning('Select a valid financial destination.');return;}
     const printRequested=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-receipt')==='print';
     const preview=printRequested?window.open('','_blank'):undefined;
     if(preview)preview.document.body.textContent='Saving payment…';
@@ -349,6 +374,7 @@ export default function CustomerEmployeeView({
         invoiceId: hasUnallocatedCollections?undefined:paymentInvoiceId,
         amount,
         paymentMethod,
+        destinationAccountId: destinationEnabled&&compatibleDestinations.some(a=>a.id===destinationAccountId)?destinationAccountId:undefined,
         date: paymentDate,
         note: paymentNote || undefined,
       };
@@ -804,7 +830,7 @@ export default function CustomerEmployeeView({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-500 font-semibold mb-1">Method</label>
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
+                  <select value={paymentMethod} onChange={(e) => {setPaymentMethod(e.target.value);setDestinationAccountId('');}} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
                     <option>Cash</option>
                     <option>Bank Transfer</option>
                     <option>Credit Card</option>
@@ -817,6 +843,14 @@ export default function CustomerEmployeeView({
                 </div>
               </div>
 
+              {destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod)&&<div>
+                <label htmlFor="collection-destination" className="block text-slate-500 font-semibold mb-1">Received into *</label>
+                <select id="collection-destination" required disabled={destinationLoading||isPaymentSubmitting} value={destinationAccountId} onChange={e=>setDestinationAccountId(e.target.value)} className="w-full rounded border p-2">
+                  <option value="">{destinationLoading?'Loading accounts…':'Select financial account'}</option>
+                  {compatibleDestinations.map(a=><option key={a.id} value={a.id}>{a.name} · {a.kind}</option>)}
+                </select>
+                {destinationError?<p role="alert" className="text-red-700 text-xs">{destinationError}</p>:!destinationLoading&&!compatibleDestinations.length?<p className="text-xs text-amber-800">Create a matching active account in Accounting before collecting.</p>:null}
+              </div>}
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Note</label>
                 <input value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500" placeholder="Receipt no, memo..." />
