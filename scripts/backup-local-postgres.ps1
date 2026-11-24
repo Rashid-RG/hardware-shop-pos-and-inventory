@@ -27,8 +27,17 @@ if ($Database -cne $configuredDb) { throw 'Requested database does not match DAT
 if (-not [System.IO.Path]::IsPathRooted($Destination)) { $Destination = Join-Path $projectRoot $Destination }
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 $Destination = (Resolve-Path -LiteralPath $Destination).Path
-& docker info *> $null
-if ($LASTEXITCODE -ne 0) { throw 'Docker is unavailable.' }
+# Windows PowerShell 5.1 can promote Docker stderr warnings to terminating errors.
+# Suppress diagnostics for this probe only; still enforce the native exit code.
+$previousPreference = $ErrorActionPreference
+try {
+  $ErrorActionPreference = 'Continue'
+  & docker info 2>$null | Out-Null
+  $dockerInfoExitCode = $LASTEXITCODE
+} finally {
+  $ErrorActionPreference = $previousPreference
+}
+if ($dockerInfoExitCode -ne 0) { throw 'Docker is unavailable.' }
 & docker inspect $Container *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Configured Docker container was not found.' }
 $portMap = & docker port $Container '5432/tcp' 2>$null
