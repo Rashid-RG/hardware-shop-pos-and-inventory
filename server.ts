@@ -7,6 +7,7 @@ import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -3202,6 +3203,48 @@ const requireLocalDatabaseDiagnostics: express.RequestHandler = (_req, res, next
   }
   next();
 };
+// Explicit host opt-in: these fixed commands are never supplied by the browser.
+let manualBackupRunning = false;
+const manualBackupAvailable = () => {
+  if (process.env.ENABLE_LOCAL_BACKUP_UI !== 'true') return false;
+  try {
+    const url = new URL(process.env.DATABASE_URL || '');
+    return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
+      ['win32', 'linux'].includes(process.platform) &&
+      dotenv.parse(fs.readFileSync(path.resolve('.env.local'))).DATABASE_URL === process.env.DATABASE_URL;
+  } catch { return false; }
+};
+app.get('/api/backup/local-status', requireRole(['Super Admin']), (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ enabled: manualBackupAvailable(), running: manualBackupRunning, platform: process.platform });
+});
+app.post('/api/backup/local-run', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Local backup button is not enabled on this database host.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'A manual backup is already running.' });
+  manualBackupRunning = true;
+  const windows = process.platform === 'win32';
+  const executable = windows ? 'powershell.exe' : 'python3';
+  const args = windows
+    ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve('scripts/backup-local-postgres.ps1'), '-OutputArchive']
+    : [path.resolve('scripts/mint/backup.py')];
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(executable, args, { cwd: process.cwd(), windowsHide: true, maxBuffer: 1024 * 1024 }, (error, output) => error ? reject(error) : resolve(output));
+    });
+    const archive = stdout.split(/\r?\n/).find(line => line.startsWith('ARS_ARCHIVE='))?.slice('ARS_ARCHIVE='.length).trim();
+    if (!archive || path.dirname(path.resolve(archive)) !== path.resolve('backups') || !/^ars-[a-z0-9_-]+\.dump$/i.test(path.basename(archive))) throw new Error('Missing verified archive');
+    await new Promise<void>((resolve, reject) => {
+      execFile(process.execPath, [path.resolve('scripts/verify-backup.mjs'), path.resolve(archive)], { cwd: process.cwd(), windowsHide: true }, error => error ? reject(error) : resolve());
+    });
+    res.json({ success: true, archive: path.basename(archive), verifiedAt: new Date().toISOString() });
+  } catch {
+    res.status(500).json({ error: 'Backup or verification failed. Check Docker and the database host configuration.' });
+  } finally {
+    manualBackupRunning = false;
+  }
+});
+
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
