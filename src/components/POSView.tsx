@@ -1,3 +1,4 @@
+import { arsPrintLogoUrl, isArsPrintBrand } from '../utils/arsPrintLogo';
 import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
@@ -94,7 +95,7 @@ export default function POSView({
     || normalizedShopName.includes('wholesale')
     || normalizedShopName.includes('ars pvt');
   const effectivePrintFormat: 'a4' | 'thermal' = isWholesaleShop ? 'a4' : (printFormat === 'thermal' ? 'thermal' : 'a4');
-  const printableShopLogoUrl = shopLogoUrl
+  const printableShopLogoUrl = isArsPrintBrand(activeShopName) ? arsPrintLogoUrl : shopLogoUrl
     ? (() => {
         try {
           return new URL(shopLogoUrl, window.location.origin).href;
@@ -1474,7 +1475,7 @@ export default function POSView({
               </div>
 
               <footer class="foot">
-                ${isWholesaleShop ? 'Wholesale supply invoice generated on A4 format. Please validate delivered quantities and terms at receipt.' : 'Returns accepted within 14 days with valid receipt.'} Printed by ${escapeHtml(activeShopName)}.<br>${invoiceFooter.goods} ${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small>
+                Printed by ${escapeHtml(activeShopName)}.<br>${invoiceFooter.goods} ${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small>
               </footer>
 
               <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px;">
