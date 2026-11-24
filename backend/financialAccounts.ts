@@ -538,3 +538,35 @@ export async function financialCashFlow(db:Pool|PoolClient,shopId:string,fromDat
  const net=(kinds:string[])=>groups.filter((g:any)=>kinds.includes(g.kind)).reduce((s:number,g:any)=>s+g.inflow-g.outflow,0);
  return {fromDate,toDate,opening:Number(row.opening),closing:Number(row.closing),groups,operating:net(['Invoice Payment','Invoice Refund','Customer Collection','Supplier Payment','Expense']),openingRegistrations:net(['Opening Balance']),netTransfers:net(['Transfer In','Transfer Out']),adjustments:net(['Adjustment'])};
 }
+
+/** Historical invoice economics, with refunds recognized on the recorded refund day.
+ * Missing or ambiguous zero-cost snapshots prevent publication of a profit figure.
+ */
+export async function financialProfitReport(db:Pool|PoolClient,shopId:string,fromDate:string,toDate:string){
+ if(!shopId||!validChequeDay(fromDate)||!validChequeDay(toDate)||fromDate>toDate)throw Error('Invalid profit report period.');
+ const result=await db.query(`WITH events AS (
+ SELECT t.id,1 AS sign,(t.total-t.tax) AS revenue FROM sales_transactions t
+ WHERE t.shop_id=$1 AND t.status IN ('Completed','Refunded') AND (t.date AT TIME ZONE 'Asia/Colombo')::date BETWEEN $2::date AND $3::date
+ UNION ALL
+ SELECT t.id,-1 AS sign,(t.total-t.tax) AS revenue FROM sales_transactions t
+ WHERE t.shop_id=$1 AND t.status='Refunded' AND (t.refunded_at AT TIME ZONE 'Asia/Colombo')::date BETWEEN $2::date AND $3::date
+ ), costs AS (
+ SELECT e.id,e.sign,e.revenue,COALESCE(SUM(i.cost_price*i.quantity),0) AS cost,
+ COUNT(*) FILTER(WHERE i.id IS NULL OR i.cost_price IS NULL OR i.cost_price<=0 OR i.quantity<=0) AS missing
+ FROM events e LEFT JOIN sales_transaction_items i ON i.transaction_id=e.id GROUP BY e.id,e.sign,e.revenue
+ ), expense AS (
+ SELECT COALESCE(SUM(amount),0) AS amount FROM manual_expenses WHERE shop_id=$1 AND date::date BETWEEN $2::date AND $3::date
+ )
+ SELECT COALESCE(SUM(revenue) FILTER(WHERE sign=1),0) AS sales,
+ COALESCE(SUM(revenue) FILTER(WHERE sign=-1),0) AS refunds,
+ COALESCE(SUM(sign*cost),0) AS cost,
+ COALESCE(SUM(missing),0) AS missing,
+ COUNT(*) FILTER(WHERE missing>0) AS affected,
+ (SELECT amount FROM expense) AS expenses,
+ (SELECT COUNT(*) FROM sales_transactions WHERE shop_id=$1 AND status='Refunded' AND refunded_at IS NULL AND (date AT TIME ZONE 'Asia/Colombo')::date <= $3::date) AS undated_refunds
+ FROM costs`,[shopId,fromDate,toDate]);
+ const r=result.rows[0],sales=Number(r.sales),refunds=Number(r.refunds),knownCost=Number(r.cost),expenses=Number(r.expenses),missing=Number(r.missing),affected=Number(r.affected),undatedRefunds=Number(r.undated_refunds);
+ const round=(n:number)=>Math.round(n*100)/100;
+ const netSales=round(sales-refunds),complete=missing===0&&undatedRefunds===0;
+ return {fromDate,toDate,sales,refunds,netSales,knownCost,expenses,missing,affected,undatedRefunds,complete,grossProfit:complete?round(netSales-knownCost):null,operatingEstimate:complete?round(netSales-knownCost-expenses):null};
+}
