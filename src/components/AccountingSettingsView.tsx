@@ -1,3 +1,4 @@
+import FinancialCashFlowPanel from './FinancialCashFlowPanel';
 import DisbursementVoucherActions from './DisbursementVoucherActions';
 import CashHandoversPanel from './CashHandoversPanel';
 import RepresentativeLoginsPanel from './RepresentativeLoginsPanel';
@@ -285,17 +286,12 @@ export default function AccountingSettingsView({
     setSocialLinks(activeInvoiceMeta.socialLinks || '');
   };
 
-  // Profit/Loss Calculations
-  // Income comes from completed POS sales transactions
-  const totalIncome = transactions.reduce((sum, t) => sum + t.subtotal + t.tax, 0);
-
-  // Expenses come from Received POs (actually bought restocks) plus manual expenses
-  const purchaseExpenses = purchaseOrders
-    .filter((po) => po.status === 'Received')
-    .reduce((sum, po) => sum + po.total, 0);
-
-  const totalExpensesAmt = manualExpenses.reduce((sum, e) => sum + e.amount, 0) + purchaseExpenses;
-  const netProfit = totalIncome - totalExpensesAmt;
+  // Invoice value is not cash income; stock procurement is not cost of goods sold.
+  const completedSales=transactions.filter(t=>t.status==='Completed');
+  const totalIncome=completedSales.reduce((sum,t)=>sum+t.total,0);
+  const purchaseExpenses=purchaseOrders.filter(po=>po.status==='Received').reduce((sum,po)=>sum+po.total,0);
+  const totalExpensesAmt=manualExpenses.reduce((sum,e)=>sum+e.amount,0);
+  const creditInvoiceValue=completedSales.filter(t=>t.paymentMethod==='Credit Account').reduce((sum,t)=>sum+t.total,0);
 
   const sendExpense=async(request:ExpenseRequest)=>{
     if(expenseLock.current)return;
@@ -423,16 +419,17 @@ export default function AccountingSettingsView({
           {isManager && <FinancialAccountsPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
           {isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
           {isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {isManager && <FinancialCashFlowPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <FinancialStatementPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Financial ledger overview',filename:'ars-financial-ledger',period:'All available records | operational figures, not audited accounts',headers:['Type','Date','Reference / description','Status','Amount (LKR)'],moneyColumns:[4],rows:[...transactions.map(t=>['Sale',reportDay(t.date),t.invoiceNumber,t.status||'Completed',t.total]),...purchaseOrders.map(p=>['Purchase order',reportDay(p.date),p.poNumber,p.status,p.total]),...manualExpenses.map(e=>['Manual expense',reportDay(e.date),e.desc,e.category,e.amount])],summary:[{label:'Non-refunded invoice totals (LKR)',value:transactions.filter(t=>t.status!=='Refunded').reduce((a,t)=>a+t.total,0)},{label:'Received purchase orders (LKR)',value:purchaseOrders.filter(p=>p.status==='Received').reduce((a,p)=>a+p.total,0)},{label:'Manual expenses (LKR)',value:manualExpenses.reduce((a,e)=>a+e.amount,0)}]})}/>}
           {/* KPI Analytics Block */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Gross Sales Income</span>
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Completed invoice value (incl. tax)</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-1 font-mono">
-                  <TrendingUp className="w-3 h-3" /> FROM {transactions.length} CASHIER SALES
+                  <TrendingUp className="w-3 h-3" /> FROM {completedSales.length} INVOICES
                 </span>
               </div>
               <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600 h-11 w-11 flex items-center justify-center shrink-0">
@@ -442,10 +439,10 @@ export default function AccountingSettingsView({
 
             <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Total Store Cost Expenses</span>
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Recorded manual expenses</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalExpensesAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 <span className="text-[9px] text-rose-600 font-bold flex items-center gap-1 mt-1 font-mono">
-                  <TrendingDown className="w-3 h-3" /> Procurement: {currencySymbol}{purchaseExpenses.toFixed(2)}
+                  <TrendingDown className="w-3 h-3" /> Received PO value (separate): {currencySymbol}{purchaseExpenses.toFixed(2)}
                 </span>
               </div>
               <div className="p-3 bg-rose-50 rounded-xl text-rose-600 h-11 w-11 flex items-center justify-center shrink-0">
@@ -455,13 +452,13 @@ export default function AccountingSettingsView({
 
             <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Net Operating Surplus</span>
-                <strong className={`text-2xl font-mono block mt-1 ${netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {currencySymbol}{netProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Credit invoice value</span>
+                <strong className={`text-2xl font-mono block mt-1 text-slate-900`}>
+                  {currencySymbol}{creditInvoiceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </strong>
-                <span className="text-[9px] text-slate-500 block mt-1 font-mono">After logistics and overheads</span>
+                <span className="text-[9px] text-slate-500 block mt-1 font-mono">Original credit invoice totals, not outstanding debt</span>
               </div>
-              <div className={`p-3 rounded-xl h-11 w-11 flex items-center justify-center shrink-0 ${netProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+              <div className={`p-3 rounded-xl h-11 w-11 flex items-center justify-center shrink-0 bg-slate-100 text-slate-700`}>
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
             </div>
@@ -472,8 +469,8 @@ export default function AccountingSettingsView({
             <div className="lg:col-span-8 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-100 flex items-center justify-between">
                 <div>
-                  <h4 className="font-heading font-medium text-slate-900 text-sm">Overhead & Expense Chronology</h4>
-                  <p className="text-[10px] text-slate-400">Inventory shipments and fixed store expenditures.</p>
+                  <h4 className="font-heading font-medium text-slate-900 text-sm">Procurement and expense records</h4>
+                  <p className="text-[10px] text-slate-400">Received purchase orders are inventory records, not evidence of payment.</p>
                 </div>
 
                 {isManager && (
@@ -491,10 +488,10 @@ export default function AccountingSettingsView({
                 <table className="w-full text-left">
                   <thead>
                     <tr className="bg-slate-50/75 text-slate-500 font-medium font-sans border-b border-slate-100">
-                      <th className="p-4">Paid On</th>
+                      <th className="p-4">Record date</th>
                       <th className="p-4">Reference/Description</th>
                       <th className="p-4">Category</th>
-                      <th className="p-4 text-right">Debit amount</th>
+                      <th className="p-4 text-right">Recorded value</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -505,14 +502,14 @@ export default function AccountingSettingsView({
                         <tr key={po.id} className="hover:bg-slate-50/50 transition">
                           <td className="p-4 text-slate-400 font-mono">Completed Date</td>
                           <td className="p-4">
-                            <span className="font-semibold text-slate-900 block">Stock Replenishment Invoice</span>
+                            <span className="font-semibold text-slate-900 block">Received purchase order (not payment)</span>
                             <span className="text-[9px] text-slate-400 block mt-0.5">Wholesaler PO: {po.poNumber} ({po.supplierName})</span>
                           </td>
                           <td className="p-4">
                             <span className="bg-blue-50 text-blue-800 text-[9px] font-mono font-bold px-2 py-0.5 rounded">Inventory</span>
                           </td>
                           <td className="p-4 text-right font-mono font-bold text-rose-600">
-                            -{currencySymbol}{po.total.toFixed(2)}
+                            {currencySymbol}{po.total.toFixed(2)}
                           </td>
                         </tr>
                       ))}
@@ -541,19 +538,19 @@ export default function AccountingSettingsView({
             {/* Income Streams POS Quick Ledger (4 cols) */}
             <div className="lg:col-span-4 bg-white p-5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
               <div>
-                <h4 className="font-heading font-medium text-slate-900 text-sm">POS Income Stream Feed</h4>
-                <p className="text-[11px] text-slate-400 mb-4">Chronological receipts compiled at cashier registers.</p>
+                <h4 className="font-heading font-medium text-slate-900 text-sm">Completed invoice register</h4>
+                <p className="text-[11px] text-slate-400 mb-4">Invoice values, including credit sales; not cash collections.</p>
 
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {transactions.map((t, idx) => {
-                    const grossText = (t.subtotal + t.tax).toFixed(2);
+                  {completedSales.map((t, idx) => {
+                    const grossText = t.total.toFixed(2);
                     return (
                       <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200/55 flex justify-between font-mono text-[11px]">
                         <div>
                           <strong className="text-slate-800 font-sans block">{t.invoiceNumber}</strong>
                           <span className="text-slate-400 text-[9px] block mt-0.5">Ref: {t.paymentMethod}</span>
                         </div>
-                        <span className="text-emerald-600 font-bold shrink-0 mt-0.5">+{currencySymbol}{grossText}</span>
+                        <span className="text-emerald-600 font-bold shrink-0 mt-0.5">{currencySymbol}{grossText}</span>
                       </div>
                     );
                   })}
@@ -561,7 +558,7 @@ export default function AccountingSettingsView({
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 text-xs font-mono text-slate-500 leading-relaxed text-center">
-                Financial balances calculated dynamically against local state file storage records.
+                For actual cash movements, use the recorded cash flow and account statements above.
               </div>
             </div>
           </div>
