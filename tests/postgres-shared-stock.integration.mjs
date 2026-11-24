@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci')throw Error('Refusing shared-stock test outside local hardware_pos_ci');
 const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder,checkoutTransaction,refundTransaction}=await import('../backend/db.ts');
-const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation}=await import('../backend/packagingDrafts.ts');
+const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices}=await import('../backend/packagingDrafts.ts');
 const {initSharedStockSchema,deductSharedSale,restoreSharedSale}=await import('../backend/sharedStock.ts');
 test('shared packaging activation, purchase, mixed sale and rollback against PostgreSQL',async()=>{
  const suffix=randomUUID(),shop='ci-shared-'+suffix,product='prod-'+suffix,supplier='supplier-'+suffix,po='po-'+suffix;
@@ -97,5 +97,14 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   assert.equal(committed.length,1);
   await refundTransaction(committed[0].id,shop,'CI concurrent checkout cleanup','CI Manager','Store Manager');
   assert.equal(await stock(),164);
+  const repriced={...config,units:config.units.map(u=>({...u,sellingPrice:u.id==='box'?5800:550}))};
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Cashier','Cashier',config,repriced),/authorization/);
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,{...repriced,units:repriced.units.map(u=>u.id==='box'?{...u,baseUnits:24}:u)}),/Only selling prices/);
+  await updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced);
+  assert.equal(await stock(),164);
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced),/Reload/);
+  const historic=(await pool.query('SELECT selling_price FROM sales_transaction_items WHERE transaction_id=$1 AND selling_unit_id=$2',[invoiceId,'box'])).rows[0];
+  assert.equal(Number(historic.selling_price),5400);
+  assert.equal(Number((await pool.query('SELECT selling_price FROM products WHERE id=$1',[product])).rows[0].selling_price),550);
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
