@@ -2,6 +2,7 @@ import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
 import { baseQuantity } from '../src/utils/unitConversion';
 import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
+import { getLegacyReturnFactor } from './packagingDrafts';
 import bcrypt from 'bcryptjs';
 import { DATABASE_URL, DB_STATE_KEY } from './config';
 import {
@@ -1777,7 +1778,9 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
         if (!item.selling_unit_id || !item.base_units_per_sale_unit || item.variant_id) throw new Error('Incomplete shared-unit invoice snapshot.');
         stockReturned = await restoreSharedSale(client, shopId, item.product_id, quantity, Number(item.base_units_per_sale_unit));
       } else if (product.shared_stock_units) {
-        throw new Error('Legacy invoice requires a verified stock migration before refund.');
+        if(item.variant_id)throw new Error('Legacy variant invoice requires separate reconciliation.');
+        const factor=await getLegacyReturnFactor(client,shopId,item.product_id,item.id);
+        stockReturned=await restoreSharedSale(client,shopId,item.product_id,quantity,factor);
       } else if (item.variant_id) {
         const variant = variants.find((entry) => entry.id === item.variant_id);
         if (!variant) throw new Error(`Cannot refund: product variant ${item.variant_name || item.variant_id} is missing.`);
