@@ -15,7 +15,7 @@ export function ReportExportMenu({report,settings}:{report:()=>BusinessReport | 
        preview.opener = null;
      }
      const data = await report();
-     if (format === 'csv') saveReportCsv(data);
+     if (format === 'csv') saveReportCsv(data, settings);
      else if (preview) printBusinessReport(data, settings, preview);
      else if (format === 'pdf') {
        const session = JSON.parse(sessionStorage.getItem('hardware_shop_session') || 'null');
