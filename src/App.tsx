@@ -1326,6 +1326,8 @@ export default function App() {
 
               {(activeTab === 'accounting' || activeTab === 'company-profile') && (
                 <AccountingSettingsView
+                  financialOwner={authUser.email}
+                  financialShopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'}
                   key={activeTab}
                   initialView={activeTab === 'company-profile' ? 'settings' : 'accounting'}
                   transactions={transactions}
