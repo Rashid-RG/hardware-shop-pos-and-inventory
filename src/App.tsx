@@ -1135,6 +1135,7 @@ export default function App() {
 
               {activeTab === 'inventory' && (
                 <InventoryView
+                  taxConfig={taxConfig}
                   products={products}
                   stockLogs={stockLogs}
                   currentRole={currentRole}
@@ -1182,6 +1183,7 @@ export default function App() {
 
               {(activeTab === 'customers' || activeTab === 'staff') && (
                 <CustomerEmployeeView
+                  taxConfig={taxConfig}
                   key={activeTab}
                   viewMode={activeTab === 'customers' ? 'customers' : 'employees'}
                   customers={customers}
@@ -1199,6 +1201,7 @@ export default function App() {
 
               {activeTab === 'reports' && (
                 <ReportsView
+                  taxConfig={taxConfig}
                   transactions={transactions}
                   products={products}
                   manualExpenses={manualExpenses}
