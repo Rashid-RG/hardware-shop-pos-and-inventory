@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
+import { baseQuantity } from '../src/utils/unitConversion';
 import type { ProductVariant } from '../src/types';
 
 // Additive schema; does not rewrite legacy business tables.
@@ -64,7 +65,7 @@ export const receivePartialOrder = async (
     }
     if (!['Pending', 'Ordered', 'Partially Received'].includes(po.status)) throw new Error('Order is not open for receiving.');
     const ordered = await client.query(
-      `SELECT i.id,i.product_id,i.product_name,i.variant_id,i.quantity,
+      `SELECT i.id,i.product_id,i.product_name,i.variant_id,i.quantity,i.selling_unit_id,i.base_units_per_purchase_unit,
               COALESCE((SELECT SUM(r.quantity) FROM ars_receipt_batch_items r WHERE r.purchase_order_item_id=i.id),0)::integer AS received
          FROM purchase_order_items i WHERE i.purchase_order_id=$1 ORDER BY i.id`, [poId]);
     if (!ordered.rowCount) throw new Error('Order has no items.');
@@ -86,6 +87,11 @@ export const receivePartialOrder = async (
       if (!productRes.rowCount) throw new Error('Ordered product unavailable in this shop.');
       const product = productRes.rows[0];
       const variants: ProductVariant[] = product.variants_json || [];
+      let stockIn = line.quantity;
+      if (product.shared_stock_units || row.selling_unit_id || row.base_units_per_purchase_unit != null) {
+        if (!product.shared_stock_units || !row.selling_unit_id || !row.base_units_per_purchase_unit || variants.length || row.variant_id) throw new Error('Incompatible purchasing unit snapshot.');
+        stockIn = baseQuantity(line.quantity,Number(row.base_units_per_purchase_unit));
+      }
       const variant = purchaseVariant(variants,row.variant_id,product.name,true);
       if (variant) {
         variant.quantity = Number(variant.quantity || 0) + line.quantity;
@@ -96,7 +102,7 @@ export const receivePartialOrder = async (
       } else {
         await client.query(
           'UPDATE products SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2 AND shop_id=$3',
-          [line.quantity,product.id,shopId]);
+          [stockIn,product.id,shopId]);
       }
       await client.query(
         'INSERT INTO ars_receipt_batch_items(batch_id,purchase_order_item_id,quantity) VALUES($1,$2,$3)',
@@ -104,7 +110,7 @@ export const receivePartialOrder = async (
       await client.query(
         `INSERT INTO stock_logs(id,shop_id,date,product_id,product_name,type,quantity,reason,user_name,reference_id)
          VALUES($1,$2,NOW(),$3,$4,'Stock In',$5,'ARS Partial Goods Receipt',$6,$7)`,
-        ['stock-'+batchId+'-'+line.purchaseOrderItemId,shopId,row.product_id,row.product_name,line.quantity,user,batchId]);
+        ['stock-'+batchId+'-'+line.purchaseOrderItemId,shopId,row.product_id,row.product_name,stockIn,user,batchId]);
       row.received = Number(row.received) + line.quantity;
     }
     const fullyReceived = ordered.rows.every(row => Number(row.received) === Number(row.quantity));
