@@ -1957,7 +1957,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       } else {
         await client.query(
           `UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
-          [item.quantity, dbProduct.id]
+          [stockIn, dbProduct.id]
         );
       }
 
