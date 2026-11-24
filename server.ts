@@ -5960,6 +5960,34 @@ app.get('/api/representative/me',requireRole(['Cashier']),async(req,res)=>{
     res.setHeader('Cache-Control','no-store');return res.json({...identity,balance:account.balance});
   }catch(error){console.error('Representative identity read failed',error);return res.status(500).json({error:'Unable to load your cash account.'});}
 });
+app.get('/api/representative/collections',requireRole(['Cashier']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  const auth=(req as AppRequest).authUser;
+  const user=db.users.find(u=>u.email.toLowerCase()===auth?.email.toLowerCase()&&u.role==='Cashier');
+  if(!scope||!user||!eligibleRepresentativeLogin(user,scope.shopId))return res.status(403).json({error:'Representative access denied.'});
+  const day=reportDay(new Date());
+  try{
+    const identity=await resolveRepresentativeFinancialIdentity(pool,scope.shopId,user.id);
+    if(!identity)return res.status(403).json({error:'No assigned representative cash account.'});
+    const result=await pool.query(`WITH movements AS (
+      SELECT * FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2
+    ), recent AS (
+      SELECT m.source_id AS id,m.amount,m.effective_date::text AS date,p.customer_name,p.invoice_id,t.invoice_number
+      FROM movements m JOIN customer_credit_payments p ON p.id=m.source_id AND p.shop_id=m.shop_id
+      LEFT JOIN sales_transactions t ON t.id=p.invoice_id AND t.shop_id=p.shop_id
+      WHERE m.movement_kind='Customer Collection' AND m.recorded_by=$3
+      ORDER BY m.effective_date DESC,m.recorded_at DESC,m.id DESC LIMIT 100
+    )
+    SELECT COALESCE(SUM(amount),0) AS balance,
+      COALESCE(SUM(amount) FILTER(WHERE movement_kind='Customer Collection' AND recorded_by=$3 AND effective_date=$4::date),0) AS today_collected,
+      COUNT(*) FILTER(WHERE movement_kind='Customer Collection' AND recorded_by=$3 AND effective_date=$4::date) AS today_count,
+      (SELECT COALESCE(json_agg(recent),'[]'::json) FROM recent) AS recent
+    FROM movements`,[scope.shopId,identity.accountId,user.id,day]);
+    const row=result.rows[0];
+    res.setHeader('Cache-Control','no-store');
+    return res.json({...identity,day,balance:Number(row.balance),todayCollected:Number(row.today_collected),todayCount:Number(row.today_count),recent:row.recent.map((r:any)=>({...r,amount:Number(r.amount)}))});
+  }catch(error){console.error('Representative collections read failed',error);return res.status(500).json({error:'Unable to load your collections.'});}
+});
 app.get('/api/representative-logins',requireRole(['Super Admin']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Representative login access denied.'});
