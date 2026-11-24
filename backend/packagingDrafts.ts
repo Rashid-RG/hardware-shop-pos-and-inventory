@@ -1,4 +1,5 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
+import { randomUUID } from 'node:crypto';
 import { validateSharedStock, type SharedStockUnits } from '../src/utils/unitConversion';
 
 // Draft only: never changes inventory mode or enables selling-unit transactions.
@@ -54,7 +55,7 @@ export async function savePackagingDraft(pool: Pool, shopId: string, productId: 
 }
 
 /** Conservative first-release eligibility. No inventory or history is modified. */
-export async function checkPackagingActivation(pool: Pool, shopId: string, productId: string) {
+export async function checkPackagingActivation(pool: Pool | PoolClient, shopId: string, productId: string) {
   const result = await pool.query(`
     SELECT p.quantity,p.status,p.variants_json,p.shared_stock_units,d.configuration,
       EXISTS(SELECT 1 FROM sales_transaction_items s WHERE s.product_id=p.id) AS has_sales,
@@ -79,4 +80,27 @@ export async function checkPackagingActivation(pool: Pool, shopId: string, produ
     } catch { reasons.push('Packaging configuration is invalid.'); }
   }
   return {eligible:reasons.length===0,reasons,active:Boolean(row.shared_stock_units)};
+}
+
+/** Pilot-only activation: no stock is changed and configuration becomes immutable. */
+export async function activatePackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, confirmed: unknown) {
+  if (process.env.ARS_SHARED_STOCK_PILOT !== 'true') throw new Error('Shared-stock activation is disabled pending integration verification.');
+  if (!['Super Admin','Store Manager'].includes(role) || confirmed !== true) throw new Error('Manager confirmation required.');
+  const client=await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const product=await client.query('SELECT id FROM products WHERE id=$1 AND shop_id=$2 FOR UPDATE',[productId,shopId]);
+    if (!product.rowCount) throw new Error('Product not found in this shop.');
+    const draft=await client.query('SELECT configuration FROM ars_packaging_drafts WHERE product_id=$1 AND shop_id=$2 FOR UPDATE',[productId,shopId]);
+    const eligibility=await checkPackagingActivation(client,shopId,productId);
+    if (!eligibility.eligible || !draft.rowCount) throw new Error(eligibility.reasons.join(' ') || 'Packaging draft required.');
+    const config=parsePackagingDraft(draft.rows[0].configuration);
+    await client.query('UPDATE products SET shared_stock_units=$1::jsonb,updated_at=NOW() WHERE id=$2 AND shop_id=$3',[JSON.stringify(config),productId,shopId]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+      VALUES($1,$2,NOW(),$3,$4,'Activated Shared Stock',$5)`,
+      ['packaging-'+randomUUID(),shopId,actor,role,'Activated base unit '+config.baseUnit+' for '+productId+'; stock unchanged.']);
+    await client.query('COMMIT');
+    return config;
+  } catch(error) { await client.query('ROLLBACK'); throw error; }
+  finally {client.release();}
 }
