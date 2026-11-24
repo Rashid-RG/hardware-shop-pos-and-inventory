@@ -180,6 +180,12 @@ export async function registerCustomerCheque(db:Pool,input:ChequeRegistration){
     }
     const customer=await client.query('SELECT credit_balance FROM customers WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,customerId]);
     if(!customer.rowCount||Math.round(amount*100)>Math.round(Number(customer.rows[0].credit_balance)*100))throw Error('Cheque exceeds customer outstanding balance or customer is unavailable.');
+    const pending=await client.query("SELECT COALESCE(SUM(amount),0) AS total, COALESCE(SUM(amount) FILTER (WHERE invoice_id=$3),0) AS invoice_total FROM ars_customer_cheques WHERE shop_id=$1 AND customer_id=$2 AND status IN ('Received','Deposited')",[shopId,customerId,invoiceId||null]);
+    if(Math.round((Number(pending.rows[0].total)+amount)*100)>Math.round(Number(customer.rows[0].credit_balance)*100))throw Error('Pending cheques plus this cheque exceed customer outstanding balance.');
+    if(invoiceId){
+      const remaining=await client.query("SELECT s.total-COALESCE((SELECT SUM(p.amount) FROM customer_credit_payments p WHERE p.shop_id=s.shop_id AND p.invoice_id=s.id),0) AS balance FROM sales_transactions s WHERE s.id=$1 AND s.shop_id=$2",[invoiceId,shopId]);
+      if(Math.round((Number(pending.rows[0].invoice_total)+amount)*100)>Math.round(Number(remaining.rows[0].balance)*100))throw Error('Pending cheques plus this cheque exceed invoice outstanding balance.');
+    }
     const duplicate=await client.query("SELECT 1 FROM ars_customer_cheques WHERE shop_id=$1 AND customer_id=$2 AND lower(issuing_bank)=lower($3) AND lower(cheque_number)=lower($4) AND status NOT IN ('Cancelled','Returned','Bounced')",[shopId,customerId,issuingBank,chequeNumber]);
     if(duplicate.rowCount)throw Error('Cheque already registered for this customer.');
     await client.query(`INSERT INTO ars_customer_cheques(id,shop_id,customer_id,invoice_id,cheque_number,issuing_bank,drawer_name,amount,received_date,due_date,recorded_by,note)
@@ -192,4 +198,37 @@ export async function listCustomerCheques(db:Pool|PoolClient,shopId:string){
   const result=await db.query(`SELECT c.id,c.customer_id AS "customerId",u.name AS "customerName",c.invoice_id AS "invoiceId",c.cheque_number AS "chequeNumber",c.issuing_bank AS "issuingBank",c.drawer_name AS "drawerName",c.amount,c.received_date::text AS "receivedDate",c.due_date::text AS "dueDate",c.status,c.deposit_account_id AS "depositAccountId",c.note
     FROM ars_customer_cheques c LEFT JOIN customers u ON u.id=c.customer_id AND u.shop_id=c.shop_id WHERE c.shop_id=$1 ORDER BY c.due_date,c.id`,[shopId]);
   return result.rows.map(r=>({...r,amount:Number(r.amount)}));
+}
+
+type PreClearanceStatus='Deposited'|'Bounced'|'Cancelled'|'Returned';
+export async function transitionCustomerCheque(db:Pool,input:{shopId:string;chequeId:string;eventId:string;nextStatus:PreClearanceStatus;effectiveDate:string;recordedBy:string;depositAccountId?:string;note?:string}){
+  const {shopId,chequeId,eventId,nextStatus,effectiveDate,recordedBy,depositAccountId}=input;
+  const note=input.note?.trim()||null;
+  if(!shopId||!chequeId||!eventId||!recordedBy||!validChequeDay(effectiveDate)||!['Deposited','Bounced','Cancelled','Returned'].includes(nextStatus)||
+    (nextStatus!=='Deposited'&&!note)||(note&&note.length>500)||(nextStatus==='Deposited'?!depositAccountId:!!depositAccountId))throw Error('Invalid cheque transition details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query('SELECT *,received_date::text AS received_day,due_date::text AS due_day FROM ars_customer_cheques WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,chequeId]);
+    const cheque=result.rows[0];
+    if(!cheque)throw Error('Cheque not found in this shop.');
+    const previous=await client.query('SELECT *,effective_date::text AS event_day FROM ars_customer_cheque_events WHERE id=$1',[eventId]);
+    if(previous.rowCount){
+      const e=previous.rows[0];
+      if(e.shop_id!==shopId||e.cheque_id!==chequeId||e.next_status!==nextStatus||e.event_day!==effectiveDate||e.recorded_by!==recordedBy||(e.note||null)!==note||(nextStatus==='Deposited'&&cheque.deposit_account_id!==depositAccountId))throw Error('Cheque event identifier already used for different details.');
+      await client.query('COMMIT');return {id:chequeId,status:cheque.status,replayed:true};
+    }
+    const allowed:Record<string,string[]>={Received:['Deposited','Cancelled','Returned'],Deposited:['Bounced','Returned']};
+    if(!allowed[cheque.status]?.includes(nextStatus))throw Error('Invalid cheque status transition.');
+    const latest=await client.query('SELECT MAX(effective_date)::text AS day FROM ars_customer_cheque_events WHERE shop_id=$1 AND cheque_id=$2',[shopId,chequeId]);
+    if(effectiveDate<cheque.received_day||(latest.rows[0]?.day&&effectiveDate<latest.rows[0].day))throw Error('Cheque event date precedes its history.');
+    if(nextStatus==='Deposited'){
+      if(effectiveDate<cheque.due_day)throw Error('Post-dated cheque cannot be deposited before its due date.');
+      const account=await client.query("SELECT id FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE AND kind='Bank' FOR UPDATE",[shopId,depositAccountId]);
+      if(!account.rowCount)throw Error('Select an active bank account in this shop.');
+    }
+    await client.query('UPDATE ars_customer_cheques SET status=$1,deposit_account_id=COALESCE($2,deposit_account_id) WHERE shop_id=$3 AND id=$4',[nextStatus,depositAccountId||null,shopId,chequeId]);
+    await client.query('INSERT INTO ars_customer_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[eventId,shopId,chequeId,cheque.status,nextStatus,effectiveDate,recordedBy,note]);
+    await client.query('COMMIT');return {id:chequeId,status:nextStatus,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
