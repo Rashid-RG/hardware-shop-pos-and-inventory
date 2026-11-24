@@ -792,7 +792,7 @@ export default function App() {
                 <p className="mt-4 max-w-md text-sm leading-6 text-slate-300">Manage international purchasing, warehouse inventory, wholesale distribution and financial reporting in one secure workspace.</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-3 text-sm text-slate-300"><div className="flex items-center gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div><div className="text-right"><span className="block text-sm font-bold italic text-white">RS Nextward</span><span className="block text-[10px] text-slate-300">Smart systems for business.</span></div></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-3 text-sm text-slate-300"><div className="flex items-center gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div><div className="text-right"><svg role="img" aria-label="RS Nextward" viewBox="0 0 158 28" className="ml-auto block h-7 w-[122px] text-white"><text x="157" y="17" textAnchor="end" fill="currentColor" fontFamily="Helvetica, Arial, sans-serif" fontSize="16" fontWeight="bold" fontStyle="italic">RS Nextward</text><path d="M91 24 Q121 16 158 20 Q123 18 91 25 Z" fill="currentColor" /></svg><span className="block text-[10px] text-slate-300">Smart systems for business.</span></div></div>
           </section>
           <div className="bg-white p-5 text-slate-900 sm:p-6 xl:p-8 flex flex-col justify-center">
             <div className="mb-4">
