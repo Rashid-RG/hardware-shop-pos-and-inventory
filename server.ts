@@ -9,7 +9,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6174,6 +6174,54 @@ app.post('/api/representative-accounts',requireRole(['Super Admin','Store Manage
     if(['Invalid representative assignment.','Select a registered sales representative in this shop.','Select an active representative cash account in this shop.','Representative or cash account already assigned. Reconcile before reassignment.','Assign a new cash account with no recorded movements; historical balances require reconciliation.'].includes(message))return res.status(409).json({error:message});
     console.error('Representative assignment failed',error);return res.status(500).json({error:'Unable to confirm assignment. Reload or retry the same selection.'});
   }
+});
+app.get('/api/invoice-cost-review',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Historical cost review access denied.'});
+ const search=typeof req.query.search==='string'?req.query.search.trim().slice(0,160):'';
+ const missingOnly=req.query.missingOnly==='true';
+ const offset=Number(req.query.offset||0);
+ if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)return res.status(400).json({error:'Invalid page.'});
+ try{
+  const result=await pool.query(`SELECT t.id AS transaction_id,t.invoice_number,(t.date AT TIME ZONE 'Asia/Colombo')::date::text AS day,t.status,
+    i.id::text AS item_id,i.product_name,i.quantity,i.variant_unit,i.selling_unit_label,i.cost_price AS original_cost,
+    COALESCE(c.corrected_cost,i.cost_price) AS current_cost,c.recorded_at AS corrected_at
+    FROM sales_transactions t JOIN sales_transaction_items i ON i.transaction_id=t.id
+    LEFT JOIN LATERAL (SELECT corrected_cost,recorded_at FROM ars_invoice_cost_corrections WHERE shop_id=t.shop_id AND transaction_id=t.id AND item_id=i.id AND original_cost=i.cost_price ORDER BY revision DESC LIMIT 1) c ON TRUE
+    WHERE t.shop_id=$1 AND t.status IN ('Completed','Refunded') AND ($2='' OR strpos(lower(t.invoice_number),lower($2))>0 OR strpos(lower(i.product_name),lower($2))>0)
+    AND (NOT $3::boolean OR COALESCE(c.corrected_cost,i.cost_price)<=0)
+    ORDER BY t.date DESC,t.id,i.id LIMIT 101 OFFSET $4`,[scope.shopId,search,missingOnly,offset]);
+  res.setHeader('Cache-Control','no-store');
+  return res.json({rows:result.rows.slice(0,100).map(r=>({...r,original_cost:Number(r.original_cost),current_cost:Number(r.current_cost),quantity:Number(r.quantity)})),offset,hasMore:result.rows.length>100});
+ }catch(error){console.error('Historical cost review failed',error);return res.status(500).json({error:'Unable to load invoice cost review.'});}
+});
+app.get('/api/invoice-cost-review/:transactionId/:itemId/history',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Historical cost review access denied.'});
+ const {transactionId,itemId}=req.params;
+ if(!/^\d{1,18}$/.test(itemId)||transactionId.length>200)return res.status(400).json({error:'Invalid invoice item.'});
+ try{
+  const line=await pool.query('SELECT 1 FROM sales_transaction_items i JOIN sales_transactions t ON t.id=i.transaction_id WHERE t.shop_id=$1 AND t.id=$2 AND i.id=$3::bigint',[scope.shopId,transactionId,itemId]);
+  if(!line.rowCount)return res.status(404).json({error:'Invoice item not found.'});
+  const result=await pool.query('SELECT id,original_cost,previous_cost,corrected_cost,evidence,reason,recorded_by,recorded_at,revision::text FROM ars_invoice_cost_corrections WHERE shop_id=$1 AND transaction_id=$2 AND item_id=$3::bigint ORDER BY revision DESC',[scope.shopId,transactionId,itemId]);
+  res.setHeader('Cache-Control','no-store');return res.json(result.rows.map(r=>({...r,original_cost:Number(r.original_cost),previous_cost:Number(r.previous_cost),corrected_cost:Number(r.corrected_cost)})));
+ }catch(error){console.error('Cost history failed',error);return res.status(500).json({error:'Unable to load correction history.'});}
+});
+app.post('/api/invoice-cost-review/:transactionId/:itemId/corrections',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Historical cost correction access denied.'});
+ const {transactionId,itemId}=req.params;
+ const {requestId,expectedCost,correctedCost,evidence,reason}=req.body||{};
+ if(!validChequeRequestId(requestId)||!/^\d{1,18}$/.test(itemId)||transactionId.length>200||typeof expectedCost!=='number'||typeof correctedCost!=='number'||typeof evidence!=='string'||typeof reason!=='string'||evidence.length>500||reason.length>500)return res.status(400).json({error:'Enter a valid cost, reason and evidence reference.'});
+ try{
+  const result=await correctHistoricalInvoiceCost(pool,{id:requestId,...scope,transactionId,itemId,expectedCost,correctedCost,evidence,reason});
+  return res.status(result.replayed?200:201).json(result);
+ }catch(error){
+  const message=error instanceof Error?error.message:'';
+  if(['Invalid historical cost correction.','Correction request identifier already used for different details.','Invoice item not found in this shop.','Historical cost changed. Refresh before correcting.','Corrected cost must differ from the current cost.'].includes(message))return res.status(409).json({error:message});
+  console.error('Cost correction failed',error);return res.status(500).json({error:'Unable to confirm correction. Retry the same request.'});
+ }
 });
 app.get('/api/financial-profit-report',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
