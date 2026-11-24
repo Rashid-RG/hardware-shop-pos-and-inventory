@@ -46,3 +46,14 @@ test('wholesale import planner is exposed only to manager role in navigation', (
   assert.match(app, /<ImportCostPlanner/);
   assert.doesNotMatch(sidebar, /New Sale \/ POS/);
 });
+
+test('tiny freight allocations never produce a negative final line',()=>{
+ const result=estimateImportLandedCost({currency:'LKR',exchangeRateLkr:1,freightLkr:0.03,dutiesLkr:0,clearanceLkr:0,otherLkr:0,lines:Array.from({length:6},(_,i)=>({sku:'SKU-'+i,description:'',quantity:1,unitForeign:1}))});
+ assert.deepEqual(result.detail.map(r=>r.allocatedChargesLkr),[0.01,0.01,0.01,0,0,0]);
+ assert.equal(result.grandTotalLkr,6.03);
+});
+test('zero-value merchandise receives no proportional import charge',()=>{
+ const result=estimateImportLandedCost({currency:'LKR',exchangeRateLkr:1,freightLkr:0.01,dutiesLkr:0,clearanceLkr:0,otherLkr:0,lines:[{sku:'A',description:'',quantity:1,unitForeign:100},{sku:'B',description:'',quantity:1,unitForeign:0}]});
+ assert.equal(result.detail[0].allocatedChargesLkr,0.01);
+ assert.equal(result.detail[1].allocatedChargesLkr,0);
+});
