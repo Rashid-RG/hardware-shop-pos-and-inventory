@@ -1,4 +1,4 @@
-import { arsPrintLogoUrl, isArsPrintBrand } from './arsPrintLogo';
+import { arsPrintLogoUrl, isArsPrintBrand, arsDisplayName } from './arsPrintLogo';
 import type { StoreSettings } from '../types';
 import { invoiceFooter } from './invoiceFooter';
 
@@ -15,7 +15,7 @@ export interface BusinessReport {
 }
 export function reportBrand(settings:StoreSettings) {
   const shop=settings.shopProfiles?.find(s=>s.id===settings.activeShopId);
-  return {name:shop?.name || settings.storeName || 'ARS Hardware', address:shop?.address || settings.address || '', phone:shop?.phone || settings.phone || '', logo:isArsPrintBrand(shop?.name || settings.storeName || 'ARS Hardware') ? arsPrintLogoUrl : shop?.logoUrl || settings.logoUrl || ''};
+  return {name:arsDisplayName(shop?.name || settings.storeName || 'ARS Distributor'), address:shop?.address || settings.address || '', phone:shop?.phone || settings.phone || '', logo:isArsPrintBrand(shop?.name || settings.storeName || 'ARS Distributor') ? arsPrintLogoUrl : shop?.logoUrl || settings.logoUrl || ''};
 }
 const escapeHtml=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function saveReportCsv(report:BusinessReport) {
