@@ -6258,7 +6258,7 @@ app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async
  try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
 });
-function ledgerApiError(res:Response,error:unknown){
+function ledgerApiError(res:express.Response,error:unknown){
  const message=error instanceof Error?error.message:'';
  if(['Valid account code, name, classification and status required.','Account code already exists.','Account not found in this shop.','Account classification is immutable; create a new account.','Shop and account code required.'].includes(message))return res.status(409).json({error:message});
  console.error('Chart of accounts operation failed',error);return res.status(500).json({error:'Unable to complete accounting account operation.'});
