@@ -11,7 +11,7 @@ test('email recovery is opt-in, rate limited, and has no plaintext OTP storage',
   assert.match(server, /INTERVAL '5 minutes'/);
   assert.match(server, /attempts<5 FOR UPDATE/);
   assert.match(server, /timingSafeEqual\(expected,actual\)/);
-  assert.match(server, /requireTLS:config.port!==465/);
+  assert.match(server, /requireTLS:!config\.secure/);
 });
 test('password recovery consumes the code and revokes sessions transactionally', () => {
   const start=server.indexOf("app.post('/api/auth/recovery/complete'");
