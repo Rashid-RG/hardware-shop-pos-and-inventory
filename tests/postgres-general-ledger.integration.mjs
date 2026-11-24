@@ -79,3 +79,76 @@ test('wholesale sales journal records net revenue, tax and selling-unit inventor
  assert.throws(()=>buildSalesJournal(invoice,{...accounts,inventory:'1200'}));
  assert.throws(()=>buildSalesJournal(invoice,{...accounts,tax:'bad'}));
 });
+
+import {allocateSupplierPayment,allocateSupplierReceipt,supplierOrderBalances,supplierReceiptCredits} from '../backend/supplierAdvance.ts';
+import {postJournal} from '../backend/ledgerPosting.ts';
+
+test('supplier advance allocation uses exact cents over multiple receipts',()=>{
+ assert.deepEqual(allocateSupplierPayment(30000n,0n),{applied:0n,advance:30000n});
+ assert.deepEqual(allocateSupplierReceipt(20000n,30000n),{applied:20000n,payable:0n});
+ assert.deepEqual(allocateSupplierReceipt(40000n,10000n),{applied:10000n,payable:30000n});
+ assert.deepEqual(allocateSupplierPayment(70000n,70000n),{applied:70000n,advance:0n});
+ assert.deepEqual(allocateSupplierPayment(10001n,10000n),{applied:10000n,advance:1n});
+ for(const fn of [allocateSupplierPayment,allocateSupplierReceipt]){assert.throws(()=>fn(0n,0n));assert.throws(()=>fn(100n,-1n));}
+});
+
+test('supplier order journal balances across partial receipts, settlement and rollback', {timeout:60000},async()=>{
+ const db=new pg.Client({connectionString:url.toString()}),schema='advance_ci_'+randomUUID().replaceAll('-','');
+ const shop='shop-a',day='2026-01-01',po='po-1';
+ await db.connect();
+ try{
+  await db.query('CREATE SCHEMA '+schema);
+  await db.query('SET search_path TO '+schema);
+  await initGeneralLedger(db);
+  // Minimal operational fixtures: deliberately isolated from real shop tables.
+  await db.query(`CREATE TABLE purchase_orders(id text PRIMARY KEY,shop_id text NOT NULL);
+   CREATE TABLE supplier_payments(id text PRIMARY KEY,shop_id text NOT NULL,purchase_order_id text);
+   CREATE TABLE ars_receipt_batches(id text PRIMARY KEY,shop_id text NOT NULL,purchase_order_id text NOT NULL);
+   INSERT INTO purchase_orders VALUES ('po-1','shop-a'),('po-2','shop-a'),('po-3','shop-b');
+   INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES ('shop-a','1000','Bank','Asset'),('shop-a','1250','Advance','Asset'),('shop-a','1300','Inventory','Asset'),('shop-a','2000','Payables','Liability');
+   INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES ('shop-a','supplierAdvances','control','1250','CI','CI'),('shop-a','supplierPayables','control','2000','CI','CI');
+   INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES ('shop-a','2026-01-01','CI','CI',true);
+  `);
+  const journal=(id,kind,source,lines)=>postJournal(db,{id,shopId:shop,postingDate:day,sourceKind:kind,sourceId:source,description:'CI fixture',actor:'CI',lines});
+  const d=(accountCode,debit)=>({accountCode,debit,credit:'0.00'}),c=(accountCode,credit)=>({accountCode,debit:'0.00',credit});
+  const balances=async(order=po)=>{const b=await supplierOrderBalances(db,shop,order);return [b.advance,b.payable];};
+  await db.query('BEGIN');
+  await db.query("INSERT INTO supplier_payments VALUES ('payment-1','shop-a','po-1')");
+  await journal('payment:1','SupplierPayment','payment-1',[d('1250','300.00'),c('1000','300.00')]);
+  await db.query('COMMIT');
+  assert.deepEqual(await balances(),[30000n,0n]);
+  assert.deepEqual(await balances('po-2'),[0n,0n]);
+  async function receive(id,cents,amount,commit=true){
+   await db.query('BEGIN');
+   await db.query('INSERT INTO ars_receipt_batches VALUES ($1,$2,$3)',[id,shop,po]);
+   const credits=await supplierReceiptCredits(db,shop,po,cents);
+   await journal('receipt:'+id,'ReceiptBatch',id,[d('1300',amount),...credits]);
+   await db.query(commit?'COMMIT':'ROLLBACK');
+  }
+  await receive('r1',20000n,'200.00');
+  assert.deepEqual(await balances(),[10000n,0n]);
+  await receive('r2',40000n,'400.00',false);
+  assert.deepEqual(await balances(),[10000n,0n]);
+  await receive('r2',40000n,'400.00');
+  assert.deepEqual(await balances(),[0n,30000n]);
+  await receive('r3',40000n,'400.00');
+  assert.deepEqual(await balances(),[0n,70000n]);
+  await db.query('BEGIN');
+  await db.query("INSERT INTO supplier_payments VALUES ('payment-2','shop-a','po-1')");
+  await journal('payment:2','SupplierPayment','payment-2',[d('2000','700.00'),c('1000','700.00')]);
+  await db.query('COMMIT');
+  assert.deepEqual(await balances(),[0n,0n]);
+  await db.query('BEGIN');
+  await assert.rejects(()=>journal('duplicate','ReceiptBatch','r1',[d('1300','200.00'),c('1250','200.00')]));
+  await db.query('ROLLBACK');
+  assert.deepEqual(await balances(),[0n,0n]);
+  await assert.rejects(()=>balances('po-3'),/order not found/);
+  await db.query("INSERT INTO supplier_payments VALUES ('historical','shop-a','po-2')");
+  await assert.rejects(()=>balances('po-2'),/Historical supplier payments/);
+ }finally{
+  await db.query('ROLLBACK').catch(()=>{});
+  await db.query('SET search_path TO public');
+  await db.query('DROP SCHEMA '+schema+' CASCADE');
+  await db.end();
+ }
+});
