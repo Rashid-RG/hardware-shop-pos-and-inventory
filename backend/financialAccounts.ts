@@ -72,3 +72,42 @@ export async function registerFinancialOpeningBalance(db:Pool,input:{
     throw error;
   }finally{client.release();}
 }
+
+/** Move recorded funds without creating revenue or expense. All movement writers
+ * must lock the affected account rows before inserting ledger entries. */
+export async function recordFinancialTransfer(db:Pool,input:{
+  requestId:string;shopId:string;fromAccountId:string;toAccountId:string;amount:number;effectiveDate:string;recordedBy:string;note?:string;
+}){
+  const {requestId,shopId,fromAccountId,toAccountId,amount,effectiveDate,recordedBy}=input;
+  const note=input.note?.trim()||null;
+  if(!requestId||!shopId||!fromAccountId||!toAccountId||fromAccountId===toAccountId||!recordedBy||
+    !Number.isFinite(amount)||amount<=0||amount>999999999999.99||
+    Math.abs(amount*100-Math.round(amount*100))>0.001||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
+    (note&&note.length>500))throw Error('Invalid financial transfer details.');
+  const client=await db.connect();
+  const sourceId='transfer-'+shopId+'-'+requestId;
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[sourceId]);
+    const prior=await client.query("SELECT account_id,amount,movement_kind,effective_date::text AS effective_date,recorded_by,note FROM ars_financial_movements WHERE shop_id=$1 AND source_id=$2 AND movement_kind IN ('Transfer In','Transfer Out')",[shopId,sourceId]);
+    if(prior.rowCount){
+      const out=prior.rows.find(r=>r.movement_kind==='Transfer Out');
+      const incoming=prior.rows.find(r=>r.movement_kind==='Transfer In');
+      if(prior.rowCount!==2||!out||!incoming||out.account_id!==fromAccountId||incoming.account_id!==toAccountId||
+        Number(out.amount)!==-amount||Number(incoming.amount)!==amount||
+        prior.rows.some(r=>r.effective_date!==effectiveDate||r.recorded_by!==recordedBy||(r.note||null)!==note))throw Error('Transfer request identifier already used for different details.');
+      await client.query('COMMIT');
+      return {sourceId,replayed:true};
+    }
+    const accounts=await client.query('SELECT id,kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=ANY($2::text[]) AND active=TRUE ORDER BY id FOR UPDATE',[shopId,[fromAccountId,toAccountId]]);
+    if(accounts.rowCount!==2)throw Error('Select two active financial accounts in this shop.');
+    if(accounts.rows.some(r=>!['Office Cash','Bank','Representative Cash'].includes(r.kind)))throw Error('Settlement accounts are not supported for fund transfers.');
+    const balance=await client.query('SELECT COALESCE(SUM(amount),0) >= $3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,fromAccountId,amount]);
+    if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in source account.');
+    await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+      VALUES($1,$2,$3,-$5::numeric,'Transfer Out',$6,$7,$8,$9),($4,$2,$10,$5::numeric,'Transfer In',$6,$7,$8,$9)`,
+      [sourceId+'-out',shopId,fromAccountId,sourceId+'-in',amount,sourceId,recordedBy,effectiveDate,note,toAccountId]);
+    await client.query('COMMIT');
+    return {sourceId,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
