@@ -67,6 +67,7 @@ export default function SupplierPurchaseView({
   const [poItems, setPoItems] = useState<PurchaseOrder['items']>([]);
   const [selectedAddProductId, setSelectedAddProductId] = useState('');
   const [variantId, setVariantId] = useState('');
+  const [sellingUnitId, setSellingUnitId] = useState('');
   const selectedProduct = products.find(product => product.id === selectedAddProductId);
   const [addQty, setAddQty] = useState(20);
   const [addCost, setAddCost] = useState(5.0);
@@ -127,12 +128,14 @@ export default function SupplierPurchaseView({
     const product = products.find((p) => p.id === selectedAddProductId);
     if (!product) return;
 
+    const unit = product.sharedStockUnits?.units.find(item=>item.id===sellingUnitId);
+    if (product.sharedStockUnits && (!unit || product.variants?.length)) return notify.warning('Choose a valid purchasing U/M.');
     const variant = product.variants?.find(item => item.id === variantId);
     if (product.variants?.length && !variant) return notify.warning('Choose the size or variant to receive.');
     if (!Number.isSafeInteger(addQty) || addQty <= 0 || !Number.isFinite(addCost) || addCost < 0) {
       return notify.warning('Enter a positive whole quantity and a valid unit cost.');
     }
-    const existingIndex = poItems.findIndex((it) => it.productId === selectedAddProductId && it.variantId === variant?.id && it.costPrice === addCost);
+    const existingIndex = poItems.findIndex((it) => it.productId === selectedAddProductId && it.variantId === variant?.id && it.sellingUnitId === unit?.id && it.costPrice === addCost);
     if (existingIndex !== -1) {
       const updated = [...poItems];
       updated[existingIndex].quantity += addQty;
@@ -144,6 +147,9 @@ export default function SupplierPurchaseView({
           productId: selectedAddProductId,
           productName: variant ? product.name + " (" + variant.name + ")" : product.name,
           variantId: variant?.id,
+          sellingUnitId: unit?.id,
+          sellingUnitLabel: unit?.label,
+          baseUnitsPerPurchaseUnit: unit?.baseUnits,
           quantity: addQty,
           costPrice: addCost,
         },
@@ -373,7 +379,7 @@ export default function SupplierPurchaseView({
                       <div key={idx} className="flex justify-between font-mono">
                         <span className="text-slate-800 truncate max-w-[200px]">{it.productName}</span>
                         <span className="text-slate-600 shrink-0 select-all">
-                          {it.quantity} x {currencySymbol}{it.costPrice.toFixed(2)}
+                          {it.quantity} {it.sellingUnitLabel || 'units'} x {currencySymbol}{it.costPrice.toFixed(2)}
                         </span>
                       </div>
                     ))}
@@ -754,6 +760,7 @@ export default function SupplierPurchaseView({
                       value={selectedAddProductId}
                       onChange={(e) => {
                         setVariantId('');
+                        setSellingUnitId('');
                         setSelectedAddProductId(e.target.value);
                         // Autofill cost price if found
                         const prod = products.find((p) => p.id === e.target.value);
@@ -772,6 +779,18 @@ export default function SupplierPurchaseView({
                     </select>
                   </div>
 
+                  {selectedProduct?.sharedStockUnits && (
+                    <label className="text-xs">Purchasing U/M
+                      <select value={sellingUnitId} className="block w-full p-2 border rounded" onChange={event=>{
+                        const unit=selectedProduct.sharedStockUnits?.units.find(item=>item.id===event.target.value);
+                        setSellingUnitId(event.target.value);
+                        setAddCost(Math.round(selectedProduct.costPrice*(unit?.baseUnits ?? 1)*100)/100);
+                      }}>
+                        <option value="">Choose a unit</option>
+                        {selectedProduct.sharedStockUnits.units.map(unit=><option key={unit.id} value={unit.id}>{unit.label} ({unit.baseUnits} {selectedProduct.sharedStockUnits?.baseUnit})</option>)}
+                      </select>
+                    </label>
+                  )}
                   {!!selectedProduct?.variants?.length && (
                     <label className="text-xs">Size or variant
                       <select value={variantId} className="block w-full p-2" onChange={event => {
@@ -830,7 +849,7 @@ export default function SupplierPurchaseView({
                       <div className="min-w-0 pr-4">
                         <p className="font-semibold text-slate-800 font-sans truncate">{lin.productName}</p>
                         <p className="text-[10px] text-slate-400 mt-0.5">
-                          {lin.quantity} units @ {currencySymbol}{lin.costPrice} ea
+                          {lin.quantity} {lin.sellingUnitLabel || 'units'} @ {currencySymbol}{lin.costPrice} each
                         </p>
                       </div>
                       <div className="flex items-center gap-4">
