@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5987,6 +5987,65 @@ app.get('/api/representative/collections',requireRole(['Cashier']),async(req,res
     res.setHeader('Cache-Control','no-store');
     return res.json({...identity,day,balance:Number(row.balance),todayCollected:Number(row.today_collected),todayCount:Number(row.today_count),recent:row.recent.map((r:any)=>({...r,amount:Number(r.amount)}))});
   }catch(error){console.error('Representative collections read failed',error);return res.status(500).json({error:'Unable to load your collections.'});}
+});
+app.get('/api/cash-handovers',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  const scope=chequeShopAccess(req),auth=(req as AppRequest).authUser;
+  if(!scope||!auth)return res.status(403).json({error:'Cash handover access denied.'});
+  const user=db.users.find(u=>u.email.toLowerCase()===auth.email.toLowerCase());
+  if(!user)return res.status(403).json({error:'Cash handover access denied.'});
+  try{
+    const isRep=auth.role==='Cashier';
+    const identity=isRep&&eligibleRepresentativeLogin(user,scope.shopId)?await resolveRepresentativeFinancialIdentity(pool,scope.shopId,user.id):null;
+    if(isRep&&!identity)return res.status(403).json({error:'No assigned representative cash account.'});
+    const result=await pool.query(`SELECT h.id,h.employee_id,e.name AS employee_name,h.from_account_id,f.name AS from_account_name,h.to_account_id,t.name AS to_account_name,h.amount,h.status,h.requested_at,h.request_note,h.decided_by,h.decided_at,h.decision_note,h.effective_date::text AS effective_date
+      FROM ars_cash_handovers h LEFT JOIN employees e ON e.id=h.employee_id AND e.shop_id=h.shop_id
+      JOIN ars_financial_accounts f ON f.id=h.from_account_id AND f.shop_id=h.shop_id
+      JOIN ars_financial_accounts t ON t.id=h.to_account_id AND t.shop_id=h.shop_id
+      WHERE h.shop_id=$1 AND ($2::text IS NULL OR (h.user_id=$2 AND h.from_account_id=$3))
+      ORDER BY (h.status='Pending') DESC,h.requested_at DESC,h.id DESC LIMIT 200`,[scope.shopId,isRep?user.id:null,identity?.accountId||null]);
+    const accounts=await listFinancialAccounts(pool,scope.shopId);
+    const officeAccounts=accounts.filter(a=>a.kind==='Office Cash'&&a.active).map(a=>({id:a.id,name:a.name}));
+    let balance:number|null=null,pendingAmount:number|null=null;
+    if(identity){
+      const totals=await pool.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2) AS balance,
+        (SELECT COALESCE(SUM(amount),0) FROM ars_cash_handovers WHERE shop_id=$1 AND from_account_id=$2 AND status='Pending') AS pending`,[scope.shopId,identity.accountId]);
+      balance=Number(totals.rows[0].balance);pendingAmount=Number(totals.rows[0].pending);
+    }
+    res.setHeader('Cache-Control','no-store');
+    return res.json({handovers:result.rows.map(h=>({...h,amount:Number(h.amount)})),officeAccounts,balance,pendingAmount,available:balance===null?null:Math.max(0,balance-(pendingAmount||0))});
+  }catch(error){console.error('Cash handover read failed',error);return res.status(500).json({error:'Unable to load cash handovers.'});}
+});
+app.post('/api/cash-handovers',requireRole(['Cashier']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req),auth=(req as AppRequest).authUser;
+  const user=db.users.find(u=>u.email.toLowerCase()===auth?.email.toLowerCase());
+  if(!scope||!user||!eligibleRepresentativeLogin(user,scope.shopId))return res.status(403).json({error:'Cash handover access denied.'});
+  const {requestId,toAccountId,amount,note}=req.body||{};
+  if(!validChequeRequestId(requestId)||typeof toAccountId!=='string'||!toAccountId.trim()||toAccountId.length>200||typeof amount!=='number'||!Number.isFinite(amount)||(note!==undefined&&(typeof note!=='string'||note.length>500)))return res.status(400).json({error:'Invalid cash handover details.'});
+  try{
+    const result=await requestCashHandover(pool,{id:requestId,shopId:scope.shopId,userId:user.id,toAccountId,amount,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid cash handover request.','Representative cash account authorization required.','Handover request identifier already used for different details.','Select an active office cash account in this shop.','Handover exceeds cash balance after pending requests.'].includes(message))return res.status(409).json({error:message});
+    console.error('Cash handover request failed',error);return res.status(500).json({error:'Unable to confirm handover request. Retry the same request.'});
+  }
+});
+app.post('/api/cash-handovers/:id/decision',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req),auth=(req as AppRequest).authUser;
+  const user=db.users.find(u=>u.email.toLowerCase()===auth?.email.toLowerCase());
+  if(!scope||!user)return res.status(403).json({error:'Cash handover decision access denied.'});
+  const {decision,note}=req.body||{};
+  if(!validChequeRequestId(req.params.id)||!['Confirmed','Rejected'].includes(decision)||(note!==undefined&&(typeof note!=='string'||note.length>500))||(decision==='Rejected'&&!note?.trim()))return res.status(400).json({error:'Select a valid decision and provide a reason for rejection.'});
+  try{
+    const result=await decideCashHandover(pool,{id:req.params.id,...scope,managerUserId:user.id,decision,effectiveDate:reportDay(new Date()),note});
+    return res.json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid handover decision.','Manager authorization required.','Handover not found in this shop.','A representative cannot approve their own handover.','Handover already decided.','Handover accounts are unavailable.','Insufficient recorded funds to confirm handover.'].includes(message))return res.status(409).json({error:message});
+    console.error('Cash handover decision failed',error);return res.status(500).json({error:'Unable to confirm handover decision. Refresh or retry the same decision.'});
+  }
 });
 app.get('/api/representative-logins',requireRole(['Super Admin']),async(req,res)=>{
   const scope=chequeShopAccess(req);
