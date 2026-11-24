@@ -173,6 +173,26 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.equal(payables.unmatchedPayments[0].paid,100);
     assert.equal(payables.needsReview,3);
     assert.equal((await supplierPayableAging(pool,otherShop)).estimatedPayable,0);
+    const {recordPositionBalance,listPositionRegisters}=await import('../backend/positionRegisters.ts');
+    const snapshot={id:id(),shopId,reference:'CI-VEHICLE',kind:'Fixed asset',label:'Delivery vehicle',amount:1000,effectiveDate:'2020-01-01',evidence:'CI asset valuation',recordedBy};
+    const registered=await Promise.all([recordPositionBalance(pool,snapshot),recordPositionBalance(pool,snapshot)]);
+    assert.deepEqual(registered.map(r=>r.replayed).sort(),[false,true]);
+    await assert.rejects(recordPositionBalance(pool,{...snapshot,amount:1001}),/identifier already used/);
+    await assert.rejects(recordPositionBalance(pool,{...snapshot,id:id()}),/already exists/);
+    await assert.rejects(recordPositionBalance(pool,{...snapshot,id:id(),amount:-1}),/Valid evidenced/);
+    await assert.rejects(recordPositionBalance(pool,{...snapshot,id:id(),effectiveDate:'2099-12-31'}),/Future carrying balances/);
+    await recordPositionBalance(pool,{...snapshot,id:id(),amount:900,effectiveDate:'2020-01-02'});
+    await recordPositionBalance(pool,{...snapshot,id:id(),reference:'CI-LOAN',kind:'Loan liability',label:'Loan',amount:200});
+    await recordPositionBalance(pool,{...snapshot,id:id(),reference:'CI-TAX',kind:'Tax liability',label:'Verified zero tax',amount:0});
+    await recordPositionBalance(pool,{...snapshot,id:id(),reference:'CI-LOSS',kind:'Retained earnings',label:'Recorded loss',amount:-50});
+    const registerRows=await listPositionRegisters(pool,shopId);
+    assert.equal(registerRows.length,4);
+    assert.equal(registerRows.find(r=>r.reference==='CI-VEHICLE').amount,900);
+    assert.equal(registerRows.find(r=>r.reference==='CI-TAX').amount,0);
+    assert.equal(registerRows.find(r=>r.reference==='CI-LOSS').amount,-50);
+    assert.equal((await listPositionRegisters(pool,otherShop)).length,0);
+    assert.equal((await pool.query('SELECT id FROM ars_position_register WHERE shop_id=$1 AND reference=$2',[shopId,snapshot.reference])).rowCount,2);
+    assert.equal((await balances())[bank],30);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
