@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { allocateReceiptCost, weightedAverageReceiptCost } from './receiptCosting';
+import { initLandedCostTables } from './landedCost';
 import { purchaseVariant } from './purchaseVariant';
 import { baseQuantity } from '../src/utils/unitConversion';
 import type { ProductVariant } from '../src/types';
 
 // Additive schema; does not rewrite legacy business tables.
 export const initPartialReceivingTables = async (pool: Pool) => {
+  await initLandedCostTables(pool);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ars_receipt_batches (
       id TEXT PRIMARY KEY,
@@ -23,6 +26,25 @@ export const initPartialReceivingTables = async (pool: Pool) => {
       quantity INTEGER NOT NULL CHECK(quantity > 0),
       PRIMARY KEY(batch_id, purchase_order_item_id)
     );
+    CREATE TABLE IF NOT EXISTS ars_receipt_cost_entries (
+      batch_id TEXT NOT NULL,
+      purchase_order_item_id BIGINT NOT NULL,
+      shop_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      variant_id TEXT,
+      approval_id TEXT NOT NULL REFERENCES ars_landed_cost_approvals(id),
+      previous_quantity INTEGER NOT NULL,
+      previous_unit_cost NUMERIC(12,2) NOT NULL,
+      received_base_quantity INTEGER NOT NULL CHECK(received_base_quantity>0),
+      received_cost NUMERIC(16,2) NOT NULL CHECK(received_cost>0),
+      new_quantity INTEGER NOT NULL,
+      new_unit_cost NUMERIC(12,2) NOT NULL,
+      rounding_difference NUMERIC(20,2) NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(batch_id,purchase_order_item_id),
+      CHECK(new_quantity=previous_quantity+received_base_quantity)
+    );
+    CREATE INDEX IF NOT EXISTS ars_receipt_cost_shop_idx ON ars_receipt_cost_entries(shop_id,product_id,recorded_at);
     CREATE INDEX IF NOT EXISTS ars_receipt_items_lookup_idx
       ON ars_receipt_batch_items(purchase_order_item_id);
   `);
@@ -65,7 +87,7 @@ export const receivePartialOrder = async (
     }
     if (!['Pending', 'Ordered', 'Partially Received'].includes(po.status)) throw new Error('Order is not open for receiving.');
     const ordered = await client.query(
-      `SELECT i.id,i.product_id,i.product_name,i.variant_id,i.quantity,i.selling_unit_id,i.base_units_per_purchase_unit,
+      `SELECT i.id,i.product_id,i.product_name,i.variant_id,i.quantity,i.cost_price,i.selling_unit_id,i.base_units_per_purchase_unit,
               COALESCE((SELECT SUM(r.quantity) FROM ars_receipt_batch_items r WHERE r.purchase_order_item_id=i.id),0)::integer AS received
          FROM purchase_order_items i WHERE i.purchase_order_id=$1 ORDER BY i.id`, [poId]);
     if (!ordered.rowCount) throw new Error('Order has no items.');
@@ -75,6 +97,10 @@ export const receivePartialOrder = async (
       if (!row) throw new Error('Receipt line does not belong to this purchase order.');
       if (Number(row.received) + line.quantity > Number(row.quantity)) throw new Error('Received quantity exceeds ordered quantity.');
     }
+    // Legacy and local purchase receipts keep their existing behavior. Only an
+    // explicitly approved import snapshot activates landed inventory costing.
+    const approvalResult=await client.query('SELECT id,snapshot FROM ars_landed_cost_approvals WHERE shop_id=$1 AND purchase_order_id=$2',[shopId,poId]);
+    const approval=approvalResult.rows[0];
     const batchId = 'grn-' + randomUUID();
     await client.query(
       `INSERT INTO ars_receipt_batches(id,shop_id,purchase_order_id,request_key,received_by,note)
@@ -93,16 +119,27 @@ export const receivePartialOrder = async (
         stockIn = baseQuantity(line.quantity,Number(row.base_units_per_purchase_unit));
       }
       const variant = purchaseVariant(variants,row.variant_id,product.name,true);
+      let costing:ReturnType<typeof weightedAverageReceiptCost>|undefined;
+      const previousQuantity=Number(variant?variant.quantity:product.quantity);
+      const previousCost=Number(variant?variant.costPrice:product.cost_price);
+      if(approval){
+        const approved=approval.snapshot.items.find((i:any)=>i.itemId===String(row.id));
+        const factor=row.selling_unit_id?Number(row.base_units_per_purchase_unit):1;
+        if(!approved||approved.productId!==row.product_id||(approved.variantId||null)!==(row.variant_id||null)||(approved.sellingUnitId||null)!==(row.selling_unit_id||null)||approved.factor!==factor||approved.quantity!==Number(row.quantity)||approved.purchaseUnitCost!==Number(row.cost_price))throw Error('Purchase order differs from approved landed cost. Receipt blocked.');
+        const receivedCost=allocateReceiptCost({landedTotal:approved.landedTotal,orderedQuantity:approved.quantity,previouslyReceived:Number(row.received),receivingQuantity:line.quantity});
+        costing=weightedAverageReceiptCost({existingQuantity:previousQuantity,existingUnitCost:previousCost,receivedBaseQuantity:stockIn,receivedTotalCost:receivedCost});
+      }
       if (variant) {
+        if(costing)variant.costPrice=costing.unitCost;
         variant.quantity = Number(variant.quantity || 0) + line.quantity;
         const total = variants.reduce((sum,v) => sum + Number(v.quantity || 0),0);
         await client.query(
-          'UPDATE products SET quantity=$1,variants_json=$2::jsonb,updated_at=NOW() WHERE id=$3 AND shop_id=$4',
-          [total,JSON.stringify(variants),product.id,shopId]);
+          'UPDATE products SET quantity=$1,variants_json=$2::jsonb,updated_at=NOW(),cost_price=CASE WHEN $5::boolean THEN $6::numeric ELSE cost_price END WHERE id=$3 AND shop_id=$4',
+          [total,JSON.stringify(variants),product.id,shopId,!!costing,variants[0]?.costPrice??product.cost_price]);
       } else {
         await client.query(
-          'UPDATE products SET quantity=quantity+$1,updated_at=NOW() WHERE id=$2 AND shop_id=$3',
-          [stockIn,product.id,shopId]);
+          'UPDATE products SET quantity=quantity+$1,updated_at=NOW(),cost_price=COALESCE($4::numeric,cost_price) WHERE id=$2 AND shop_id=$3',
+          [stockIn,product.id,shopId,costing?.unitCost??null]);
       }
       await client.query(
         'INSERT INTO ars_receipt_batch_items(batch_id,purchase_order_item_id,quantity) VALUES($1,$2,$3)',
@@ -111,6 +148,7 @@ export const receivePartialOrder = async (
         `INSERT INTO stock_logs(id,shop_id,date,product_id,product_name,type,quantity,reason,user_name,reference_id)
          VALUES($1,$2,NOW(),$3,$4,'Stock In',$5,'ARS Partial Goods Receipt',$6,$7)`,
         ['stock-'+batchId+'-'+line.purchaseOrderItemId,shopId,row.product_id,row.product_name,stockIn,user,batchId]);
+      if(costing)await client.query(`INSERT INTO ars_receipt_cost_entries(batch_id,purchase_order_item_id,shop_id,product_id,variant_id,approval_id,previous_quantity,previous_unit_cost,received_base_quantity,received_cost,new_quantity,new_unit_cost,rounding_difference) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,[batchId,line.purchaseOrderItemId,shopId,product.id,variant?.id||null,approval.id,previousQuantity,previousCost,stockIn,costing.receivedTotalCost,costing.quantity,costing.unitCost,costing.roundingDifference]);
       row.received = Number(row.received) + line.quantity;
     }
     const fullyReceived = ordered.rows.every(row => Number(row.received) === Number(row.quantity));
