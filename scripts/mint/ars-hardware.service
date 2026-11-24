@@ -8,6 +8,7 @@ Environment=NODE_ENV=production
 Environment=ARS_LISTEN_HOST=127.0.0.1
 Environment=PORT=3000
 Environment=CORS_ALLOWED_ORIGINS=http://localhost:3000
+ExecCondition=/usr/bin/python3 %h/.local/share/ars-hardware/update-tools/startup_guard.py
 ExecStartPre=/usr/bin/env docker compose -p ars-mint --env-file .env.local -f scripts/mint/compose.yaml up -d --wait
 ExecStart=%h/.local/share/ars-hardware/node dist/server.cjs
 TimeoutStartSec=150
