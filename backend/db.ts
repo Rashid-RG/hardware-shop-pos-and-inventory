@@ -1539,7 +1539,10 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
          saved.customer_id!==tx.customerId||
          savedItems.some((row:any,i:number)=>row.productId!==tx.items[i].productId||
            Number(row.quantity)!==tx.items[i].quantity||
-           Number(row.sellingPrice)!==tx.items[i].sellingPrice))
+           Number(row.sellingPrice)!==tx.items[i].sellingPrice||
+           (row.sellingUnitId??null)!==(tx.items[i].sellingUnitId??null)||
+           (row.baseUnitsPerSaleUnit??null)!==(tx.items[i].baseUnitsPerSaleUnit??null)||
+           (row.sellingUnitLabel??null)!==(tx.items[i].sellingUnitLabel??null)))
         throw new Error('Quotation was modified. Reload it before converting.');
     }
 
@@ -1563,10 +1566,11 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       let stockOut = item.quantity;
       const requestedUnit = (item as typeof item & { sellingUnitId?: string }).sellingUnitId;
       if (dbProduct.shared_stock_units || requestedUnit) {
-        if (!requestedUnit || item.variantId || quotationId || !tx.shopId) throw new Error('Shared stock requires an explicit selling unit and direct sale.');
+        if (!requestedUnit || item.variantId || !tx.shopId) throw new Error('Shared stock requires an explicit selling unit and direct sale.');
         const snapshot = await deductSharedSale(client, tx.shopId, item.productId, requestedUnit, item.quantity);
         // Totals have already been calculated. Reject stale or untrusted prices rather than rewriting them.
         if (Math.round(item.sellingPrice * 100) !== Math.round(snapshot.sellingPrice * 100)) throw new Error('Selling-unit price changed. Reload product.');
+        if (quotationId && (snapshot.baseUnitsPerSaleUnit!==item.baseUnitsPerSaleUnit || snapshot.sellingUnitLabel!==item.sellingUnitLabel)) throw new Error('Quotation packaging changed. Issue a new quotation.');
         item.costPrice = snapshot.costPrice;
         item.variantUnit = snapshot.sellingUnitLabel;
         sharedSnapshots.set(item, snapshot);
