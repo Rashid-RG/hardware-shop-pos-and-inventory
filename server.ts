@@ -1,3 +1,4 @@
+import {supplierReconciliation} from './backend/supplierReconciliation';
 import {ledgerStatements,ledgerActivity} from './backend/ledgerReports';
 import { renderArsDisbursementVoucherPdf } from './src/utils/arsDisbursementVoucherPdf';
 import { renderArsHandoverVoucherPdf } from './src/utils/arsHandoverVoucherPdf';
@@ -6269,6 +6270,16 @@ function ledgerApiError(res:express.Response,error:unknown){
  if(['Valid account code, name, classification and status required.','Account code already exists.','Account not found in this shop.','Account classification is immutable; create a new account.','Shop and account code required.'].includes(message))return res.status(409).json({error:message});
  console.error('Chart of accounts operation failed',error);return res.status(500).json({error:'Unable to complete accounting account operation.'});
 }
+app.get('/api/ledger/supplier-orders/:id/reconciliation',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await supplierReconciliation(pool,scope.shopId,req.params.id));}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(message==='Valid purchase order required.')return res.status(400).json({error:message});
+ if(message==='Purchase order not found.')return res.status(404).json({error:message});
+ console.error('Supplier reconciliation failed',error);return res.status(500).json({error:'Unable to load supplier reconciliation.'});}
+});
 app.get('/api/ledger/statements',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
