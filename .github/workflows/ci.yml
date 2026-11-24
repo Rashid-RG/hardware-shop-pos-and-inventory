@@ -82,6 +82,10 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
         run: node --test tests/postgres-maintenance-lock.integration.mjs
+      - name: Double-entry accounting safeguards (isolated PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+        run: node --import tsx --test tests/postgres-general-ledger.integration.mjs
       - name: TypeScript checks
         run: npm run lint
       - name: Regression tests
