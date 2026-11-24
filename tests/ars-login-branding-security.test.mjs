@@ -16,7 +16,7 @@ test('anonymous branch lookup does not disclose configured business details', ()
 test('login never fetches or lists registered shops before authentication', () => {
   assert.doesNotMatch(app, /fetch\(`?\/api\/public\/shops/);
   assert.doesNotMatch(app, /loginShops|loginShopId|resetShopId/);
-  assert.match(app, /Your authorized branch will load after verification/);
+  assert.match(app, /Only branches assigned to your account are available/);
 });
 
 test('ARS company mark is distinct and visible in the login and sidebar', () => {
