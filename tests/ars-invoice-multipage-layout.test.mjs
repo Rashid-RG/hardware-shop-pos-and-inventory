@@ -41,3 +41,19 @@ for (const count of [4, 48]) {
     assert.equal(printed.match(/Original box with the full saved description/g)?.length, count / 2);
   });
 }
+
+test('four saved packaging units print beside quantity on one portrait page', async () => {
+  const items = [
+    { productName: 'Floor tiles · Box of 4 tiles', invoiceDescription: '' },
+    { productName: 'Door hinges', invoiceDescription: 'Pair' },
+    { productName: 'Cutting discs', invoiceDescription: 'Pack of 10' },
+    { productName: 'Bolts', invoiceDescription: 'Pack of 10', variantUnit: 'Case' },
+  ].map((item, i) => ({ ...item, productId: String(i), sellingPrice: 10, quantity: 1 }));
+  const pdf = await renderArsInvoicePdf({
+    items, invoiceNumber: 'UNIT-TEST', date: '2026-11-24', subtotal: 40, total: 40,
+  }, 'ARS Hardware', {}, null);
+  const pages = pageTexts(pdf);
+  assert.equal(pages.length, 1);
+  assert.match(pages[0], /U\/M Qty/);
+  for (const unit of ['Box', 'Pair', 'Pack', 'Case']) assert.ok(pages[0].includes(unit + ' 1 Rs.'));
+});

@@ -17,6 +17,17 @@ const formatMoney = (amount: number) => 'Rs. ' + amount.toLocaleString('en-US', 
 });
 const safe = (value: unknown, fallback = '-') => String(value ?? '').trim() || fallback;
 
+function invoiceUnit(item: SalesTransaction['items'][number]): string {
+  const saved = item.variantUnit?.trim();
+  if (saved) return saved;
+  // Older invoices sometimes stored the packing unit only in their description or name.
+  for (const value of [item.invoiceDescription, item.productName.split(' · ').slice(1).pop()]) {
+    const match = /^(box|pack|pair|piece|bag|roll|set|carton|bundle|kg|litre|metre)(?: of [0-9]+(?: [a-z]+)?)?$/i.exec(value?.trim() || '');
+    if (match) return match[1][0].toUpperCase() + match[1].slice(1).toLowerCase();
+  }
+  return '—';
+}
+
 /** Render the approved compact ARS A4 document; no printed signature graphic. */
 export const renderArsInvoicePdf = async (
   tx: SalesTransaction,
@@ -118,7 +129,7 @@ export const renderArsInvoicePdf = async (
     const gross = Number(item.quantity) * Number(item.sellingPrice);
     const discount = Math.min(gross, Math.max(0, gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
     const values = [String(index + 1), safe(item.variantSku, item.productId), safe(item.productName),
-      String(item.invoiceDescription || '').trim(), safe(item.variantUnit), String(item.quantity),
+      String(item.invoiceDescription || '').trim(), invoiceUnit(item), String(item.quantity),
       formatMoney(Number(item.sellingPrice)), discount ? formatMoney(discount) : '-', formatMoney(gross - discount)];
     const heights = values.map((value, i) => doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4)
       .heightOfString(value, { width: cols[i+1] - cols[i] - 8 }));

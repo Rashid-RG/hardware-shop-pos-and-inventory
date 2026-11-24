@@ -632,6 +632,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
         productId: item.product_id,
         productName: item.product_name,
         invoiceDescription: item.invoice_description ?? undefined,
+        variantUnit: item.variant_unit ?? undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
         costPrice: Number(item.cost_price || 0),
