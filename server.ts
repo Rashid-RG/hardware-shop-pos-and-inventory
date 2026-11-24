@@ -1806,6 +1806,8 @@ const initPostgres = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS invoice_id TEXT;
+
     CREATE TABLE IF NOT EXISTS invoice_print_logs (
       id TEXT PRIMARY KEY,
       shop_id TEXT,
@@ -2164,9 +2166,9 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
 
   for (const cp of (state.customerCreditPayments || [])) {
     await client.query(
-      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [cp.id, cp.shopId || null, cp.customerId, cp.customerName, cp.amount, cp.date, cp.paymentMethod, cp.note || null, cp.createdBy || null]
+      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [cp.id, cp.shopId || null, cp.customerId, cp.customerName, cp.amount, cp.date, cp.paymentMethod, cp.note || null, cp.createdBy || null, cp.invoiceId || null]
     );
   }
 
@@ -2499,6 +2501,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     })),
     customerCreditPayments: creditPaymentsRes.rows.map((row) => ({
       id: row.id,
+      invoiceId: row.invoice_id || undefined,
       shopId: row.shop_id || undefined,
       customerId: row.customer_id,
       customerName: row.customer_name,
