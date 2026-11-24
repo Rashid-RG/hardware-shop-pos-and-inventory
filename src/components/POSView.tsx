@@ -93,7 +93,7 @@ export default function POSView({
   const normalizedShopName = String(activeShopName || '').toLowerCase();
   const isWholesaleShop = String(activeShopProfile?.id || '') === 'shop-2'
     || normalizedShopName.includes('wholesale')
-    || normalizedShopName.includes('ars pvt');
+    || normalizedShopName.includes('ars pvt') || isArsPrintBrand(activeShopName);
   const effectivePrintFormat: 'a4' | 'thermal' = isWholesaleShop ? 'a4' : (printFormat === 'thermal' ? 'thermal' : 'a4');
   const printableShopLogoUrl = isArsPrintBrand(activeShopName) ? arsPrintLogoUrl : shopLogoUrl
     ? (() => {
@@ -622,7 +622,7 @@ export default function POSView({
 
     const blob = await response.blob();
     const downloadUrl = URL.createObjectURL(blob);
-    const fileName = 'invoice.pdf';
+    const fileName = tx.invoiceNumber + '.pdf';
     const link = document.createElement('a');
     link.href = downloadUrl;
     link.download = fileName;
@@ -766,7 +766,7 @@ export default function POSView({
     return printWindow;
   };
 
-  const printReceiptInvoice = (
+  const printReceiptInvoice = async (
     tx: SalesTransaction,
     existingWindow?: Window | null,
     printMeta?: {
@@ -1007,505 +1007,28 @@ export default function POSView({
       printWindow.focus();
       return;
     }
-
-      if (isWholesaleShop) {
-        const issueDate = new Date(tx.date);
-        const dueDate = new Date(issueDate);
-        dueDate.setDate(dueDate.getDate() + 30);
-        const formatDate = (date: Date) => date.toLocaleDateString('en-GB');
-        const customerRecord = customers.find((customer) => customer.id === tx.customerId);
-        const previousBalance = Number(customerRecord?.creditBalance || 0);
-        const creditLimit = Number(customerRecord?.creditLimit || 0);
-        const currentPayment = tx.paymentMethod === 'Credit Account' ? 0 : Number(tx.cashReceived ?? tx.total);
-        const remainingBalance = Math.max(0, previousBalance + Number(tx.total) - currentPayment);
-        const availableCreditLimit = Math.max(0, creditLimit - previousBalance);
-        const wholesaleMeta = tx.wholesaleMeta || {};
-        const statusLabel = tx.paymentStatus || resolvePaymentStatus(tx);
-        const statusClass = statusLabel === 'PAID'
-          ? 'status-paid'
-          : statusLabel === 'PARTIALLY PAID'
-            ? 'status-partial'
-            : statusLabel === 'UNPAID'
-              ? 'status-unpaid'
-              : statusLabel === 'CREDIT SALE'
-                ? 'status-credit'
-                : 'status-cancelled';
-        const secondaryWatermark = copyLabel === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '';
-        const watermarkOpacity = 0.12;
-
-        const wholesaleRowsHtml = tx.items
-          .map((itm) => {
-            const productRef = products.find((product) => product.id === itm.productId);
-            const variantRef = productRef?.variants?.find((variant) => variant.id === itm.variantId);
-            const discountPct = Number(itm.discount || 0);
-            const lineUnit = Number(itm.sellingPrice || 0);
-            const lineQty = Number(itm.quantity || 0);
-            const gross = lineUnit * lineQty;
-            const percentAdjusted = gross * (1 - discountPct / 100);
-            const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-            const lineTotal = Math.max(0, percentAdjusted - lineDiscountAmount);
-            const variantLabel = itm.variantName || variantRef?.name || '-';
-            const unitLabel = itm.variantUnit || variantRef?.unit || inferUnitLabel(itm.productName);
-            const brandLabel = productRef?.brand || '-';
-            const itemCode = itm.variantSku || variantRef?.sku || itm.productId || '-';
-            const discountLabel = discountPct > 0
-              ? `${discountPct.toFixed(0)}%`
-              : (lineDiscountAmount > 0 ? formatMoney(lineDiscountAmount) : '-');
-            return `
-              <tr>
-                <td>${escapeHtml(itemCode)}</td>
-                <td>${escapeHtml(itm.productName)}${itm.invoiceDescription ? `<div class="item-code">${escapeHtml(itm.invoiceDescription)}</div>` : ''}</td>
-                <td>${escapeHtml(brandLabel)}</td>
-                <td>${escapeHtml(variantLabel)}</td>
-                <td>${escapeHtml(unitLabel)}</td>
-                <td class="right">${lineQty}</td>
-                <td class="right">${escapeHtml(formatMoney(lineUnit))}</td>
-                <td class="right">${escapeHtml(discountLabel)}</td>
-                <td class="right">${escapeHtml(formatMoney(lineTotal))}</td>
-              </tr>
-            `;
-          })
-          .join('');
-
-        const wholesaleHtml = `
-          <!doctype html>
-          <html>
-            <head>
-              <meta charset="utf-8" />
-              <title>Wholesale Invoice ${escapeHtml(tx.invoiceNumber)}</title>
-              <style>
-                @page { size: A4; margin: 8mm; }
-                * { box-sizing: border-box; }
-                body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #ffffff; }
-                .sheet { border: 1px solid #cbd5e1; border-radius: 10px; position: relative; overflow: hidden; }
-                .header { padding: 14px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
-                .header-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; align-items: start; }
-                .company h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
-                .company p { margin: 2px 0; font-size: 12px; color: #334155; }
-                .legal { margin-top: 6px; padding: 8px; border: 1px dashed #cbd5e1; border-radius: 8px; font-size: 11px; }
-                .meta { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; background: #fff; }
-                .meta .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 4px; }
-                .badge { display: inline-block; margin-top: 6px; padding: 6px 11px; border-radius: 999px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
-                .status-paid { background: #dcfce7; color: #166534; }
-                .status-partial { background: #fef9c3; color: #854d0e; }
-                .status-unpaid { background: #fee2e2; color: #991b1b; }
-                .status-credit { background: #dbeafe; color: #1d4ed8; }
-                .status-cancelled { background: #e5e7eb; color: #374151; }
-                .body { padding: 12px 16px 16px; }
-                .section-title { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #334155; font-weight: 800; }
-                .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-                .box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px; background: #fff; }
-                .line { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0; font-size: 12px; }
-                table { width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; }
-                thead th { background: #eff6ff; color: #334155; padding: 7px 6px; border-bottom: 1px solid #cbd5e1; font-size: 10px; text-transform: uppercase; }
-                tbody td { padding: 6px; border-bottom: 1px solid #eef2f7; font-size: 11px; }
-                tbody tr:last-child td { border-bottom: none; }
-                .right { text-align: right; }
-                .footer { margin-top: 12px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 8px; font-size: 11px; color: #475569; }
-                .watermark-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-                .wm { transform: rotate(-28deg); font-size: 62px; letter-spacing: 0.18em; font-weight: 800; color: rgba(15, 23, 42, ${watermarkOpacity}); text-transform: uppercase; white-space: nowrap; }
-                .wm.secondary { margin-top: 80px; font-size: 42px; color: rgba(30, 58, 138, ${watermarkOpacity}); }
-                .reprint-note { margin-top: 4px; font-size: 10px; color: #334155; }
-                .qr-wrap { text-align: right; margin-top: 8px; }
-                .qr-wrap img { width: 76px; height: 76px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 6px; }
-                @media (max-width: 900px) {
-                  .header-grid, .grid-2 { grid-template-columns: 1fr; }
-                  .qr-wrap { text-align: left; }
-                }
-              </style>
-            </head>
-            <body>
-              <section class="sheet">
-                <div class="watermark-wrap">
-                  <div>
-                    <div class="wm">${escapeHtml(watermarkLabel)}</div>
-                    ${secondaryWatermark ? `<div class="wm secondary">${escapeHtml(secondaryWatermark)}</div>` : ''}
-                  </div>
-                </div>
-                <div class="header">
-                  <div class="header-grid">
-                    <div class="company">
-                      ${printableShopLogoMarkup}
-                      <h1>${escapeHtml(invoiceCompanyMeta.companyLegalName)}</h1>
-                      <p>${escapeHtml(invoiceCompanyMeta.companyTagline)}</p>
-                      <p>${[shopAddress, shopPhone].filter(Boolean).map(escapeHtml).join(' | ')}</p>
-                      <div class="legal">
-                        <div>BR No: <strong>${escapeHtml(invoiceCompanyMeta.businessRegistrationNo || '-')}</strong></div>
-                        <div>VAT No: <strong>${escapeHtml(invoiceCompanyMeta.vatRegistrationNo || '-')}</strong></div>
-                        <div>TIN No: <strong>${escapeHtml(invoiceCompanyMeta.tinNo || '-')}</strong></div>
-                      </div>
-                    </div>
-                    <div class="meta">
-                      <div class="row"><span>Invoice No</span><strong>${escapeHtml(tx.invoiceNumber)}</strong></div>
-                      <div class="row"><span>Invoice Date</span><strong>${escapeHtml(formatDate(issueDate))}</strong></div>
-                      <div class="row"><span>Due Date</span><strong>${escapeHtml(formatDate(dueDate))}</strong></div>
-                      <div class="row"><span>Sales Rep</span><strong>${escapeHtml(tx.salesRepName || 'Not recorded')}</strong></div>
-                      <span class="badge ${statusClass}">${escapeHtml(statusLabel)}</span>
-                      <div class="reprint-note">${escapeHtml(copyLabel)}${printMeta?.isReprint ? ` | Reprint: ${escapeHtml(new Date(printMeta?.printedAt || new Date().toISOString()).toLocaleString())}` : ''}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="body">
-                  <div class="grid-2">
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Customer Details</div>
-                      <div class="line"><span>Name</span><strong>${escapeHtml(tx.customerName || '-')}</strong></div>
-                      <div class="line"><span>Customer ID</span><strong>${escapeHtml(tx.customerId || '-')}</strong></div>
-                      <div class="line"><span>Phone</span><strong>${escapeHtml(tx.customerPhone || '-')}</strong></div>
-                      <div class="line"><span>Address</span><strong>${escapeHtml(tx.customerAddress || '-')}</strong></div>
-                    </div>
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Customer Credit Information</div>
-                      <div class="line"><span>Outstanding Balance</span><strong>${escapeHtml(formatMoney(previousBalance))}</strong></div>
-                      <div class="line"><span>Current Invoice Amount</span><strong>${escapeHtml(formatMoney(Number(tx.total || 0)))}</strong></div>
-                      <div class="line"><span>Available Credit Limit</span><strong>${escapeHtml(formatMoney(availableCreditLimit))}</strong></div>
-                      <div class="line"><span>Credit Limit</span><strong>${escapeHtml(formatMoney(creditLimit))}</strong></div>
-                      <div class="line"><span>Current Payment</span><strong>${escapeHtml(formatMoney(currentPayment))}</strong></div>
-                      <div class="line"><span>Remaining Balance</span><strong>${escapeHtml(formatMoney(remainingBalance))}</strong></div>
-                    </div>
-                  </div>
-
-                  <div class="section-title">Product Table</div>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Item Code</th>
-                        <th>Product Name</th>
-                        <th>Brand</th>
-                        <th>Variant</th>
-                        <th>Unit</th>
-                        <th class="right">Quantity</th>
-                        <th class="right">Unit Price</th>
-                        <th class="right">Discount</th>
-                        <th class="right">Total Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>${wholesaleRowsHtml}</tbody>
-                  </table>
-
-                  <div class="grid-2" style="margin-top: 10px;">
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Hardware Business Information</div>
-                      <div class="line"><span>Transport Charges</span><strong>${escapeHtml(formatMoney(Number(wholesaleMeta.transportCharges || 0)))}</strong></div>
-                      <div class="line"><span>Delivery Charges</span><strong>${escapeHtml(formatMoney(Number(wholesaleMeta.deliveryCharges || 0)))}</strong></div>
-                      <div class="line"><span>Warranty Information</span><strong>${escapeHtml(wholesaleMeta.warrantyInformation || '-')}</strong></div>
-                      <div class="line"><span>Dispatch Method</span><strong>${escapeHtml(wholesaleMeta.dispatchMethod || '-')}</strong></div>
-                      <div class="line"><span>Vehicle Number</span><strong>${escapeHtml(wholesaleMeta.vehicleNumber || '-')}</strong></div>
-                      <div class="line"><span>Delivery Note Number</span><strong>${escapeHtml(wholesaleMeta.deliveryNoteNumber || '-')}</strong></div>
-                      <div class="line"><span>Batch Number</span><strong>${escapeHtml(wholesaleMeta.batchNumber || '-')}</strong></div>
-                      <div class="line"><span>Supplier Reference</span><strong>${escapeHtml(wholesaleMeta.supplierReference || '-')}</strong></div>
-                      <div class="line"><span>Delivery Status</span><strong>${escapeHtml(wholesaleMeta.deliveryStatus || '-')}</strong></div>
-                    </div>
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Invoice Summary</div>
-                      <div class="line"><span>Subtotal</span><strong>${escapeHtml(formatMoney(tx.subtotal))}</strong></div>
-                      <div class="line"><span>Discount</span><strong>${escapeHtml(formatMoney(tx.discountAmount || 0))}</strong></div>
-                      <div class="line"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
-                      <div class="line" style="font-size:14px;font-weight:800;border-top:1px solid #cbd5e1;padding-top:6px;"><span>Grand Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-                      ${invoiceQrData ? `<div class="qr-wrap"><img src="${escapeHtml(invoiceQrData)}" alt="Invoice QR" /><div style="font-size:10px;color:#64748b;margin-top:4px;">Invoice QR</div></div>` : ''}
-                    </div>
-                  </div>
-
-                  <div style="break-inside:avoid;page-break-inside:avoid;border-top:1px solid #cbd5e1;margin-top:18px;padding-top:12px;">
-                    <div style="font-size:11px;font-weight:800;text-align:center;letter-spacing:.08em;margin-bottom:24px;">GOODS VERIFICATION & RECEIPT</div>
-                    <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;text-align:center;font-size:9px;">
-                      ${['Prepared By','Checked By','Authorized By','Received By'].map((label) => `<div><div style="border-bottom:1px solid #64748b;height:22px;"></div><div style="padding-top:7px;">${label} / Signature</div></div>`).join('')}
-                    </div>
-                    <div style="display:flex;justify-content:space-between;gap:16px;font-size:9px;margin-top:20px;">
-                      <span>Receiving Date / Time: __________________</span>
-                      <span>Customer Stamp (if applicable): __________________</span>
-                    </div>
-                    <div style="text-align:center;font-size:9px;margin-top:12px;">${invoiceFooter.acknowledgement}</div>
-                  </div>
-                  <div class="footer">
-                    <div>${invoiceFooter.goods}</div>
-                    <div><strong>${invoiceFooter.thanks}</strong></div>
-                    <div><small>${invoiceFooter.credit}</small></div>
-                    <div style="margin-top:4px;">Support: ${escapeHtml(invoiceCompanyMeta.supportPhone || '-')} | ${escapeHtml(invoiceCompanyMeta.supportEmail || '-')}</div>
-                    <div>${escapeHtml(invoiceCompanyMeta.websiteUrl || '-')} ${invoiceCompanyMeta.socialLinks ? `| ${escapeHtml(invoiceCompanyMeta.socialLinks)}` : ''}</div>
-                  </div>
-                </div>
-              </section>
-              <script>
-                setTimeout(() => {
-                  window.print();
-                  setTimeout(() => window.close(), 250);
-                }, 180);
-              <\/script>
-            </body>
-          </html>
-        `;
-
-        printWindow.document.open();
-        printWindow.document.write(wholesaleHtml);
-        printWindow.document.close();
-        printWindow.focus();
-        return;
-      }
-
-    const rowsHtml = tx.items
-      .map((itm) => {
-        const discountPct = Number(itm.discount || 0);
-        const lineUnit = Number(itm.sellingPrice || 0);
-        const lineQty = Number(itm.quantity || 0);
-        const gross = lineUnit * lineQty;
-        const percentAdjusted = gross * (1 - discountPct / 100);
-        const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-        const lineTotal = Math.max(0, percentAdjusted - lineDiscountAmount);
-        return `
-          <tr>
-            <td>${escapeHtml(itm.productName)}${itm.invoiceDescription ? `<div class="item-code">${escapeHtml(itm.invoiceDescription)}</div>` : ''}${isWholesaleShop ? `<div class="item-code">Product Code: ${escapeHtml(itm.productId)}</div>` : ''}</td>
-            <td class="right">${lineQty}</td>
-            <td class="right">${escapeHtml(formatMoney(lineUnit))}</td>
-            <td class="right">${discountPct > 0 ? `${discountPct.toFixed(0)}%` : '-'}${lineDiscountAmount > 0 ? ` / ${escapeHtml(formatMoney(lineDiscountAmount))}` : ''}</td>
-            <td class="right total">${escapeHtml(formatMoney(lineTotal))}</td>
-          </tr>
-        `;
-      })
-      .join('');
-
-    const itemDiscountTotal = tx.items.reduce((acc, itm) => {
-      const gross = Number(itm.sellingPrice || 0) * Number(itm.quantity || 0);
-      const percentAdjusted = gross * (1 - Number(itm.discount || 0) / 100);
-      const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-      return acc + (gross - Math.max(0, percentAdjusted - lineDiscountAmount));
-    }, 0);
-
-    const totalUnits = tx.items.reduce((acc, itm) => acc + Number(itm.quantity || 0), 0);
-    const wholesaleTermNote = tx.paymentMethod === 'Credit Account'
-      ? 'Credit settlement is governed by your wholesale credit agreement.'
-      : 'Payment is due as per agreed wholesale purchase terms.';
-
-    const discountBlock = tx.discountAmount > 0
-      ? `
-        <div class="row discount">
-          <span>Manual Discount</span>
-          <strong>-${escapeHtml(formatMoney(tx.discountAmount))}</strong>
-        </div>
-      `
-      : '';
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Invoice ${escapeHtml(tx.invoiceNumber)}</title>
-          <style>
-              @page { size: A4 portrait; margin: 12mm; }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #ffffff; }
-            .bill { border: 1px solid #dbe4f0; border-radius: 18px; overflow: hidden; }
-            .hero { padding: 22px 24px 18px; background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 55%, #fff7ed 100%); border-bottom: 1px solid #dbe4f0; }
-            .top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
-            .eyebrow { display: inline-block; margin-bottom: 10px; padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
-            .eyebrow.wholesale { background: #ffedd5; color: #c2410c; }
-            .brand h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
-            .brand p { margin: 3px 0; color: #475569; font-size: 12px; }
-            .meta { min-width: 220px; padding: 14px 16px; background: rgba(255,255,255,0.85); border: 1px solid #dbe4f0; border-radius: 14px; }
-            .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
-            .meta .label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
-            .meta .value { font-weight: 700; margin-top: 3px; font-size: 13px; }
-            .content { padding: 18px 24px 22px; }
-            .sub { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 18px; }
-            .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
-            .card .k { color: #64748b; font-size: 10px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.08em; }
-            .card .v { font-size: 13px; font-weight: 700; }
-            .wholesale-panel {
-              margin: 0 0 16px;
-              border: 1px solid #fed7aa;
-              background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
-              border-radius: 12px;
-              padding: 12px 14px;
-              display: grid;
-              grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 10px;
-            }
-            .wholesale-panel .k { color: #9a3412; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
-            .wholesale-panel .v { color: #7c2d12; font-size: 13px; font-weight: 700; }
-            table { width: 100%; border-collapse: collapse; margin-top: 8px; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; }
-            thead th { text-align: left; font-size: 11px; color: #475569; background: #eff6ff; border-bottom: 1px solid #dbe4f0; padding: 10px 12px; text-transform: uppercase; letter-spacing: 0.06em; }
-            tbody td { border-bottom: 1px solid #eef2f7; padding: 12px; font-size: 12px; vertical-align: top; }
-            tbody tr:nth-child(even) { background: #fcfdff; }
-            tbody tr:last-child td { border-bottom: none; }
-            .item-code { margin-top: 3px; color: #64748b; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; }
-            .right { text-align: right; }
-            .total { font-weight: 700; }
-            .summary-wrap { display: flex; justify-content: space-between; gap: 18px; margin-top: 18px; align-items: flex-start; }
-            .notes { flex: 1; padding: 14px 16px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; color: #7c2d12; }
-            .notes h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-            .notes p { margin: 0; font-size: 12px; line-height: 1.6; }
-            .summary { width: 320px; border: 1px solid #dbe4f0; border-radius: 14px; padding: 14px 16px; background: #ffffff; }
-            .row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; }
-            .discount { color: #059669; }
-            .grand { border-top: 1px solid #dbe4f0; margin-top: 8px; padding-top: 10px; font-size: 16px; font-weight: 800; color: #1e3a8a; }
-              .sign-row { display: grid; grid-template-columns: 1fr 140px; gap: 12px; margin-top: 14px; align-items: end; }
-              .signature-box { border-top: 1px solid #94a3b8; padding-top: 8px; text-align: center; color: #475569; font-size: 10px; }
-              .signature-line { font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 18px; color: #0f172a; margin-bottom: 3px; }
-              .stamp-box {
-                width: 140px;
-                height: 92px;
-                border: 2px dashed #ef4444;
-                border-radius: 16px;
-                color: #ef4444;
-                text-align: center;
-                padding: 10px 8px;
-                box-sizing: border-box;
-                transform: rotate(-8deg);
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                gap: 6px;
-                font-weight: 800;
-              }
-              .stamp-title { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-              .stamp-shop { font-size: 13px; line-height: 1.1; }
-              .stamp-note { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
-            .foot { margin-top: 18px; color: #64748b; font-size: 11px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
-            .brand-note { margin-top: 8px; color: #475569; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-          </style>
-        </head>
-        <body>
-          <section class="bill">
-            <div class="hero">
-              <header class="top">
-                <div class="brand">
-                  <span class="eyebrow ${isWholesaleShop ? 'wholesale' : ''}">${isWholesaleShop ? 'Wholesale Tax Invoice' : 'Customer Invoice'}</span>
-                  ${printableShopLogoMarkup}
-                  <h1>${escapeHtml(activeShopName)}</h1>
-                  <p>${escapeHtml(shopAddress)}</p>
-                  ${shopPhone ? '<p>Phone: ' + escapeHtml(shopPhone) + '</p>' : ''}
-                </div>
-                <div class="meta">
-                  <div class="meta-grid">
-                    <div>
-                      <div class="label">Invoice No</div>
-                      <div class="value">${escapeHtml(tx.invoiceNumber)}</div>
-                    </div>
-                    <div>
-                      <div class="label">Issued At</div>
-                      <div class="value">${escapeHtml(new Date(tx.date).toLocaleString())}</div>
-                    </div>
-                    <div>
-                      <div class="label">Customer</div>
-                      <div class="value">${escapeHtml(tx.customerName)}</div>
-                    </div>
-                    <div>
-                      <div class="label">Phone</div>
-                      <div class="value">${escapeHtml(tx.customerPhone || '-')}</div>
-                    </div>
-                    <div style="grid-column: span 2;">
-                      <div class="label">Address</div>
-                      <div class="value">${escapeHtml(tx.customerAddress || '-')}</div>
-                    </div>
-                    <div>
-                      <div class="label">Payment</div>
-                      <div class="value">${escapeHtml(tx.paymentMethod)}</div>
-                    </div>
-                  </div>
-                </div>
-              </header>
-            </div>
-
-            <div class="content">
-              <div class="sub">
-                <div class="card"><div class="k">Sales Representative</div><div class="v">${escapeHtml(tx.salesRepName || 'Not recorded')}</div></div>
-                <div class="card"><div class="k">Line Items</div><div class="v">${escapeHtml(String(tx.items.length))}</div></div>
-                <div class="card"><div class="k">Total Units</div><div class="v">${escapeHtml(String(totalUnits))}</div></div>
-                <div class="card"><div class="k">Tax Rate</div><div class="v">${escapeHtml(`${taxConfig.taxRate.toFixed(1)}%`)}</div></div>
-                <div class="card"><div class="k">Currency</div><div class="v">LKR / Rs.</div></div>
-              </div>
-
-              ${isWholesaleShop ? `
-                <div class="wholesale-panel">
-                  <div>
-                    <div class="k">Buyer Phone</div>
-                    <div class="v">${escapeHtml(tx.customerPhone || '-')}</div>
-                  </div>
-                  <div>
-                    <div class="k">Buyer Address</div>
-                    <div class="v">${escapeHtml(tx.customerAddress || '-')}</div>
-                  </div>
-                  <div>
-                    <div class="k">Trade Terms</div>
-                    <div class="v">${escapeHtml(wholesaleTermNote)}</div>
-                  </div>
-                </div>
-              ` : ''}
-
-              <table>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th class="right">Qty</th>
-                    <th class="right">Unit</th>
-                    <th class="right">Discount</th>
-                    <th class="right">Line Total</th>
-                  </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-              </table>
-
-              <div class="summary-wrap">
-                <div class="notes">
-                  <h3>${isWholesaleShop ? 'Wholesale Notes' : 'Billing Notes'}</h3>
-                  <p>${isWholesaleShop ? `This invoice is generated for wholesale supply. ${escapeHtml(wholesaleTermNote)} Goods once delivered are subject to agreed return and shortage policies.` : 'Thank you for your business. Please keep this invoice for warranty claims, returns, and accounting reference.'}</p>
-                </div>
-                <div class="summary">
-                  ${itemDiscountTotal > 0 ? `<div class="row discount"><span>Item Discounts</span><strong>-${escapeHtml(formatMoney(itemDiscountTotal))}</strong></div>` : ''}
-                  <div class="row"><span>Subtotal</span><strong>${escapeHtml(formatMoney(tx.subtotal))}</strong></div>
-                  ${discountBlock}
-                  <div class="row"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
-                  <div class="row grand"><span>Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-                  ${tx.paymentMethod === 'Cash' ? `<div class="row"><span>Cash Received</span><strong>${escapeHtml(formatMoney(tx.cashReceived ?? tx.total))}</strong></div><div class="row"><span>Change Due</span><strong>${escapeHtml(formatMoney(tx.changeDue ?? 0))}</strong></div>` : ''}
-                  <div class="sign-row">
-                    <div class="signature-box">
-                      <div class="signature-line">__________________</div>
-                      <div>Authorized Signature</div>
-                      <div>${escapeHtml(activeShopName)}</div>
-                    </div>
-                    <div class="stamp-box">
-                      <div class="stamp-title">Shop Stamp</div>
-                      <div class="stamp-shop">${escapeHtml(activeShopName)}</div>
-                      <div class="stamp-note">PAID / AUTHORIZED</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <footer class="foot">
-                Printed by ${escapeHtml(activeShopName)}.<br>${invoiceFooter.goods} ${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small>
-              </footer>
-
-              <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px;">
-                <div style="border-top: 1px solid #64748b; padding-top: 6px; text-align: center; font-size: 10px; color: #475569;">
-                  <div style="font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 18px; color: #111827; line-height: 1; margin-bottom: 2px;">__________________</div>
-                  <div>Authorized Signature</div>
-                  <div>${escapeHtml(activeShopName)}</div>
-                </div>
-                <div style="border: 2px dashed #ef4444; border-radius: 14px; color: #ef4444; text-align: center; padding: 10px 8px; font-weight: 800; transform: rotate(-4deg);">
-                  <div style="font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;">Shop Stamp</div>
-                  <div style="font-size: 12px; line-height: 1.1; margin: 4px 0;">${escapeHtml(activeShopName)}</div>
-                  <div style="font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;">PAID / AUTHORIZED</div>
-                </div>
-              </div>
-            </div>
-          </section>
-          <script>
-            setTimeout(() => {
-              window.print();
-              setTimeout(() => window.close(), 250);
-            }, 180);
-          <\/script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
+    // A4 uses the persisted invoice PDF only. Never fall back to dashboard HTML.
+    const query=new URLSearchParams({
+      copyType:printMeta?.copyType||'Original Copy',
+      printSequence:String(printMeta?.printSequence||1),
+      watermark:printMeta?.watermarkText||'ORIGINAL COPY',
+      secondaryWatermark:printMeta?.secondaryWatermarkText||'',
+      printedBy:printMeta?.printedBy||'',
+      printedAt:printMeta?.printedAt||'',
+    });
+    try {
+      const response=await authFetch(`/api/transactions/${tx.id}/pdf?${query.toString()}`);
+      if(!response.ok || !response.headers.get('Content-Type')?.includes('application/pdf')) throw new Error('Unable to generate invoice PDF');
+      const blob=await response.blob();
+      const url=URL.createObjectURL(blob);
+      if(printWindow.closed){URL.revokeObjectURL(url);notify.warning('Invoice saved. Open its PDF from invoice history.');return;}
+      printWindow.location.replace(url);
+      printWindow.focus();
+      const release=window.setInterval(()=>{if(printWindow.closed){URL.revokeObjectURL(url);window.clearInterval(release);}},5000);
+    } catch(error) {
+      printWindow.close();
+      notify.warning('Invoice saved, but PDF could not open. Use Download PDF from invoice history; do not create another sale.');
+    }
   };
 
   // Process core checkout
@@ -1599,7 +1122,7 @@ export default function POSView({
         try {
           const printAudit = await logInvoicePrint(txWithQr, 'Original Copy');
           await loadInvoicePrintHistory(txWithQr);
-          printReceiptInvoice(txWithQr, printWindow, {
+          await printReceiptInvoice(txWithQr, printWindow, {
             copyType: printAudit.printLog.copyType,
             watermarkText: printAudit.printSummary.watermarkText,
             secondaryWatermarkText: printAudit.printSummary.secondaryWatermarkText,
@@ -1609,7 +1132,7 @@ export default function POSView({
             printedAt: printAudit.printLog.printedAt,
           });
         } catch {
-          printReceiptInvoice(txWithQr, printWindow);
+          await printReceiptInvoice(txWithQr, printWindow);
           notify.warning('Sale saved, but print audit log failed. Printed without tracked copy label.');
         }
         // Require an explicit representative for each new invoice; another rep may handle the next sale.
@@ -2898,10 +2421,12 @@ export default function POSView({
                     onClick={async () => {
                       try {
                         setIsLoggingPrint(true);
+                        const invoiceWindow = createPrintWindow();
+                        if(!invoiceWindow) return;
                         const printAudit = await logInvoicePrint(receiptModel, selectedCopyType);
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
-                        printReceiptInvoice(receiptModel, undefined, {
+                        await printReceiptInvoice(receiptModel, invoiceWindow, {
                           copyType: printAudit.printLog.copyType,
                           watermarkText: printAudit.printSummary.watermarkText,
                           secondaryWatermarkText: printAudit.printSummary.secondaryWatermarkText,
