@@ -5731,9 +5731,15 @@ app.get('/api/supplier-payments', (_req, res) => {
 });
 
 app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const authUser = (req as AppRequest).authUser;
   const { activeShopId } = getActiveShopContext(db, req);
-  const { supplierId, purchaseOrderId, amount, paymentMethod, date, note } = req.body || {};
+  const { supplierId, purchaseOrderId, amount, paymentMethod, date, note, sourceAccountId, requestId } = req.body || {};
+  if(sourceAccountId!==undefined){
+    const scope=chequeShopAccess(req);
+    if(!scope||scope.shopId!==activeShopId)return res.status(403).json({error:'Financial source access denied.'});
+    if(typeof sourceAccountId!=='string'||!sourceAccountId.trim()||sourceAccountId.length>200||!validChequeRequestId(requestId)||!['Cash','Bank Transfer'].includes(paymentMethod)||typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date+'T00:00:00Z'))||new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date||date>reportDay(new Date()))return res.status(400).json({error:'Select a valid payment source, payment method, date and request identifier.'});
+  }
   const supplier = db.suppliers.find((s) => s.id === supplierId && s.shopId === activeShopId);
   if (!supplier) return res.status(404).json({ error: 'Supplier not found in this shop' });
   const paid = Number(amount);
@@ -5746,7 +5752,7 @@ app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager'])
     return res.status(400).json({ error: 'Purchase order does not belong to this supplier and shop' });
   }
   const sp: SupplierPayment = {
-    id: 'spay-' + randomUUID(),
+    id: 'spay-' + (sourceAccountId?requestId:randomUUID()),
     shopId: activeShopId,
     supplierId: supplier.id,
     supplierName: supplier.companyName || supplier.name,
@@ -5755,10 +5761,10 @@ app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager'])
     paymentMethod: String(paymentMethod || 'Bank Transfer'),
     date: String(date || reportDay(new Date())),
     note: typeof note === 'string' ? note.slice(0, 500) : undefined,
-    createdBy: authUser?.name,
+    createdBy: sourceAccountId?authUser?.email:authUser?.name,
   };
   try {
-    await insertSupplierPayment(sp);
+    await insertSupplierPayment(sp,sourceAccountId);
   } catch (error) {
     return res.status(409).json({ error: (error as Error).message });
   }
