@@ -23,7 +23,7 @@ import {moneyCents} from './generalLedger';
 /** Require whole approved charge funding, proven by original expense journals.
  * The PO is locked by the receiving transaction; lock the approval against concurrent linking.
  */
-export async function verifiedImportChargeBalance(client:PoolClient,shopId:string,poId:string,expenseAccount:string){
+export async function verifiedImportChargeFunding(client:PoolClient,shopId:string,poId:string,expenseAccount:string){
  const a=(await client.query('SELECT id,charges_total::text,snapshot FROM ars_landed_cost_approvals WHERE shop_id=$1 AND purchase_order_id=$2 FOR UPDATE',[shopId,poId])).rows[0];
  if(!a)throw Error('Approved landed cost required.');
  const links=(await client.query(`SELECT x.charge_kind,x.amount::text,x.expense_id,j.id AS journal_id,
@@ -36,16 +36,34 @@ export async function verifiedImportChargeBalance(client:PoolClient,shopId:strin
   if(!l.journal_id||!Object.prototype.hasOwnProperty.call(paid,l.charge_kind)||moneyCents(l.amount)!==moneyCents(l.posted))throw Error('Import expense must have matching posted operating expense.');
   paid[l.charge_kind]+=moneyCents(l.amount);
  }
- for(const k of Object.keys(caps))if(paid[k]!==caps[k])throw Error('All approved import charges must be funded and linked before receiving.');
+ const obligations=(await client.query(`SELECT o.id,o.charge_kind,o.amount::text,COALESCE((SELECT sum(x.amount) FROM ars_gl_import_receipt_allocations x WHERE x.shop_id=o.shop_id AND x.obligation_id=o.id),0)::numeric(24,2)::text AS allocated
+ FROM ars_gl_import_obligations o JOIN ars_gl_import_obligation_reviews r ON r.shop_id=o.shop_id AND r.obligation_id=o.id AND r.decision='Approved'
+ WHERE o.shop_id=$1 AND o.approval_id=$2 ORDER BY o.due_date,o.id`,[shopId,a.id])).rows;
+ const unpaid:Record<string,bigint>={Freight:0n,Customs:0n,Clearance:0n};
+ const available:{id:string;remaining:bigint}[]=[];
+ for(const o of obligations){
+  if(!Object.prototype.hasOwnProperty.call(unpaid,o.charge_kind))throw Error('Invalid approved obligation charge.');
+  const amount=moneyCents(o.amount),allocated=moneyCents(o.allocated);
+  if(allocated>amount)throw Error('Import obligation already overallocated.');
+  unpaid[o.charge_kind]+=amount;
+  available.push({id:o.id,remaining:amount-allocated});
+ }
+ for(const k of Object.keys(caps))if(paid[k]+unpaid[k]!==caps[k])throw Error('All approved import charges require verified funding or approved obligations.');
  const funded=paid.Freight+paid.Customs+paid.Clearance;
- if(funded!==moneyCents(a.charges_total))throw Error('Approved charges do not reconcile.');
+ if(funded+unpaid.Freight+unpaid.Customs+unpaid.Clearance!==moneyCents(a.charges_total))throw Error('Approved charges do not reconcile.');
  const used=(await client.query(`SELECT COALESCE(sum(l.credit-l.debit),0)::numeric(24,2)::text AS used
  FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id
  JOIN ars_receipt_batches b ON b.shop_id=j.shop_id AND b.id=j.source_id
  WHERE j.shop_id=$1 AND j.source_kind='ReceiptBatch' AND b.purchase_order_id=$2 AND l.account_code=$3`,[shopId,poId,expenseAccount])).rows[0].used;
  const remaining=funded-moneyCents(used);
  if(remaining<0n)throw Error('Import charges already overallocated.');
- return remaining;
+ return {fundedRemaining:remaining,approvedUnpaidRemaining:available.reduce((sum,o)=>sum+o.remaining,0n),available};
+}
+
+export async function verifiedImportChargeBalance(client:PoolClient,shopId:string,poId:string,expenseAccount:string){
+ const funding=await verifiedImportChargeFunding(client,shopId,poId,expenseAccount);
+ if(funding.approvedUnpaidRemaining>0n)throw Error('Unpaid charges require creditor allocation.');
+ return funding.fundedRemaining;
 }
 
 /** Allocate a receipt's import charges between already funded amounts and
@@ -69,4 +87,18 @@ export function buildImportLiabilityReceiptJournal(input:{goods:bigint;landed:bi
  if(rounding!==0n)lines.push({accountCode:roundingAccount,debit:decimal(rounding<0n?-rounding:0n),credit:decimal(rounding>0n?rounding:0n)});
  if(new Set(lines.map(l=>l.accountCode)).size!==lines.length)throw Error('Distinct import ledger accounts required.');
  validateJournal(lines);return lines;
+}
+
+/** Receipt journal and creditor subledger allocations must commit together. */
+export async function recordImportReceiptAllocations(client:PoolClient,shopId:string,batchId:string,journalId:string,amount:bigint,available:{id:string;remaining:bigint}[]){
+ let left=amount;
+ if(left<0n)throw Error('Invalid import allocation amount.');
+ for(const o of available){
+  if(left===0n)break;
+  const applied=left<o.remaining?left:o.remaining;
+  if(applied===0n)continue;
+  await client.query('INSERT INTO ars_gl_import_receipt_allocations(shop_id,obligation_id,batch_id,journal_id,amount) VALUES($1,$2,$3,$4,$5)',[shopId,o.id,batchId,journalId,decimal(applied)]);
+  left-=applied;
+ }
+ if(left!==0n)throw Error('Approved creditor allocation coverage incomplete.');
 }
