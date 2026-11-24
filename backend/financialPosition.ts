@@ -1,5 +1,6 @@
 import type {Pool} from 'pg';
 import {inventoryValuation} from './inventoryValuation';
+import {listPositionRegisters,positionKinds} from './positionRegisters';
 
 /** Current operational position, not a statutory balance sheet. No balancing plug. */
 export async function financialPosition(db:Pool,shopId:string){
@@ -38,6 +39,14 @@ export async function financialPosition(db:Pool,shopId:string){
   const unmatched=await client.query(`SELECT COUNT(*) AS count FROM supplier_payments p WHERE p.shop_id=$1 AND NOT EXISTS(
     SELECT 1 FROM purchase_orders o WHERE o.shop_id=p.shop_id AND o.supplier_id=p.supplier_id AND o.id=p.purchase_order_id AND o.status='Received')`,[shopId]);
   const inventory=await inventoryValuation(client,shopId);
+  const registers=await listPositionRegisters(client,shopId);
+  const registerBalances=positionKinds.map(kind=>({kind,count:registers.filter(r=>r.kind===kind).length,amount:registers.some(r=>r.kind===kind)?round(registers.filter(r=>r.kind===kind).reduce((n,r)=>n+r.amount,0)):null}));
+  const amount=(kind:string)=>registerBalances.find(r=>r.kind===kind)?.amount??null;
+  const fixedAssets=amount('Fixed asset'),otherAssets=amount('Other asset'),loans=amount('Loan liability'),tax=amount('Tax liability'),otherLiabilities=amount('Other liability');
+  const knownAssetSubtotal=round(Number(r.cash)+Number(r.receivables)+inventory.knownValue+(fixedAssets??0)+(otherAssets??0));
+  const knownLiabilitySubtotal=round(Number(r.negative_cash)+Number(r.customer_credits)+receivedOrderOutstandingEstimate+(loans??0)+(tax??0)+(otherLiabilities??0));
+  // Opening equity and retained earnings may overlap recorded partner capital.
+  // Never sum them into certified equity until their coverage is reconciled.
   await client.query('COMMIT');
   return {asOf:r.day,recordedCashAndBank:Number(r.cash),negativeCashAccounts:Number(r.negative_cash),
     netSettlementBalance:Number(r.settlement),nonzeroSettlementAccounts:Number(r.settlement_count),
@@ -47,7 +56,8 @@ export async function financialPosition(db:Pool,shopId:string){
     receivedOrderOutstandingEstimate,partialOrders:Number(r.partial_orders),overpaidOrders,
     unmatchedSupplierPayments:Number(unmatched.rows[0].count),profitAllocations:Number(r.allocations),
     inventoryKnownValue:inventory.knownValue,inventoryTotalValue:inventory.totalValue,inventoryFlagged:inventory.flagged,
+    registerBalances,knownAssetSubtotal,knownLiabilitySubtotal,
     complete:false,totalAssets:null,totalLiabilities:null,totalEquity:null,balanceDifference:null,
-    limitations:[...(inventory.complete?[]:['Inventory contains unresolved valuation entries.']),'Fixed assets require verified valuation.','Supplier liabilities require invoice reconciliation.','Opening equity, retained earnings, taxes and other liabilities require verified ledger balances.','Settlement accounts and partner allocations require classification and reconciliation.']};
+    limitations:[...(inventory.complete?[]:['Inventory contains unresolved valuation entries.']),'Register balances are evidenced snapshots; completeness and overlap with existing ledgers are not established.','Supplier liabilities require invoice reconciliation.','Opening equity, retained earnings, taxes and other liabilities require verified ledger balances.','Settlement accounts and partner allocations require classification and reconciliation.']};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
