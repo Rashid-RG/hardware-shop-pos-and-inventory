@@ -1,3 +1,4 @@
+import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
@@ -214,7 +215,7 @@ export default function AccountingSettingsView({
       return;
     }
     setActiveShopId(shopId);
-    setStoreName(activeShop.name || 'ARS Distributor');
+    setStoreName(arsDisplayName(activeShop.name || 'ARS Distributor'));
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
     setTaxRate(Number(activeShop.taxRate || 18));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
