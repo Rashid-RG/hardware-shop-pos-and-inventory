@@ -21,3 +21,16 @@ export function buildPurchaseReturnJournal(input:{inventoryCost:string;supplierC
  if(new Set(lines.map(l=>l.accountCode)).size!==lines.length)throw Error('Distinct return accounts required.');
  validateJournal(lines);return lines;
 }
+
+/** Historical import charges are documentary amounts, not independently posted losses.
+ * Recognize the difference between carrying value and confirmed supplier credit once.
+ * Freight/customs recoveries require separate verified transactions. */
+export function buildImportPurchaseReturnJournal(input:Parameters<typeof buildPurchaseReturnJournal>[0]&{historicalGoodsCost:string;historicalImportCharges:string;importVarianceAccount:string}){
+ const goods=moneyCents(input.historicalGoodsCost),charges=moneyCents(input.historicalImportCharges);
+ const carrying=moneyCents(input.inventoryCost),credit=moneyCents(input.supplierCredit);
+ if(goods+charges<=0n||carrying<=0n||credit<=0n)throw Error('Verified import return cost breakdown required.');
+ const variance=carrying-credit;
+ if(variance!==0n&&!input.importVarianceAccount)throw Error('Missing import return variance accounting mapping.');
+ const lines=buildPurchaseReturnJournal({...input,varianceAccount:input.importVarianceAccount});
+ return {lines,historicalLandedCost:goods+charges,carryingVariance:variance};
+}
