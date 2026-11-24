@@ -1,3 +1,4 @@
+import { arsPrintLogoUrl, isArsPrintBrand } from './arsPrintLogo';
 import type { StoreSettings } from '../types';
 import { invoiceFooter } from './invoiceFooter';
 
@@ -13,7 +14,7 @@ export interface BusinessReport {
 }
 export function reportBrand(settings:StoreSettings) {
   const shop=settings.shopProfiles?.find(s=>s.id===settings.activeShopId);
-  return {name:shop?.name || settings.storeName || 'ARS Hardware', address:shop?.address || settings.address || '', phone:shop?.phone || settings.phone || '', logo:shop?.logoUrl || settings.logoUrl || ''};
+  return {name:shop?.name || settings.storeName || 'ARS Hardware', address:shop?.address || settings.address || '', phone:shop?.phone || settings.phone || '', logo:isArsPrintBrand(shop?.name || settings.storeName || 'ARS Hardware') ? arsPrintLogoUrl : shop?.logoUrl || settings.logoUrl || ''};
 }
 const escapeHtml=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function saveReportCsv(report:BusinessReport) {
@@ -24,6 +25,8 @@ export function downloadReport(blob:Blob,filename:string) {
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 export function safeReportLogo(value:string) {
+  if(value===arsPrintLogoUrl)return value;
+  if(!value)return '';
   try { const url=new URL(value,window.location.origin); return url.origin===window.location.origin&&/^https?:$/.test(url.protocol)?url.href:/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)?value:''; } catch{return '';}
 }
 export function printBusinessReport(report:BusinessReport,settings:StoreSettings) {
