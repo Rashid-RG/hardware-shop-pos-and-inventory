@@ -21,6 +21,10 @@ def ready():
 
 
 def launch():
+    from pathlib import Path
+    guard=Path.home()/".local/share/ars-hardware/update-tools/startup_guard.py"
+    if not guard.is_file() or subprocess.run(["python3",str(guard)]).returncode!=0:
+        raise RuntimeError("ARS startup blocked: update recovery review is required. Contact RS Nextward. Do not delete the recovery journal.")
     subprocess.run(['systemctl', '--user', 'start', '--no-block', UNIT], check=True)
     deadline = time.monotonic() + 155
     while time.monotonic() < deadline:
