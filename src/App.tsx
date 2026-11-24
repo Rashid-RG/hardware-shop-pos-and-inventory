@@ -748,38 +748,37 @@ export default function App() {
   if (!authUser) {
     return (
       <div
-        className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-3 sm:p-6 lg:p-7"
+        className="relative min-h-[100dvh] w-full overflow-y-auto bg-[#101d32] text-white flex items-center justify-center p-3 sm:p-4"
       >
         <NotificationCenter />
         <div className="pointer-events-none absolute inset-0 opacity-30 bg-cover bg-center" style={{ backgroundImage: `url(${loginBackgroundImage})` }} />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#101d32]/95 via-[#101d32]/85 to-[#243b5c]/90" />
         <div className="relative z-10 w-full max-w-6xl overflow-hidden rounded-[30px] border border-white/15 bg-white/5 shadow-[0_25px_100px_rgba(0,0,0,0.38)] lg:grid lg:grid-cols-[1.12fr_0.88fr]">
-          <section className="hidden lg:flex flex-col justify-between min-h-[560px] border-r border-white/10 p-9 xl:p-12 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
+          <section className="hidden lg:flex flex-col justify-between gap-6 border-r border-white/10 p-7 xl:p-8 bg-gradient-to-br from-[#0b192e]/30 via-[#182e4d]/70 to-[#233854]/75">
             <div>
               <div className="inline-flex items-center gap-3">
                 <ARSBrand featured subtitle="Imports • Wholesale • Distribution" className="ars-login-brand" />
               </div>
-              <div className="mt-14 max-w-xl">
-                <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for import and distribution</p>
-                <h1 className="font-heading text-5xl font-bold tracking-tight leading-[1.14] xl:text-[56px]">Your business.<br/><span className="text-amber-300">One powerful</span><br/>workspace.</h1>
-                <p className="mt-6 max-w-md text-[15px] leading-7 text-slate-300">Manage international purchasing, warehouse inventory, wholesale distribution and financial reporting in one secure workspace.</p>
+              <div className="mt-7 max-w-xl">
+                <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[11px] font-bold uppercase tracking-[0.19em] text-amber-300"><Store className="h-3.5 w-3.5" /> Built for import and distribution</p>
+                <h1 className="font-heading text-4xl font-bold tracking-tight leading-[1.12] xl:text-[44px]">Your business.<br/><span className="text-amber-300">One powerful</span><br/>workspace.</h1>
+                <p className="mt-4 max-w-md text-sm leading-6 text-slate-300">Manage international purchasing, warehouse inventory, wholesale distribution and financial reporting in one secure workspace.</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 border-t border-white/15 pt-5 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
+            <div className="flex items-center gap-3 border-t border-white/15 pt-3 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
           </section>
-          <div className="bg-white p-6 text-slate-900 sm:p-8 lg:p-9 xl:p-11 flex flex-col justify-center">
-            <div className="mb-6">
-              <div className="mb-6 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Welcome back</p>
-              <h2 className="mt-2 font-heading text-3xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
-              <p className="mt-3 text-sm text-slate-500">Sign in securely. Your authorized branch will load after verification.</p>
+          <div className="bg-white p-5 text-slate-900 sm:p-6 xl:p-8 flex flex-col justify-center">
+            <div className="mb-4">
+              <div className="mb-4 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
+              <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
+              <p className="mt-2 text-sm text-slate-500">Sign in to your branch workspace.</p>
             </div>
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handleLogin} className="space-y-3">
 
           {setupStatus && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">{setupStatus}</p>}
 
           <div className="space-y-2">
-            <label htmlFor="ars-login-email" className="mb-2 block text-xs font-semibold text-slate-700">Email address</label>
+            <label htmlFor="ars-login-email" className="block text-xs font-semibold text-slate-700">Email address</label>
             <input
               id="ars-login-email"
               type="email"
@@ -793,7 +792,7 @@ export default function App() {
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="ars-login-password" className="mb-2 block text-xs font-semibold text-slate-700">Password</label>
+            <label htmlFor="ars-login-password" className="block text-xs font-semibold text-slate-700">Password</label>
             <div className="relative">
               <input
                 id="ars-login-password"
@@ -819,7 +818,7 @@ export default function App() {
             <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
             <div>
               <p className="text-xs font-semibold text-slate-800">Your branch is protected</p>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">Sign in first. You'll only see branches assigned to your account.</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">Only branches assigned to your account are available.</p>
             </div>
           </div>
 
@@ -841,7 +840,7 @@ export default function App() {
             Change Password
           </button>
             </form>
-            <div className="mt-5 border-t border-slate-100 pt-4 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <div className="mt-3 border-t border-slate-100 pt-3 flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> Protected business access</span>
               <span>RS Nextward</span>
             </div>
