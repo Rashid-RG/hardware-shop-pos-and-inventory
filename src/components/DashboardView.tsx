@@ -26,9 +26,10 @@ import {
   Legend,
   CartesianGrid,
 } from 'recharts';
-import { Product, SalesTransaction, Customer, Supplier, Employee, ActivityLog } from '../types';
+import { Product, SalesTransaction, Customer, Supplier, Employee, ActivityLog, CustomerCreditPayment } from '../types';
 
 interface DashboardViewProps {
+  customerCreditPayments: CustomerCreditPayment[];
   products: Product[];
   transactions: SalesTransaction[];
   customers: Customer[];
@@ -40,6 +41,7 @@ interface DashboardViewProps {
 }
 
 export default function DashboardView({
+  customerCreditPayments,
   products,
   transactions,
   customers,
@@ -134,6 +136,13 @@ export default function DashboardView({
         </div>
       </div>
 
+      <section className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Customer collections">
+        {[
+          ['Today’s credit collections',customerCreditPayments.filter(p=>reportDay(p.date)===todayStr).reduce((s,p)=>s+Number(p.amount),0),'Recorded repayments only'],
+          ['All recorded credit collections',customerCreditPayments.reduce((s,p)=>s+Number(p.amount),0),'Not additional sales revenue'],
+          ['Current customer receivables',customers.reduce((s,c)=>s+Number(c.creditBalance||0),0),'Outstanding across customer accounts']
+        ].map(([label,value,description])=><div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-600">{label}</p><p className="mt-1 text-xl font-bold">Rs. {Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="mt-1 text-xs text-slate-500">{description}</p></div>)}
+      </section>
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4">
         {/* Total Revenue */}
