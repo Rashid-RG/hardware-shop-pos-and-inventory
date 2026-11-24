@@ -5799,10 +5799,15 @@ app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']
        (unitPrice*quantity*(1-discount/100))<discountFixed) {
       return res.status(400).json({error:'Invalid product or quantity, unit price, and discount.'});
     }
+    const unit=product.sharedStockUnits?.units.find(u=>u.id===raw.sellingUnitId);
+    if (product.sharedStockUnits || raw.sellingUnitId) {
+      if (!unit || product.variants?.length || unit.sellingPrice!==unitPrice) return res.status(400).json({error:'Choose a current selling unit and price.'});
+      try {baseQuantity(quantity,unit.baseUnits);} catch {return res.status(400).json({error:'Invalid packaging quantity.'});}
+    }
     const lineAmount=roundMoney(unitPrice*quantity*(1-discount/100)-discountFixed);
     lineSubtotal+=lineAmount;
     normalizedItems.push({productId:product.id,productName:product.name,
-      quantity,sellingPrice:unitPrice,discount,discountAmount:discountFixed});
+      quantity,sellingPrice:unitPrice,discount,discountAmount:discountFixed,sellingUnitId:unit?.id,sellingUnitLabel:unit?.label,baseUnitsPerSaleUnit:unit?.baseUnits});
   }
   if(!Number.isFinite(lineSubtotal)||lineSubtotal>9_000_000_000)
     return res.status(400).json({error:'Quotation total exceeds allowed range.'});
@@ -5882,7 +5887,9 @@ app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager
     if(!Number.isSafeInteger(line.quantity)||line.quantity<1||
        !Number.isFinite(line.sellingPrice)||line.sellingPrice<0)
       return res.status(409).json({error:'Quotation contains invalid line quantities or prices.'});
-    items.push({...line,costPrice:product.costPrice||0});
+    const unit=product.sharedStockUnits?.units.find(u=>u.id===line.sellingUnitId);
+    if ((product.sharedStockUnits || line.sellingUnitId) && (!unit || unit.baseUnits!==line.baseUnitsPerSaleUnit || unit.label!==line.sellingUnitLabel || unit.sellingPrice!==line.sellingPrice)) return res.status(409).json({error:'Quotation packaging or price changed. Issue a new quotation.'});
+    items.push({...line,variantUnit:unit?.label,costPrice:roundMoney((product.costPrice||0)*(unit?.baseUnits ?? 1))});
   }
   const tx:SalesTransaction={
     id:'tx-'+randomUUID(),shopId:activeShopId,
