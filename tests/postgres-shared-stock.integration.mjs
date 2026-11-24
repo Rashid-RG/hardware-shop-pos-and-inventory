@@ -30,7 +30,25 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,configuration:{...config,units:config.units.map(u=>({...u,sellingPrice:u.sellingPrice+1}))}}),/Save the current/);
   assert.equal(Number((await legacyRow()).quantity),20);
   assert.equal((await legacyRow()).shared_stock_units,null);
-  const conversion=await convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request);
+  const oldPo='legacy-po-'+suffix;
+  await createPurchaseOrder({id:oldPo,shopId:shop,poNumber:oldPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:legacy,productName:'Legacy door locks',quantity:2,costPrice:3600}],total:7200,status:'Pending'});
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/outstanding purchase orders/);
+  assert.equal(Number((await legacyRow()).quantity),20);
+  await receivePurchaseOrder(oldPo,shop,'CI Manager');
+  assert.equal(Number((await legacyRow()).quantity),22);
+  // Create a genuine pre-conversion invoice via the ordinary checkout workflow.
+  const legacyCustomer='legacy-customer-'+suffix,legacyInvoice='legacy-invoice-'+suffix;
+  await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'CI Legacy Customer',0,0,0,0)",[legacyCustomer,shop]);
+  await checkoutTransaction({id:legacyInvoice,shopId:shop,invoiceNumber:legacyInvoice,date:new Date().toISOString(),customerId:legacyCustomer,customerName:'CI Legacy Customer',cashierName:'CI Cashier',items:[{productId:legacy,productName:'Legacy door locks',quantity:2,sellingPrice:5400,costPrice:3600,discount:0}],subtotal:10800,tax:0,discountAmount:0,total:10800,paymentMethod:'Cash',paymentStatus:'PAID',status:'Completed',cashReceived:10800,changeDue:0},'Cashier','CI Shop');
+  assert.equal(Number((await legacyRow()).quantity),20);
+  const originalLines=(await pool.query('SELECT * FROM sales_transaction_items WHERE transaction_id=$1',[legacyInvoice])).rows;
+  const originalPO=(await pool.query('SELECT * FROM purchase_order_items WHERE purchase_order_id=$1',[oldPo])).rows;
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/every historical invoice/);
+  const historicalRequest={...request,historicalUnits:originalLines.map(line=>({saleItemId:String(line.id),unitId:'box'}))};
+  const conversion=await convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',historicalRequest);
+  assert.deepEqual((await pool.query('SELECT * FROM sales_transaction_items WHERE transaction_id=$1',[legacyInvoice])).rows,originalLines);
+  assert.deepEqual((await pool.query('SELECT * FROM purchase_order_items WHERE purchase_order_id=$1',[oldPo])).rows,originalPO);
+
   assert.equal(conversion.valuationDifference,0);
   const converted=await legacyRow();
   assert.deepEqual([Number(converted.quantity),Number(converted.reorder_level),Number(converted.cost_price),Number(converted.selling_price)],[240,60,300,500]);
@@ -48,6 +66,10 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
     await legacyClient.query('COMMIT');
   }finally{await legacyClient.query('ROLLBACK').catch(()=>{});legacyClient.release();}
   assert.equal(Number((await legacyRow()).quantity),212);
+  await refundTransaction(legacyInvoice,shop,'CI legacy return','CI Manager','Store Manager');
+  assert.equal(Number((await legacyRow()).quantity),236);
+  await assert.rejects(()=>refundTransaction(legacyInvoice,shop,'CI duplicate return','CI Manager','Store Manager'),/already been refunded/);
+  assert.equal(Number((await legacyRow()).quantity),236);
   await savePackagingDraft(pool,shop,product,'CI Manager',config);
   assert.equal((await checkPackagingActivation(pool,shop,product)).eligible,true);
   delete process.env.ARS_SHARED_STOCK_PILOT;
