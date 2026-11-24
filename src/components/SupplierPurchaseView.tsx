@@ -71,6 +71,63 @@ export default function SupplierPurchaseView({
       .finally(()=>{if(!controller.signal.aborted)setReturnHistoryLoading(false);});
     return ()=>controller.abort();
   },[returnHistoryOrder,canViewReturns,financialAuthToken,financialShopId]);
+  type ReturnCandidate={itemId:number;productName:string;availableBaseQuantity:number;receivedBaseQuantity:number;returnedBaseQuantity:number;purchaseCost:string;purchaseFactor:number;units:Array<{id:string;label:string;baseUnits:number}>};
+  type ReturnRequest={requestId:string;poId:string;date:string;reason:string;evidence:string;items:Array<{itemId:number;baseQuantity:number;supplierCredit:string}>};
+  const canPostReturn=canViewReturns&&currentRole==='Super Admin'&&!!financialOwner;
+  const returnKey='ars:pending-purchase-return:'+JSON.stringify([financialOwner||'',financialShopId||'']);
+  const [returnOrder,setReturnOrder]=useState<PurchaseOrder|null>(null);
+  const [returnDate,setReturnDate]=useState(reportDay(new Date()));
+  const [returnReason,setReturnReason]=useState('');
+  const [returnEvidence,setReturnEvidence]=useState('');
+  const [returnCandidates,setReturnCandidates]=useState<ReturnCandidate[]>([]);
+  const [returnDraft,setReturnDraft]=useState<Record<number,{unit:string;quantity:string;credit:string}>>({});
+  const [returnError,setReturnError]=useState('');
+  const [returnLoading,setReturnLoading]=useState(false);
+  const [returnBusy,setReturnBusy]=useState(false);
+  const [returnSaved,setReturnSaved]=useState<ReturnRequest|null>(null);
+  const [returnStorageReady,setReturnStorageReady]=useState(false);
+  const returnLock=useRef(false);
+  useEffect(()=>{
+    setReturnOrder(null);setReturnSaved(null);setReturnStorageReady(false);setReturnError('');
+    if(!canPostReturn)return;
+    try{setReturnSaved(JSON.parse(localStorage.getItem(returnKey)||'null'));setReturnStorageReady(true);}
+    catch{setReturnError('Cannot read saved return request. Check browser storage.');}
+  },[returnKey,canPostReturn,financialAuthToken]);
+  useEffect(()=>{
+    setReturnCandidates([]);setReturnDraft({});
+    if(!returnOrder||!canPostReturn)return;
+    const controller=new AbortController();setReturnLoading(true);setReturnError('');
+    fetch('/api/ledger/purchase-returns/'+encodeURIComponent(returnOrder.id)+'/candidates?date='+encodeURIComponent(returnDate),{headers:{Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},cache:'no-store',signal:controller.signal})
+      .then(async response=>{const data=await response.json();if(!response.ok||!Array.isArray(data.items))throw Error(data.error||'Unable to load eligible products.');if(!controller.signal.aborted)setReturnCandidates(data.items);})
+      .catch(error=>{if(!controller.signal.aborted)setReturnError(error instanceof Error?error.message:'Unable to load products.');})
+      .finally(()=>{if(!controller.signal.aborted)setReturnLoading(false);});
+    return ()=>controller.abort();
+  },[returnOrder,returnDate,canPostReturn,financialAuthToken,financialShopId]);
+  const draftFor=(line:ReturnCandidate)=>returnDraft[line.itemId]||{unit:line.units[0]?.id||'',quantity:'',credit:''};
+  const changeReturnLine=(line:ReturnCandidate,patch:Partial<{unit:string;quantity:string;credit:string}>)=>setReturnDraft(previous=>({...previous,[line.itemId]:{...(previous[line.itemId]||{unit:line.units[0]?.id||'',quantity:'',credit:''}),...patch}}));
+  const baseQuantity=(line:ReturnCandidate)=>Number(draftFor(line).quantity)*(line.units.find(unit=>unit.id===draftFor(line).unit)?.baseUnits||0);
+  async function postSavedReturn(request:ReturnRequest){
+    if(returnLock.current||!canPostReturn||!returnStorageReady)return;
+    returnLock.current=true;setReturnBusy(true);setReturnError('');
+    try{
+      const response=await fetch('/api/ledger/purchase-returns',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},body:JSON.stringify(request)});
+      const result=await response.json();if(!response.ok||result.id!==request.requestId)throw Error(result.error||'Return not confirmed.');
+      localStorage.removeItem(returnKey);setReturnSaved(null);setReturnOrder(null);setReturnDraft({});
+      notify.success('Purchase return recorded. Reloading stock and supplier records.');
+      window.location.reload();
+    }catch(error){setReturnError((error instanceof Error?error.message:'Return not confirmed.')+' Saved request retained; retry the same request or ask an administrator to reconcile it.');}
+    finally{returnLock.current=false;setReturnBusy(false);}
+  }
+  async function submitReturn(event:React.FormEvent){
+    event.preventDefault();
+    if(!returnOrder||returnSaved||returnLock.current||returnLoading||!returnStorageReady||!canPostReturn)return;
+    const chosen=returnCandidates.filter(line=>draftFor(line).quantity!==''||draftFor(line).credit!=='');
+    if(!chosen.length||!returnReason.trim()||!returnEvidence.trim()||chosen.some(line=>{const d=draftFor(line),qty=baseQuantity(line);return !Number.isSafeInteger(Number(d.quantity))||Number(d.quantity)<=0||!Number.isSafeInteger(qty)||qty<=0||qty>line.availableBaseQuantity||!/^\d{1,14}(\.\d{1,2})?$/.test(d.credit)||Number(d.credit)<=0;})){setReturnError('Enter valid quantities, supplier credits, reason and evidence.');return;}
+    const request:ReturnRequest={requestId:crypto.randomUUID(),poId:returnOrder.id,date:returnDate,reason:returnReason.trim(),evidence:returnEvidence.trim(),items:chosen.map(line=>({itemId:line.itemId,baseQuantity:baseQuantity(line),supplierCredit:draftFor(line).credit}))};
+    if(!window.confirm('Post this purchase return and deduct the selected stock?'))return;
+    try{localStorage.setItem(returnKey,JSON.stringify(request));}catch{setReturnError('Cannot safely save return request. Nothing posted.');return;}
+    setReturnSaved(request);await postSavedReturn(request);
+  }
   const currencySymbol = 'Rs.';
   const [activeTab, setActiveTab] = useState<'purchases' | 'suppliers'>('purchases');
 
@@ -360,6 +417,25 @@ export default function SupplierPurchaseView({
         </div>
       </div>
 
+      {canPostReturn&&(returnOrder||returnSaved||returnError)&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return">
+        <div className="flex justify-between"><div><h3 className="font-semibold">Record purchase return</h3><p className="text-xs text-slate-600">{returnOrder?.poNumber||returnSaved?.poId} · {returnOrder?.supplierName}</p></div>{!returnSaved&&<button type="button" onClick={()=>{setReturnOrder(null);setReturnError('');}} className="text-sm underline">Close</button>}</div>
+        {returnError&&<p role="alert" className="text-sm text-red-700">{returnError}</p>}
+        {returnSaved?<div className="space-y-2"><p className="text-sm">Saved request: {returnSaved.requestId}. {returnSaved.items.length} lines. Retry only this request to avoid duplicate stock deductions.</p><button type="button" disabled={returnBusy||!returnStorageReady} onClick={()=>void postSavedReturn(returnSaved)} className="rounded bg-slate-900 text-white px-3 py-2 disabled:opacity-50">{returnBusy?'Submitting…':'Retry saved return'}</button></div>:returnOrder&&<form onSubmit={submitReturn} className="space-y-3">
+          <label className="block text-sm">Return date<input type="date" required max={reportDay(new Date())} value={returnDate} onChange={e=>setReturnDate(e.target.value)} className="block rounded border p-2"/></label>
+          {returnLoading?<p role="status">Loading eligible products…</p>:returnCandidates.map(line=>{const d=draftFor(line);return <fieldset key={line.itemId} disabled={line.availableBaseQuantity<=0||!line.units.length} className="rounded-lg border p-3 disabled:opacity-50">
+            <legend className="font-semibold text-sm">{line.productName} · line {line.itemId}</legend><p className="text-xs text-slate-600">Received: {line.receivedBaseQuantity} · Returned: {line.returnedBaseQuantity} · Available: {line.availableBaseQuantity} base units. Original purchase cost: Rs. {line.purchaseCost} per {line.purchaseUnit||'unit'}.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+              <label className="text-xs">U/M<select value={d.unit} onChange={e=>changeReturnLine(line,{unit:e.target.value})} className="block w-full rounded border p-2">{line.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}</select></label>
+              <label className="text-xs">Quantity<input type="number" min="1" step="1" value={d.quantity} onChange={e=>changeReturnLine(line,{quantity:e.target.value})} className="block w-full rounded border p-2"/></label>
+              <label className="text-xs">Supplier credit (LKR)<input inputMode="decimal" value={d.credit} onChange={e=>changeReturnLine(line,{credit:e.target.value})} className="block w-full rounded border p-2"/></label>
+            </div><p className="text-xs mt-2">Stock deduction: {baseQuantity(line)||0} base units</p>
+          </fieldset>;})}
+          <label className="block text-sm">Return reason<input required maxLength={500} value={returnReason} onChange={e=>setReturnReason(e.target.value)} className="block w-full rounded border p-2"/></label>
+          <label className="block text-sm">Evidence / supplier credit note reference<input required maxLength={500} value={returnEvidence} onChange={e=>setReturnEvidence(e.target.value)} className="block w-full rounded border p-2"/></label>
+          <p className="text-xs text-slate-600">Supplier credit only; this does not record a cash or bank refund.</p>
+          <button disabled={returnLoading||returnBusy||!returnStorageReady||!returnCandidates.length} className="rounded bg-slate-900 text-white px-4 py-2 disabled:opacity-50">Confirm purchase return</button>
+        </form>}
+      </section>}
       {canViewReturns&&returnHistoryOrder&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return history">
         <div className="flex justify-between gap-3"><div><h3 className="font-semibold">Purchase return history</h3><p className="text-xs text-slate-600">{returnHistoryOrder.poNumber} · {returnHistoryOrder.supplierName}</p></div><button type="button" className="text-sm underline" onClick={()=>setReturnHistoryOrder(null)}>Close history</button></div>
         {returnHistoryLoading?<p role="status">Loading returns…</p>:returnHistoryError?<p role="alert" className="text-red-700">{returnHistoryError}</p>:returnHistory.length===0?<p className="text-sm text-slate-500">No recorded purchase returns.</p>:returnHistory.map(entry=><article key={entry.id} className="rounded-lg border p-3 text-sm space-y-1">
@@ -453,6 +529,7 @@ export default function SupplierPurchaseView({
 
                   {canViewReturns&&['Received','Partially Received'].includes(po.status)&&<button type="button" className="self-start rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" onClick={()=>{setReturnHistory([]);setReturnHistoryError('');setReturnHistoryLoading(true);setReturnHistoryOrder(po);}}>Purchase return history</button>}
 
+                  {canPostReturn&&['Received','Partially Received'].includes(po.status)&&<button type="button" disabled={!!returnSaved||!returnStorageReady||returnBusy} className="self-start rounded-lg bg-slate-900 text-white px-3 py-2 text-xs disabled:opacity-50" onClick={()=>{setReturnOrder(po);setReturnDate(reportDay(new Date()));setReturnReason('');setReturnEvidence('');setReturnDraft({});}}>Record purchase return</button>}
                   {/* receipt trigger */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                     <div className="font-mono">
