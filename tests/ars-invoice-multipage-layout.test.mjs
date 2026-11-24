@@ -10,8 +10,8 @@ test('every A4 invoice page uses the full configured ARS company and buyer heade
   assert.match(header,/company\?\.companyLegalName/);
   assert.match(header,/contact\?\.address/);
   assert.match(header,/contact\?\.phone/);
-  assert.match(header,/section\(LEFT, 124, 248, 85, 'Customer'\)/);
-  assert.match(header,/section\(295, 124, 265, 85, 'Invoice Details'\)/);
+  assert.match(header,/section\(LEFT, 88, 248, 76, 'Customer'\)/);
+  assert.match(header,/section\(295, 88, 265, 76, 'Invoice Details'\)/);
   assert.match(header,/tx\.invoiceNumber/);
   assert.match(header,/tx\.customerName/);
   assert.match(header,/tx\.paymentMethod/);
@@ -21,15 +21,17 @@ test('every A4 invoice page uses the full configured ARS company and buyer heade
 test('page footer is repeated and numbered using buffered PDF pages',()=>{
   assert.match(pdf,/const footer = \(pageNumber: number, totalPages: number\)/);
   assert.match(pdf,/Page \$\{pageNumber\} of \$\{totalPages\}/);
-  assert.match(pdf,/Generated with RS Nextward Business Systems/);
+  assert.match(pdf,/invoiceFooter\.credit, 320, 824, 240, 8, 'right'/);
+  assert.match(pdf,/invoiceFooter\.goods\+' '\+invoiceFooter\.thanks/);
   assert.match(pdf,/doc\.bufferedPageRange\(\)/);
   assert.match(pdf,/doc\.switchToPage\(range\.start \+ offset\)/);
   assert.match(pdf,/footer\(offset \+ 1, range\.count\)/);
 });
-test('multipage invoice retains line numbering, with totals and signatures on the last page',()=>{
+test('multipage invoice retains product codes, with totals and signatures on the last page',()=>{
   assert.match(pdf,/doc\.addPage\(\)/);
-  assert.match(pdf,/y = header\(true\)/);
-  assert.match(pdf,/String\(i \+ 1\)/);
+  assert.match(pdf,/y\s*=\s*header\(true\)/);
+  assert.match(pdf,/safe\(item\.variantSku,item\.productId\)/);
+  assert.match(pdf,/'Product Code','Item Name','Description','U\/M','Qty','Rate'/);
   assert.match(pdf,/notesAndTotals\(y\)/);
   assert.match(pdf,/\['Prepared By', LEFT\]/);
   assert.match(pdf,/\['Received By', 214\]/);
