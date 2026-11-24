@@ -1,3 +1,4 @@
+import { renderArsHandoverVoucherPdf } from './src/utils/arsHandoverVoucherPdf';
 import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/reporting';
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
@@ -6040,6 +6041,31 @@ app.post('/api/cash-handovers',requireRole(['Cashier']),async(req,res)=>{
     if(['Invalid cash handover request.','Representative cash account authorization required.','Handover request identifier already used for different details.','Select an active office cash account in this shop.','Handover exceeds cash balance after pending requests.'].includes(message))return res.status(409).json({error:message});
     console.error('Cash handover request failed',error);return res.status(500).json({error:'Unable to confirm handover request. Retry the same request.'});
   }
+});
+app.get('/api/cash-handovers/:id/pdf',requireRole(['Super Admin','Store Manager','Cashier']),async(req,res)=>{
+  const scope=chequeShopAccess(req),auth=(req as AppRequest).authUser;
+  if(!scope||!auth)return res.status(403).json({error:'Handover voucher access denied.'});
+  if(!validChequeRequestId(req.params.id))return res.status(400).json({error:'Invalid handover reference.'});
+  try{
+    const user=db.users.find(u=>u.email.toLowerCase()===auth.email.toLowerCase());
+    if(!user)return res.status(403).json({error:'Handover voucher access denied.'});
+    const isRep=auth.role==='Cashier';
+    const identity=isRep&&eligibleRepresentativeLogin(user,scope.shopId)?await resolveRepresentativeFinancialIdentity(pool,scope.shopId,user.id):null;
+    if(isRep&&!identity)return res.status(403).json({error:'Handover voucher access denied.'});
+    const result=await pool.query(`SELECT h.*,h.effective_date::text AS business_day,e.name AS employee_name,f.name AS from_name,t.name AS to_name
+      FROM ars_cash_handovers h LEFT JOIN employees e ON e.id=h.employee_id AND e.shop_id=h.shop_id
+      JOIN ars_financial_accounts f ON f.id=h.from_account_id AND f.shop_id=h.shop_id
+      JOIN ars_financial_accounts t ON t.id=h.to_account_id AND t.shop_id=h.shop_id
+      WHERE h.shop_id=$1 AND h.id=$2 AND h.status='Confirmed'
+      AND ($3::text IS NULL OR (h.user_id=$3 AND h.from_account_id=$4))`,[scope.shopId,req.params.id,isRep?user.id:null,identity?.accountId||null]);
+    const h=result.rows[0];
+    if(!h)return res.status(404).json({error:'Confirmed handover voucher not found.'});
+    const {activeShopName}=getActiveShopContext(db,req);
+    const profile=(db.settings.shopProfiles||[]).find(s=>s.id===scope.shopId);
+    const stamp=(value:Date|string)=>new Date(value).toLocaleString('en-GB',{timeZone:'Asia/Colombo'})+' (Sri Lanka)';
+    const pdf=await renderArsHandoverVoucherPdf({id:h.id,amount:Number(h.amount),employeeName:h.employee_name||h.employee_id,fromAccount:h.from_name,toAccount:h.to_name,requestedAt:stamp(h.requested_at),confirmedAt:stamp(h.decided_at),effectiveDate:h.business_day,confirmedBy:h.decided_by,requestNote:h.request_note||undefined,decisionNote:h.decision_note||undefined},activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
+    res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="handover-'+h.id+'.pdf"');return res.send(pdf);
+  }catch(error){console.error('Handover voucher generation failed',error);return res.status(500).json({error:'Unable to generate handover voucher.'});}
 });
 app.post('/api/cash-handovers/:id/decision',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
