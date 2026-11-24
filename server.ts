@@ -1,3 +1,4 @@
+import { renderArsDisbursementVoucherPdf } from './src/utils/arsDisbursementVoucherPdf';
 import { renderArsHandoverVoucherPdf } from './src/utils/arsHandoverVoucherPdf';
 import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/reporting';
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
@@ -3953,6 +3954,24 @@ app.get('/api/manual-expenses/unassigned',requireRole(['Super Admin']),async(req
   res.json(db.manualExpenses.filter(e=>!e.shopId));
 });
 
+app.get('/api/manual-expenses/:id/pdf',requireRole(['Super Admin','Store Manager']),async(req:express.Request,res:express.Response)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Payment voucher access denied.'});
+  if(!req.params.id||req.params.id.length>200)return res.status(400).json({error:'Invalid payment reference.'});
+  try{
+    const result=await pool.query(`SELECT e.id,e.amount,e.date::text AS day,e.description AS payee,e.category AS reference,CASE a.kind WHEN 'Office Cash' THEN 'Cash' WHEN 'Bank' THEN 'Bank Transfer' END AS method,a.name AS account,m.recorded_by,NULL::text AS note
+      FROM manual_expenses e JOIN ars_financial_movements m ON m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' AND m.amount=-e.amount
+      JOIN ars_financial_accounts a ON a.shop_id=m.shop_id AND a.id=m.account_id
+      WHERE e.shop_id=$1 AND e.id=$2`,[scope.shopId,req.params.id]);
+    if(result.rowCount!==1)return res.status(404).json({error:'Verified ledger-linked payment voucher not found. Historical unlinked records require reconciliation.'});
+    const p=result.rows[0];
+    if(!p.method||!Number.isFinite(Number(p.amount))||Number(p.amount)<=0)return res.status(409).json({error:'Payment ledger requires reconciliation.'});
+    const {activeShopName}=getActiveShopContext(db,req);
+    const profile=(db.settings.shopProfiles||[]).find(s=>s.id===scope.shopId);
+    const pdf=await renderArsDisbursementVoucherPdf({id:p.id,kind:'Expense',date:p.day,amount:Number(p.amount),payee:p.payee,reference:p.reference,method:p.method,account:p.account,recordedBy:p.recorded_by,note:p.note||undefined},activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
+    res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="voucher-'+p.id.replace(/[^a-zA-Z0-9_-]/g,'-')+'.pdf"');return res.send(pdf);
+  }catch(error){console.error('Disbursement voucher generation failed',error);return res.status(500).json({error:'Unable to generate payment voucher.'});}
+});
 app.post('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled until recovery.'});
   const scope=chequeShopAccess(req);
@@ -5771,6 +5790,25 @@ app.get('/api/supplier-payments', (_req, res) => {
   res.json(db.supplierPayments.filter((sp) => sp.shopId === activeShopId));
 });
 
+app.get('/api/supplier-payments/:id/pdf',requireRole(['Super Admin','Store Manager']),async(req:express.Request,res:express.Response)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Payment voucher access denied.'});
+  if(!req.params.id||req.params.id.length>200)return res.status(400).json({error:'Invalid payment reference.'});
+  try{
+    const result=await pool.query(`SELECT p.id,p.amount,p.date::text AS day,p.supplier_name AS payee,COALESCE(o.po_number,p.purchase_order_id,'Supplier account') AS reference,p.payment_method AS method,a.name AS account,m.recorded_by,p.note
+      FROM supplier_payments p JOIN ars_financial_movements m ON m.shop_id=p.shop_id AND m.source_id=p.id AND m.movement_kind='Supplier Payment' AND m.amount=-p.amount
+      JOIN ars_financial_accounts a ON a.shop_id=m.shop_id AND a.id=m.account_id
+      LEFT JOIN purchase_orders o ON o.shop_id=p.shop_id AND o.id=p.purchase_order_id
+      WHERE p.shop_id=$1 AND p.id=$2`,[scope.shopId,req.params.id]);
+    if(result.rowCount!==1)return res.status(404).json({error:'Verified ledger-linked payment voucher not found. Historical unlinked records require reconciliation.'});
+    const p=result.rows[0];
+    if(!p.method||!Number.isFinite(Number(p.amount))||Number(p.amount)<=0)return res.status(409).json({error:'Payment ledger requires reconciliation.'});
+    const {activeShopName}=getActiveShopContext(db,req);
+    const profile=(db.settings.shopProfiles||[]).find(s=>s.id===scope.shopId);
+    const pdf=await renderArsDisbursementVoucherPdf({id:p.id,kind:'Supplier Payment',date:p.day,amount:Number(p.amount),payee:p.payee,reference:p.reference,method:p.method,account:p.account,recordedBy:p.recorded_by,note:p.note||undefined},activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
+    res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="voucher-'+p.id.replace(/[^a-zA-Z0-9_-]/g,'-')+'.pdf"');return res.send(pdf);
+  }catch(error){console.error('Disbursement voucher generation failed',error);return res.status(500).json({error:'Unable to generate payment voucher.'});}
+});
 app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager']), async (req, res) => {
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const authUser = (req as AppRequest).authUser;
