@@ -529,7 +529,7 @@ export default function App() {
     await handleRefreshDb();
   };
 
-  const handleAddCreditPayment = async (payload: { customerId: string; amount: number; paymentMethod: string; date: string; note?: string }) => {
+  const handleAddCreditPayment = async (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => {
     const res = await apiRequest(`/api/customers/${payload.customerId}/credit-payment`, {
       method: 'POST',
       body: JSON.stringify(payload),
