@@ -48,6 +48,10 @@ export default function InventoryView({
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [qtyDifference, setQtyDifference] = useState<number>(0);
+  const [adjustUnitId, setAdjustUnitId] = useState('');
+  const adjustmentProduct = products.find(p=>p.id===selectedProductId);
+  const adjustmentUnit = adjustmentProduct?.sharedStockUnits?.units.find(u=>u.id===adjustUnitId);
+  const baseDifference = qtyDifference * (adjustmentUnit?.baseUnits ?? 1);
   const [adjustType, setAdjustType] = useState<'Stock In' | 'Stock Out' | 'Stock Adjust' | 'Return'>('Stock Adjust');
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -79,7 +83,8 @@ export default function InventoryView({
     }
 
     // Compute new target quantity
-    const newQty = product.quantity + qtyDifference;
+    if (product.sharedStockUnits && !adjustmentUnit) { notify.warning('Select an adjustment U/M.'); setIsSubmitting(false); return; }
+    const newQty = product.quantity + baseDifference;
     if (!Number.isSafeInteger(newQty) || newQty > 2147483647 || newQty < 0) {
       notify.error('Inventory error: Stock cannot be adjusted below zero.');
       setIsSubmitting(false);
@@ -89,7 +94,7 @@ export default function InventoryView({
     try {
       await onEditProduct(selectedProductId, {
         quantity: newQty,
-        reason: `${adjustType}: ${reason.trim()}`,
+        reason: `${adjustType}: ${adjustmentUnit ? `${qtyDifference} ${adjustmentUnit.label} (${baseDifference} base units); ` : ''}${reason.trim()}`,
         user: currentUser,
       });
       notify.success('Inventory adjustment saved with audit reason.');
@@ -110,6 +115,7 @@ export default function InventoryView({
       return;
     }
     setSelectedProductId(productId);
+    setAdjustUnitId('');
     setQtyDifference(0);
     setAdjustType('Stock Adjust');
     setReason('Manual bin location recount audit');
@@ -376,7 +382,7 @@ export default function InventoryView({
                 <select
                   id="adjust-prod-select"
                   value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(e.target.value)}
+                  onChange={(e) => {setSelectedProductId(e.target.value);setAdjustUnitId('');}}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs focus:outline-none focus:border-amber-500"
                 >
                   <option value="">-- Choose Hardware SKU --</option>
@@ -388,9 +394,15 @@ export default function InventoryView({
                 </select>
               </div>
 
+              {adjustmentProduct?.sharedStockUnits && <label className="block text-slate-500 font-semibold">Adjustment U/M
+                <select required value={adjustUnitId} onChange={e=>setAdjustUnitId(e.target.value)} className="w-full border rounded p-2">
+                  <option value="">Select U/M</option>
+                  {adjustmentProduct.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}
+                </select>
+              </label>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Difference amount (base stock units) *</label>
+                  <label className="block text-slate-500 font-semibold mb-1">Difference amount ({adjustmentUnit?.label || 'base stock units'}) *</label>
                   <input
                     id="adjust-qty-diff"
                     type="number"
@@ -399,7 +411,7 @@ export default function InventoryView({
                     placeholder="e.g. +11 or -4"
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                   />
-                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract. For shared stock, enter the base-unit quantity, not the number of boxes.</span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract. {adjustmentUnit && `Converted change: ${baseDifference} base units.`}</span>
                 </div>
 
                 <div>
@@ -440,7 +452,7 @@ export default function InventoryView({
                   </strong>{' '}
                   to{' '}
                   <strong className="font-mono">
-                    {(products.find((p) => p.id === selectedProductId)?.quantity || 0) + qtyDifference}
+                    {(products.find((p) => p.id === selectedProductId)?.quantity || 0) + baseDifference}
                   </strong>
                   .
                 </div>
