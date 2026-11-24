@@ -310,6 +310,21 @@ export default function ProductManagementView({
     try{return {result:previewLegacyPackaging({quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice,legacyUnitId,configuration:packaging}),error:''};}
     catch(error){return {result:null,error:error instanceof Error?error.message:String(error)};}
   },[packagingProduct,legacyUnitId,packaging]);
+  const convertExistingPackaging=async()=>{
+    const preview=conversionPreview?.result;
+    if(!packagingProduct || packagingProduct.sharedStockUnits || packagingBusy || !canActivatePackaging || !packagingEligibility?.pilotEnabled || !preview?.eligible || savedPackaging!==JSON.stringify(packaging))return;
+    if(!window.confirm('Convert '+preview.oldQuantity+' '+preview.legacyUnit+' to '+preview.newQuantity+' '+preview.baseUnit+'? Confirm the current stock unit and inventory value are correct. This changes the inventory unit permanently.'))return;
+    setPackagingBusy(true);
+    try{
+      const expected={quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice};
+      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,legacyUnitId,expected,configuration:packaging})});
+      const body=await response.json();
+      if(!response.ok)throw Error(body.error||'Conversion failed.');
+      notify.success('Inventory converted successfully. Reloading product data.');
+      window.location.reload();
+    }catch(error){notify.error(error instanceof Error?error.message:String(error));}
+    finally{setPackagingBusy(false);setPackagingEligibility(null);}
+  };
   const categories = Array.from(
     new Set([
       ...defaultCategories,
@@ -1496,7 +1511,7 @@ export default function ProductManagementView({
             </fieldset>
             {!packagingProduct.sharedStockUnits && packagingProduct.quantity>0 && <section className="rounded-lg border border-slate-300 p-3 space-y-2">
               <h4 className="font-semibold text-sm">Existing stock conversion preview</h4>
-              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. This is a calculation only; no stock or history will change.</p>
+              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. Review the calculation before confirming conversion. Products with transaction history or independent variants remain protected.</p>
               <label className="block text-xs">Current stock unit<select className="w-full border rounded p-2" value={legacyUnitId} onChange={e=>setLegacyUnitId(e.target.value)}><option value="">Select current unit explicitly</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}</select></label>
               {conversionPreview?.error && <p role="alert" className="text-xs text-rose-700">{conversionPreview.error}</p>}
               {conversionPreview?.result && <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1506,8 +1521,9 @@ export default function ProductManagementView({
                 <div>Converted inventory value<strong className="block">Rs. {conversionPreview.result.valueAfter.toFixed(2)}</strong></div>
                 <div>Cost per base unit<strong className="block">Rs. {conversionPreview.result.newCostPrice.toFixed(2)}</strong></div>
                 <div>Converted reorder level<strong className="block">{conversionPreview.result.newReorderLevel}</strong></div>
-                <p className="col-span-2 text-amber-800">{conversionPreview.result.eligible?'Arithmetic checks passed. Actual conversion is not yet enabled.':conversionPreview.result.reasons.join(' ')}</p>
+                <p className="col-span-2 text-amber-800">{conversionPreview.result.eligible?'Arithmetic checks passed. Save the draft and check eligibility before conversion. The server will recheck stock and transaction history.':conversionPreview.result.reasons.join(' ')}</p>
               </div>}
+              {canActivatePackaging && <button type="button" disabled={packagingBusy || !packagingEligibility?.pilotEnabled || !conversionPreview?.result?.eligible || savedPackaging!==JSON.stringify(packaging)} className="rounded border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-40" onClick={convertExistingPackaging}>Confirm &amp; convert stock</button>}
             </section>}
             {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
             <div className="flex flex-wrap justify-end gap-2">
