@@ -41,21 +41,21 @@ export function estimateImportLandedCost(input: ImportEstimateInput) {
   if (goodsTotalLkr <= 0) throw new Error('Goods value must be greater than zero.');
   const chargesTotalLkr = round2(charges.reduce((sum, value) => sum + value, 0));
   if (!valid(chargesTotalLkr) || !valid(goodsTotalLkr + chargesTotalLkr)) throw new Error('Import total is too large.');
-  // Allocate additional costs proportionally by product invoice value.
-  // The final line absorbs rounding difference to reconcile exactly.
-  let allocated = 0;
-  const detail = rows.map((row, index) => {
-    const allocatedChargesLkr = index === rows.length - 1
-      ? round2(chargesTotalLkr - allocated)
-      : round2(chargesTotalLkr * row.baseLkr / goodsTotalLkr);
-    allocated = round2(allocated + allocatedChargesLkr);
-    const landedTotalLkr = round2(row.baseLkr + allocatedChargesLkr);
-    return {
-      ...row,
-      allocatedChargesLkr,
-      landedTotalLkr,
-      landedUnitCostLkr: round2(landedTotalLkr / row.quantity),
-    };
+  // Allocate in integer cents by largest remainder. BigInt keeps exact
+  // proportional shares even for large supported invoice totals.
+  const totalCents=BigInt(Math.round(chargesTotalLkr*100));
+  const goodsCents=BigInt(Math.round(goodsTotalLkr*100));
+  const allocations=rows.map((row,index)=>{
+    const numerator=totalCents*BigInt(Math.round(row.baseLkr*100));
+    return {index,cents:numerator/goodsCents,remainder:numerator%goodsCents};
+  });
+  let remaining=totalCents-allocations.reduce((sum,row)=>sum+row.cents,0n);
+  const ranked=[...allocations].sort((a,b)=>a.remainder===b.remainder?a.index-b.index:a.remainder>b.remainder?-1:1);
+  for(const row of ranked){if(remaining===0n)break;row.cents++;remaining--;}
+  const detail=rows.map((row,index)=>{
+    const allocatedChargesLkr=Number(allocations[index].cents)/100;
+    const landedTotalLkr=round2(row.baseLkr+allocatedChargesLkr);
+    return {...row,allocatedChargesLkr,landedTotalLkr,landedUnitCostLkr:round2(landedTotalLkr/row.quantity)};
   });
   return { currency: input.currency, exchangeRateLkr: input.exchangeRateLkr,
     goodsTotalLkr, chargesTotalLkr, grandTotalLkr: round2(goodsTotalLkr + chargesTotalLkr), detail };
