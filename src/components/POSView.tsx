@@ -1562,7 +1562,7 @@ export default function POSView({
       <div className="lg:hidden flex border border-slate-200 bg-white rounded-xl p-1 shadow-2xs shrink-0">
         <button
           type="button"
-          onClick={() => setActiveMobileView('catalog')}
+          onClick={() => { setExpandedInvoice(false); setActiveMobileView('catalog'); }}
           className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 ${
             activeMobileView === 'catalog'
               ? 'bg-indigo-600 text-white shadow-xs'
@@ -1769,7 +1769,7 @@ export default function POSView({
               <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
             </div>
             <div className="p-1 px-2.5 bg-slate-50 rounded-md border border-slate-150 text-slate-600 text-[11px] font-mono">
-              <button type="button" aria-pressed={expandedInvoice} onClick={() => { setExpandedInvoice(v => !v); setActiveMobileView('cart'); }} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Restore split view' : 'Expand invoice'}</button>
+              <button type="button" aria-pressed={expandedInvoice} onClick={() => setExpandedInvoice(v => !v)} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Restore split view' : 'Expand invoice'}</button>
               <span className="lg:hidden">Invoice</span>
             </div>
           </div>
@@ -1798,12 +1798,9 @@ export default function POSView({
           </div>
         </div>
           {/* Cart Header */}
-          <div className="shrink-0 flex items-center justify-between text-xs text-slate-500 border-b border-slate-200 pb-2 font-sans mb-2">
-            <span>Product</span>
-            <div className="flex items-center gap-12">
-              <span>Qty</span>
-              <span>Total</span>
-            </div>
+          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_120px_170px_140px]" : "grid-cols-1"}`}>
+            <span>Invoice items · {cart.length} lines</span>
+            {expandedInvoice && <><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-right">Line total</span></>}
           </div>
 
           {/* Cart Scroll list */}
@@ -1814,9 +1811,9 @@ export default function POSView({
               const pricing = getLinePricing(item);
 
               return (
-                <div key={lineKey} className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-2 text-xs font-sans">
+                <div key={lineKey} className={`grid gap-2 items-start border-b border-slate-100 pb-2 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_120px_170px_140px]" : "grid-cols-1"}`}>
                   {/* description */}
-                  <div className="min-w-[140px] flex-1">
+                  <div className="min-w-0">
                     <p className="font-semibold text-slate-800 break-words" title={item.product.name}>
                       {item.product.name}
                     </p>
@@ -1831,7 +1828,7 @@ export default function POSView({
                       className="mt-1 block max-w-full break-words whitespace-normal text-left text-xs font-medium text-indigo-600 hover:underline">
                       {item.invoiceDescription ? `Description: ${item.invoiceDescription}` : '+ Add invoice description'}
                     </button>
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono mt-0.5">
+                    <div className={`flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5 ${expandedInvoice ? "lg:hidden" : ""}`}>
                       <span>{formatMoney(basePrice)} ea</span>
                       {pricing.percentDiscount > 0 && <span className="text-emerald-600">(-{pricing.percentDiscount}%)</span>}
                       {pricing.rupeeDiscount > 0 && <span className="text-emerald-600">(-{formatMoney(pricing.rupeeDiscount)})</span>}
@@ -1844,27 +1841,31 @@ export default function POSView({
                         type="number"
                         min="0"
                         max="100"
+                        aria-label={`Percentage discount for ${item.product.name}`}
                         value={item.discount}
                         onChange={(e) => updateItemDiscount(lineKey, Number(e.target.value))}
-                        className="w-11 px-1 py-0.5 border border-slate-200 bg-white rounded text-[9px] text-slate-700 focus:outline-none"
+                        className="w-16 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
                       />
                       <span className="text-[9px] text-slate-400 uppercase">Disc Rs:</span>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
+                        aria-label={`Fixed discount for ${item.product.name}`}
                         value={item.discountAmount || 0}
                         onChange={(e) => updateItemDiscountAmount(lineKey, Number(e.target.value))}
-                        className="w-16 px-1 py-0.5 border border-slate-200 bg-white rounded text-[9px] text-slate-700 focus:outline-none"
+                        className="w-24 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
                       />
                     </div>
                   </div>
 
+                  {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
                   {/* selectors and quantities */}
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md p-1">
+                  <div className={`flex items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
+                    <div className="flex items-center justify-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md p-1">
                       <button
                         type="button"
+                        aria-label={`Decrease quantity for ${item.product.name}`}
                         onClick={() => updateCartQty(lineKey, item.quantity - 1)}
                         className="p-0.5 text-slate-500 hover:text-slate-800"
                       >
@@ -1874,6 +1875,7 @@ export default function POSView({
                         type="number"
                         min="1"
                         step="1"
+                        aria-label={`Quantity for ${item.product.name}`}
                         value={item.quantity}
                         onChange={(e) => updateCartQty(lineKey, Number(e.target.value))}
                         onFocus={(e) => e.currentTarget.select()}
@@ -1881,6 +1883,7 @@ export default function POSView({
                       />
                       <button
                         type="button"
+                        aria-label={`Increase quantity for ${item.product.name}`}
                         onClick={() => updateCartQty(lineKey, item.quantity + 1)}
                         className="p-0.5 text-slate-500 hover:text-slate-800"
                       >
@@ -1891,6 +1894,8 @@ export default function POSView({
                     <div className="text-right min-w-[76px] font-mono font-bold text-slate-900">
                       {formatMoney(pricing.lineTotal)}
                       <button
+                        type="button"
+                        aria-label={`Remove ${item.product.name} from invoice`}
                         onClick={() => removeFromCart(lineKey)}
                         className="block text-slate-400 hover:text-rose-500 mt-1 ml-auto"
                       >
