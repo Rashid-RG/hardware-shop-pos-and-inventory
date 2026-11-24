@@ -1,3 +1,4 @@
+import DisbursementVoucherActions from './DisbursementVoucherActions';
 import CashHandoversPanel from './CashHandoversPanel';
 import RepresentativeLoginsPanel from './RepresentativeLoginsPanel';
 import RepresentativeAccountsPanel from './RepresentativeAccountsPanel';
@@ -522,6 +523,7 @@ export default function AccountingSettingsView({
                         <td className="p-4 text-slate-400 font-mono">{exp.date}</td>
                         <td className="p-4">
                           <span className="font-semibold text-slate-900 block">{exp.desc}</span>
+                          {isManager&&expenseShop&&<DisbursementVoucherActions kind="expense" id={exp.id} authToken={authToken} shopId={expenseShop} />}
                         </td>
                         <td className="p-4">
                           <span className="bg-slate-100 text-slate-700 text-[9px] font-mono font-bold px-2 py-0.5 rounded">{exp.category}</span>
