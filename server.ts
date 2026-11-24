@@ -4,6 +4,7 @@ import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPackagingDrafts, getPackagingDraft, savePackagingDraft } from './backend/packagingDrafts';
 import { initSharedStockSchema } from './backend/sharedStock';
+import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -2301,6 +2302,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       description: row.description,
       location: row.location || undefined,
       variants: Array.isArray(row.variants_json) ? row.variants_json as ProductVariant[] : undefined,
+      sharedStockUnits: row.shared_stock_units ?? undefined,
     })),
     suppliers: suppliersRes.rows.map((row) => ({
       id: row.id,
@@ -2354,6 +2356,9 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
         variantId: item.variant_id || undefined,
         variantName: item.variant_name || undefined,
         variantUnit: item.variant_unit || undefined,
+        sellingUnitId: item.selling_unit_id ?? undefined,
+        sellingUnitLabel: item.selling_unit_label ?? undefined,
+        baseUnitsPerSaleUnit: item.base_units_per_sale_unit ?? undefined,
         variantSku: item.variant_sku || undefined,
         variantBarcode: item.variant_barcode || undefined,
         quantity: Number(item.quantity),
@@ -4444,6 +4449,12 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
       return res.status(409).json({ error: `Product ${dbProduct.name} is archived and cannot be sold` });
     }
 
+    const sellingUnitId = String(item.sellingUnitId || '').trim();
+    const shared = dbProduct.sharedStockUnits;
+    const sellingUnit = shared?.units.find(unit => unit.id === sellingUnitId);
+    if ((shared || sellingUnitId) && (!sellingUnit || item.variantId || dbProduct.variants?.length)) {
+      return res.status(400).json({ error: 'Select a valid shared selling unit for ' + dbProduct.name });
+    }
     const variantId = String(item.variantId || '').trim();
     const variants = Array.isArray(dbProduct.variants) ? dbProduct.variants : [];
     const targetVariant = variantId
@@ -4460,7 +4471,10 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     const quantity = Number(item.quantity) || 0;
     const availableQty = targetVariant ? Number(targetVariant.quantity || 0) : Number(dbProduct.quantity || 0);
     const stockKey = targetVariant ? `${dbProduct.id}:${targetVariant.id}` : dbProduct.id;
-    const requestedQty = (requestedQtyByStockKey.get(stockKey) || 0) + quantity;
+    let stockQuantity: number;
+    try { stockQuantity = baseQuantity(quantity, sellingUnit?.baseUnits ?? 1); }
+    catch { return res.status(400).json({error:'Invalid selling-unit quantity'}); }
+    const requestedQty = (requestedQtyByStockKey.get(stockKey) || 0) + stockQuantity;
     if (!Number.isSafeInteger(requestedQty)) {
       return res.status(400).json({ error: 'Requested stock quantity exceeds supported limits' });
     }
@@ -4473,8 +4487,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     requestedQtyByStockKey.set(stockKey, requestedQty);
 
     const discountPct = Math.min(100, Math.max(0, Number(item.discount) || 0));
-    const unitSellingPrice = targetVariant ? Number(targetVariant.sellingPrice || 0) : Number(dbProduct.sellingPrice || 0);
-    const unitCostPrice = targetVariant ? Number(targetVariant.costPrice || 0) : Number(dbProduct.costPrice || 0);
+    const unitSellingPrice = sellingUnit ? sellingUnit.sellingPrice : targetVariant ? Number(targetVariant.sellingPrice || 0) : Number(dbProduct.sellingPrice || 0);
+    const unitCostPrice = sellingUnit ? roundMoney(Number(dbProduct.costPrice) * sellingUnit.baseUnits) : targetVariant ? Number(targetVariant.costPrice || 0) : Number(dbProduct.costPrice || 0);
     const baseItemCost = unitSellingPrice * quantity;
     const percentAdjustedLineTotal = baseItemCost * (1 - discountPct / 100);
     const lineDiscountAmount = Math.min(percentAdjustedLineTotal, Math.max(0, Number(item.discountAmount) || 0));
@@ -4501,7 +4515,10 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
       invoiceDescription,
       variantId: targetVariant?.id,
       variantName: targetVariant?.name,
-      variantUnit: targetVariant?.unit,
+      variantUnit: sellingUnit?.label ?? targetVariant?.unit,
+      sellingUnitId: sellingUnit?.id,
+      sellingUnitLabel: sellingUnit?.label,
+      baseUnitsPerSaleUnit: sellingUnit?.baseUnits,
       variantSku: targetVariant?.sku,
       variantBarcode: targetVariant?.barcode,
       quantity,
