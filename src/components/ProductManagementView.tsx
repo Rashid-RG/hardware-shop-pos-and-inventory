@@ -16,6 +16,7 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { Product, ProductVariant, Role } from '../types';
+import { validateSharedStock, type SharedStockUnits } from '../utils/unitConversion';
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
 
 interface ProductManagementViewProps {
@@ -240,6 +241,36 @@ export default function ProductManagementView({
     const headers = new Headers(init?.headers || {});
     headers.set('Authorization', `Bearer ${authToken}`);
     return fetch(url, { ...init, headers });
+  };
+
+  const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
+  const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
+  const [packagingBusy, setPackagingBusy] = useState(false);
+  const openPackaging = async (product: Product) => {
+    setPackagingBusy(true);
+    try {
+      const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to load selling units.');
+      setPackaging(body.configuration || {baseUnit:'Piece',units:[{id:crypto.randomUUID(),label:'Piece',baseUnits:1,sellingPrice:product.sellingPrice}]});
+      setPackagingProduct(product);
+    } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
+    finally { setPackagingBusy(false); }
+  };
+  const savePackaging = async () => {
+    if (!packagingProduct || packagingBusy) return;
+    setPackagingBusy(true);
+    try {
+      validateSharedStock(packaging);
+      const response = await authFetch('/api/products/' + encodeURIComponent(packagingProduct.id) + '/packaging-draft', {
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({configuration:packaging})
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to save selling units.');
+      notify.success('Packaging draft saved. Stock and billing remain unchanged.');
+      setPackagingProduct(null);
+    } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
+    finally { setPackagingBusy(false); }
   };
 
   const categories = Array.from(
@@ -1377,6 +1408,7 @@ export default function ProductManagementView({
                 </div>
               )}
 
+              {editingProduct && <div className="px-4 py-2"><button type="button" disabled={packagingBusy || isSubmitting} onClick={()=>openPackaging(editingProduct)} className="rounded border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700">Configure selling units (draft)</button></div>}
               {/* Submitting buttons */}
               <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-5 flex gap-3">
                 <button
@@ -1397,6 +1429,33 @@ export default function ProductManagementView({
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {packagingProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
+            <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
+            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">Draft only. These settings do not change stock or enable shared-unit billing yet.</p>
+            <label className="block text-sm">Base stock unit
+              <input className="block w-full border rounded p-2" value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
+            </label>
+            <div className="space-y-2">
+              {packaging.units.map((unit,index)=>(
+                <div key={unit.id} className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end border rounded p-2">
+                  <label className="text-xs">U/M<input className="w-full border rounded p-2" value={unit.label} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,label:e.target.value}:u)}))}/></label>
+                  <label className="text-xs">Base units<input type="number" min="1" step="1" className="w-full border rounded p-2" value={unit.baseUnits} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,baseUnits:Number(e.target.value)}:u)}))}/></label>
+                  <label className="text-xs">Selling price<input type="number" min="0" step="0.01" className="w-full border rounded p-2" value={unit.sellingPrice} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,sellingPrice:Number(e.target.value)}:u)}))}/></label>
+                  <button type="button" disabled={packagingBusy} className="text-xs text-rose-700 p-2" onClick={()=>setPackaging(old=>({...old,units:old.units.filter(u=>u.id!==unit.id)}))}>Remove</button>
+                </div>
+              ))}
+            </div>
+            <button type="button" disabled={packagingBusy || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Cancel</button>
+              <button type="button" disabled={packagingBusy} className="bg-indigo-600 text-white rounded p-2" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
+            </div>
+          </section>
         </div>
       )}
 
