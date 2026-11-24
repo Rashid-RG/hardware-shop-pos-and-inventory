@@ -25,6 +25,6 @@ test('A4 invoice preserves saved packaging labels, quantities and historical rat
   assert.match(content,/Box\s+2\s+Rs\.\s*5,400\.00/);
   assert.match(content,/Piece\s+4\s+Rs\.\s*500\.00/);
   assert.match(content,/12,800\.00/);
-  assert.match(content,/CI Cashier/);
+  assert.doesNotMatch(content,/CI Cashier|Sales By/);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
