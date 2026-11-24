@@ -2070,6 +2070,13 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
     if (po.status === 'Received') throw new Error('Purchase order already received.');
 
     if (po.status !== 'Pending' && po.status !== 'Ordered') throw new Error('Only open orders can be received.');
+    // The legacy full-receipt path must not bypass an approved shipment cost.
+    const approvalTable=await client.query("SELECT to_regclass('public.ars_landed_cost_approvals') IS NOT NULL AS present");
+    if(approvalTable.rows[0].present){
+      const approved=await client.query('SELECT 1 FROM ars_landed_cost_approvals WHERE shop_id=$1 AND purchase_order_id=$2 LIMIT 1',[shopId,poId]);
+      if(approved.rowCount)throw new Error('Approved import costs require Warehouse Receiving. Use a verified goods receipt.');
+    }
+
 
     // Load items
     const itemsRes = await client.query(
