@@ -10,18 +10,8 @@ node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)' || { ec
 docker info >/dev/null
 docker compose version >/dev/null
 systemctl --user show-environment >/dev/null
-if [[ ! -e .env.local ]]; then
-  python3 - <<'PY'
-from pathlib import Path
-import os, secrets
-pw = secrets.token_hex(32)
-with os.fdopen(os.open('.env.local', os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'w') as f:
-    f.write(f'ARS_MINT_DB_PASSWORD={pw}\nDATABASE_URL=postgresql://ars:{pw}@127.0.0.1:5434/hardware_pos_ars\nJWT_SECRET={secrets.token_hex(48)}\n')
-PY
-elif ! grep -q '^ARS_MINT_DB_PASSWORD=.' .env.local; then
-  echo "This setup targets a fresh Mint installation. Existing .env.local was preserved."
-  exit 1
-fi
+# Fresh installs use stable runtime data; legacy installations fail closed.
+python3 scripts/mint/runtime-layout.py "$root"
 npm ci --include=dev
 npm run build
 # Provision the image while the installer has internet access.
