@@ -60,6 +60,7 @@ export interface Product {
   description: string;
   location?: string;
   variants?: ProductVariant[];
+  sharedStockUnits?: import('./utils/unitConversion').SharedStockUnits;
 }
 
 export interface ProductVariant {
@@ -116,6 +117,7 @@ export interface Employee {
 }
 
 export interface CartItem {
+  sellingUnitId?: string;
   product: Product;
   /** Editable description for this invoice only; never updates the product master. */
   invoiceDescription?: string;
@@ -146,6 +148,9 @@ export interface SalesTransaction {
   items: {
     productId: string;
     productName: string;
+    sellingUnitId?: string;
+    sellingUnitLabel?: string;
+    baseUnitsPerSaleUnit?: number;
     /** Snapshot printed on original and duplicate invoices. */
     invoiceDescription?: string;
     variantId?: string;
