@@ -211,12 +211,25 @@ export default function CustomerEmployeeView({
     : [];
 
   const selectedInvoice = selectedInvoices.find((invoice) => invoice.id === selectedInvoiceId);
+  const invoiceCollectionSummary=(tx:SalesTransaction)=>{
+    const total=Number(tx.total||0);
+    if(tx.status==='Refunded')return {status:'Refunded',paid:0,balance:0,uncertain:false};
+    if(tx.paymentMethod!=='Credit Account'){
+      const paid=tx.paymentStatus==='UNPAID'?0:Math.min(total,Math.max(0,Number(tx.cashReceived??total)));
+      return {status:paid>=total?'Paid':paid>0?'Partially paid':'Unpaid',paid,balance:Math.max(0,total-paid),uncertain:false};
+    }
+    const uncertain=selectedPayments.some(p=>!p.invoiceId);
+    const paid=Math.round(selectedPayments.filter(p=>p.invoiceId===tx.id).reduce((sum,p)=>sum+Number(p.amount),0)*100)/100;
+    const balance=Math.max(0,Math.round((total-paid)*100)/100);
+    return {status:uncertain?'Reconciliation required':balance===0?'Paid':paid>0?'Partially paid':'Unpaid',paid,balance,uncertain};
+  };
+  const selectedCollectionSummary=selectedInvoice?invoiceCollectionSummary(selectedInvoice):null;
   const normalizedHistorySearch = customerHistorySearch.trim().toLowerCase();
   const historyRows = [
     ...(customerHistoryType === 'payments' ? [] : selectedInvoices.map((tx) => ({
       id: tx.id, type: 'Invoice' as const, date: tx.date, reference: tx.invoiceNumber,
       description: `${tx.items.length} product line(s) · ${tx.paymentMethod}`,
-      amount: Number(tx.total || 0), status: tx.status || 'Completed',
+      amount: Number(tx.total || 0), status: invoiceCollectionSummary(tx).status,
     }))),
     ...(customerHistoryType === 'invoices' ? [] : selectedPayments.map((payment) => ({
       id: payment.id, type: 'Payment' as const, date: payment.date,
@@ -647,6 +660,11 @@ export default function CustomerEmployeeView({
                       <p>Tax: <strong>{formatMoney(Number(selectedInvoice.tax || 0))}</strong></p>
                       <p>Total: <strong>{formatMoney(Number(selectedInvoice.total || 0))}</strong></p>
                     </div>
+                    {selectedCollectionSummary&&<div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><strong>Payment status: {selectedCollectionSummary.status}</strong>
+                      {!selectedCollectionSummary.uncertain&&selectedCollectionSummary.balance>0&&selectedInvoice.paymentMethod==='Credit Account'&&selectedCustomer&&<button type="button" onClick={()=>{setPaymentDraft(selectedCustomer);setPaymentInvoiceId(selectedInvoice.id);setPaymentAmount('');setPaymentMethod('Cash');setPaymentDate(reportDay(new Date()));setPaymentNote('');}} className="rounded bg-emerald-700 px-3 py-2 text-xs font-bold text-white">Record payment for this invoice</button>}</div>
+                      {selectedCollectionSummary.uncertain?<p className="mt-2 text-xs text-amber-800">Older account payments have no invoice reference. Exact invoice balances require reconciliation.</p>:selectedInvoice.status!=='Refunded'&&<div className="mt-2 grid grid-cols-2 gap-2 text-sm"><p>Collected: <strong>{formatMoney(selectedCollectionSummary.paid)}</strong></p><p>Outstanding: <strong>{formatMoney(selectedCollectionSummary.balance)}</strong></p></div>}
+                    </div>}
                   </section>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
