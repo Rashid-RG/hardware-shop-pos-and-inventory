@@ -8,7 +8,8 @@ const sidebar = readFileSync(new URL('../src/components/Sidebar.tsx', import.met
 const brand = readFileSync(new URL('../src/components/ARSBrand.tsx', import.meta.url), 'utf8');
 
 test('anonymous branch lookup does not disclose configured business details', () => {
-  const publicHandler = server.split("app.get('/api/public/shops'")[1]?.split("app.use('/api', requireAuth)")[0] || '';
+  const publicHandler = server.match(/app\.get\('\/api\/public\/shops',[^\n]*\n[\s\S]*?\n\}\);/)?.[0] || '';
+  assert.ok(publicHandler, 'Public branch handler must exist');
   assert.match(publicHandler, /status\(401\)/);
   assert.doesNotMatch(publicHandler, /db\.settings|db\.users|shop\.address|shop\.phone|shop\.name/);
 });
