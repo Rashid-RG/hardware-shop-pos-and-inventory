@@ -12,6 +12,23 @@ permissions:
   contents: read
 
 jobs:
+  mint-script-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check Python syntax
+        run: python3 -m compileall -q scripts/mint
+      - name: Check shell syntax
+        run: find scripts/mint -type f -name '*.sh' -exec bash -n {} \;
+      - name: Check JavaScript syntax
+        run: |
+          for file in scripts/mint/*.mjs; do node --check "$file" || exit 1; done
+      - name: Release fingerprint regression tests
+        run: python3 scripts/mint/test-release-fingerprint.py
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
