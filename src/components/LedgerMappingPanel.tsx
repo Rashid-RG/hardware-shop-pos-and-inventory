@@ -8,7 +8,7 @@ const controls:Source[]=[
  ['supplierAdvances','Supplier advances','Asset'],['receivables','Customer receivables','Asset'],['inventory','Inventory','Asset'],['cheques','Cheques receivable','Asset'],['fixedAssets','Fixed assets','Asset'],
  ['supplierPayables','Supplier payables','Liability'],['customerCredits','Customer credit balances','Liability'],['loans','Loans','Liability'],['tax','Taxes','Liability'],
  ['capital','Partner capital','Equity'],['retainedEarnings','Retained earnings','Equity'],['sales','Wholesale sales','Revenue'],['costOfGoods','Cost of goods sold','Expense'],
- ['operatingExpense','Operating expenses','Expense'],['salary','Salaries','Expense']
+ ['inventoryRounding','Inventory rounding adjustments','Expense'],['operatingExpense','Operating expenses','Expense'],['salary','Salaries','Expense']
 ].map(([kind,label,classification])=>({kind,label,classification,sourceId:'control'}));
 const button='border rounded-lg px-3 py-2 text-sm disabled:opacity-50';
 const field='w-full border rounded-lg p-2 text-sm';
