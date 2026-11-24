@@ -74,7 +74,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Download encrypted Drive backup","View cloud backup status","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -118,6 +118,18 @@ def main():
                     continue
                 if dialog("--question","--no-markup","--text=Resume the unchanged installed POS? This does not install a release or restore the database.").returncode==0:
                     execute(project,"resume_maintenance.py","--confirmation","RESUME CURRENT POS")
+            elif action=="Google Drive backup setup":
+                option=dialog("--list","--no-markup","--text=Google Drive authorization and encryption must be configured before enabling backups. Keep the encryption recovery credentials in a secure separate location.","--column=Action","--width=640","--height=360","Configuration instructions","Validate encrypted connection","Enable daily backup at 8 PM","Disable daily backup","Back up now","Return")
+                if option.returncode!=0: continue
+                selected=option.stdout.strip()
+                if selected=="Configuration instructions":
+                    notice("Ask RS Nextward to configure rclone on this computer: ars-drive must be a Google Drive remote, and ars-encrypted must be a crypt remote backed by ars-drive:ARS-Backups. Authorize your own Google account. Keep the encryption password and salt securely offline. Never send them in support logs.")
+                elif selected=="Validate encrypted connection":
+                    execute(project,"cloud-backup-control.py","validate")
+                elif selected in ("Enable daily backup at 8 PM","Disable daily backup","Back up now"):
+                    command={"Enable daily backup at 8 PM":"enable","Disable daily backup":"disable","Back up now":"backup"}[selected]
+                    if dialog("--question","--no-markup","--text=Confirm: "+selected+"? Enabling or running backups sends encrypted business backup files to your configured Google Drive account.").returncode==0:
+                        execute(project,"cloud-backup-control.py",command)
             elif action=="View cloud backup status":
                 try:
                     data=json.loads((project/"backups/drive-status.json").read_text())
