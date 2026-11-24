@@ -79,7 +79,7 @@ export default function AccountingSettingsView({
     return [
       {
         id: 'shop-main',
-        name: config.storeName || 'ARS Distribution',
+        name: config.storeName || 'ARS Distributor',
         logoUrl: config.logoUrl || '',
         address: config.address || '',
         phone: config.phone || '',
@@ -214,7 +214,7 @@ export default function AccountingSettingsView({
       return;
     }
     setActiveShopId(shopId);
-    setStoreName(activeShop.name || 'ARS Distribution');
+    setStoreName(activeShop.name || 'ARS Distributor');
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
     setTaxRate(Number(activeShop.taxRate || 18));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
