@@ -1,3 +1,4 @@
+import LedgerReportsPanel from './LedgerReportsPanel';
 import ReceivableAgingPanel from './ReceivableAgingPanel';
 import SupplierPayablePanel from './SupplierPayablePanel';
 import ChartOfAccountsPanel from './ChartOfAccountsPanel';
@@ -436,6 +437,7 @@ export default function AccountingSettingsView({
           {isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <ChartOfAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
           {isManager && <OpeningBalancePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {isManager && <LedgerReportsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <LedgerMappingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
           {isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <FinancialPositionPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
