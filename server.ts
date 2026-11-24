@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -3968,36 +3968,14 @@ app.post('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),asy
     return res.status(400).json({error:'Enter valid expense details and a matching payment source.'});
   }
   const expense:ManualExpense={id:'exp-'+(linked?requestId:randomUUID()),shopId:scope.shopId,desc,amount,category,date:reportDay(new Date())};
-  const client=await pool.connect();
   try{
-    await client.query('BEGIN');
-    if(linked){
-      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[expense.id]);
-      const prior=await client.query("SELECT e.*,e.date::text AS day,m.account_id,m.recorded_by FROM manual_expenses e LEFT JOIN ars_financial_movements m ON m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' WHERE e.id=$1",[expense.id]);
-      if(prior.rowCount){
-        const p=prior.rows[0];
-        if(p.shop_id!==scope.shopId||p.description!==desc||p.category!==category||Number(p.amount)!==amount||p.account_id!==sourceAccountId||p.recorded_by!==scope.recordedBy)throw Error('Expense request identifier already used for different details.');
-        await client.query('COMMIT');
-        return res.json({...expense,date:p.day});
-      }
-      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[scope.shopId,sourceAccountId]);
-      const kind=account.rows[0]?.kind;
-      if(!((paymentMethod==='Cash'&&kind==='Office Cash')||(paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active expense account matching the payment method.');
-      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[scope.shopId,sourceAccountId,amount]);
-      if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for expense.');
-      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
-        VALUES($1,$2,$3,-$4::numeric,'Expense',$5,$6,$7,$8)`,['expense-out-'+expense.id,scope.shopId,sourceAccountId,amount,expense.id,scope.recordedBy,expense.date,desc]);
-    }
-    await client.query('INSERT INTO manual_expenses(id,description,amount,date,category,shop_id) VALUES($1,$2,$3,$4,$5,$6)',[expense.id,desc,amount,expense.date,category,scope.shopId]);
-    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
-      VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,['expense-audit-'+expense.id,scope.shopId,scope.recordedBy,(req as AppRequest).authUser?.role||'Store Manager','Added manual expense '+desc+' (LKR '+amount.toFixed(2)+').']);
-    await client.query('COMMIT');
+    const result=await recordPaidExpense(pool,{...expense,shopId:scope.shopId,recordedBy:scope.recordedBy,role:(req as AppRequest).authUser?.role||'Store Manager',sourceAccountId,paymentMethod});
+    expense.date=result.date;
   }catch(error){
-    await client.query('ROLLBACK').catch(()=>{});
     const message=error instanceof Error?error.message:'';
-    if(['Expense request identifier already used for different details.','Select an active expense account matching the payment method.','Insufficient recorded funds for expense.'].includes(message))return res.status(409).json({error:message});
+    if(['Invalid expense details.','Expense request identifier already used for different details.','Select an active expense account matching the payment method.','Insufficient recorded funds for expense.'].includes(message))return res.status(409).json({error:message});
     console.error('Expense recording failed',error);return res.status(500).json({error:'Unable to confirm expense. Retry the same request identifier.'});
-  }finally{client.release();}
+  }
   try{
     const refreshed=await loadStateFromNormalized();
     if(!refreshed)throw Error('Cannot reload committed expense');
