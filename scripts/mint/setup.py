@@ -10,6 +10,7 @@ import tempfile
 import time
 
 from open import ready
+from prerequisites import install_missing
 
 TITLE = "ARS Distributor Setup"
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,7 +61,10 @@ def setup():
                 return 0
         problem = check_tools()
         if problem:
-            dialog("--error", problem)
+            install_missing(dialog)
+            problem = check_tools()
+        if problem:
+            dialog("--error", problem + " Setup will not change Docker group membership automatically. If packages were just installed, administrator configuration or a new login may be required.")
             return 1
         if not dialog("--question", "Install ARS Distributor POS on this computer? Internet is required for first setup. Existing database volumes will not be deleted."):
             return 0
