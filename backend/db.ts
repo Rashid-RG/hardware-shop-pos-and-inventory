@@ -1304,7 +1304,7 @@ export const updateCustomerCreditLimit = async (customerId: string, shopId: stri
   if (!result.rowCount) throw new Error('Customer not found in this shop.');
 };
 
-export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false, destinationAccountId?: string, chequeClearance?: {chequeId:string;eventId:string;recordedBy:string}) => {
+export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false, destinationAccountId?: string, chequeClearance?: {chequeId:string;eventId:string;recordedBy:string}, representative?:{userId:string}) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       !Number.isSafeInteger(Math.round(p.amount * 100)) ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
@@ -1313,6 +1313,16 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(representative){
+      if(!replaySafe||p.paymentMethod!=='Cash'||!destinationAccountId||chequeClearance)throw Error('Representative collections require a protected cash payment.');
+      const identity=await client.query(`SELECT r.account_id FROM ars_representative_logins l
+        JOIN users u ON u.id=l.user_id AND u.role='Cashier'
+        JOIN employees e ON e.id=l.employee_id AND e.shop_id=l.shop_id AND e.role='Cashier'
+        JOIN ars_representative_accounts r ON r.shop_id=l.shop_id AND r.employee_id=l.employee_id
+        JOIN ars_financial_accounts a ON a.id=r.account_id AND a.shop_id=r.shop_id AND a.active AND a.kind='Representative Cash'
+        WHERE l.shop_id=$1 AND l.user_id=$2`,[p.shopId,representative.userId]);
+      if(identity.rows[0]?.account_id!==destinationAccountId)throw Error('Representative cash account authorization changed.');
+    }
     if(chequeClearance){
       const chequeResult=await client.query("SELECT *,received_date::text AS received_day,due_date::text AS due_day FROM ars_customer_cheques WHERE shop_id=$1 AND id=$2 FOR UPDATE",[p.shopId,chequeClearance.chequeId]);
       const cheque=chequeResult.rows[0];
@@ -1400,7 +1410,7 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
       const kind=account.rows[0]?.kind;
       if(!kind||!((p.paymentMethod==='Cash'&&['Office Cash','Representative Cash'].includes(kind))||((p.paymentMethod==='Bank Transfer'||(p.paymentMethod==='Cheque'&&!!chequeClearance))&&kind==='Bank')))throw Error('Select an active financial account matching the payment method.');
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
-        VALUES($1,$2,$3,$4,'Customer Collection',$5,$6,$7,$8)`,['collection-'+p.id,p.shopId,destinationAccountId,p.amount,p.id,p.createdBy||'Unknown',p.date,p.note||null]);
+        VALUES($1,$2,$3,$4,'Customer Collection',$5,$6,$7,$8)`,['collection-'+p.id,p.shopId,destinationAccountId,p.amount,p.id,representative?representative.userId:p.createdBy||'Unknown',p.date,p.note||null]);
     }
     if(chequeClearance){
       const updated=await client.query("UPDATE ars_customer_cheques SET status='Cleared',payment_id=$1 WHERE shop_id=$2 AND id=$3 AND status='Deposited'",[p.id,p.shopId,chequeClearance.chequeId]);
