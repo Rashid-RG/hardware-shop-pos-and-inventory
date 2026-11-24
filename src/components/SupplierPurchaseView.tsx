@@ -1,7 +1,7 @@
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { notify } from '../utils/notifications';
 import {
   Truck,
@@ -21,7 +21,12 @@ import {
 } from 'lucide-react';
 import { Supplier, PurchaseOrder, Product, Role, SupplierPayment } from '../types';
 
+type SupplierPaymentRequest={supplierId:string;supplierName:string;purchaseOrderId?:string;amount:number;paymentMethod:string;date:string;note?:string;sourceAccountId?:string;requestId?:string};
+type SourceAccount={id:string;name:string;kind:string;active:boolean;balance:number};
 interface SupplierPurchaseViewProps {
+  financialAuthToken?:string;
+  financialShopId?:string;
+  financialOwner?:string;
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrder[];
   supplierPayments: SupplierPayment[];
@@ -32,7 +37,7 @@ interface SupplierPurchaseViewProps {
   onAddSupplier: (supData: Omit<Supplier, 'id'>) => Promise<void>;
   onCreatePO: (poData: { supplierId: string; supplierName: string; items: any[]; orderUser: string }) => Promise<void>;
   onReceivePO: (poId: string, receiveUser: string) => Promise<void>;
-  onAddSupplierPayment: (payload: { supplierId: string; supplierName: string; purchaseOrderId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<void>;
+  onAddSupplierPayment: (payload: SupplierPaymentRequest) => Promise<void>;
 }
 
 export default function SupplierPurchaseView({
@@ -47,6 +52,7 @@ export default function SupplierPurchaseView({
   onCreatePO,
   onReceivePO,
   onAddSupplierPayment,
+  financialAuthToken,financialShopId,financialOwner,
 }: SupplierPurchaseViewProps) {
   const currencySymbol = 'Rs.';
   const [activeTab, setActiveTab] = useState<'purchases' | 'suppliers'>('purchases');
@@ -78,6 +84,31 @@ export default function SupplierPurchaseView({
   const [paymentDate, setPaymentDate] = useState(reportDay(new Date()));
   const [paymentNote, setPaymentNote] = useState('');
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
+  const [sources,setSources]=useState<SourceAccount[]>([]);
+  const [sourceId,setSourceId]=useState('');
+  const [sourceError,setSourceError]=useState('');
+  const [sourceLoading,setSourceLoading]=useState(false);
+  const [pendingPayment,setPendingPayment]=useState<SupplierPaymentRequest|null>(null);
+  const [storageReady,setStorageReady]=useState(false);
+  const paymentLock=useRef(false);
+  const financialEnabled=!!financialAuthToken&&!!financialShopId&&!!financialOwner&&['Super Admin','Store Manager'].includes(currentRole);
+  const paymentStorageKey='ars:pending-supplier-payment:'+JSON.stringify([financialOwner||'',financialShopId||'']);
+  const compatibleSources=sources.filter(a=>a.active&&(paymentMethod==='Cash'?a.kind==='Office Cash':paymentMethod==='Bank Transfer'?a.kind==='Bank':false));
+  useEffect(()=>{
+    setPendingPayment(null);setStorageReady(false);setPaymentDraft(null);
+    if(!financialEnabled)return;
+    try{setPendingPayment(JSON.parse(localStorage.getItem(paymentStorageKey)||'null'));setStorageReady(true);}
+    catch{setSourceError('Cannot read saved supplier payment. Check browser storage.');}
+  },[paymentStorageKey,financialEnabled]);
+  useEffect(()=>{
+    setSources([]);setSourceId('');setSourceError('');
+    if(!paymentDraft||!financialEnabled)return;
+    const controller=new AbortController();setSourceLoading(true);
+    fetch('/api/financial-accounts',{headers:{Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},cache:'no-store',signal:controller.signal})
+      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load payment accounts.');return data;})
+      .then(data=>{if(!controller.signal.aborted)setSources(data);}).catch(e=>{if(!controller.signal.aborted)setSourceError(e.message);}).finally(()=>{if(!controller.signal.aborted)setSourceLoading(false);});
+    return ()=>controller.abort();
+  },[paymentDraft?.supplierId,paymentDraft?.purchaseOrderId,financialAuthToken,financialShopId,financialEnabled]);
 
   // Search parameters
   const [searchTerm, setSearchTerm] = useState('');
@@ -228,17 +259,28 @@ export default function SupplierPurchaseView({
     setPaymentNote('');
   };
 
+  async function submitSavedSupplierPayment(request:SupplierPaymentRequest){
+    if(paymentLock.current)return;
+    paymentLock.current=true;setIsPaymentSubmitting(true);setSourceError('');
+    try{
+      await onAddSupplierPayment(request);
+      if(request.sourceAccountId)localStorage.removeItem(paymentStorageKey);
+      setPendingPayment(null);setPaymentDraft(null);notify.success('Supplier payment recorded.');
+    }catch(err){setSourceError(err instanceof Error?err.message:'Unable to confirm payment.');notify.error('Payment not confirmed. Review the saved request before retrying.');}
+    finally{paymentLock.current=false;setIsPaymentSubmitting(false);}
+  }
   const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!paymentDraft) return;
+    if (!paymentDraft || paymentLock.current || pendingPayment) return;
     const amount = Number(paymentAmount);
     if (!amount || amount <= 0) {
       notify.warning('Enter a valid payment amount.');
       return;
     }
-    setIsPaymentSubmitting(true);
-    try {
-      await onAddSupplierPayment({
+    if(financialEnabled&&(!storageReady||!compatibleSources.some(a=>a.id===sourceId&&a.balance>=amount))){
+      notify.warning('Select a matching account with sufficient recorded funds.');return;
+    }
+    const request:SupplierPaymentRequest={
         supplierId: paymentDraft.supplierId,
         supplierName: paymentDraft.supplierName,
         purchaseOrderId: paymentDraft.purchaseOrderId,
@@ -246,14 +288,14 @@ export default function SupplierPurchaseView({
         paymentMethod,
         date: paymentDate,
         note: paymentNote || undefined,
-      });
-      notify.success('Supplier payment recorded.');
-      setPaymentDraft(null);
-    } catch (err) {
-      notify.error('Failed to record supplier payment: ' + err);
-    } finally {
-      setIsPaymentSubmitting(false);
+        sourceAccountId:financialEnabled?sourceId:undefined,
+        requestId:financialEnabled?crypto.randomUUID():undefined,
+    };
+    if(financialEnabled){
+      try{localStorage.setItem(paymentStorageKey,JSON.stringify(request));}catch{notify.error('Cannot safely preserve payment request.');return;}
+      setPendingPayment(request);
     }
+    await submitSavedSupplierPayment(request);
   };
 
   const visiblePurchaseOrders=purchaseOrders.filter(po=>[po.poNumber,po.supplierName,po.status]
@@ -546,6 +588,7 @@ export default function SupplierPurchaseView({
         </div>
       )}
 
+      {pendingPayment&&<div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"><strong>Unconfirmed supplier payment</strong><p>{pendingPayment.supplierName} · Rs. {pendingPayment.amount.toFixed(2)} · {pendingPayment.date}</p><p>Retry the original request, not a new payment.</p>{sourceError&&<p role="alert">{sourceError}</p>}<button type="button" disabled={isPaymentSubmitting} className="rounded bg-slate-900 text-white px-3 py-2" onClick={()=>void submitSavedSupplierPayment(pendingPayment)}>Retry exact payment</button></div>}
       {paymentDraft && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
           <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-sm border border-slate-250 font-sans relative max-h-[90dvh] overflow-y-auto">
@@ -569,11 +612,10 @@ export default function SupplierPurchaseView({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-500 font-semibold mb-1">Method</label>
-                  <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
+                  <select value={paymentMethod} onChange={(e) => {setPaymentMethod(e.target.value);setSourceId('');}} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
                     <option>Bank Transfer</option>
                     <option>Cash</option>
-                    <option>Cheque</option>
-                    <option>Card</option>
+                    {!financialEnabled&&<><option>Cheque</option><option>Card</option></>}
                   </select>
                 </div>
                 <div>
@@ -582,6 +624,8 @@ export default function SupplierPurchaseView({
                 </div>
               </div>
 
+              {financialEnabled&&<div><label className="block text-slate-500 font-semibold mb-1">Paid from *</label><select required value={sourceId} disabled={sourceLoading||isPaymentSubmitting} onChange={e=>setSourceId(e.target.value)} className="w-full rounded border p-2"><option value="">{sourceLoading?'Loading accounts…':'Select payment account'}</option>{compatibleSources.map(a=><option key={a.id} value={a.id}>{a.name} · Rs. {a.balance.toFixed(2)}</option>)}</select>{!sourceLoading&&!compatibleSources.length&&<p className="text-amber-800 mt-1">Create a matching financial account in Accounting first.</p>}</div>}
+              {sourceError&&<p role="alert" className="text-red-700">{sourceError}</p>}
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Note</label>
                 <input value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500" placeholder="Reference, bank slip, memo..." />
@@ -589,7 +633,7 @@ export default function SupplierPurchaseView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={isPaymentSubmitting} className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs transition">
+                <button type="submit" disabled={isPaymentSubmitting||!!pendingPayment||(financialEnabled&&(!storageReady||sourceLoading))} className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs transition">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
               </div>
