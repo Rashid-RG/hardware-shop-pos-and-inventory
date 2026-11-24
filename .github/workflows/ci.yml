@@ -46,6 +46,11 @@ jobs:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
           JWT_SECRET: ci-secret-not-for-production-long-random-placeholder
         run: node --import tsx --test tests/postgres-checkout.integration.mjs tests/postgres-purchases.integration.mjs tests/postgres-credit.integration.mjs tests/postgres-product-intake.integration.mjs
+      - name: Shared-stock packaging lifecycle (isolated PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+          JWT_SECRET: ci-secret-not-for-production-long-random-placeholder
+        run: node --import tsx --test tests/postgres-shared-stock.integration.mjs
       - name: Customer profile edit and financial preservation (isolated PostgreSQL)
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
