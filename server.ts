@@ -7,6 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -1913,6 +1914,8 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
   if (protectedReceipts.rows[0]?.has_receipts) {
     throw new Error('Legacy full-state rewrite blocked: ARS goods-receipt history exists. Use targeted SQL updates.');
   }
+  const protectedFunds=await client.query('SELECT EXISTS(SELECT 1 FROM ars_financial_accounts) AS has_accounts');
+  if(protectedFunds.rows[0]?.has_accounts)throw Error('Legacy full-state rewrite blocked: financial accounts exist. Use targeted SQL updates.');
   await client.query(`
     TRUNCATE TABLE sales_transaction_items,
       sales_transactions,
@@ -5864,6 +5867,29 @@ app.get('/api/customer-credit-payments/:id/pdf', requireRole(['Super Admin','Sto
   }catch(error){console.error('Payment receipt PDF generation failed',error);res.status(500).json({error:'Failed to generate payment receipt.'});}
 });
 
+app.get('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try{res.json(await listFinancialAccounts(pool,activeShopId));}
+  catch(error){console.error('Financial account read failed',error);res.status(500).json({error:'Unable to load financial accounts.'});}
+});
+app.post('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const {activeShopId}=getActiveShopContext(db,req);
+  const authUser=(req as AppRequest).authUser;
+  const {name,kind}=req.body||{};
+  if(typeof name!=='string'||!name.trim()||name.trim().length>120||!['Office Cash','Bank','Representative Cash','Settlement'].includes(kind))return res.status(400).json({error:'Enter a valid account name and type.'});
+  const client=await pool.connect();
+  const id='fund-'+randomUUID();
+  try{
+    await client.query('BEGIN');
+    await createFinancialAccount(client,{id,shopId:activeShopId,name,kind:kind as FinancialAccountKind,recordedBy:authUser?.name||'Manager'});
+    await client.query("INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Financial Account Created',$5)",['act-'+randomUUID(),activeShopId,authUser?.name||'Manager',authUser?.role||'Store Manager',name.trim()+' ('+kind+')']);
+    await client.query('COMMIT');
+    res.status(201).json({id,name:name.trim(),kind,active:true,balance:0});
+  }catch(error){await client.query('ROLLBACK').catch(()=>{});console.error('Financial account creation failed',error);res.status(409).json({error:'Unable to create account. Check whether that account name already exists.'});}
+  finally{client.release();}
+});
+
 // ── Quotation Routes ─────────────────────────────────────────────────────────
 app.get('/api/quotations', (_req, res) => {
   const { activeShopId } = getActiveShopContext(db, _req);
@@ -6514,6 +6540,7 @@ async function startServer() {
   await initPostgres();
   await initPartialReceivingTables(pool);
   await initPackagingDrafts(pool);
+  await initFinancialAccounts(pool);
   await initSharedStockSchema(pool);
   await initArsProfitLedger(pool);
   await loadDb();
