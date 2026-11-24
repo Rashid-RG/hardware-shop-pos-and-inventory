@@ -1,12 +1,14 @@
 name: Hardware POS checks
 
 on:
-  push:
-    branches:
-      - codex/shop-opening-pilot
+  workflow_dispatch:
   pull_request:
     branches:
       - main
+
+concurrency:
+  group: hardware-pos-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -23,7 +25,9 @@ jobs:
       - name: Check Python syntax
         run: python3 -m compileall -q scripts/mint
       - name: Check shell syntax
-        run: find scripts/mint -type f -name '*.sh' -exec bash -n {} \;
+        run: |
+          set -euo pipefail
+          for file in scripts/mint/*.sh; do bash -n "$file"; done
       - name: Check JavaScript syntax
         run: |
           for file in scripts/mint/*.mjs; do node --check "$file" || exit 1; done
