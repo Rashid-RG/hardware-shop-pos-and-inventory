@@ -63,6 +63,7 @@ def test(folder, compatibility=False):
         build_fingerprint=None
         backward_result=False
         previous_build=None
+        authenticated_reads=False
         def db(*args,**kwargs):
             return run(["docker","exec","-i",container,*args],**kwargs)
         try:
@@ -123,6 +124,27 @@ def test(folder, compatibility=False):
                                 raise RuntimeError("Database fingerprint query failed.")
                         values[t]=h.hexdigest()
                     return values
+                # Create synthetic user before the historical baseline, only inside isolated PostgreSQL.
+                email="update-test-"+uuid.uuid4().hex+"@example.invalid"
+                test_password=secrets.token_hex(32)
+                hashed=run(["docker","run","--rm","--pull=never","--network","none",
+                            "-v",str(staged)+":/app:ro","-w","/app",node_image,
+                            "node","-e","console.log(require('bcryptjs').hashSync(process.argv[1],10))",test_password],
+                           stdout=subprocess.PIPE,text=True).stdout.strip()
+                if not re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}",hashed):
+                    raise ValueError("Synthetic password hashing failed.")
+                user_id="update-test-"+uuid.uuid4().hex
+                db("psql","-X","-U","restore_admin","-d","ars_update_test","-v","ON_ERROR_STOP=1","-c",
+                   "INSERT INTO users(id,email,name,role,password_hash) VALUES ('"+user_id+"','"+email+"','Update Test Admin','Super Admin','"+hashed+"')")
+                def auth_probe():
+                    probe_file=Path(__file__).resolve().with_name("compatibility-api-probe.mjs")
+                    with probe_file.open("rb") as script:
+                        run(["docker","exec","-i","-e","ARS_TEST_EMAIL="+email,
+                             "-e","ARS_TEST_PASSWORD="+test_password,"-e","ARS_TEST_SHOP=shop-main",
+                             app_name,"node","--input-type=module","-"],stdin=script)
+                    # Remove only sessions belonging to the synthetic user before comparison.
+                    db("psql","-X","-U","restore_admin","-d","ars_update_test","-v","ON_ERROR_STOP=1","-c",
+                       "DELETE FROM auth_sessions WHERE user_id='"+user_id+"'")
                 schema=snapshot()
                 before=fingerprints(schema)
                 # Share only the isolated PostgreSQL container's network namespace.
@@ -143,6 +165,7 @@ def test(folder, compatibility=False):
                     time.sleep(2)
                 else:
                     raise RuntimeError("Staged application failed readiness on isolated database.")
+                auth_probe()
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if fingerprints(schema)!=before:
                     raise RuntimeError("Existing database rows changed during startup; automatic compatibility approval blocked.")
@@ -177,10 +200,12 @@ def test(folder, compatibility=False):
                             time.sleep(2)
                         else:
                             raise RuntimeError("Previous release cannot start on the migrated database.")
+                        auth_probe()
                         run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                         if fingerprints(schema)!=before:
                             raise RuntimeError("Previous release changed historical records on migrated database.")
                         backward_result=True
+                        authenticated_reads=True
                     finally:
                         run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
                         app_created=False
@@ -194,7 +219,7 @@ def test(folder, compatibility=False):
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
-                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
+                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"authenticatedReadsPassed":authenticated_reads,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
         temporary=folder/(".restore-"+uuid.uuid4().hex)
         temporary.write_text(json.dumps(result,indent=2)+"\n")
         temporary.replace(receipt)
