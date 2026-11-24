@@ -28,6 +28,43 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       FOREIGN KEY(shop_id,account_id) REFERENCES ars_financial_accounts(shop_id,id),
       UNIQUE(shop_id,movement_kind,source_id,account_id)
     );
+
+    CREATE TABLE IF NOT EXISTS ars_customer_cheques (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      invoice_id TEXT,
+      cheque_number TEXT NOT NULL CHECK(length(trim(cheque_number)) BETWEEN 1 AND 80),
+      issuing_bank TEXT NOT NULL CHECK(length(trim(issuing_bank)) BETWEEN 1 AND 120),
+      drawer_name TEXT NOT NULL CHECK(length(trim(drawer_name)) BETWEEN 1 AND 160),
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      received_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Received' CHECK(status IN ('Received','Deposited','Cleared','Bounced','Cancelled','Returned')),
+      deposit_account_id TEXT,
+      payment_id TEXT UNIQUE,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      note TEXT,
+      UNIQUE(shop_id,id),
+      FOREIGN KEY(shop_id,deposit_account_id) REFERENCES ars_financial_accounts(shop_id,id),
+      CHECK(status NOT IN ('Deposited','Cleared') OR deposit_account_id IS NOT NULL),
+      CHECK((status='Cleared')=(payment_id IS NOT NULL))
+    );
+    CREATE INDEX IF NOT EXISTS ars_customer_cheque_due ON ars_customer_cheques(shop_id,status,due_date);
+    CREATE TABLE IF NOT EXISTS ars_customer_cheque_events (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      cheque_id TEXT NOT NULL,
+      previous_status TEXT,
+      next_status TEXT NOT NULL CHECK(next_status IN ('Received','Deposited','Cleared','Bounced','Cancelled','Returned')),
+      effective_date DATE NOT NULL,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      note TEXT,
+      FOREIGN KEY(shop_id,cheque_id) REFERENCES ars_customer_cheques(shop_id,id)
+    );
+    CREATE INDEX IF NOT EXISTS ars_customer_cheque_history ON ars_customer_cheque_events(shop_id,cheque_id,recorded_at);
     CREATE INDEX IF NOT EXISTS ars_financial_movement_account ON ars_financial_movements(shop_id,account_id,effective_date);
     CREATE UNIQUE INDEX IF NOT EXISTS ars_financial_collection_once ON ars_financial_movements(shop_id,source_id) WHERE movement_kind='Customer Collection';
   `);
