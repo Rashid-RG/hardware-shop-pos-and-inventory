@@ -70,8 +70,17 @@ try {
   $length = (Get-Item -LiteralPath $tempFile).Length
   if ($length -lt 1024) { throw 'Archive too small to trust.' }
   $hash = (Get-FileHash -LiteralPath $tempFile -Algorithm SHA256).Hash
+  # sha256sum may return leading whitespace (including a CR) or multiple output lines.
+  # Accept exactly one well-formed digest for the archive; compare case-insensitively.
   $remoteHash = & docker exec $Container sha256sum $remoteFile
-  if ($LASTEXITCODE -ne 0 -or (($remoteHash -split '\s+')[0] -ne $hash)) { throw 'Database archive copy failed checksum verification.' }
+  $hashExitCode = $LASTEXITCODE
+  if ($hashExitCode -ne 0) { throw 'Could not calculate container archive SHA-256.' }
+  $digestLines = @($remoteHash | Where-Object { $_ -match '^\s*[0-9a-fA-F]{64}\s+' })
+  if ($digestLines.Count -ne 1) { throw 'Unexpected sha256sum output; cannot verify archive.' }
+  $remoteDigest = [regex]::Match([string]$digestLines[0], '^\s*([0-9a-fA-F]{64})\s+').Groups[1].Value
+  if (-not [string]::Equals($remoteDigest, $hash, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Database archive checksum mismatch. Container SHA-256: $remoteDigest; copied SHA-256: $hash"
+  }
   if ($hasUploads) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::CreateFromDirectory($uploadsDir, $uploadTemp, [System.IO.Compression.CompressionLevel]::Optimal, $true)
