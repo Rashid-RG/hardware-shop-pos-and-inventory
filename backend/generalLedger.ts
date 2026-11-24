@@ -274,6 +274,19 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_purchase_return_line_immutable ON ars_gl_purchase_return_lines;
  CREATE TRIGGER ars_gl_purchase_return_line_immutable BEFORE UPDATE OR DELETE ON ars_gl_purchase_return_lines
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_supplier_refunds(
+ shop_id TEXT NOT NULL,id TEXT NOT NULL,return_id TEXT NOT NULL,account_id TEXT NOT NULL,
+ amount NUMERIC(16,2) NOT NULL CHECK(amount>0),refund_date DATE NOT NULL,
+ evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+ recorded_by TEXT NOT NULL,journal_id TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(shop_id,id),UNIQUE(shop_id,journal_id),
+ FOREIGN KEY(shop_id,return_id) REFERENCES ars_gl_purchase_returns(shop_id,id),
+ FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_supplier_refund_immutable ON ars_gl_supplier_refunds;
+ CREATE TRIGGER ars_gl_supplier_refund_immutable BEFORE UPDATE OR DELETE ON ars_gl_supplier_refunds
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_supplier_refund_return ON ars_gl_supplier_refunds(shop_id,return_id);
  CREATE INDEX IF NOT EXISTS ars_gl_purchase_return_order ON ars_gl_purchase_returns(shop_id,purchase_order_id);
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
