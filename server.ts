@@ -6070,7 +6070,7 @@ app.get('/api/ars/purchases/:id/receipts',requireRole(['Super Admin','Store Mana
     if(!order.rowCount)return res.status(404).json({error:'Purchase order not found.'});
     const lines=await pool.query(
       `SELECT i.id AS "purchaseOrderItemId",i.product_id AS "productId",i.product_name AS "productName",
-         i.quantity AS ordered,COALESCE(SUM(ri.quantity),0)::integer AS received
+         i.quantity AS ordered,i.selling_unit_label AS "sellingUnitLabel",i.base_units_per_purchase_unit AS "baseUnitsPerPurchaseUnit",COALESCE(SUM(ri.quantity),0)::integer AS received
        FROM purchase_order_items i LEFT JOIN ars_receipt_batch_items ri ON ri.purchase_order_item_id=i.id
        WHERE i.purchase_order_id=$1 GROUP BY i.id ORDER BY i.id`,[req.params.id]);
     const batches=await pool.query(
