@@ -74,7 +74,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -118,6 +118,10 @@ def main():
                     continue
                 if dialog("--question","--no-markup","--text=Resume the unchanged installed POS? This does not install a release or restore the database.").returncode==0:
                     execute(project,"resume_maintenance.py","--confirmation","RESUME CURRENT POS")
+            elif action=="Rehearse disaster recovery":
+                selected=choose_file("Select local or downloaded ARS backup .dump")
+                if selected and dialog("--question","--no-markup","--text=Verify and restore this backup in a disposable isolated PostgreSQL instance? This does not replace the live database.").returncode==0:
+                    execute(project,"disaster-recovery-test.py",selected)
             elif action=="Google Drive backup setup":
                 option=dialog("--list","--no-markup","--text=Google Drive authorization and encryption must be configured before enabling backups. Keep the encryption recovery credentials in a secure separate location.","--column=Action","--width=640","--height=360","Configuration instructions","Validate encrypted connection","Enable daily backup at 8 PM","Disable daily backup","Back up now","Return")
                 if option.returncode!=0: continue
