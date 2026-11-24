@@ -78,6 +78,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
         run: node --import tsx --test tests/postgres-ars-profit.integration.mjs
+      - name: ARS financial lifecycle and populated backup fixtures (isolated PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+          JWT_SECRET: ci-secret-not-for-production-long-random-placeholder
+        run: node --import tsx --test tests/postgres-ars-financial.integration.mjs
       - name: Restore isolated PostgreSQL backup and verify accounting records
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
