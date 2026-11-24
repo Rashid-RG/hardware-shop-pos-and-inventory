@@ -127,6 +127,20 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     const retryAfterRejection={...request,id:id(),amount:30};
     await requestCashHandover(pool,retryAfterRejection);
     assert.equal((await balances())[repCash],30);
+    // Account-level receipts must remain visible as unallocated, never silently assigned to invoices.
+    const {receivableAging}=await import('../backend/receivableAging.ts');
+    const aging=await receivableAging(pool,shopId);
+    const account=aging.customers.find(c=>c.id===customerId);
+    assert.equal(account.recorded_balance,450);
+    assert.equal(account.invoice_balance,0);
+    assert.equal(account.unallocated_payments,550);
+    assert.equal(account.difference,450);
+    assert.equal(aging.needsReview,1);
+    const paymentRows=await pool.query('SELECT id,amount FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2',[shopId,customerId]);
+    assert.equal(paymentRows.rowCount,3);
+    assert.equal(paymentRows.rows.reduce((sum,row)=>sum+Number(row.amount),0),550);
+    assert.equal((await listCustomerCheques(pool,shopId)).find(c=>c.id===bounced.id).status,'Bounced');
+    assert.equal((await receivableAging(pool,otherShop)).customers.some(c=>c.id===customerId),false);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
