@@ -33,10 +33,14 @@ test('legacy whole-state rewrite fails closed after receipt batches exist', () =
 
 test('manual expenses commit with an audit entry and no whole-state rewrite', () => {
   const expenses=server.split("app.post('/api/manual-expenses'")[1]?.split('// Products Routes')[0] || '';
-  assert.match(expenses,/INSERT INTO manual_expenses/);
-  assert.match(expenses,/INSERT INTO activity_logs/);
-  assert.match(expenses,/await client\.query\('BEGIN'\)/);
-  assert.match(expenses,/await client\.query\('COMMIT'\)/);
-  assert.match(expenses,/await client\.query\('ROLLBACK'\)/);
+  const service=readFileSync(new URL('../backend/financialAccounts.ts',import.meta.url),'utf8').split('export async function recordPaidExpense')[1] || '';
+  assert.match(expenses,/await recordPaidExpense\(pool,/);
+  assert.match(service,/INSERT INTO manual_expenses/);
+  assert.match(service,/INSERT INTO ars_financial_movements/);
+  assert.match(service,/INSERT INTO activity_logs/);
+  assert.match(service,/await client\.query\('BEGIN'\)/);
+  assert.match(service,/await client\.query\('COMMIT'\)/);
+  assert.match(service,/await client\.query\('ROLLBACK'\)/);
   assert.doesNotMatch(expenses,/await saveDb\(\)/);
+  assert.doesNotMatch(service,/await saveDb\(\)/);
 });
