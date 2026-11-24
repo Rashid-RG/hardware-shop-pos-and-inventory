@@ -111,7 +111,7 @@ export const renderArsInvoicePdf = async (
     field('Phone', safe(tx.customerPhone), 36, 207, 48, 249);
     field('Sales Rep.', safe(tx.salesRepName, 'Not recorded'), 315, 162, 59, 245);
     field('Line Items', String(tx.items.length), 315, 178, 59, 245);
-    field('Item Lines', String(tx.items.length), 315, 194, 59, 245);
+    field('Sales By', safe(tx.cashierName, 'Not recorded'), 315, 194, 59, 245);
     field('Tax Rate', taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%', 315, 210, 59, 245);
   };
   const cols = [left, 46, 110, 208, 292, 324, 348, 421, 493, right];
