@@ -1,3 +1,4 @@
+import InventoryValuationPanel from './InventoryValuationPanel';
 import HistoricalCostReviewPanel from './HistoricalCostReviewPanel';
 import FinancialProfitPanel from './FinancialProfitPanel';
 import FinancialCashFlowPanel from './FinancialCashFlowPanel';
@@ -423,6 +424,7 @@ export default function AccountingSettingsView({
           {isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
           {isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
           {currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
+          {isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <FinancialProfitPanel correctionRevision={costCorrectionRevision} authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <FinancialCashFlowPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <FinancialStatementPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
