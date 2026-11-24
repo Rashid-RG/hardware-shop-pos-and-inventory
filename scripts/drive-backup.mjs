@@ -11,6 +11,7 @@ const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backups = resolve(root, 'backups');
 const statusFile = join(backups, 'drive-status.json');
+const historyDir = join(backups, 'drive-history');
 const backing = 'ars-drive:ARS-Backups';
 const remote = 'ars-encrypted:daily';
 
@@ -47,12 +48,21 @@ async function writeStatus(state) {
   await rename(temp, statusFile);
 }
 
+async function writeHistory(state) {
+  await mkdir(historyDir,{recursive:true,mode:0o700});
+  const destination=join(historyDir,state.attemptId+'.json');
+  const temporary=destination+'.'+randomUUID()+'.tmp';
+  await writeFile(temporary,JSON.stringify(state),{flag:'wx',mode:0o600});
+  await rename(temporary,destination);
+}
+
 async function dailyBackup() {
   await mkdir(backups, { recursive: true });
   let previous;
   try { previous = JSON.parse(await readFile(statusFile, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const state = { attemptedAt: new Date().toISOString(), verifiedAt: previous?.verifiedAt ?? null, phase: 'local' };
+  const state = { attemptId: randomUUID(), attemptedAt: new Date().toISOString(), verifiedAt: previous?.verifiedAt ?? null, phase: 'local' };
+  await writeHistory(state);
   await writeStatus(state);
   try {
     const { stdout } = process.platform === 'linux'
@@ -61,15 +71,21 @@ async function dailyBackup() {
       '-File', join(root, 'scripts', 'backup-local-postgres.ps1'), '-OutputArchive'], { cwd: root });
     const archive = stdout.split(/\r?\n/).find(line => line.startsWith('ARS_ARCHIVE='))?.slice(12);
     if (!archive || dirname(resolve(archive)) !== backups) throw new Error('Backup did not return its archive.');
+    state.archive = basename(archive);
     state.phase = 'upload';
+    await writeHistory(state);
     await writeStatus(state);
     await uploadSet(archive, async args => (await exec('rclone', args, { cwd: root })).stdout);
     state.phase = 'verified';
     state.verifiedAt = new Date().toISOString();
+    state.finishedAt = state.verifiedAt;
+    await writeHistory(state);
     await writeStatus(state);
     console.log('Google Drive backup verified:', state.verifiedAt);
   } catch (error) {
-    state.phase = state.phase === 'local' ? 'local-failed' : 'upload-failed';
+    state.phase = state.phase === 'local' ? 'local-failed' : state.phase === 'verified' ? 'recording-failed' : 'upload-failed';
+    state.finishedAt = new Date().toISOString();
+    await writeHistory(state);
     await writeStatus(state);
     throw error;
   }
