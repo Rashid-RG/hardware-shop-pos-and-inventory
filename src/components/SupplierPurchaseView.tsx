@@ -1,3 +1,4 @@
+import DisbursementVoucherActions from './DisbursementVoucherActions';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
@@ -557,6 +558,7 @@ export default function SupplierPurchaseView({
                           <div key={payment.id} className="flex items-center justify-between gap-2 text-slate-600">
                             <span>{payment.date} • {payment.paymentMethod}</span>
                             <strong className="text-emerald-700">{currencySymbol}{payment.amount.toFixed(2)}</strong>
+                            {financialEnabled&&financialAuthToken&&financialShopId&&<DisbursementVoucherActions kind="supplier" id={payment.id} authToken={financialAuthToken} shopId={financialShopId} /> }
                           </div>
                         ))}
                       </div>
