@@ -174,6 +174,8 @@ export default function POSView({
     } catch { return null; }
   });
   const [checkoutUncertain, setCheckoutUncertain] = useState<boolean>(Boolean(restoredDraft?.pending));
+  const [pendingCheckoutBody,setPendingCheckoutBody]=useState<string|null>(typeof restoredDraft?.requestBody==='string'?restoredDraft.requestBody:null);
+  const checkoutLock=React.useRef(false);
   const [draftSaved, setDraftSaved] = useState(false);
   // Customer & Cart states
   // Never silently assign an invoice to the first customer in the database.
@@ -223,20 +225,20 @@ export default function POSView({
     deliveryStatus: '',
     ...restoredDraft?.wholesaleMeta,
   });
-  const persistDraft = (pending = checkoutUncertain) => {
+  const persistDraft = (pending = checkoutUncertain, requestBody = pendingCheckoutBody) => {
     if (!draftKey) return false;
     try {
-      if (cart.length === 0) sessionStorage.removeItem(draftKey);
+      if (cart.length === 0 && !requestBody) sessionStorage.removeItem(draftKey);
       else sessionStorage.setItem(draftKey, JSON.stringify({
         cart, customer: selectedCustomer, repId: selectedSalesRepId,
-        discountMode, discountInput, wholesaleMeta: wholesaleMetaDraft, pending,
+        discountMode, discountInput, wholesaleMeta: wholesaleMetaDraft, pending, requestBody:pending?requestBody:null,
       }));
       return true;
     } catch { return false; }
   };
   useEffect(() => {
     setDraftSaved(persistDraft());
-  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, checkoutUncertain]);
+  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, checkoutUncertain,pendingCheckoutBody]);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [barcodeNotification, setBarcodeNotification] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
   const [lastScannedItem, setLastScannedItem] = useState<{ label: string; code: string } | null>(null);
@@ -1158,18 +1160,7 @@ export default function POSView({
     if (paymentMethod === 'Credit Account' && !creditAccountAllowed) { notify.warning('Customer credit limit must cover this invoice.'); return; }
     if(needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0)){notify.warning('Select an active receiving account for the paid invoice.');return;}
     if (paymentMethod !== 'Credit Account' && !window.confirm('Confirm full payment of '+formatMoney(total)+' has already been received. Otherwise choose Pay later.')) return;
-    if (!persistDraft(true)) {
-      notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
-      return;
-    }
-    setCheckoutUncertain(true);
-    const printWindow = createPrintWindow();
-    setIsSubmitting(true);
-
-    try {
-      const response = await authFetch('/api/transactions', {
-        method: 'POST',
-        body: JSON.stringify({
+    const requestBody=JSON.stringify({requestId:crypto.randomUUID(),
           cartItems: cart,
           customerId: selectedCustomer.id,
           customerName: (billingCustomerName || '').trim() || selectedCustomer.name,
@@ -1198,15 +1189,36 @@ export default function POSView({
           },
           discountAmount: cashDiscount,
           cashReceived: paymentMethod === 'Cash' ? total : undefined,
-        }),
+
+    });
+    if (!persistDraft(true,requestBody)) {
+      notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
+      return;
+    }
+    setPendingCheckoutBody(requestBody);
+    await submitCheckout(requestBody);
+  };
+  const submitCheckout=async(requestBody:string)=>{
+    if(checkoutLock.current)return;
+    checkoutLock.current=true;
+    setCheckoutUncertain(true);
+    const printWindow = createPrintWindow();
+    setIsSubmitting(true);
+
+    try {
+      const response = await authFetch('/api/transactions', {
+        method: 'POST',
+        body: requestBody,
       });
 
       if (response.ok) {
         // The sale is committed; never restore it as an unfinished invoice.
-        try { sessionStorage.removeItem(draftKey); } catch { /* keep checkout locked if storage fails */ }
+        const completedTx = await response.json();
+        if(!completedTx?.id||!completedTx?.invoiceNumber)throw Error('Invalid invoice confirmation.');
+        try { sessionStorage.removeItem(draftKey); } catch { /* exact replay remains safe */ }
+        setPendingCheckoutBody(null);
         setCart([]);
         setCheckoutUncertain(false);
-        const completedTx = await response.json();
         let invoiceQrData = '';
         try {
           const qrRes = await authFetch('/api/qr/generate-invoice', {
@@ -1255,7 +1267,7 @@ export default function POSView({
         setPaymentMethod('Credit Account');
         onRefreshDb(); // Reload stock amounts parent state
       } else {
-        if (response.status >= 400 && response.status < 500) setCheckoutUncertain(false);
+        // Keep the exact request until confirmed or manually reconciled; a retry must never create a new ID.
         if (printWindow) {
           printWindow.close();
         }
@@ -1268,6 +1280,7 @@ export default function POSView({
       }
       notify.error('Network failure processing transaction');
     } finally {
+      checkoutLock.current=false;
       setIsSubmitting(false);
     }
   };
@@ -1542,10 +1555,10 @@ export default function POSView({
           )}
         </div>
           {checkoutUncertain && !isSubmitting && <div role="alert" className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
-            Previous checkout outcome is uncertain. Check Sales Reports before continuing to avoid a duplicate invoice.
+            Previous checkout outcome is uncertain. Retry the original protected request, or reconcile it in Sales Reports.
             <div className="mt-1 flex flex-wrap gap-2">
-              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Confirm you checked Sales Reports and this invoice was NOT saved.')) setCheckoutUncertain(false); }}>Invoice not saved — resume</button>
-              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Discard this draft after confirming the sale was already saved?')) { setCart([]); setCheckoutUncertain(false); } }}>Already saved — discard draft</button>
+              {pendingCheckoutBody?<button type="button" className="underline font-semibold" onClick={()=>void submitCheckout(pendingCheckoutBody)}>Retry exact invoice</button>:<button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Confirm you checked Sales Reports and this invoice was NOT saved.')) setCheckoutUncertain(false); }}>Invoice not saved — resume</button>}
+              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Discard this draft after confirming the sale was already saved?')) { setPendingCheckoutBody(null); setCart([]); setCheckoutUncertain(false); } }}>Already saved — discard draft</button>
             </div>
           </div>}
           {/* Cart Header */}
