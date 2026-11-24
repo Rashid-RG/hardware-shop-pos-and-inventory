@@ -359,6 +359,10 @@ export const initDbTables = async () => {
       ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC(12,2) NOT NULL DEFAULT 0;
       ALTER TABLE products ADD COLUMN IF NOT EXISTS dealer_price NUMERIC(12,2) NOT NULL DEFAULT 0;
       ALTER TABLE products ADD COLUMN IF NOT EXISTS variants_json JSONB;
+      ALTER TABLE products ADD COLUMN IF NOT EXISTS shared_stock_units JSONB;
+      ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS selling_unit_id TEXT;
+      ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS selling_unit_label TEXT;
+      ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS base_units_per_sale_unit INTEGER;
     `);
 
     // Additional tables
