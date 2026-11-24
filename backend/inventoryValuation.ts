@@ -1,5 +1,5 @@
-import type {Pool} from 'pg';
-export async function inventoryValuation(db:Pool,shopId:string){
+import type {Pool,PoolClient} from 'pg';
+export async function inventoryValuation(db:Pool|PoolClient,shopId:string){
  const result=await db.query(`SELECT id,name,sku,category,status,quantity,cost_price,variants_json,shared_stock_units FROM products WHERE shop_id=$1 ORDER BY name,id`,[shopId]);
  const rows=result.rows.flatMap(p=>{
   const variants=Array.isArray(p.variants_json)?p.variants_json:[];
