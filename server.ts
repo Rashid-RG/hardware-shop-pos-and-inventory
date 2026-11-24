@@ -3245,6 +3245,84 @@ app.post('/api/backup/local-run', requireRole(['Super Admin']), async (_req, res
   }
 });
 
+// Only managed archives and their exact companions can be accessed.
+const managedBackupName = /^ars-[a-z0-9_-]+-(?:with-uploads|database-only)\.dump$/i;
+const backupRoot = path.resolve('backups');
+async function managedBackupFile(name: string) {
+  if (!managedBackupName.test(name)) throw new Error('Invalid archive');
+  const file = path.join(backupRoot, name);
+  const info = await fs.promises.lstat(file);
+  if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid archive');
+  return { file, info };
+}
+async function backupCompanions(name: string) {
+  await managedBackupFile(name);
+  const names = [name, name + '.sha256'];
+  if (name.endsWith('-with-uploads.dump')) names.push(name.slice(0,-5) + '-uploads.zip', name.slice(0,-5) + '-uploads.zip.sha256');
+  for (const member of names) {
+    const info = await fs.promises.lstat(path.join(backupRoot, member));
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error('Invalid backup companion');
+  }
+  return names;
+}
+async function verifyManagedBackup(name: string) {
+  await backupCompanions(name);
+  await new Promise<void>((resolve, reject) => {
+    execFile(process.execPath, [path.resolve('scripts/verify-backup.mjs'), path.join(backupRoot, name)], { cwd: process.cwd(), windowsHide: true }, error => error ? reject(error) : resolve());
+  });
+}
+app.get('/api/backup/local-history', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Local backup tools are disabled.' });
+  try {
+    const entries = await fs.promises.readdir(backupRoot).catch(error => {
+      if (error.code === 'ENOENT') return [] as string[];
+      throw error;
+    });
+    const backups = [];
+    for (const name of entries.filter(name => managedBackupName.test(name))) {
+      try {
+        const {info} = await managedBackupFile(name);
+        let complete = false;
+        try { await backupCompanions(name); complete = true; } catch { /* incomplete sets remain visible */ }
+        backups.push({name, bytes: info.size, createdAt: info.mtime.toISOString(), complete, includesUploads: name.endsWith('-with-uploads.dump')});
+      } catch { /* skip non-regular files */ }
+    }
+    backups.sort((a,b) => b.createdAt.localeCompare(a.createdAt));
+    res.json({ backups: backups.slice(0,100) });
+  } catch { res.status(500).json({ error: 'Could not read backup history.' }); }
+});
+app.post('/api/backup/local-verify', requireRole(['Super Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Local backup tools are disabled.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Wait until the current backup operation finishes.' });
+  manualBackupRunning = true;
+  try {
+    await verifyManagedBackup(String(req.body?.archive || ''));
+    res.json({ success: true, verifiedAt: new Date().toISOString() });
+  } catch { res.status(400).json({ error: 'Backup set is missing, incomplete or failed checksum verification.' }); }
+  finally { manualBackupRunning = false; }
+});
+app.get('/api/backup/local-download', requireRole(['Super Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Local backup tools are disabled.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Wait until the current backup operation finishes.' });
+  const name = String(req.query.archive || '');
+  const member = String(req.query.member || '');
+  manualBackupRunning = true;
+  try {
+    const members = await backupCompanions(name);
+    if (!members.includes(member)) return res.status(400).json({ error: 'Invalid backup member.' });
+    await verifyManagedBackup(name);
+    await new Promise<void>((resolve, reject) => {
+      res.download(path.join(backupRoot, member), member, { headers: { 'Cache-Control': 'no-store' } }, error => error ? reject(error) : resolve());
+    });
+  } catch {
+    if (!res.headersSent) res.status(400).json({ error: 'Backup download unavailable or verification failed.' });
+    else res.end();
+  } finally { manualBackupRunning = false; }
+});
+
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
