@@ -1449,7 +1449,7 @@ export const insertManualExpense = async (e: ManualExpense) => {
   );
 };
 
-export const insertSupplierPayment = async (p: SupplierPayment) => {
+export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?:string) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
     throw new Error('Supplier payment amount must be positive with at most two decimal places.');
@@ -1457,6 +1457,15 @@ export const insertSupplierPayment = async (p: SupplierPayment) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(sourceAccountId){
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[p.id]);
+      const previous=await client.query("SELECT p.*,p.date::text AS payment_day,m.account_id FROM supplier_payments p LEFT JOIN ars_financial_movements m ON m.shop_id=p.shop_id AND m.source_id=p.id AND m.movement_kind='Supplier Payment' WHERE p.id=$1",[p.id]);
+      if(previous.rowCount){
+        const row=previous.rows[0];
+        if(row.shop_id!==p.shopId||row.supplier_id!==p.supplierId||(row.purchase_order_id||null)!==(p.purchaseOrderId||null)||Number(row.amount)!==p.amount||row.payment_method!==p.paymentMethod||row.payment_day!==p.date||(row.note||null)!==(p.note||null)||(row.created_by||null)!==(p.createdBy||null)||row.account_id!==sourceAccountId)throw Error('Supplier payment request identifier already used for different details.');
+        await client.query('COMMIT');return;
+      }
+    }
     const supplier = await client.query(
       'SELECT id, name, company_name FROM suppliers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
       [p.supplierId, p.shopId]
@@ -1495,6 +1504,15 @@ export const insertSupplierPayment = async (p: SupplierPayment) => {
       ['supplier-payment-' + p.id, p.shopId, p.createdBy || 'Manager',
        `Paid Rs.${p.amount.toFixed(2)} to ${supplierName}.`]
     );
+    if(sourceAccountId){
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[p.shopId,sourceAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!((p.paymentMethod==='Cash'&&kind==='Office Cash')||(p.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active supplier payment account matching the payment method.');
+      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[p.shopId,sourceAccountId,p.amount]);
+      if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for supplier payment.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+        VALUES($1,$2,$3,-$4::numeric,'Supplier Payment',$5,$6,$7,$8)`,['supplier-out-'+p.id,p.shopId,sourceAccountId,p.amount,p.id,p.createdBy||'Manager',p.date,p.note||null]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
