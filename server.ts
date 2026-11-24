@@ -1,4 +1,4 @@
-import {recordImportChargeRecovery} from './backend/importChargeRecoveries';
+import {recordImportChargeRecovery,importRecoveryAvailability} from './backend/importChargeRecoveries';
 import {recordSupplierRefund,supplierRefundAvailability} from './backend/supplierRefunds';
 import {recordPurchaseReturn} from './backend/purchaseReturns';
 import {settleImportCreditor} from './backend/importSettlements';
@@ -6369,6 +6369,15 @@ app.post('/api/ledger/import-charge-recoveries',requireRole(['Super Admin']),asy
  catch(error){const message=error instanceof Error?error.message:'';
  if(['Valid documented import recovery required.','Valid positive recovery amount required.','Recovery identifier already used.','Active accounting required for import recovery.','Posted import return required before recovery.','Import purchase order not found.','Approved landed charges required.','Verified import return cost records required.','Active return variance account required.','Approved import charge breakdown required.','Import recovery balances require reconciliation.','Recovery date precedes later recovery.','Recovery exceeds documented available import charge loss.','Recovery document already used.','Active cash or bank account required.','Active recovery financial mapping required.','Accounting period is closed'].includes(message))return res.status(409).json({error:message});
  console.error('Import recovery failed',error);return res.status(500).json({error:'Unable to confirm import recovery. Retry the same request.'});}
+});
+app.get('/api/ledger/import-charge-recoveries/:returnId/availability',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import recovery access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await importRecoveryAvailability(pool,scope.shopId,req.params.returnId));}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(message==='Posted import return required before recovery.')return res.status(404).json({error:message});
+ if(['Active accounting required for import recovery.','Import purchase order not found.','Approved landed charges required.','Verified import return cost records required.','Active return variance account required.','Approved import charge breakdown required.','Import recovery balances require reconciliation.'].includes(message))return res.status(409).json({error:message});
+ console.error('Import recovery availability failed',error);return res.status(500).json({error:'Unable to calculate available import recovery.'});}
 });
 app.get('/api/ledger/import-charge-recoveries/:returnId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import recovery access denied.'});
