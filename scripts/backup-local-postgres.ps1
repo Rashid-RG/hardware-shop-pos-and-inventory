@@ -32,11 +32,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker is unavailable.' }
 if ($LASTEXITCODE -ne 0) { throw 'Configured Docker container was not found.' }
 $portMap = & docker port $Container '5432/tcp' 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $portMap) { throw 'Cannot verify PostgreSQL port mapping.' }
-if ($uri.Port -gt 0 -and ($portMap -notmatch ":$($uri.Port)(\s|$)")) {
-  throw 'Docker mapped port does not match DATABASE_URL. Refusing to back up a different database.'
+$configuredPort = if ($uri.Port -gt 0) { $uri.Port } else { 5432 }
+if (-not ($portMap -match ":$configuredPort$")) {
+  throw 'Docker mapped port does not match DATABASE_URL.'
 }
+$uploadsDir = Join-Path $projectRoot 'uploads'
+$hasUploads = Test-Path -LiteralPath $uploadsDir -PathType Container
+$scope = if ($hasUploads) { 'with-uploads' } else { 'database-only' }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff')
-$name = "ars-$Database-$stamp"
+$name = "ars-$Database-$stamp-$([guid]::NewGuid().ToString('N'))-$scope"
 $remoteFile = "/tmp/$name.dump"
 $backupFile = Join-Path $Destination "$name.dump"
 $tempFile = "$backupFile.partial"
@@ -55,17 +59,19 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Could not copy the database archive.' }
   $length = (Get-Item -LiteralPath $tempFile).Length
   if ($length -lt 1024) { throw 'Archive too small to trust.' }
-  Move-Item -LiteralPath $tempFile -Destination $backupFile -ErrorAction Stop
-  $hash = (Get-FileHash -LiteralPath $backupFile -Algorithm SHA256).Hash
-  Set-Content -LiteralPath $checksumFile -Value "$hash  $name.dump" -Encoding ASCII
-  $uploadsDir = Join-Path $projectRoot 'uploads'
-  if (Test-Path -LiteralPath $uploadsDir -PathType Container) {
-    # File copies are independent of DB snapshot; confirm logo/image consistency during restore drill.
-    Compress-Archive -Path $uploadsDir -DestinationPath $uploadTemp -CompressionLevel Optimal -Force
-    Move-Item -LiteralPath $uploadTemp -Destination $uploadZip
-    $uploadHash = (Get-FileHash -LiteralPath $uploadZip -Algorithm SHA256).Hash
+  $hash = (Get-FileHash -LiteralPath $tempFile -Algorithm SHA256).Hash
+  $remoteHash = & docker exec $Container sha256sum $remoteFile
+  if ($LASTEXITCODE -ne 0 -or (($remoteHash -split '\s+')[0] -ne $hash)) { throw 'Database archive copy failed checksum verification.' }
+  if ($hasUploads) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($uploadsDir, $uploadTemp, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    $uploadHash = (Get-FileHash -LiteralPath $uploadTemp -Algorithm SHA256).Hash
     Set-Content -LiteralPath $uploadChecksum -Value "$uploadHash  $name-uploads.zip" -Encoding ASCII
+    Move-Item -LiteralPath $uploadTemp -Destination $uploadZip
   }
+  Set-Content -LiteralPath $checksumFile -Value "$hash  $name.dump" -Encoding ASCII
+  # Publish the selectable dump last, after all companions are present.
+  Move-Item -LiteralPath $tempFile -Destination $backupFile
   Write-Host "Verified PostgreSQL backup: $backupFile"
   Write-Host "Archive SHA-256: $hash"
   if (Test-Path $uploadZip) { Write-Host "Uploaded files archived: $uploadZip" }
@@ -81,7 +87,9 @@ try {
     }
   }
 } catch {
-  foreach ($temp in @($tempFile, $uploadTemp)) {
+  $cleanup = @($tempFile, $uploadTemp)
+  if (-not (Test-Path -LiteralPath $backupFile)) { $cleanup += @($checksumFile, $uploadZip, $uploadChecksum) }
+  foreach ($temp in $cleanup) {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
   }
   throw
