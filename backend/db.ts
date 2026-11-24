@@ -1301,7 +1301,7 @@ export const updateCustomerCreditLimit = async (customerId: string, shopId: stri
   if (!result.rowCount) throw new Error('Customer not found in this shop.');
 };
 
-export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false, destinationAccountId?: string) => {
+export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false, destinationAccountId?: string, chequeClearance?: {chequeId:string;eventId:string;recordedBy:string}) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       !Number.isSafeInteger(Math.round(p.amount * 100)) ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
@@ -1310,6 +1310,19 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(chequeClearance){
+      const chequeResult=await client.query("SELECT *,received_date::text AS received_day,due_date::text AS due_day FROM ars_customer_cheques WHERE shop_id=$1 AND id=$2 FOR UPDATE",[p.shopId,chequeClearance.chequeId]);
+      const cheque=chequeResult.rows[0];
+      if(!cheque||cheque.customer_id!==p.customerId||(cheque.invoice_id||null)!==(p.invoiceId||null)||Number(cheque.amount)!==p.amount||cheque.deposit_account_id!==destinationAccountId||!destinationAccountId||p.paymentMethod!=='Cheque'||p.id!=='cpay-cheque-'+chequeClearance.chequeId)throw Error('Cheque clearance details do not match the registered cheque.');
+      if(cheque.status==='Cleared'){
+        const event=await client.query("SELECT id,effective_date::text AS day,recorded_by FROM ars_customer_cheque_events WHERE shop_id=$1 AND cheque_id=$2 AND next_status='Cleared'",[p.shopId,chequeClearance.chequeId]);
+        if(cheque.payment_id!==p.id||event.rowCount!==1||event.rows[0].id!==chequeClearance.eventId||event.rows[0].day!==p.date||event.rows[0].recorded_by!==chequeClearance.recordedBy)throw Error('Cheque already cleared. Review the original payment.');
+      }else{
+        if(cheque.status!=='Deposited')throw Error('Only deposited cheques can be cleared.');
+        const latest=await client.query('SELECT MAX(effective_date)::text AS day FROM ars_customer_cheque_events WHERE shop_id=$1 AND cheque_id=$2',[p.shopId,chequeClearance.chequeId]);
+        if(p.date<cheque.due_day||p.date<cheque.received_day||(latest.rows[0]?.day&&p.date<latest.rows[0].day))throw Error('Clearance date precedes cheque history.');
+      }
+    }else if(p.paymentMethod==='Cheque')throw Error('Cheque payments require registered cheque clearance.');
     if(replaySafe){
       // Serialize identical request IDs, including when the original invoice is already settled.
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[p.id]);
@@ -1382,9 +1395,14 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
     if(destinationAccountId){
       const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[p.shopId,destinationAccountId]);
       const kind=account.rows[0]?.kind;
-      if(!kind||!((p.paymentMethod==='Cash'&&['Office Cash','Representative Cash'].includes(kind))||(p.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active financial account matching the payment method.');
+      if(!kind||!((p.paymentMethod==='Cash'&&['Office Cash','Representative Cash'].includes(kind))||((p.paymentMethod==='Bank Transfer'||(p.paymentMethod==='Cheque'&&!!chequeClearance))&&kind==='Bank')))throw Error('Select an active financial account matching the payment method.');
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
         VALUES($1,$2,$3,$4,'Customer Collection',$5,$6,$7,$8)`,['collection-'+p.id,p.shopId,destinationAccountId,p.amount,p.id,p.createdBy||'Unknown',p.date,p.note||null]);
+    }
+    if(chequeClearance){
+      const updated=await client.query("UPDATE ars_customer_cheques SET status='Cleared',payment_id=$1 WHERE shop_id=$2 AND id=$3 AND status='Deposited'",[p.id,p.shopId,chequeClearance.chequeId]);
+      if(updated.rowCount!==1)throw Error('Cheque clearance state changed.');
+      await client.query("INSERT INTO ars_customer_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Deposited','Cleared',$4,$5,$6)",[chequeClearance.eventId,p.shopId,chequeClearance.chequeId,p.date,chequeClearance.recordedBy,p.note||null]);
     }
     await client.query('COMMIT');
     return receiptSnapshot;
