@@ -1248,7 +1248,7 @@ const getInitialDbState = () => {
     activityLogs: initialActivityLogs,
     settings: {
       taxRate: 0,
-      storeName: 'ARS Distribution',
+      storeName: 'ARS Distributor',
       currency: 'LKR',
       invoicePrefix: 'SL-INV',
       logoUrl: '',
@@ -1265,7 +1265,7 @@ const getInitialDbState = () => {
       shopProfiles: [
         {
           id: 'shop-main',
-          name: 'ARS Distribution',
+          name: 'ARS Distributor',
           logoUrl: '',
           address: '',
           phone: '',
@@ -1311,7 +1311,7 @@ const getCleanBusinessState = () => {
     invoicePrintLogs: [],
     settings: {
       ...demo.settings,
-      storeName: 'ARS Distribution',
+      storeName: 'ARS Distributor',
       logoUrl: '',
       address: '',
       phone: '',
@@ -1319,7 +1319,7 @@ const getCleanBusinessState = () => {
       invoicePrefix: 'ARS-INV',
       shopProfiles: [{
         id: 'shop-main',
-        name: 'ARS Distribution',
+        name: 'ARS Distributor',
         logoUrl: '',
         address: '',
         phone: '',
@@ -1340,7 +1340,7 @@ const normalizeState = (state: DBState): DBState => ({
     const rawProfiles = Array.isArray(state.settings?.shopProfiles) ? state.settings.shopProfiles : [];
     const fallbackProfile = {
       id: 'shop-main',
-      name: state.settings?.storeName || 'ARS Distribution',
+      name: state.settings?.storeName || 'ARS Distributor',
       logoUrl: state.settings?.logoUrl || '',
       address: state.settings?.address || '',
       phone: state.settings?.phone || '',
@@ -2229,7 +2229,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
 
   const settingsRow = settingsRes.rows[0] || {
     tax_rate: 18,
-    store_name: 'ARS Distribution',
+    store_name: 'ARS Distributor',
     currency: 'LKR',
     invoice_prefix: 'SL-INV',
     logo_url: '',
@@ -2240,7 +2240,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     shop_profiles: [
       {
         id: 'shop-main',
-        name: 'ARS Distribution',
+        name: 'ARS Distributor',
         logoUrl: '',
         address: '',
         phone: '',
@@ -2849,7 +2849,7 @@ app.get('/api/support/diagnostics', requireRole(['Super Admin', 'Store Manager']
   }
   const ready = database === 'reachable' && databaseWriteHealthy && singleWriterLease !== null;
   res.status(ready ? 200 : 503).json({
-    service: 'ARS Distribution POS',
+    service: 'ARS Distributor POS',
     checkedAt: new Date().toISOString(),
     release: String(process.env.ARS_RELEASE_ID || 'not-configured').slice(0, 64),
     environment: NODE_ENV,
