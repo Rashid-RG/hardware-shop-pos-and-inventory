@@ -47,7 +47,19 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     });
 
     const first = 'ci-tx-' + randomUUID();
-    await checkoutTransaction(tx(2, first), 'Cashier', 'CI Shop');
+    const terms={dueDate:'2099-12-31',evidence:'CI agreed payment terms',recordedBy:'CI Manager'};
+    const creditRequest={actor:'CI Manager',fingerprint:'ci-credit-terms'};
+    const invalidId='ci-invalid-terms-'+randomUUID();
+    await assert.rejects(checkoutTransaction(tx(2,invalidId),'Cashier','CI Shop',undefined,undefined,creditRequest,terms),/Invalid agreed credit payment terms/);
+    await assert.rejects(checkoutTransaction(tx(2,invalidId),'Store Manager','CI Shop',undefined,undefined,creditRequest,{...terms,dueDate:'2000-01-01'}),/Due date cannot precede/);
+    assert.equal(Number((await pool.query('SELECT quantity FROM products WHERE id=$1',[productId])).rows[0].quantity),10);
+    assert.equal(Number((await pool.query('SELECT credit_balance FROM customers WHERE id=$1',[customerId])).rows[0].credit_balance),0);
+    assert.equal((await pool.query('SELECT id FROM sales_transactions WHERE id=$1',[invalidId])).rowCount,0);
+    const creditResults=await Promise.all([checkoutTransaction(tx(2,first),'Store Manager','CI Shop',undefined,undefined,creditRequest,terms),checkoutTransaction(tx(2,first),'Store Manager','CI Shop',undefined,undefined,creditRequest,terms)]);
+    assert.deepEqual(creditResults.map(r=>r.replayed).sort(),[false,true]);
+    const storedTerms=await pool.query('SELECT due_date::text AS day,evidence,recorded_by FROM ars_invoice_due_dates WHERE shop_id=$1 AND invoice_id=$2',[shopId,first]);
+    assert.deepEqual(storedTerms.rows,[{day:terms.dueDate,evidence:terms.evidence,recorded_by:terms.recordedBy}]);
+    await assert.rejects(checkoutTransaction(tx(2,first),'Store Manager','CI Shop',undefined,undefined,{...creditRequest,fingerprint:'changed'},terms),/identifier already used/);
     const stock = await pool.query('SELECT quantity, variants_json FROM products WHERE id = $1', [productId]);
     assert.equal(Number(stock.rows[0].quantity), 8);
     assert.equal(stock.rows[0].variants_json[0].quantity, 8);
