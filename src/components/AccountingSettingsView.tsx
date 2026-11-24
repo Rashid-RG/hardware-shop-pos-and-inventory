@@ -1,3 +1,4 @@
+import RepresentativeAccountsPanel from './RepresentativeAccountsPanel';
 import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
@@ -413,6 +414,7 @@ export default function AccountingSettingsView({
       {/* RENDER TAB 1: FINANCIAL LEDGER */}
       {activeTab === 'accounting' && (
         <div className="space-y-6">
+          {isManager && <RepresentativeAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
           {isManager && <FinancialAccountsPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
           {isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
           {isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
