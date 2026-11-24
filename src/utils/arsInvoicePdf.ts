@@ -46,7 +46,7 @@ export const renderArsInvoicePdf = async (
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
   const left = 26, right = 569, width = right - left;
-  const navy = '#094785', pale = '#e5eff8', ink = '#121b26', rule = '#a6b9c9';
+  const ink = '#000000', rule = '#000000';
   type Align = 'left' | 'center' | 'right';
   const text = (value: string, x: number, y: number, w: number, size = 10,
     bold = false, align: Align = 'left', color = ink) => {
@@ -55,15 +55,15 @@ export const renderArsInvoicePdf = async (
   };
   const line = (x: number, y: number, x2: number, y2: number) =>
     doc.moveTo(x, y).lineTo(x2, y2).lineWidth(0.6).strokeColor(rule).stroke();
-  const fill = (x: number, y: number, w: number, h: number, color: string) =>
-    doc.roundedRect(x, y, w, h, 4).fill(color);
+  const outline = (x: number, y: number, w: number, h: number) =>
+    doc.roundedRect(x, y, w, h, 4).lineWidth(0.8).strokeColor(rule).stroke();
   const field = (name: string, value: string, x: number, y: number, key: number, w: number) => {
     text(name, x, y, key, 9);
     text(':', x + key, y, 8, 9);
     text(value, x + key + 12, y, w - key - 12, 9, false);
   };
   const sectionIcon = (kind: 'person' | 'calendar' | 'note', x: number, y: number) => {
-    doc.save().translate(x, y).lineWidth(1.2).strokeColor(navy).fillColor(navy);
+    doc.save().translate(x, y).lineWidth(1.2).strokeColor(ink).fillColor(ink);
     if (kind === 'person') {
       doc.circle(6, 3, 2.7).fill();
       doc.roundedRect(0, 7, 12, 5, 2).fill();
@@ -90,20 +90,20 @@ export const renderArsInvoicePdf = async (
       .text(contact?.address || '', 85, 42, { width: 213, height: 28, ellipsis: true });
     text([contact?.phone, company?.supportEmail || contact?.email].filter(Boolean).join('   |   '), 85, 72, 216, 7.8);
     line(306, 16, 306, 106);
-    fill(318, 16, 251, 22, navy);
+    outline(318, 16, 251, 22);
     const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
-    text(title + (continued ? '  (CONTINUED)' : ''), 318, 20, 251, 12, true, 'center', '#ffffff');
+    text(title + (continued ? '  (CONTINUED)' : ''), 318, 20, 251, 12, true, 'center', ink);
     field('Invoice No', tx.invoiceNumber, 324, 46, 52, 245);
     field('Issued At', new Date(tx.date).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }), 324, 61, 52, 245);
     field('Payment', safe(tx.paymentMethod), 324, 76, 52, 245);
     field('Currency', 'LKR (Rs.)', 324, 91, 52, 245);
     line(left, 116, right, 116);
-    fill(left, 131, 264, 21, pale);
-    fill(304, 131, 265, 21, pale);
+    outline(left, 131, 264, 21);
+    outline(304, 131, 265, 21);
     sectionIcon('person', left + 8, 135);
-    text('Customer Details', left + 27, 135, 240, 12, true, 'left', navy);
+    text('Customer Details', left + 27, 135, 240, 12, true, 'left', ink);
     sectionIcon('calendar', 313, 135);
-    text('Invoice Details', 331, 135, 245, 12, true, 'left', navy);
+    text('Invoice Details', 331, 135, 245, 12, true, 'left', ink);
     line(297, 131, 297, 223);
     field('Customer', safe(tx.customerName, 'Walk-in Customer'), 36, 163, 48, 249);
     field('Address', safe(tx.customerAddress), 36, 184, 48, 249);
@@ -118,8 +118,8 @@ export const renderArsInvoicePdf = async (
   const alignments: Align[] = ['center', 'left', 'left', 'left', 'center', 'center', 'right', 'right', 'right'];
   const tableStart = (continued: boolean) => {
     header(continued);
-    fill(left, 239, width, 22, navy);
-    headings.forEach((name, i) => text(name, cols[i] + 4, 246, cols[i+1] - cols[i] - 8, 7.6, true, alignments[i], '#ffffff'));
+    outline(left, 239, width, 22);
+    headings.forEach((name, i) => text(name, cols[i] + 4, 246, cols[i+1] - cols[i] - 8, 8.5, true, alignments[i], ink));
     return 261;
   };
   const footerY = 768;
@@ -135,7 +135,6 @@ export const renderArsInvoicePdf = async (
       .heightOfString(value, { width: cols[i+1] - cols[i] - 8 }));
     const height = Math.max(23, Math.ceil(Math.max(...heights)) + 8);
     if (y + height > footerY - 8) { doc.addPage(); y = tableStart(true); }
-    if (index % 2) doc.rect(left, y, width, height).fill('#f5f8fb');
     values.forEach((value, i) => {
       doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4).fillColor(ink)
         .text(value, cols[i]+4, y+4, { width: cols[i+1]-cols[i]-8, align: alignments[i] });
@@ -147,12 +146,12 @@ export const renderArsInvoicePdf = async (
   });
   if (y + summaryHeight > footerY) { doc.addPage(); header(true); y = 239; }
   const top = y + 16;
-  fill(left, top, 264, 102, pale);
-  fill(left, top, 264, 24, '#d8eafb');
+  outline(left, top, 264, 102);
+  line(left, top + 24, left + 264, top + 24);
   sectionIcon('note', 35, top+5);
-  text('Notes', 54, top + 6, 225, 12, true, 'left', navy);
-  doc.rect(36, top+37, 4, 4).fill('#1875cc');
-  doc.rect(36, top+80, 4, 4).fill('#1875cc');
+  text('Notes', 54, top + 6, 225, 12, true, 'left', ink);
+  doc.rect(36, top+37, 4, 4).fill(ink);
+  doc.rect(36, top+80, 4, 4).fill(ink);
   doc.font('Helvetica').fontSize(10).fillColor(ink).text('Goods once sold will be exchanged only with original invoice and management approval.', 48, top+35, {width:232});
   text('Thank you for your business.', 48, top+78, 232);
   const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
@@ -169,13 +168,13 @@ export const renderArsInvoicePdf = async (
       : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)], ['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, tx.total - knownPaid))]]),
   ];
   doc.roundedRect(304, top, 265, 70, 4).lineWidth(0.6).strokeColor(rule).stroke();
-  fill(304, top+73, 265, 31, pale);
+  outline(304, top+73, 265, 31);
   summary.forEach(([name, amount], i) => {
     const yy = top + [4, 20, 36, 52, 76, 91][i];
-    if (i === 3) fill(304, yy-2, 265, 20, navy);
-    const color = i === 3 ? '#ffffff' : ink, size = i === 3 ? 13 : 10;
-    text(name, 314, yy, 124, size, i >= 3, 'left', color);
-    text(amount, 439, yy, 120, size, true, 'right', color);
+    if (i === 3) outline(304, yy-2, 265, 20);
+    const size = i === 3 ? 13 : 10;
+    text(name, 314, yy, 124, size, i >= 3, 'left', ink);
+    text(amount, 439, yy, 120, size, true, 'right', ink);
   });
   const signatureY = footerY - 64;
   ['Prepared By', 'Received By', 'Authorized By'].forEach((title, i) => {
@@ -195,10 +194,10 @@ export const renderArsInvoicePdf = async (
     text(`Page ${page+1} of ${range.count}`, left, footerY+44, 110, 7);
     line(400, footerY+8, 400, footerY+50);
     text('Powered by', 411, footerY+6, 158, 8, false, 'right');
-    doc.font('Helvetica-BoldOblique').fontSize(16).fillColor(navy)
+    doc.font('Helvetica-BoldOblique').fontSize(16).fillColor(ink)
       .text(invoiceFooter.credit.replace(/^Powered by /, ''), 411, footerY+18, {width:158,align:'right',lineBreak:false});
     doc.moveTo(right-67, footerY+38).quadraticCurveTo(right-37, footerY+30, right, footerY+34)
-      .quadraticCurveTo(right-35, footerY+32, right-67, footerY+39).fill('#ee9115');
+      .quadraticCurveTo(right-35, footerY+32, right-67, footerY+39).fill(ink);
     text('Smart systems for business.', 411, footerY+43, 158, 9, false, 'right');
   }
   doc.end();
