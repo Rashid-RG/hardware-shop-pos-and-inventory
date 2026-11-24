@@ -5926,11 +5926,21 @@ app.get('/api/customer-credit-payments', (_req, res) => {
 });
 
 app.get('/api/customer-credit-payments/:id/pdf', requireRole(['Super Admin','Store Manager','Cashier']), async(req,res)=>{
+  const scope=chequeShopAccess(req),auth=(req as AppRequest).authUser;
+  if(!scope||!auth)return res.status(403).json({error:'Payment receipt access denied.'});
   const {activeShopId,activeShopName}=getActiveShopContext(db,req);
   const payment=db.customerCreditPayments.find(p=>p.id===req.params.id&&p.shopId===activeShopId);
   if(!payment)return res.status(404).json({error:'Payment not found in this shop.'});
   const profile=(db.settings.shopProfiles||[]).find(s=>s.id===activeShopId);
   try{
+    if(auth.role==='Cashier'){
+      const user=db.users.find(u=>u.email.toLowerCase()===auth.email.toLowerCase());
+      if(!user||!eligibleRepresentativeLogin(user,scope.shopId))return res.status(403).json({error:'Payment receipt access denied.'});
+      const identity=await resolveRepresentativeFinancialIdentity(pool,scope.shopId,user.id);
+      if(!identity)return res.status(403).json({error:'Payment receipt access denied.'});
+      const owned=await pool.query("SELECT 1 FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2 AND movement_kind='Customer Collection' AND source_id=$3 AND recorded_by=$4",[scope.shopId,identity.accountId,payment.id,user.id]);
+      if(!owned.rowCount)return res.status(403).json({error:'Only your own recorded collection receipts are available.'});
+    }
     const pdf=await renderArsPaymentReceiptPdf(payment,activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
     res.setHeader('Cache-Control','no-store');
     res.setHeader('Content-Type','application/pdf');
