@@ -190,6 +190,9 @@ export interface PurchaseOrder {
     productId: string;
     productName: string;
     variantId?: string;
+    sellingUnitId?: string;
+    sellingUnitLabel?: string;
+    baseUnitsPerPurchaseUnit?: number;
     quantity: number;
     costPrice: number;
   }[];
