@@ -32,6 +32,16 @@ def select_version():
     result=dialog("--list","--column=Staged version","--width=420","--height=300",*versions)
     return result.stdout.strip() if result.returncode==0 and result.stdout.strip() in versions else None
 
+def select_recovery():
+    root=STATE/"update-recovery"
+    folders=sorted(p.name for p in root.iterdir() if p.is_dir() and not p.is_symlink() and (p/"recovery.json").is_file()) if root.is_dir() else []
+    if not folders:
+        notice("No recovery archives available.")
+        return None
+    result=dialog("--list","--column=Recovery archive","--width=820","--height=350",*folders)
+    name=result.stdout.strip()
+    return root/name if result.returncode==0 and name in folders else None
+
 def execute(project,script,*args):
     logs=STATE/"update-logs"
     logs.mkdir(mode=0o700,exist_ok=True)
@@ -64,7 +74,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -82,6 +92,19 @@ def main():
                 version=select_version()
                 if version and dialog("--question","--no-markup","--text=Create a verified recovery backup without stopping the POS? This is not approval to install an update.").returncode==0:
                     execute(project,"prepare-update-backup.py",version)
+            elif action in ("Test isolated database restoration","Test software compatibility","View activation readiness"):
+                folder=select_recovery()
+                if folder:
+                    if action=="View activation readiness":
+                        result=subprocess.run(["python3",str(project/"scripts/mint/update-switch-plan.py"),str(folder)],cwd=project,capture_output=True,text=True)
+                        if result.returncode==0:
+                            plan=json.loads(result.stdout[result.stdout.index("{"):])
+                            notice("Installation remains disabled.\n\n"+"\n".join(plan.get("blockers",[])))
+                        else:
+                            notice("Readiness verification unsuccessful. Complete recovery and compatibility checks first.",True)
+                    elif dialog("--question","--no-markup","--text=Run an isolated recovery test? This may use considerable memory and disk space. The live database will not be restored or replaced.").returncode==0:
+                        extra=["--compatibility"] if action=="Test software compatibility" else []
+                        execute(project,"test-update-restore.py",str(folder),*extra)
             elif action=="Open local recovery archive folder":
                 folder=STATE/"update-recovery"
                 if folder.is_dir() and not folder.is_symlink():
