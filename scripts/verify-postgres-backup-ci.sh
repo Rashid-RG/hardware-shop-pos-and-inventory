@@ -62,6 +62,7 @@ ars_tables=(
   ars_receipt_batches ars_receipt_batch_items
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
+  ars_customer_cheques ars_customer_cheque_events ars_financial_reconciliations
   ars_legacy_sale_return_units
   ars_partner_profit_allocations ars_partner_profit_shares
 )
