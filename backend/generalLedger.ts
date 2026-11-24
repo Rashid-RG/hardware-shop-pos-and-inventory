@@ -253,6 +253,28 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_import_settlement_obligation ON ars_gl_import_settlements(shop_id,obligation_id);
  CREATE INDEX IF NOT EXISTS ars_gl_import_obligation_approval ON ars_gl_import_obligations(shop_id,approval_id,charge_kind);
+ CREATE TABLE IF NOT EXISTS ars_gl_purchase_returns(
+ shop_id TEXT NOT NULL,id TEXT NOT NULL,purchase_order_id TEXT NOT NULL,
+ return_date DATE NOT NULL,reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 1 AND 500),
+ evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+ recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(shop_id,id)
+ );
+ CREATE TABLE IF NOT EXISTS ars_gl_purchase_return_lines(
+ shop_id TEXT NOT NULL,return_id TEXT NOT NULL,purchase_order_item_id BIGINT NOT NULL,
+ base_quantity BIGINT NOT NULL CHECK(base_quantity>0),
+ inventory_cost NUMERIC(16,2) NOT NULL CHECK(inventory_cost>0),
+ supplier_credit NUMERIC(16,2) NOT NULL CHECK(supplier_credit>0),
+ PRIMARY KEY(shop_id,return_id,purchase_order_item_id),
+ FOREIGN KEY(shop_id,return_id) REFERENCES ars_gl_purchase_returns(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_purchase_return_immutable ON ars_gl_purchase_returns;
+ CREATE TRIGGER ars_gl_purchase_return_immutable BEFORE UPDATE OR DELETE ON ars_gl_purchase_returns
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ DROP TRIGGER IF EXISTS ars_gl_purchase_return_line_immutable ON ars_gl_purchase_return_lines;
+ CREATE TRIGGER ars_gl_purchase_return_line_immutable BEFORE UPDATE OR DELETE ON ars_gl_purchase_return_lines
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_purchase_return_order ON ars_gl_purchase_returns(shop_id,purchase_order_id);
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
