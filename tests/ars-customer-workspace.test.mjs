@@ -63,7 +63,7 @@ test('customer directory and customer file export complete filtered results', ()
   assert.match(customer, /rows:historyRows\.map/);
   assert.match(customer, /report=\{customerDirectoryReport\}/);
   assert.match(customer, /report=\{customerStatementReport\}/);
-  assert.match(menu, /saveReportCsv\(data\)/);
+  assert.match(menu, /saveReportCsv\(data,\s*settings\)/);
   assert.ok(engine.includes('...report.rows'));
   assert.ok(engine.includes('[=+@-]'));
   assert.ok(engine.includes('.replace(/"/g,\'""\')'));
