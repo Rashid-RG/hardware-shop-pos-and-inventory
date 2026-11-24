@@ -60,6 +60,7 @@ export default function App() {
   const [setupError, setSetupError] = useState('');
   const [setupStatus, setSetupStatus] = useState('');
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [resetCurrentPassword, setResetCurrentPassword] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
@@ -867,6 +868,7 @@ export default function App() {
           >
             Change Password
           </button>
+          <button type="button" onClick={() => setIsForgotModalOpen(true)} className="w-full rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">Forgot Password?</button>
             </form>
             <div className="mt-3 border-t border-slate-100 pt-3 flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> Protected business access</span>
@@ -875,6 +877,20 @@ export default function App() {
           </div>
         </div>
 
+        {isForgotModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4" onKeyDown={e => { if (e.key === 'Escape') setIsForgotModalOpen(false); }}>
+            <section role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" className="w-full max-w-md rounded-2xl bg-white p-6 text-slate-800 shadow-2xl">
+              <h3 id="forgot-password-title" className="text-xl font-bold">Recover your account</h3>
+              <p className="mt-2 text-sm text-slate-600">Choose the recovery method for your account. Your business records remain intact.</p>
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="rounded-xl border p-3"><h4 className="font-bold">Staff account</h4><p className="mt-1">Contact your authorized System Administrator. They can reset your password in System Administration → User Management.</p></div>
+                <div className="rounded-xl border p-3"><h4 className="font-bold">Owner or System Administrator</h4><p className="mt-1">For a local installation, use the protected local administrator recovery procedure on the host computer after verifying a backup. For hosted installations, contact the authorized system operator.</p></div>
+                <p className="text-xs text-slate-500">Email verification is not configured in this release. Never share your password or database credentials.</p>
+              </div>
+              <button autoFocus type="button" onClick={() => setIsForgotModalOpen(false)} className="mt-5 w-full rounded-xl bg-[#182a45] px-4 py-3 text-sm font-bold text-white">Back to Sign In</button>
+            </section>
+          </div>
+        )}
         {isResetModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4">
             <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
