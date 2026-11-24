@@ -1001,10 +1001,12 @@ export const updateProductWithAudit = async (
   try {
     await client.query('BEGIN');
     const locked = await client.query(
-      'SELECT quantity, variants_json FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      'SELECT quantity, variants_json, shared_stock_units FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
       [product.id, product.shopId]
     );
     if (!locked.rowCount) throw new Error('Product not found in this shop.');
+    if (locked.rows[0].shared_stock_units && variants.length) throw new Error('Shared-stock products cannot have independent variants.');
+    if (Boolean(locked.rows[0].shared_stock_units) !== Boolean(product.sharedStockUnits)) throw new Error('Product packaging mode changed. Reload before editing.');
     const previousQty = Number(locked.rows[0].quantity);
     if (previousQty !== expectedQuantity) {
       throw new Error('Product stock changed since it was opened. Reload before editing.');
