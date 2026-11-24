@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory=$true)][string]$BackupFile,
   [string]$Container = 'hardware-pos-postgres',
   [string]$DbUser = 'postgres',
-  [string]$TargetDatabase = ''
+  [string]$TargetDatabase = '',
+  [string]$Confirmation = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -30,7 +31,7 @@ if ($TargetDatabase -notmatch '^ars_restore_test_[a-zA-Z0-9_]+$' -or $TargetData
 }
 if ($TargetDatabase -eq $activeDb) { throw 'Never restore over the active ARS database.' }
 if ($TargetDatabase -eq 'postgres' -or $TargetDatabase -eq 'template1' -or $TargetDatabase -eq 'template0') { throw 'Cannot restore into a PostgreSQL system database.' }
-$confirm = Read-Host "Restore into a NEW database '$TargetDatabase' (active database '$activeDb' will not be touched)? Type RESTORE TEST"
+$confirm = if ($Confirmation) { $Confirmation } else { Read-Host "Restore into a NEW database '$TargetDatabase' (active database '$activeDb' will not be touched)? Type RESTORE TEST" }
 if ($confirm -cne 'RESTORE TEST') { throw 'Restore cancelled.' }
 
 docker info *> $null
