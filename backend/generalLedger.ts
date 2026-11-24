@@ -229,6 +229,16 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_import_review_immutable ON ars_gl_import_obligation_reviews;
  CREATE TRIGGER ars_gl_import_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_import_obligation_reviews
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_import_receipt_allocations(
+ shop_id TEXT NOT NULL,obligation_id TEXT NOT NULL,batch_id TEXT NOT NULL,
+ journal_id TEXT NOT NULL,amount NUMERIC(16,2) NOT NULL CHECK(amount>0),
+ PRIMARY KEY(shop_id,obligation_id,batch_id),
+ FOREIGN KEY(shop_id,obligation_id) REFERENCES ars_gl_import_obligations(shop_id,id),
+ FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_import_receipt_allocation_immutable ON ars_gl_import_receipt_allocations;
+ CREATE TRIGGER ars_gl_import_receipt_allocation_immutable BEFORE UPDATE OR DELETE ON ars_gl_import_receipt_allocations
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_import_obligation_approval ON ars_gl_import_obligations(shop_id,approval_id,charge_kind);
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
