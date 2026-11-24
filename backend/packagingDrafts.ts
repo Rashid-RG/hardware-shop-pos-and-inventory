@@ -147,7 +147,7 @@ export async function updatePackagingPrices(pool: Pool, shopId: string, productI
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
-/** Conservative conversion of stocked SKUs with explicitly reconciled invoice history and no PO or quotation history.
+/** Conservative conversion of stocked SKUs with reconciled invoice history, terminal purchase orders and no quotation history.
  * Existing stock logs are preserved; the unit boundary is recorded in the audit.
  * No conversion of independently stocked variants or historical financial records.
  */
@@ -168,7 +168,14 @@ export async function convertLegacyPackaging(pool: Pool, shopId: string, product
       FROM products p WHERE p.id=$1 AND p.shop_id=$2 FOR UPDATE OF p`,[productId,shopId]);
     const p=result.rows[0];
     if(!p || p.status==='Inactive'||p.shared_stock_units||p.variants_json?.length)throw Error('Product is not eligible for legacy conversion.');
-    if(p.has_purchases||p.has_quotes)throw Error('Historical purchases or quotations require a separate reconciliation workflow.');
+    // Query again after acquiring the product lock: a concurrent PO may have
+    // committed while we waited. Only terminal orders are safe to leave untouched.
+    const orders=await client.query(`SELECT DISTINCT o.id,o.po_number,o.status,o.shop_id
+      FROM purchase_order_items i JOIN purchase_orders o ON o.id=i.purchase_order_id
+      WHERE i.product_id=$1 ORDER BY o.id`,[productId]);
+    if(orders.rows.some(o=>o.shop_id!==shopId || !['Received','Cancelled'].includes(o.status)))
+      throw Error('Complete or cancel outstanding purchase orders before converting stock. Partially received orders must be reconciled first.');
+    if(p.has_quotes)throw Error('Historical quotations require a separate reconciliation workflow.');
     if(Number(p.wholesale_price||0)!==0||Number(p.dealer_price||0)!==0)throw Error('Reconcile existing wholesale and dealer price tiers before conversion.');
     const snapshot={quantity:Number(p.quantity),reorderLevel:Number(p.reorder_level),costPrice:Number(p.cost_price),sellingPrice:Number(p.selling_price)};
     if(Object.entries(snapshot).some(([key,value])=>expected[key]!==value))throw Error('Product stock or prices changed. Reload before conversion.');
@@ -195,7 +202,7 @@ export async function convertLegacyPackaging(pool: Pool, shopId: string, product
     const base=config.units.find(u=>u.baseUnits===1)!;
     if(base.sellingPrice>9999999999.99 || Math.abs(base.sellingPrice*100-Math.round(base.sellingPrice*100))>0.00001)throw Error('Base selling price exceeds currency precision.');
     await client.query('UPDATE products SET quantity=$1,reorder_level=$2,cost_price=$3,selling_price=$4,shared_stock_units=$5::jsonb,updated_at=NOW() WHERE id=$6 AND shop_id=$7',[preview.newQuantity,preview.newReorderLevel,preview.newCostPrice,base.sellingPrice,JSON.stringify(config),productId,shopId]);
-    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Converted Legacy Packaging',$5)`,['packaging-convert-'+randomUUID(),shopId,actor,role,JSON.stringify({productId,...preview,configuration:config})]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Converted Legacy Packaging',$5)`,['packaging-convert-'+randomUUID(),shopId,actor,role,JSON.stringify({productId,...preview,configuration:config,closedPurchaseOrders:orders.rows.map(o=>({id:o.id,status:o.status}))})]);
     await client.query('COMMIT');
     return preview;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
