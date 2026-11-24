@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from release_fingerprint import fingerprint
 
 STATE=Path.home()/".local/share/ars-hardware"
 
@@ -41,8 +42,9 @@ def plan(folder):
     manifest=json.loads((staged/".ars-release-manifest.json").read_text())
     if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
         raise ValueError("Manifest mismatch.")
+    if receipt.get('buildFingerprint')!=fingerprint(staged):
+        raise ValueError('Exact staged build differs from compatibility-tested files. Repeat compatibility test.')
     blockers=[
-        "Bind compatibility receipt to the exact verified staged build and dependency tree.",
         "Move runtime configuration, uploads and backups to stable storage independent of release folders.",
         "Verify old application compatibility with the migrated schema.",
         "Suspend writes and take a fresh verified recovery snapshot.",
