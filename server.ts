@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6092,6 +6092,23 @@ app.post('/api/financial-reconciliations',requireRole(['Super Admin','Store Mana
     const message=error instanceof Error?error.message:'';
     if(['Invalid reconciliation details.','Reconciliation request identifier already used for different details.','New reconciliations must use the current business date.','Select an active cash or bank account in this shop.','Counted cash cannot be negative.','Explain the discrepancy before saving.'].includes(message))return res.status(409).json({error:message});
     console.error('Financial reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request identifier.'});
+  }
+});
+
+
+app.get('/api/financial-accounts/:id/statement',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Financial shop access denied.'});
+  const {fromDate,toDate,offset='0',limit='100'}=req.query;
+  if(typeof fromDate!=='string'||typeof toDate!=='string'||typeof offset!=='string'||typeof limit!=='string'||!/^\d+$/.test(offset)||!/^\d+$/.test(limit))return res.status(400).json({error:'Invalid financial statement filters.'});
+  try{
+    const result=await listFinancialMovements(pool,{shopId:scope.shopId,accountId:String(req.params.id),fromDate,toDate,offset:Number(offset),limit:Number(limit)});
+    res.setHeader('Cache-Control','no-store');return res.json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(message==='Invalid financial statement filters.')return res.status(400).json({error:message});
+    if(message==='Financial account not found in this shop.')return res.status(404).json({error:message});
+    console.error('Financial statement read failed',error);return res.status(500).json({error:'Unable to load account statement.'});
   }
 });
 
