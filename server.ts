@@ -2,7 +2,7 @@ import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/r
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft, updatePackagingPrices, convertLegacyPackaging } from './backend/packagingDrafts';
+import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft, updatePackagingPrices, convertLegacyPackaging, listLegacyInvoiceLines } from './backend/packagingDrafts';
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
@@ -4329,6 +4329,14 @@ app.put('/api/products/:id/packaging-prices',requireRole(['Super Admin','Store M
     try{const fresh=await loadStateFromNormalized();if(!fresh)throw Error('Reload failed');db=fresh;}
     catch{databaseWriteHealthy=false;return res.status(503).json({error:'Price change committed but reload failed. Reconcile before retrying.'});}
     res.json({configuration,active:true});
+  }catch(error){res.status(409).json({error:(error as Error).message});}
+});
+app.get('/api/products/:id/packaging-history',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const {activeShopId}=getActiveShopContext(db,req);
+  try{
+    const product=await pool.query('SELECT id FROM products WHERE id=$1 AND shop_id=$2',[req.params.id,activeShopId]);
+    if(!product.rowCount)return res.status(404).json({error:'Product not found in this shop.'});
+    res.json({lines:await listLegacyInvoiceLines(pool,activeShopId,req.params.id)});
   }catch(error){res.status(409).json({error:(error as Error).message});}
 });
 app.post('/api/products/:id/packaging-convert',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
