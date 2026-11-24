@@ -335,6 +335,7 @@ export interface CashShift {
 
 export interface CustomerCreditPayment {
   id: string;
+  invoiceId?: string;
   shopId?: string;
   customerId: string;
   customerName: string;
