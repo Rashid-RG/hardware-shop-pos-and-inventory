@@ -55,6 +55,70 @@ export async function initGeneralLedger(db:Pool|PoolClient){
   FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id),
   FOREIGN KEY(shop_id,account_code) REFERENCES ars_gl_accounts(shop_id,code)
  );
+ -- Posting must remain disabled unless a shop has an explicitly approved cutover.
+ CREATE OR REPLACE FUNCTION ars_gl_require_cutover() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_cutover c
+   WHERE c.shop_id=NEW.shop_id AND c.posting_enabled AND NEW.posting_date>=c.cutover_date
+   FOR SHARE) THEN
+   RAISE EXCEPTION 'General ledger posting is disabled or predates cutover' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_cutover_guard ON ars_gl_journals;
+ CREATE TRIGGER ars_gl_cutover_guard BEFORE INSERT ON ars_gl_journals
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_require_cutover();
+
+ -- Entries are append-only. A correction must use a separate reversing journal.
+ CREATE OR REPLACE FUNCTION ars_gl_reject_mutation() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  RAISE EXCEPTION 'Posted journal records are immutable' USING ERRCODE='23514';
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_journal_immutable ON ars_gl_journals;
+ CREATE TRIGGER ars_gl_journal_immutable BEFORE UPDATE OR DELETE ON ars_gl_journals
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ DROP TRIGGER IF EXISTS ars_gl_line_immutable ON ars_gl_lines;
+ CREATE TRIGGER ars_gl_line_immutable BEFORE UPDATE OR DELETE ON ars_gl_lines
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+
+ -- All lines must be inserted in the same transaction as the journal header.
+ -- PostgreSQL transaction identity is checked against the header's xmin.
+ CREATE OR REPLACE FUNCTION ars_gl_guard_line() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_journals j
+   WHERE j.shop_id=NEW.shop_id AND j.id=NEW.journal_id
+    AND j.xmin::text=(pg_current_xact_id()::text::numeric % 4294967296)::text) THEN
+   RAISE EXCEPTION 'Lines can only be inserted while creating a journal' USING ERRCODE='23514';
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_accounts a WHERE a.shop_id=NEW.shop_id
+   AND a.code=NEW.account_code AND a.active FOR SHARE) THEN
+   RAISE EXCEPTION 'Active shop ledger account required' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_line_guard ON ars_gl_lines;
+ CREATE TRIGGER ars_gl_line_guard BEFORE INSERT ON ars_gl_lines
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_line();
+
+ -- Deferred until COMMIT, so a header and its lines can be written atomically.
+ CREATE OR REPLACE FUNCTION ars_gl_check_balance() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ DECLARE n bigint; d numeric; c numeric;
+ BEGIN
+  SELECT count(*),coalesce(sum(debit),0),coalesce(sum(credit),0)
+  INTO n,d,c FROM ars_gl_lines WHERE shop_id=NEW.shop_id AND journal_id=NEW.id;
+  IF n<2 OR n>500 OR d<=0 OR d<>c THEN
+   RAISE EXCEPTION 'Journal must contain 2 to 500 balanced lines' USING ERRCODE='23514';
+  END IF;
+  RETURN NULL;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_journal_balanced ON ars_gl_journals;
+ CREATE CONSTRAINT TRIGGER ars_gl_journal_balanced AFTER INSERT ON ars_gl_journals
+ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ars_gl_check_balance();
+
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
  `);
