@@ -16,8 +16,7 @@ const adminUrl = new URL(sourceUrl);
 adminUrl.pathname = '/postgres';
 const scratchUrl = new URL(sourceUrl);
 scratchUrl.pathname = '/' + dbName;
-const apiPort = 39388;
-const origin = 'http://127.0.0.1:' + apiPort;
+let origin = '';
 const email = 'ci-first-owner@example.invalid';
 const password = 'CI-FirstOwner-Strong-31#';
 const admin = new Client({ connectionString: adminUrl.href });
@@ -35,7 +34,7 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
         DATABASE_URL: scratchUrl.href,
         NODE_ENV: 'production',
         JWT_SECRET: 'ci-bootstrap-key-8c4b2e78d19f3a6c5e7f01b0a4d39567',
-        PORT: String(apiPort),
+        PORT: '0', ARS_LISTEN_HOST: '127.0.0.1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -45,6 +44,9 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
     let started = false;
     for (let i = 0; i < 120; i++) {
       if (child.exitCode != null) break;
+      const bound = output.match(/Server fully functional on http:\/\/127\.0\.0\.1:(\d+)/);
+      if (!bound) { await sleep(300); continue; }
+      origin = 'http://127.0.0.1:' + bound[1];
       try {
         const response = await fetch(origin + '/api/health', { signal: AbortSignal.timeout(500) });
         if (response.ok) { started = true; break; }
