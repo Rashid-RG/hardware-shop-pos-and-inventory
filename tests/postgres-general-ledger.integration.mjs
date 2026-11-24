@@ -169,3 +169,70 @@ test('paid import charges capitalize once without a second cash payment',()=>{
  assert.equal(domestic.length,2);
  assert.equal(validateJournal(domestic).totalCents,'100000');
 });
+
+import {allocateImportChargeFunding,buildImportLiabilityReceiptJournal,verifiedImportChargeFunding,recordImportReceiptAllocations} from '../backend/importCapitalization.ts';
+import {settleImportCreditor} from '../backend/importSettlements.ts';
+test('mixed import funding records separate creditor liability and avoids duplicate expenses',()=>{
+ const i={goods:100000n,landed:130000n,rounding:-1n,fundedRemaining:10000n,approvedUnpaidRemaining:20000n,goodsCredits:[{accountCode:'2000',debit:'0.00',credit:'1000.00'}],inventoryAccount:'1300',expenseAccount:'5100',roundingAccount:'5050',importPayableAccount:'2050'};
+ assert.deepEqual(allocateImportChargeFunding({charges:30000n,fundedRemaining:10000n,approvedUnpaidRemaining:20000n}),{paid:10000n,unpaid:20000n});
+ const lines=buildImportLiabilityReceiptJournal(i);
+ assert.deepEqual(lines,[{accountCode:'1300',debit:'1299.99',credit:'0.00'},{accountCode:'2000',debit:'0.00',credit:'1000.00'},{accountCode:'5100',debit:'0.00',credit:'100.00'},{accountCode:'2050',debit:'0.00',credit:'200.00'},{accountCode:'5050',debit:'0.01',credit:'0.00'}]);
+ assert.equal(validateJournal(lines).totalCents,'130000');
+ assert.throws(()=>buildImportLiabilityReceiptJournal({...i,approvedUnpaidRemaining:19999n}));
+ assert.throws(()=>buildImportLiabilityReceiptJournal({...i,importPayableAccount:'2000'}));
+});
+test('PostgreSQL import creditor funding, partial allocation and settlement lifecycle',{timeout:60000},async()=>{
+ const db=new pg.Client({connectionString:url.toString()}),schema='import_ci_'+randomUUID().replaceAll('-','');
+ await db.connect();const shop='shop-a',day='2026-01-01';
+ // A single connection adapter keeps settlement calls inside the isolated schema.
+ const pool={connect:async()=>({query:db.query.bind(db),release:()=>{}})};
+ try{
+ await db.query('CREATE SCHEMA '+schema);await db.query('SET search_path TO '+schema);await initGeneralLedger(db);
+ await db.query(`CREATE TABLE ars_landed_cost_approvals(id text PRIMARY KEY,shop_id text,purchase_order_id text,charges_total numeric(16,2),snapshot jsonb);
+ CREATE TABLE ars_import_expense_links(shop_id text,approval_id text,charge_kind text,amount numeric(16,2),expense_id text);
+ CREATE TABLE ars_receipt_batches(id text PRIMARY KEY,shop_id text,purchase_order_id text);
+ CREATE TABLE ars_financial_accounts(id text PRIMARY KEY,shop_id text,kind text,active boolean);
+ CREATE TABLE ars_financial_movements(id text PRIMARY KEY,shop_id text,account_id text,amount numeric(16,2),movement_kind text,source_id text,recorded_by text,effective_date date,note text);
+ INSERT INTO ars_landed_cost_approvals VALUES('approval','shop-a','po',300,'{"freightLkr":100,"customsLkr":200,"clearanceLkr":0}');
+ INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES('shop-a','1000','Bank','Asset'),('shop-a','1300','Inventory','Asset'),('shop-a','2000','Supplier','Liability'),('shop-a','2050','Import creditor','Liability'),('shop-a','5100','Expense','Expense');
+ INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES('shop-a','importPayables','control','2050','CI','CI'),('shop-a','financialAccount','bank','1000','CI','CI');
+ INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES('shop-a','2026-01-01','CI','CI',true);
+ INSERT INTO ars_financial_accounts VALUES('bank','shop-a','Bank',true);
+ INSERT INTO ars_financial_movements VALUES('opening','shop-a','bank',500,'Opening Balance','opening','CI','2026-01-01','CI');
+ INSERT INTO ars_gl_import_obligations(shop_id,id,approval_id,charge_kind,creditor_name,document_reference,amount,due_date,evidence,submitted_by) VALUES('shop-a','creditor','approval','Customs','Customs','INV-1',200,'2026-01-10','CI','submitter');
+ INSERT INTO ars_gl_import_obligation_reviews(shop_id,obligation_id,decision,evidence,reviewed_by) VALUES('shop-a','creditor','Approved','CI','reviewer');`);
+ const journal=(id,kind,source,lines)=>postJournal(db,{id,shopId:shop,postingDate:day,sourceKind:kind,sourceId:source,description:'CI',actor:'CI',lines});
+ await db.query('BEGIN');
+ await journal('expense','Expense','expense',[{accountCode:'5100',debit:'100.00',credit:'0.00'},{accountCode:'1000',debit:'0.00',credit:'100.00'}]);
+ await db.query("INSERT INTO ars_import_expense_links VALUES('shop-a','approval','Freight',100,'expense')");
+ await db.query('COMMIT');
+ const settle={shopId:shop,id:'payment-1',obligationId:'creditor',accountId:'bank',amount:'50.00',date:day,evidence:'CI',actor:'CI'};
+ await assert.rejects(()=>settleImportCreditor(pool,settle),/exceeds recognized/);
+ async function receipt(id,charges,commit=true){
+ await db.query('BEGIN');
+ await db.query('INSERT INTO ars_receipt_batches VALUES($1,$2,$3)',[id,shop,'po']);
+ const f=await verifiedImportChargeFunding(db,shop,'po','5100');
+ const a=allocateImportChargeFunding({charges,fundedRemaining:f.fundedRemaining,approvedUnpaidRemaining:f.approvedUnpaidRemaining});
+ const lines=buildImportLiabilityReceiptJournal({goods:100000n,landed:100000n+charges,rounding:0n,...f,goodsCredits:[{accountCode:'2000',debit:'0.00',credit:'1000.00'}],inventoryAccount:'1300',expenseAccount:'5100',roundingAccount:'',importPayableAccount:'2050'});
+ const j=await journal('receipt:'+id,'ReceiptBatch',id,lines);
+ await recordImportReceiptAllocations(db,shop,id,j.id,a.unpaid,f.available);
+ await db.query(commit?'COMMIT':'ROLLBACK');
+ }
+ await receipt('r1',15000n);
+ assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).approvedUnpaidRemaining,15000n);
+ await receipt('r2',15000n,false);
+ assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).approvedUnpaidRemaining,15000n);
+ await receipt('r2',15000n);
+ assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).approvedUnpaidRemaining,0n);
+ assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).fundedRemaining,0n);
+ assert.equal((await settleImportCreditor(pool,settle)).replayed,false);
+ assert.equal((await settleImportCreditor(pool,settle)).replayed,true);
+ await assert.rejects(()=>settleImportCreditor(pool,{...settle,amount:'51.00'}),/identifier already used/);
+ await assert.rejects(()=>settleImportCreditor(pool,{...settle,id:'over',amount:'150.01'}),/exceeds recognized/);
+ await settleImportCreditor(pool,{...settle,id:'payment-2',amount:'150.00'});
+ const totals=(await db.query("SELECT sum(amount)::text AS paid,count(*)::int AS n FROM ars_gl_import_settlements")).rows[0];
+ assert.deepEqual(totals,{paid:'200.00',n:2});
+ assert.equal((await db.query("SELECT sum(credit-debit)::text AS balance FROM ars_gl_lines WHERE account_code='2050'")).rows[0].balance,'0.00');
+ assert.equal((await db.query("SELECT sum(amount)::text AS balance FROM ars_financial_movements")).rows[0].balance,'300.00');
+ }finally{await db.query('ROLLBACK').catch(()=>{});await db.query('SET search_path TO public');await db.query('DROP SCHEMA '+schema+' CASCADE');await db.end();}
+});
