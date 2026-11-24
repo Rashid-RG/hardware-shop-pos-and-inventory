@@ -4,6 +4,7 @@ import { initReceivableAging } from './receivableAging';
 import { initPayableAging } from './payableAging';
 import { initPositionRegisters } from './positionRegisters';
 import { initGeneralLedger } from './generalLedger';
+import { postInvoiceJournal } from './salesPosting';
 import { baseQuantity } from '../src/utils/unitConversion';
 import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
 import { getLegacyReturnFactor } from './packagingDrafts';
@@ -1857,6 +1858,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         [tx.id,quotationId,tx.shopId]);
       if(converted.rowCount!==1)throw new Error('Quotation was already converted.');
     }
+    // Accounting is inactive by default. If a cutover is ever enabled, journal failures roll back the entire invoice.
+    if(tx.shopId)await postInvoiceJournal(client,tx.shopId,tx.id,request?.actor||financialPayment?.recordedBy||'');
     if(request)await client.query('INSERT INTO ars_invoice_requests(id,shop_id,actor,fingerprint) VALUES($1,$2,$3,$4)',[tx.id,tx.shopId,request.actor,request.fingerprint]);
     await client.query('COMMIT');return {replayed:false};
   } catch (error) {
