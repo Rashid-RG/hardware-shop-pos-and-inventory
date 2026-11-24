@@ -58,7 +58,7 @@ done
 # Additional ARS ledgers use some composite primary keys instead of an id column.
 # Compare full sorted JSON rows for every ARS table present in the source DB.
 ars_tables=(
-  ars_import_shipments ars_landed_cost_approvals ars_business_partners ars_partner_capital_entries
+  ars_import_shipments ars_landed_cost_approvals ars_import_expense_links ars_business_partners ars_partner_capital_entries
   ars_receipt_batches ars_receipt_batch_items ars_receipt_cost_entries
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
@@ -100,5 +100,15 @@ for database in hardware_pos_ci hardware_pos_restore_ci; do
       HAVING COUNT(*)>=2 AND SUM(c.received_cost)=a.landed_total
     ) THEN 'landed-cost-fixtures-present' ELSE 'missing' END" | grep -qx 'landed-cost-fixtures-present'
   echo "Landed-cost restoration fixtures verified: $database"
+done
+for database in hardware_pos_ci hardware_pos_restore_ci; do
+  pg psql -h 127.0.0.1 -U postgres -d "$database" -v ON_ERROR_STOP=1 -Atc "
+    SELECT CASE WHEN EXISTS(
+      SELECT 1 FROM ars_import_expense_links l JOIN manual_expenses e ON e.id=l.expense_id AND e.shop_id=l.shop_id
+      JOIN ars_financial_movements m ON m.shop_id=l.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' AND m.amount=-l.amount
+      JOIN ars_landed_cost_approvals a ON a.id=l.approval_id AND a.shop_id=l.shop_id
+      WHERE e.amount=l.amount GROUP BY a.id HAVING COUNT(*)>=2
+    ) THEN 'import-expense-fixtures-present' ELSE 'missing' END" | grep -qx 'import-expense-fixtures-present'
+  echo "Import expense reconciliation restoration fixtures verified: $database"
 done
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
