@@ -1,3 +1,4 @@
+import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React, { useState } from 'react';
@@ -81,7 +82,7 @@ export default function CustomerEmployeeView({
   const [paymentDraft, setPaymentDraft] = useState<Customer | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState(reportDay(new Date()));
   const [paymentNote, setPaymentNote] = useState('');
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
@@ -222,7 +223,7 @@ export default function CustomerEmployeeView({
       amount: Number(payment.amount || 0), status: 'Received',
     }))),
   ].filter((row) => {
-    const date = String(row.date || '').slice(0, 10);
+    const date = reportDay(row.date);
     const text = [row.reference, row.description, row.status, row.type].join(' ').toLowerCase();
     return (!customerHistoryFrom || date >= customerHistoryFrom)
       && (!customerHistoryTo || date <= customerHistoryTo)
@@ -255,7 +256,7 @@ export default function CustomerEmployeeView({
     if(!selectedCustomer)throw new Error('Select a customer first.');
     return {title:'Customer statement — '+selectedCustomer.name,filename:'ars-customer-statement-'+selectedCustomer.id.replace(/[^a-zA-Z0-9_-]/g,''),period:(customerHistoryFrom||'All dates')+' to '+(customerHistoryTo||'Latest')+' | '+customerHistoryType,
     headers:['Customer ID','Shop name','Date','Record type','Reference','Details','Status','Amount (LKR)'],
-    rows:historyRows.map(row=>[selectedCustomer.id,selectedCustomer.name,String(row.date).slice(0,10),row.type,row.reference,row.description,row.status,row.amount]),moneyColumns:[7],
+    rows:historyRows.map(row=>[selectedCustomer.id,selectedCustomer.name,reportDay(row.date),row.type,row.reference,row.description,row.status,row.amount]),moneyColumns:[7],
     summary:[{label:'Matching activity records',value:historyRows.length},{label:'Current outstanding (LKR; not period total)',value:Number(selectedCustomer.creditBalance||0)}]};
   };
 
@@ -304,7 +305,7 @@ export default function CustomerEmployeeView({
       setPaymentDraft(null);
       setPaymentAmount('');
       setPaymentMethod('Cash');
-      setPaymentDate(new Date().toISOString().split('T')[0]);
+      setPaymentDate(reportDay(new Date()));
       setPaymentNote('');
     } catch (err) {
       notify.error('Failed to record customer payment: ' + err);
@@ -459,7 +460,7 @@ export default function CustomerEmployeeView({
                           setPaymentDraft(c);
                           setPaymentAmount('');
                           setPaymentMethod('Cash');
-                          setPaymentDate(new Date().toISOString().split('T')[0]);
+                          setPaymentDate(reportDay(new Date()));
                           setPaymentNote('');
                         }}
                         className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1"
@@ -510,7 +511,7 @@ export default function CustomerEmployeeView({
       )}
 
       {activeTab === 'customers' && isReportsOpen && (
-        <CustomerReportsView customers={customers} invoices={transactions}
+        <CustomerReportsView customers={customers} settings={taxConfig} invoices={transactions}
           payments={customerCreditPayments} onClose={() => setIsReportsOpen(false)} />
       )}
 
@@ -548,7 +549,7 @@ export default function CustomerEmployeeView({
                 <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Recorded credit payments</p><p className="mt-1 text-lg font-bold">{formatMoney(selectedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</p></div>
               </section>
               <div key={selectedCustomer.id}>
-                <CustomerLedgerPanel customer={selectedCustomer}
+                <CustomerLedgerPanel customer={selectedCustomer} settings={taxConfig}
                   invoices={selectedInvoices} payments={selectedPayments} />
               </div>
               <section className="rounded-xl border border-slate-200 bg-white p-4">
@@ -584,7 +585,7 @@ export default function CustomerEmployeeView({
                     <tbody>
                       {historyRows.map((row) => (
                         <tr key={`${row.type}-${row.id}`} className="border-t border-slate-100">
-                          <td className="whitespace-nowrap p-3">{String(row.date).slice(0, 10)}</td>
+                          <td className="whitespace-nowrap p-3">{reportDay(row.date)}</td>
                           <td className="p-3 font-semibold">{row.type}</td>
                           <td className="p-3">{row.type === 'Invoice' ? (
                             <button type="button" onClick={() => setSelectedInvoiceId(row.id)}
@@ -607,7 +608,7 @@ export default function CustomerEmployeeView({
                       <div>
                         <p className="text-xs font-bold uppercase text-indigo-700">Invoice details</p>
                         <h4 className="text-base font-bold">{selectedInvoice.invoiceNumber}</h4>
-                        <p className="text-xs text-slate-600">{String(selectedInvoice.date).slice(0, 10)} · {selectedInvoice.paymentMethod} · {selectedInvoice.status || 'Completed'}</p>
+                        <p className="text-xs text-slate-600">{reportDay(selectedInvoice.date)} · {selectedInvoice.paymentMethod} · {selectedInvoice.status || 'Completed'}</p>
                       </div>
                       <button type="button" onClick={() => setSelectedInvoiceId(null)}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-bold">Close invoice details</button>
@@ -643,7 +644,7 @@ export default function CustomerEmployeeView({
                   <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
                   {selectedCustomer.id !== 'cust-walkin' && (
-                    <button type="button" onClick={() => { setPaymentDraft(selectedCustomer); setPaymentAmount(''); setPaymentMethod('Cash'); setPaymentDate(new Date().toISOString().split('T')[0]); }}
+                    <button type="button" onClick={() => { setPaymentDraft(selectedCustomer); setPaymentAmount(''); setPaymentMethod('Cash'); setPaymentDate(reportDay(new Date())); }}
                       className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800">Record credit repayment</button>
                   )}
                 </div>

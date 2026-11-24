@@ -1,3 +1,4 @@
+import { reportTime } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React, { useState } from 'react';
@@ -109,7 +110,7 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
         <p className="text-xs text-slate-500 mt-0.5">Manage opening/closing of cash drawer shifts and track cash variances.</p>
       </div>
 
-      {taxConfig&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Closed cash shift reconciliation',filename:'ars-cash-shifts',period:'All closed shifts available to this workspace',headers:['Cashier','Opened','Closed','Opening float (LKR)','Expected cash (LKR)','Closing cash (LKR)','Difference (LKR)','Notes'],moneyColumns:[3,4,5,6],rows:closedShifts.map(s=>[s.cashierName,s.openedAt,s.closedAt||'',s.openingFloat,s.expectedCash??'',s.closingCash??'',s.cashDifference??'',s.notes||'']),summary:[{label:'Closed shifts',value:closedShifts.length},{label:'Recorded net variance (LKR)',value:closedShifts.reduce((a,s)=>a+(s.cashDifference??0),0)}]})}/>}
+      {taxConfig&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Closed cash shift reconciliation',filename:'ars-cash-shifts',period:'All closed shifts available to this workspace',headers:['Cashier','Opened','Closed','Opening float (LKR)','Expected cash (LKR)','Closing cash (LKR)','Difference (LKR)','Notes'],moneyColumns:[3,4,5,6],rows:closedShifts.map(s=>[s.cashierName,reportTime(s.openedAt),reportTime(s.closedAt||''),s.openingFloat,s.expectedCash??'',s.closingCash??'',s.cashDifference??'',s.notes||'']),summary:[{label:'Closed shifts',value:closedShifts.length},{label:'Recorded net variance (LKR)',value:closedShifts.reduce((a,s)=>a+(s.cashDifference??0),0)}]})}/>}
       {/* Current shift card */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className={`rounded-xl border p-6 shadow-xs ${openShift ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100'}`}>
@@ -140,7 +141,7 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
               </div>
               <div className="text-xs text-slate-500 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
-                Opened: {new Date(openShift.openedAt).toLocaleString()}
+                Opened: {reportTime(openShift.openedAt)}
                 {openShift.cashierName && ` by ${openShift.cashierName}`}
               </div>
 
@@ -260,8 +261,8 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-3 font-mono text-slate-500">{s.id.slice(-8).toUpperCase()}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{new Date(s.openedAt).toLocaleString()}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{s.closedAt ? new Date(s.closedAt).toLocaleString() : '—'}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{reportTime(s.openedAt)}</td>
+                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{s.closedAt ? reportTime(s.closedAt) : '—'}</td>
                       <td className="px-4 py-3 text-slate-700">{s.cashierName || '—'}</td>
                       <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt(s.openingFloat)}</td>
                       <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmt(cashSales)}</td>

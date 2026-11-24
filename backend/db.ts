@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
 import bcrypt from 'bcryptjs';
 import { DATABASE_URL, DB_STATE_KEY } from './config';
@@ -24,6 +24,9 @@ import {
   InvoicePrintLog,
   InvoiceCopyType,
 } from '../src/types';
+
+// PostgreSQL DATE is a calendar day, independent of the server time zone.
+types.setTypeParser(types.builtins.DATE, day => day);
 
 export const pool = new Pool({ connectionString: DATABASE_URL });
 
@@ -635,7 +638,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
         variantUnit: item.variant_unit ?? undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
-        costPrice: Number(item.cost_price || 0),
+        costPrice: item.cost_price == null ? undefined : Number(item.cost_price),
         discount: Number(item.discount),
         discountAmount: Number(item.discount_amount || 0),
       })),
@@ -718,7 +721,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       purchaseOrderId: row.purchase_order_id || undefined,
       amount: Number(row.amount),
       paymentMethod: row.payment_method,
-      date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0],
+      date: row.date,
       note: row.note || undefined,
       createdBy: row.created_by || undefined,
     })),
@@ -727,7 +730,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       shopId: row.shop_id || undefined,
       quoteNumber: row.quote_number,
       date: row.date,
-      validUntil: row.valid_until ? String(row.valid_until).split('T')[0] : undefined,
+      validUntil: row.valid_until || undefined,
       customerId: row.customer_id || undefined,
       customerName: row.customer_name,
       customerPhone: row.customer_phone || undefined,
@@ -760,7 +763,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       customerId: row.customer_id,
       customerName: row.customer_name,
       amount: Number(row.amount),
-      date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0],
+      date: row.date,
       paymentMethod: row.payment_method,
       note: row.note || undefined,
       createdBy: row.created_by || undefined,

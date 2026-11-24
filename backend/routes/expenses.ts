@@ -1,3 +1,4 @@
+import { reportDay } from '../../src/utils/reporting';
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware';
 import { pool } from '../db';
@@ -14,7 +15,7 @@ router.get('/', requireRole(['Super Admin', 'Store Manager']), async (req, res) 
       id: row.id,
       desc: row.description,
       amount: Number(row.amount),
-      date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0],
+      date: row.date,
       category: row.category,
     }));
     res.json(expenses);
@@ -34,7 +35,7 @@ router.post('/', requireRole(['Super Admin', 'Store Manager']), async (req, res)
     description: String(desc),
     amount: Number(amount),
     category: String(category || 'Other'),
-    date: new Date().toISOString().split('T')[0],
+    date: reportDay(new Date()),
   };
 
   try {

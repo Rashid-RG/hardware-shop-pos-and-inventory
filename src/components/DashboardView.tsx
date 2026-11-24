@@ -1,3 +1,4 @@
+import { reportDay, lineRevenue, saleProfit } from '../utils/reporting';
 import React from 'react';
 import {
   TrendingUp,
@@ -50,11 +51,12 @@ export default function DashboardView({
 }: DashboardViewProps) {
   const currencySymbol = 'Rs.';
   // Metric Calculations
-  const totalRevenue = transactions.reduce((sum, t) => sum + t.total, 0);
+  const completedSales = transactions.filter(t => t.status !== 'Refunded');
+  const totalRevenue = completedSales.reduce((sum, t) => sum + t.total, 0);
 
   // Compute the current Sri Lanka business date rather than a demo date.
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const todayTransactions = transactions.filter((t) => t.date.startsWith(todayStr));
+  const todayStr = reportDay(new Date());
+  const todayTransactions = completedSales.filter(t => reportDay(t.date) === todayStr);
   const todayRevenue = todayTransactions.reduce((sum, t) => sum + t.total, 0);
 
   const inventoryValue = products.reduce((sum, p) => sum + p.quantity * p.costPrice, 0);
@@ -63,36 +65,18 @@ export default function DashboardView({
   // Profit calculations
   // Gross profit per transaction = sum of (sellingPrice * qty * (1 - disc/100)) - cost per item
   const productCostMap = new Map(products.map((p) => [p.id, p.costPrice]));
-  const grossProfit = transactions
-    .filter((t) => t.status !== 'Refunded')
-    .reduce((sum, t) => {
-      const txProfit = t.items.reduce((isum, item) => {
-        const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-        const cost = (productCostMap.get(item.productId) ?? item.sellingPrice) * item.quantity;
-        return isum + (rev - cost);
-      }, 0);
-      return sum + txProfit - (t.discountAmount || 0);
-    }, 0);
-  const todayProfit = todayTransactions
-    .filter((t) => t.status !== 'Refunded')
-    .reduce((sum, t) => {
-      const txProfit = t.items.reduce((isum, item) => {
-        const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-        const cost = (productCostMap.get(item.productId) ?? item.sellingPrice) * item.quantity;
-        return isum + (rev - cost);
-      }, 0);
-      return sum + txProfit - (t.discountAmount || 0);
-    }, 0);
+  const grossProfit = completedSales.reduce((sum, tx) => sum + saleProfit(tx, productCostMap), 0);
+  const todayProfit = todayTransactions.reduce((sum, tx) => sum + saleProfit(tx, productCostMap), 0);
   const stockPotentialProfit = products.reduce((sum, p) => sum + (p.sellingPrice - p.costPrice) * p.quantity, 0);
 
   // Pie chart mapping - Category sales distribution
   const salesByCategoryRecord: Record<string, number> = {};
-  transactions.forEach((t) => {
+  completedSales.forEach((t) => {
     t.items.forEach((item) => {
       // Find category from catalog matching product
       const product = products.find((p) => p.id === item.productId);
       const cat = product ? product.category : 'General Hardware';
-      const itemRev = item.quantity * item.sellingPrice * (1 - (item.discount || 0) / 100);
+      const itemRev = lineRevenue(item);
       salesByCategoryRecord[cat] = (salesByCategoryRecord[cat] || 0) + itemRev;
     });
   });
@@ -106,26 +90,19 @@ export default function DashboardView({
   // Trend line mapping - past 14 days
   const dateRecord: Record<string, { revenue: number; profit: number }> = {};
   for (let i = 13; i >= 0; i--) {
-    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - i * 86400000));
+    const dateStr = reportDay(new Date(Date.now() - i * 86400000));
     dateRecord[dateStr] = { revenue: 0, profit: 0 };
   }
-  transactions.forEach((t) => {
-    const dateStr = t.date.split('T')[0];
+  completedSales.forEach((t) => {
+    const dateStr = reportDay(t.date);
     if (dateRecord[dateStr] !== undefined) {
       dateRecord[dateStr].revenue += t.total;
-      if (t.status !== 'Refunded') {
-        const txProfit = t.items.reduce((isum, item) => {
-          const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-          const cost = (productCostMap.get(item.productId) ?? item.sellingPrice) * item.quantity;
-          return isum + (rev - cost);
-        }, 0);
-        dateRecord[dateStr].profit += txProfit - (t.discountAmount || 0);
-      }
+      dateRecord[dateStr].profit += saleProfit(t, productCostMap);
     }
   });
 
   const salesTrendData = Object.entries(dateRecord).map(([date, vals]) => {
-    const day = new Date(date).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+    const day = new Date(date).toLocaleDateString('en-US', { timeZone: 'Asia/Colombo', day: 'numeric', month: 'short' });
     return {
       name: day,
       Revenue: Math.round(vals.revenue * 100) / 100,
@@ -403,18 +380,14 @@ export default function DashboardView({
               <tbody className="divide-y divide-slate-50">
                 {recentTransactions.map((tx) => {
                   const txProfit = tx.status !== 'Refunded'
-                    ? tx.items.reduce((isum, item) => {
-                        const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-                        const cost = (productCostMap.get(item.productId) ?? item.sellingPrice) * item.quantity;
-                        return isum + (rev - cost);
-                      }, 0) - (tx.discountAmount || 0)
+                    ? saleProfit(tx, productCostMap)
                     : null;
                   return (
                   <tr key={tx.id} className="hover:bg-slate-50/50">
                     <td className="py-2.5 font-mono text-indigo-600 font-semibold">{tx.invoiceNumber}</td>
                     <td className="py-2.5 font-medium text-slate-800">{tx.customerName}</td>
                     <td className="py-2.5 text-slate-500">
-                      {new Date(tx.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {new Date(tx.date).toLocaleDateString('en-US', { timeZone: 'Asia/Colombo', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </td>
                     <td className="py-2.5 text-right font-mono font-bold text-slate-900">{currencySymbol}{tx.total}</td>
                     <td className={`py-2.5 text-right font-mono font-bold ${txProfit != null && txProfit >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
@@ -487,7 +460,7 @@ export default function DashboardView({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <p className="font-semibold text-slate-800 truncate">{log.user}</p>
-                    <span className="text-[9px] font-mono text-slate-400">{new Date(log.date).toLocaleDateString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="text-[9px] font-mono text-slate-400">{new Date(log.date).toLocaleDateString('en-US', { timeZone: 'Asia/Colombo', hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                   <p className="text-[10px] font-mono text-amber-600 font-bold mt-0.5 uppercase tracking-wide">{log.action}</p>
                   <p className="text-[11px] text-slate-500 mt-0.5">{log.details}</p>

@@ -1,3 +1,4 @@
+import { reportDay, reportTime } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState} from 'react';
@@ -31,7 +32,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const [amount,setAmount]=useState('');
  const [reference,setReference]=useState('');
  const [note,setNote]=useState('');
- const [date,setDate]=useState(()=>new Date().toISOString().slice(0,10));
+ const [date,setDate]=useState(()=>reportDay(new Date()));
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
  const [busy,setBusy]=useState(false);
@@ -132,8 +133,8 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const allocationReady=activePartners.length>0&&activePartners.every(p=>p.ownership_percent!==null)&&Math.abs(ownershipTotal-100)<0.00001;
  const partnerReport=():BusinessReport=>{
  const base={period:'All available records | Confidential'};
- if(workspace==='profits')return {...base,title:'Approved partner profit allocations',filename:'ars-partner-profits',headers:['Period','Approval reference','Partner','Ownership (%)','Allocated (LKR)','Approved by','Allocated at'],moneyColumns:[4],rows:profits.flatMap(p=>p.shares.map(s=>[p.period_key,p.approval_reference,s.name,s.ownershipPercent,Number(s.allocatedLkr),p.approved_by,p.allocated_at])),summary:[{label:'Approved allocations',value:profits.length},{label:'Approved profit (LKR)',value:profits.reduce((a,p)=>a+Number(p.approved_profit_lkr),0)}]};
- if(workspace==='capital')return {...base,title:'Partner capital ledger',filename:'ars-partner-capital',headers:['Date','Partner','Type','Amount (LKR)','Reference','Note','Created by'],moneyColumns:[3],rows:entries.map(e=>[e.entry_date,partners.find(p=>p.id===e.partner_id)?.name||e.partner_id,e.entry_type,Number(e.amount_lkr),e.reference,e.note,e.created_by]),summary:[{label:'Contributions (LKR)',value:entries.filter(e=>e.entry_type==='Contribution').reduce((a,e)=>a+Number(e.amount_lkr),0)},{label:'Drawings (LKR)',value:entries.filter(e=>e.entry_type==='Drawing').reduce((a,e)=>a+Number(e.amount_lkr),0)}]};
+ if(workspace==='profits')return {...base,title:'Approved partner profit allocations',filename:'ars-partner-profits',headers:['Period','Approval reference','Partner','Ownership (%)','Allocated (LKR)','Approved by','Allocated at'],moneyColumns:[4],rows:profits.flatMap(p=>p.shares.map(s=>[p.period_key,p.approval_reference,s.name,s.ownershipPercent,Number(s.allocatedLkr),p.approved_by,reportTime(p.allocated_at)])),summary:[{label:'Approved allocations',value:profits.length},{label:'Approved profit (LKR)',value:profits.reduce((a,p)=>a+Number(p.approved_profit_lkr),0)}]};
+ if(workspace==='capital')return {...base,title:'Partner capital ledger',filename:'ars-partner-capital',headers:['Date','Partner','Type','Amount (LKR)','Reference','Note','Created by'],moneyColumns:[3],rows:entries.map(e=>[reportDay(e.entry_date),partners.find(p=>p.id===e.partner_id)?.name||e.partner_id,e.entry_type,Number(e.amount_lkr),e.reference,e.note,e.created_by]),summary:[{label:'Contributions (LKR)',value:entries.filter(e=>e.entry_type==='Contribution').reduce((a,e)=>a+Number(e.amount_lkr),0)},{label:'Drawings (LKR)',value:entries.filter(e=>e.entry_type==='Drawing').reduce((a,e)=>a+Number(e.amount_lkr),0)}]};
  return {...base,title:'Partner ownership register',filename:'ars-partner-ownership',headers:['Partner','Ownership (%)','Status'],rows:partners.map(p=>[p.name,p.ownership_percent===null?'Not assigned':Number(p.ownership_percent),p.is_active?'Active':'Inactive']),summary:[{label:'Active partners',value:activePartners.length},{label:'Assigned active ownership (%)',value:ownershipTotal}]};
  };
  const formField='mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 focus:border-amber-400 focus:outline-none';
@@ -266,7 +267,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
     <h3 className="font-bold">Partner capital activity ({entries.length} records)</h3>
     <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-xs">
       <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">Date</th><th>Partner</th><th>Type</th><th>Amount · LKR</th><th>Reference</th></tr></thead>
-      <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{String(e.entry_date).slice(0,10)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
+      <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{reportDay(e.entry_date)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
     </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>This ledger is separate from cash, bank accounts and profit distribution. Reconcile it with supporting documents.</p>
   </section>}
@@ -277,7 +278,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
       <table className="w-full min-w-[640px] text-left text-xs">
         <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">When</th><th>Partner</th><th>Change</th><th>Share</th><th>Reference</th><th>By</th></tr></thead>
         <tbody>{audits.map(a=><tr key={a.id} className="border-b border-slate-100">
-          <td className="py-2">{new Date(a.changed_at).toLocaleString()}</td><td>{a.partner_name}</td>
+          <td className="py-2">{reportTime(a.changed_at)}</td><td>{a.partner_name}</td>
           <td>{a.change_type}</td><td>{a.old_percent??'–'} → {a.new_percent??'–'}%</td>
           <td>{a.reference}</td><td>{a.changed_by}</td></tr>)}</tbody>
       </table>
@@ -308,7 +309,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
           <p className="font-semibold">{share.name}</p><p>{Number(share.ownershipPercent).toFixed(2)}% ownership</p>
           <p className="mt-1 text-sm font-bold">Rs.{n(share.allocatedLkr)}</p>
         </div>)}</div>
-        <p className="mt-2 text-[11px] text-slate-500">Recorded by {p.approved_by} · {new Date(p.allocated_at).toLocaleString()} · Payment status: not tracked</p>
+        <p className="mt-2 text-[11px] text-slate-500">Recorded by {p.approved_by} · {reportTime(p.allocated_at)} · Payment status: not tracked</p>
       </div>)}
     </div>
   </section>}

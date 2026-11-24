@@ -1,3 +1,4 @@
+import { reportDay, reportTime } from '../../src/utils/reporting';
 import { Router } from 'express';
 import { requireAuth, requireRole, getActiveShopContext, AppRequest } from '../middleware';
 import { pool, checkoutTransaction, refundTransaction, loadStateFromNormalized, insertInvoicePrintLog } from '../db';
@@ -546,11 +547,10 @@ router.get('/invoice-print-audit', requireRole(['Super Admin', 'Store Manager'])
 
     if (fromDate) {
       sql += ` AND l.printed_at >= $${idx++}`;
-      values.push(new Date(String(fromDate)));
+      values.push(new Date(String(fromDate) + 'T00:00:00+05:30'));
     }
     if (toDate) {
-      const end = new Date(String(toDate));
-      end.setHours(23, 59, 59, 999);
+      const end = new Date(String(toDate) + 'T23:59:59.999+05:30');
       sql += ` AND l.printed_at <= $${idx++}`;
       values.push(end);
     }
@@ -641,11 +641,10 @@ router.get('/invoice-print-audit/export.csv', requireRole(['Super Admin', 'Store
 
     if (fromDate) {
       sql += ` AND l.printed_at >= $${idx++}`;
-      values.push(new Date(String(fromDate)));
+      values.push(new Date(String(fromDate) + 'T00:00:00+05:30'));
     }
     if (toDate) {
-      const end = new Date(String(toDate));
-      end.setHours(23, 59, 59, 999);
+      const end = new Date(String(toDate) + 'T23:59:59.999+05:30');
       sql += ` AND l.printed_at <= $${idx++}`;
       values.push(end);
     }
@@ -674,7 +673,7 @@ router.get('/invoice-print-audit/export.csv', requireRole(['Super Admin', 'Store
     result.rows.forEach((r) => {
       const escapedCustomer = `"${r.customer_name.replace(/"/g, '""')}"`;
       const escapedReason = `"${(r.reason || '').replace(/"/g, '""')}"`;
-      csv += `${r.invoice_number},${new Date(r.transaction_date).toISOString().split('T')[0]},${escapedCustomer},${Number(r.total_amount).toFixed(2)},${r.copy_type},${r.print_sequence},${r.printed_by},${new Date(r.printed_at).toLocaleString()},${escapedReason},${r.transaction_status},${r.payment_method}\n`;
+      csv += `${r.invoice_number},${reportDay(r.transaction_date)},${escapedCustomer},${Number(r.total_amount).toFixed(2)},${r.copy_type},${r.print_sequence},${r.printed_by},${reportTime(r.printed_at)},${escapedReason},${r.transaction_status},${r.payment_method}\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv');

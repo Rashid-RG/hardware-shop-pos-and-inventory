@@ -1,3 +1,4 @@
+import { reportDay, reportTime } from '../utils/reporting';
 import React, { useState } from 'react';
 import { notify } from '../utils/notifications';
 import {
@@ -121,7 +122,7 @@ export default function InventoryView({
     const matchesSearch = [log.productName, log.productId, log.reason, log.user, log.referenceId, log.type]
       .some((field) => String(field || '').toLowerCase().includes(normalizedSearch));
     const matchesType = logTypeFilter === 'All' || log.type === logTypeFilter;
-    const logDay = String(log.date || '').slice(0, 10);
+    const logDay = reportDay(log.date);
     const matchesDate = (!logDateFrom || logDay >= logDateFrom) && (!logDateTo || logDay <= logDateTo);
     return matchesSearch && matchesType && matchesDate;
   });
@@ -131,7 +132,7 @@ export default function InventoryView({
   const ledgerReport = ():BusinessReport => ({
     title:'Stock movement ledger',filename:'ars-stock-movements',period:(logDateFrom||'All dates')+' to '+(logDateTo||'Latest')+' | '+logTypeFilter,
     headers:['Date','Product ID','Product','Type','Quantity','Operator','Reason','Reference'],
-    rows:filteredLogs.map(log=>[log.date,log.productId,log.productName,log.type,Number(log.quantity),log.user,log.reason,log.referenceId||'']),
+    rows:filteredLogs.map(log=>[reportTime(log.date),log.productId,log.productName,log.type,Number(log.quantity),log.user,log.reason,log.referenceId||'']),
     summary:[{label:'Matching movements',value:filteredLogs.length},{label:'Distinct products',value:new Set(filteredLogs.map(log=>log.productId)).size}]
   });
 
@@ -297,8 +298,8 @@ export default function InventoryView({
                   return (
                     <tr key={log.id} className="hover:bg-slate-50/50 transition duration-150 text-[11px]">
                       <td className="p-4 text-slate-400 font-mono">
-                        {new Date(log.date).toLocaleDateString()} <br />
-                        {new Date(log.date).toLocaleTimeString()}
+                        {reportDay(log.date)} <br />
+                        {new Date(log.date).toLocaleTimeString('en-GB',{timeZone:'Asia/Colombo'})}
                       </td>
                       <td className="p-4">
                         <div className="font-semibold text-slate-900 max-w-xs truncate" title={log.productName}>

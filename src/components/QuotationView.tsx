@@ -1,3 +1,4 @@
+import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
@@ -210,7 +211,7 @@ export default function QuotationView({
       <div><h1>${shopName}</h1><div class="meta">${shopAddress} | ${shopPhone}</div></div>
       <div style="text-align:right;"><div style="font-size:20px;font-weight:bold;color:#6366f1">QUOTATION</div>
         <div class="meta">${q.quoteNumber}</div>
-        <div class="meta">Date: ${q.date.split('T')[0]}</div>
+        <div class="meta">Date: ${reportDay(q.date)}</div>
         ${q.validUntil ? `<div class="meta">Valid Until: ${q.validUntil}</div>` : ''}
       </div>
     </div>
@@ -268,7 +269,7 @@ export default function QuotationView({
         ))}
       </div>
 
-      <ReportExportMenu settings={taxConfig} report={()=>({title:'Quotation register',filename:'ars-quotations',period:'Matching quotations | '+statusFilter,headers:['Quotation','Date','Valid until','Customer','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Status','Converted invoice ID'],moneyColumns:[4,5,6,7],rows:displayed.map(q=>[q.quoteNumber,q.date,q.validUntil||'',q.customerName,q.subtotal,q.tax,q.discountAmount,q.total,q.status,q.convertedToTxId||'']),summary:[{label:'Matching quotes',value:displayed.length},{label:'Converted quotes',value:displayed.filter(q=>q.status==='Converted').length}]})}/>
+      <ReportExportMenu settings={taxConfig} report={()=>({title:'Quotation register',filename:'ars-quotations',period:'Matching quotations | '+statusFilter,headers:['Quotation','Date','Valid until','Customer','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Status','Converted invoice ID'],moneyColumns:[4,5,6,7],rows:displayed.map(q=>[q.quoteNumber,reportDay(q.date),q.validUntil||'',q.customerName,q.subtotal,q.tax,q.discountAmount,q.total,q.status,q.convertedToTxId||'']),summary:[{label:'Matching quotes',value:displayed.length},{label:'Converted quotes',value:displayed.filter(q=>q.status==='Converted').length}]})}/>
       {/* Quotations list */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
         {displayed.length === 0 ? (
@@ -303,7 +304,7 @@ export default function QuotationView({
               {displayed.map((q) => (
                 <tr key={q.id} className="hover:bg-slate-50/50">
                   <td className="px-4 py-3 font-mono font-semibold text-indigo-600">{q.quoteNumber}</td>
-                  <td className="px-4 py-3 text-slate-500">{q.date.split('T')[0]}</td>
+                  <td className="px-4 py-3 text-slate-500">{reportDay(q.date)}</td>
                   <td className="px-4 py-3 font-medium text-slate-800">{q.customerName}</td>
                   <td className="px-4 py-3 text-right font-mono font-bold text-slate-900">Rs.{q.total.toFixed(2)}</td>
                   <td className="px-4 py-3 text-slate-500">{q.validUntil || '—'}</td>

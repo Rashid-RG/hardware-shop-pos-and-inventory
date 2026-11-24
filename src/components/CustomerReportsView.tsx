@@ -1,7 +1,11 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
+import { inReportPeriod } from '../utils/reporting';
 import React, { useMemo, useState } from 'react';
-import { Customer, CustomerCreditPayment, SalesTransaction } from '../types';
+import { Customer, CustomerCreditPayment, SalesTransaction, StoreSettings } from '../types';
 
 interface Props {
+  settings: StoreSettings;
   customers: Customer[];
   invoices: SalesTransaction[];
   payments: CustomerCreditPayment[];
@@ -10,13 +14,7 @@ interface Props {
 
 const currency = (amount: number) => 'Rs. ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const cents = (amount: number) => Math.round((Number.isFinite(amount) ? amount : 0) * 100);
-const csvCell = (value: string | number) => {
-  const raw = String(value ?? '');
-  const safe = typeof value === 'number' || !/^\s*[=+@-]/.test(raw) ? raw : "'" + raw;
-  return '"' + safe.replace(/"/g, '""') + '"';
-};
-
-export function CustomerReportsView({ customers, invoices, payments, onClose }: Props) {
+export function CustomerReportsView({ settings, customers, invoices, payments, onClose }: Props) {
   const [search, setSearch] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -25,10 +23,10 @@ export function CustomerReportsView({ customers, invoices, payments, onClose }: 
   const rows = useMemo(() => customers.filter(customer => customer.id !== 'cust-walkin').map(customer => {
     const ownInvoice = invoices.filter(tx =>
       tx.customerId === customer.id && tx.shopId === customer.shopId
-      && (!from || tx.date.slice(0, 10) >= from) && (!to || tx.date.slice(0, 10) <= to));
+      && inReportPeriod(tx.date, from, to));
     const ownPayment = payments.filter(payment =>
       payment.customerId === customer.id && payment.shopId === customer.shopId
-      && (!from || payment.date.slice(0, 10) >= from) && (!to || payment.date.slice(0, 10) <= to));
+      && inReportPeriod(payment.date, from, to));
     const active = ownInvoice.filter(tx => tx.status !== 'Refunded');
     const credit = active.filter(tx => tx.paymentMethod === 'Credit Account');
     return {
@@ -58,26 +56,25 @@ export function CustomerReportsView({ customers, invoices, payments, onClose }: 
     outstanding: acc.outstanding + cents(row.outstanding),
   }), { sales: 0, creditSales: 0, repayments: 0, outstanding: 0 });
 
-  const exportCsv = () => {
-    const data: (string | number)[][] = [
+  const report = (): BusinessReport => ({
+    title: 'Customer activity and outstanding balances',
+    filename: 'ars-customer-report',
+    period: (from || 'All dates') + ' to ' + (to || 'today') + ' | Outstanding is the current account balance.',
+    csvPreamble: [
       ['Customer report from', from || 'All dates', 'To', to || 'All dates'],
       ['Note', 'Sales and repayment figures reflect date filters; outstanding is the current account snapshot.'],
-      ['Customer ID', 'Shop', 'Phone', 'Invoices', 'Refunded invoices', 'Net sales (LKR)', 'Credit sales (LKR)', 'Repayments (LKR)', 'Current outstanding (LKR)'],
-      ...rows.map(row => [
-        row.customer.id, row.customer.name, row.customer.phone, row.invoiceCount,
-        row.refundedCount, row.sales, row.creditSales, row.repayments, row.outstanding,
-      ]),
-    ];
-    const csv = '\uFEFF' + data.map(row=>row.map(csvCell).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'ars-customer-report.csv';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(()=>URL.revokeObjectURL(url),1000);
-  };
+    ],
+    headers: ['Customer ID', 'Shop', 'Phone', 'Invoices', 'Refunded invoices', 'Net sales (LKR)', 'Credit sales (LKR)', 'Repayments (LKR)', 'Current outstanding (LKR)'],
+    rows: rows.map(row => [row.customer.id, row.customer.name, row.customer.phone || '', row.invoiceCount,
+      row.refundedCount, row.sales, row.creditSales, row.repayments, row.outstanding]),
+    moneyColumns: [5, 6, 7, 8],
+    summary: [
+      {label:'Net sales (LKR)', value:totals.sales / 100},
+      {label:'Credit sales (LKR)', value:totals.creditSales / 100},
+      {label:'Repayments (LKR)', value:totals.repayments / 100},
+      {label:'Current outstanding (LKR)', value:totals.outstanding / 100},
+    ],
+  });
 
   return <div role="dialog" aria-modal="true" aria-label="Customer reporting workspace"
     id="ars-customer-reports" className="fixed inset-0 z-40 flex flex-col bg-slate-50">
@@ -121,8 +118,7 @@ export function CustomerReportsView({ customers, invoices, payments, onClose }: 
           <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-5">
             <button type="button" onClick={()=>{setSearch('');setFrom('');setTo('');setBalanceFilter('all');setActivityFilter('all');}}
               className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold">Clear filters</button>
-            <button type="button" id="ars-report-export" onClick={exportCsv}
-              className="rounded-lg bg-indigo-700 px-4 py-2 text-xs font-bold text-white">Export all matching customers</button>
+            <div id="ars-report-export"><ReportExportMenu report={report} settings={settings}/></div>
             <span className="self-center text-xs text-slate-600">{rows.length} matching shops</span>
           </div>
         </div>

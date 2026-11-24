@@ -1,3 +1,4 @@
+import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/reporting';
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
@@ -385,17 +386,7 @@ const buildInvoicePrintAuditRows = (
       };
     })
     .filter((row) => {
-      const printedAt = new Date(row.printedAt);
-      if (fromDate && printedAt < fromDate) {
-        return false;
-      }
-      if (toDate) {
-        const endDate = new Date(toDate);
-        endDate.setHours(23, 59, 59, 999);
-        if (printedAt > endDate) {
-          return false;
-        }
-      }
+      if (!inReportPeriod(row.printedAt, fromDate ? reportDay(fromDate) : '', toDate ? reportDay(toDate) : '')) return false;
       if (copyType && row.copyType !== copyType) {
         return false;
       }
@@ -2350,7 +2341,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
         variantBarcode: item.variant_barcode || undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
-        costPrice: Number(item.cost_price || 0),
+        costPrice: item.cost_price == null ? undefined : Number(item.cost_price),
         discount: Number(item.discount),
         discountAmount: Number(item.discount_amount || 0),
       })),
@@ -2433,7 +2424,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       purchaseOrderId: row.purchase_order_id || undefined,
       amount: Number(row.amount),
       paymentMethod: row.payment_method,
-      date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0],
+      date: row.date,
       note: row.note || undefined,
       createdBy: row.created_by || undefined,
     })),
@@ -2442,7 +2433,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       shopId: row.shop_id || undefined,
       quoteNumber: row.quote_number,
       date: row.date,
-      validUntil: row.valid_until ? String(row.valid_until).split('T')[0] : undefined,
+      validUntil: row.valid_until || undefined,
       customerId: row.customer_id || undefined,
       customerName: row.customer_name,
       customerPhone: row.customer_phone || undefined,
@@ -2475,7 +2466,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       customerId: row.customer_id,
       customerName: row.customer_name,
       amount: Number(row.amount),
-      date: row.date instanceof Date ? row.date.toISOString().split('T')[0] : String(row.date).split('T')[0],
+      date: row.date,
       paymentMethod: row.payment_method,
       note: row.note || undefined,
       createdBy: row.created_by || undefined,
@@ -3792,7 +3783,7 @@ app.post('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),asy
   }
   const {activeShopId}=getActiveShopContext(db,req);
   const authUser=(req as AppRequest).authUser;
-  const expense:ManualExpense={id:'exp-'+randomUUID(),desc,amount,category,date:new Date().toISOString().slice(0,10)};
+  const expense:ManualExpense={id:'exp-'+randomUUID(),desc,amount,category,date:reportDay(new Date())};
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
@@ -4850,7 +4841,7 @@ app.get('/api/invoice-print-audit', requireRole(['Super Admin', 'Store Manager']
   }
 });
 
-app.get('/api/invoice-print-audit/export.csv', requireRole(['Super Admin', 'Store Manager']), (req, res) => {
+app.get(['/api/invoice-print-audit/export.csv', '/api/invoice-print-audit/export-report'], requireRole(['Super Admin', 'Store Manager']), (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   try {
     const result = buildInvoicePrintAuditRows(db, activeShopId, {
@@ -4875,7 +4866,7 @@ app.get('/api/invoice-print-audit/export.csv', requireRole(['Super Admin', 'Stor
       'reason',
     ];
     const csvRows = result.rows.map((row) => [
-      row.printedAt,
+      reportTime(row.printedAt),
       row.invoiceNumber,
       row.copyType,
       row.printSequence,
@@ -4886,6 +4877,14 @@ app.get('/api/invoice-print-audit/export.csv', requireRole(['Super Admin', 'Stor
       Number(row.totalAmount || 0).toFixed(2),
       row.reason || '',
     ]);
+    if (req.path.endsWith('/export-report')) {
+      return res.json({
+        title: 'Invoice print audit', filename: 'invoice-print-audit',
+        period: (result.normalizedFilters.fromDate || 'All dates') + ' to ' + (result.normalizedFilters.toDate || 'today'),
+        headers: header, rows: csvRows.map(row => row.map((value, i) => i === 8 ? Number(value) : value)),
+        moneyColumns: [8], summary: [{label:'Matching print events', value:csvRows.length}],
+      });
+    }
     const csv = [header, ...csvRows]
       .map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
       .join('\n');
@@ -5229,7 +5228,7 @@ Please provide your **GEMINI_API_KEY** in the Secrets panel to activate live har
 
   try {
     const historicalOverview = db.transactions.map(t => ({
-      date: t.date.split('T')[0],
+      date: reportDay(t.date),
       total: t.total,
       itemCount: t.items.reduce((acc, it) => acc + it.quantity, 0),
       items: t.items.map(it => `${it.productName} (Qty: ${it.quantity})`).join(', ')
@@ -5497,7 +5496,7 @@ app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager'])
     purchaseOrderId: purchaseOrderId || undefined,
     amount: paid,
     paymentMethod: String(paymentMethod || 'Bank Transfer'),
-    date: String(date || new Date().toISOString().slice(0, 10)),
+    date: String(date || reportDay(new Date())),
     note: typeof note === 'string' ? note.slice(0, 500) : undefined,
     createdBy: authUser?.name,
   };
@@ -5561,7 +5560,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     customerId: customer.id,
     customerName: customer.name,
     amount: normalizedAmount,
-    date: new Date().toISOString().split('T')[0],
+    date: reportDay(new Date()),
     paymentMethod: String(paymentMethod || 'Cash'),
     note: typeof note === 'string' ? note.slice(0, 500) : undefined,
     createdBy: authUser?.name,
@@ -5876,23 +5875,16 @@ app.post('/api/shifts/:id/close',requireRole(['Super Admin','Store Manager','Cas
 app.get('/api/reports/sales', (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   const { from, to } = req.query;
-  const fromDate = from ? new Date(String(from)) : new Date(0);
-  const toDate = to ? new Date(String(to) + 'T23:59:59Z') : new Date();
-  const filtered = db.transactions.filter((t) => {
-    if (t.shopId !== activeShopId) return false;
-    const d = new Date(t.date);
-    return d >= fromDate && d <= toDate;
-  });
-  const productCostMap = new Map(db.products.map((p) => [p.id, p.costPrice]));
+  const first = from ? String(from) : '1970-01-01';
+  const last = to ? String(to) : reportDay(new Date());
+  const fromDate = new Date(first + 'T00:00:00+05:30');
+  const toDate = to ? new Date(last + 'T23:59:59.999+05:30') : new Date();
+  if (!Number.isFinite(+fromDate) || !Number.isFinite(+toDate)) return res.status(400).json({error:'Invalid report dates'});
+  const filtered = db.transactions.filter(t => t.shopId === activeShopId && new Date(t.date) >= fromDate && new Date(t.date) <= toDate);
+  const productCostMap = new Map(db.products.filter(p => p.shopId === activeShopId).map(p => [p.id, p.costPrice]));
   const rows = filtered.map((t) => {
-    const profit = t.status !== 'Refunded'
-      ? t.items.reduce((sum, item) => {
-          const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-          const cost = (item.costPrice || productCostMap.get(item.productId) || item.sellingPrice) * item.quantity;
-          return sum + (rev - cost);
-        }, 0) - (t.discountAmount || 0)
-      : 0;
-    return { invoiceNumber: t.invoiceNumber, date: t.date.split('T')[0], customer: t.customerName, salesRepresentative: t.salesRepName || 'Not recorded', items: t.items.length, subtotal: t.subtotal, tax: t.tax, discount: t.discountAmount, total: t.total, profit: Math.round(profit * 100) / 100, paymentMethod: t.paymentMethod, status: t.status || 'Completed' };
+    const profit = saleProfit(t, productCostMap);
+    return { invoiceNumber: t.invoiceNumber, date: reportDay(t.date), customer: t.customerName, salesRepresentative: t.salesRepName || 'Not recorded', items: t.items.length, subtotal: t.subtotal, tax: t.tax, discount: t.discountAmount, total: t.total, profit: Math.round(profit * 100) / 100, paymentMethod: t.paymentMethod, status: t.status || 'Completed' };
   });
   const totals = { revenue: rows.filter((r) => r.status !== 'Refunded').reduce((sum, r) => sum + r.total, 0), profit: rows.reduce((sum, r) => sum + r.profit, 0), transactions: rows.length, refunds: rows.filter((r) => r.status === 'Refunded').length };
   res.json({ rows, totals, from: fromDate, to: toDate });

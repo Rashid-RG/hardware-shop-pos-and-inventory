@@ -1,3 +1,4 @@
+import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React, { useState } from 'react';
@@ -73,7 +74,7 @@ export default function SupplierPurchaseView({
   const [paymentDraft, setPaymentDraft] = useState<{ supplierId: string; supplierName: string; purchaseOrderId?: string } | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Bank Transfer');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState(reportDay(new Date()));
   const [paymentNote, setPaymentNote] = useState('');
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
@@ -217,7 +218,7 @@ export default function SupplierPurchaseView({
     setPaymentDraft({ supplierId, supplierName, purchaseOrderId });
     setPaymentAmount('');
     setPaymentMethod('Bank Transfer');
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(reportDay(new Date()));
     setPaymentNote('');
   };
 
@@ -254,7 +255,7 @@ export default function SupplierPurchaseView({
   const procurementReport = ():BusinessReport => activeTab==='suppliers' ? {
  title:'Supplier directory',filename:'ars-suppliers',period:'Matching suppliers',headers:['Supplier','Company','Phone','Email','Address','Ordered excluding cancelled (LKR)','Payments (LKR)'],moneyColumns:[5,6],
  rows:filteredSuppliers.map(s=>[s.name,s.companyName,s.phone,s.email,s.address,purchaseOrders.filter(p=>p.supplierId===s.id&&p.status!=='Cancelled').reduce((a,p)=>a+p.total,0),supplierPayments.filter(p=>p.supplierId===s.id).reduce((a,p)=>a+p.amount,0)]),summary:[{label:'Matching suppliers',value:filteredSuppliers.length}]
- } : {title:'Purchase order register',filename:'ars-purchase-orders',period:'Matching purchase orders',headers:['Order','Date','Supplier','Lines','Amount (LKR)','Status'],moneyColumns:[4],rows:visiblePurchaseOrders.map(p=>[p.poNumber,p.date,p.supplierName,p.items.length,p.total,p.status]),summary:[{label:'Orders',value:visiblePurchaseOrders.length},{label:'Non-cancelled order value (LKR)',value:visiblePurchaseOrders.filter(p=>p.status!=='Cancelled').reduce((a,p)=>a+p.total,0)}]};
+ } : {title:'Purchase order register',filename:'ars-purchase-orders',period:'Matching purchase orders',headers:['Order','Date','Supplier','Lines','Amount (LKR)','Status'],moneyColumns:[4],rows:visiblePurchaseOrders.map(p=>[p.poNumber,reportDay(p.date),p.supplierName,p.items.length,p.total,p.status]),summary:[{label:'Orders',value:visiblePurchaseOrders.length},{label:'Non-cancelled order value (LKR)',value:visiblePurchaseOrders.filter(p=>p.status!=='Cancelled').reduce((a,p)=>a+p.total,0)}]};
   return (
     <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
       {/* View Header with Toggle navigation tabs */}

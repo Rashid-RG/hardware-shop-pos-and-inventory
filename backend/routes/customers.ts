@@ -1,3 +1,4 @@
+import { reportDay } from '../../src/utils/reporting';
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { requireAuth, requireRole, getActiveShopContext, AppRequest } from '../middleware';
@@ -83,7 +84,7 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
       customerId,
       customerName: customer.name,
       amount: Number(amount),
-      date: new Date().toISOString().split('T')[0],
+      date: reportDay(new Date()),
       paymentMethod: String(paymentMethod || 'Cash'),
       note: note || undefined,
       createdBy: authUser?.name,

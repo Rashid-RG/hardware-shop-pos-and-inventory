@@ -1,3 +1,6 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import { reportTime } from '../utils/reporting';
+import type { BusinessReport } from '../utils/businessReport';
 import { arsPrintLogoUrl, isArsPrintBrand } from '../utils/arsPrintLogo';
 import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
@@ -287,7 +290,6 @@ export default function POSView({
   const [shareWhatsAppTo, setShareWhatsAppTo] = useState('');
   const [isSharingEmail, setIsSharingEmail] = useState(false);
   const [isSharingWhatsApp, setIsSharingWhatsApp] = useState(false);
-  const [isExportingAuditCsv, setIsExportingAuditCsv] = useState(false);
   const [printAuditFilters, setPrintAuditFilters] = useState({
     fromDate: '',
     toDate: '',
@@ -694,7 +696,7 @@ export default function POSView({
     return data;
   };
 
-  const exportInvoicePrintAuditCsv = async (filters?: typeof printAuditFilters) => {
+  const printAuditReport = async (filters?: typeof printAuditFilters): Promise<BusinessReport> => {
     const activeFilters = filters || printAuditFilters;
     const query = new URLSearchParams();
     if (activeFilters.fromDate) query.set('fromDate', activeFilters.fromDate);
@@ -704,19 +706,9 @@ export default function POSView({
     if (activeFilters.printedBy) query.set('printedBy', activeFilters.printedBy);
     if (activeFilters.invoiceNumber) query.set('invoiceNumber', activeFilters.invoiceNumber.trim());
 
-    const response = await authFetch(`/api/invoice-print-audit/export.csv?${query.toString()}`);
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({ error: 'Failed to export CSV' }));
-      throw new Error(data.error || 'Failed to export CSV');
-    }
-
-    const blob = await response.blob();
-    const downloadUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = 'invoice-print-audit.csv';
-    link.click();
-    URL.revokeObjectURL(downloadUrl);
+    const response = await authFetch(`/api/invoice-print-audit/export-report?${query.toString()}`);
+    if (!response.ok) throw new Error('Unable to export the invoice print audit.');
+    return response.json();
   };
 
   const loadInvoicePrintAudit = async (filters?: typeof printAuditFilters) => {
@@ -2262,7 +2254,7 @@ export default function POSView({
                         <div key={`${log.printSequence}-${log.printedAt}`} className="grid grid-cols-[auto_1fr_auto] gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-slate-600">
                           <span className="font-mono text-indigo-600">#{log.printSequence}</span>
                           <span className="truncate">{log.copyType} • {log.printedBy}</span>
-                          <span className="font-mono">{new Date(log.printedAt).toLocaleString()}</span>
+                          <span className="font-mono">{reportTime(log.printedAt)}</span>
                         </div>
                       ))}
                     </div>
@@ -2345,23 +2337,7 @@ export default function POSView({
                     >
                       Apply Filters
                     </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          setIsExportingAuditCsv(true);
-                          await exportInvoicePrintAuditCsv(printAuditFilters);
-                        } catch (error: any) {
-                          notify.warning(error?.message || 'Unable to export audit CSV');
-                        } finally {
-                          setIsExportingAuditCsv(false);
-                        }
-                      }}
-                      className="text-[10px] px-2.5 py-1.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-100"
-                      disabled={isExportingAuditCsv}
-                    >
-                      {isExportingAuditCsv ? 'Exporting CSV...' : 'Export CSV'}
-                    </button>
+                    <ReportExportMenu report={() => printAuditReport()} settings={taxConfig}/>
                     <button
                       type="button"
                       onClick={() => {
@@ -2405,7 +2381,7 @@ export default function POSView({
                         <tbody>
                           {printAuditRows.map((row) => (
                             <tr key={row.id} className="border-t border-indigo-50 text-slate-700">
-                              <td className="px-2 py-1">{new Date(row.printedAt).toLocaleString()}</td>
+                              <td className="px-2 py-1">{reportTime(row.printedAt)}</td>
                               <td className="px-2 py-1 font-mono">{row.invoiceNumber}</td>
                               <td className="px-2 py-1">{row.copyType} #{row.printSequence}</td>
                               <td className="px-2 py-1">{row.printedBy}</td>

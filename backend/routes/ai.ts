@@ -1,3 +1,4 @@
+import { reportDay } from '../../src/utils/reporting';
 import { Router } from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import { loadStateFromNormalized } from '../db';
@@ -46,7 +47,7 @@ Please provide your **GEMINI_API_KEY** in the Secrets panel to activate live har
 
   try {
     const historicalOverview = transactions.map(t => ({
-      date: typeof t.date === 'string' ? t.date.split('T')[0] : String(t.date).split('T')[0],
+      date: reportDay(t.date),
       total: t.total,
       itemCount: t.items.reduce((acc: number, it: any) => acc + it.quantity, 0),
       items: t.items.map((it: any) => `${it.productName} (Qty: ${it.quantity})`).join(', ')

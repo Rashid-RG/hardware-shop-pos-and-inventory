@@ -1,3 +1,4 @@
+import { reportDay } from './reporting.ts';
 import type { Customer, CustomerCreditPayment, SalesTransaction } from '../types';
 
 export type CustomerLedgerEntry = {
@@ -87,7 +88,7 @@ export function buildCustomerLedger(
     'Credit invoice': 0, 'Credit repayment': 1, 'Credit refund': 2,
   };
   events.sort((a, b) =>
-    a.date.slice(0, 10).localeCompare(b.date.slice(0, 10))
+    reportDay(a.date).localeCompare(reportDay(b.date))
     || priority[a.kind] - priority[b.kind]
     || a.id.localeCompare(b.id));
   const closingCents = toCents(Number(customer.creditBalance || 0));
@@ -115,7 +116,7 @@ export function filterCustomerLedger(
 ) {
   const search = (options.search || '').trim().toLowerCase();
   const entries = ledger.entries.filter((entry) => {
-    const date = entry.date.slice(0, 10);
+    const date = reportDay(entry.date);
     return (!options.from || date >= options.from)
       && (!options.to || date <= options.to)
       && (!options.kind || options.kind === 'all' || entry.kind === options.kind)

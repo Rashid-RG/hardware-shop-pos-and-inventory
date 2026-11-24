@@ -1,3 +1,4 @@
+import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState} from 'react';
@@ -55,11 +56,11 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
      : statusFilter==='All'||row.status===statusFilter;
    const matchesSearch=[row.shipment_reference,row.po_number,row.supplier_name,row.container_number,row.origin_country,row.status]
      .some(value=>String(value||'').toLowerCase().includes(search.trim().toLowerCase()));
-   const eta=String(row.eta_date||'').slice(0,10);
+   const eta=reportDay(row.eta_date||'');
    const matchesDate=(!etaFrom||(eta&&eta>=etaFrom))&&(!etaTo||(eta&&eta<=etaTo));
    return statusAllowed&&matchesSearch&&matchesDate;
  });
- const shipmentReport=():BusinessReport=>{const financial=['Super Admin','Store Manager'].includes(currentRole);return {title:mode==='shipments'?'Import shipment register':'Warehouse receiving status',filename:'ars-'+mode,period:'Matching shipments | ETA '+(etaFrom||'Any')+' to '+(etaTo||'Any'),headers:['Shipment','Purchase order','Supplier','Container','Origin','ETA','Status',...(financial?['Invoice currency','Exchange rate (LKR)','Freight (LKR)','Customs (LKR)','Clearance (LKR)']:[])],moneyColumns:financial?[8,9,10,11]:[],rows:visibleRows.map(r=>[r.shipment_reference,r.po_number,r.supplier_name,r.container_number,r.origin_country,r.eta_date||'',r.status,...(financial?[r.invoice_currency,Number(r.exchange_rate_lkr),Number(r.freight_lkr),Number(r.customs_lkr),Number(r.clearance_lkr)]:[])]),summary:[{label:'Matching shipments',value:visibleRows.length},{label:'Partially received',value:visibleRows.filter(r=>r.status==='Partially Received').length}]};};
+ const shipmentReport=():BusinessReport=>{const financial=['Super Admin','Store Manager'].includes(currentRole);return {title:mode==='shipments'?'Import shipment register':'Warehouse receiving status',filename:'ars-'+mode,period:'Matching shipments | ETA '+(etaFrom||'Any')+' to '+(etaTo||'Any'),headers:['Shipment','Purchase order','Supplier','Container','Origin','ETA','Status',...(financial?['Invoice currency','Exchange rate (LKR)','Freight (LKR)','Customs (LKR)','Clearance (LKR)']:[])],moneyColumns:financial?[8,9,10,11]:[],rows:visibleRows.map(r=>[r.shipment_reference,r.po_number,r.supplier_name,r.container_number,r.origin_country,reportDay(r.eta_date||''),r.status,...(financial?[r.invoice_currency,Number(r.exchange_rate_lkr),Number(r.freight_lkr),Number(r.customs_lkr),Number(r.clearance_lkr)]:[])]),summary:[{label:'Matching shipments',value:visibleRows.length},{label:'Partially received',value:visibleRows.filter(r=>r.status==='Partially Received').length}]};};
  const displayedRows=hasActiveFilters||showAll?visibleRows:visibleRows.slice(0,12);
  return <div className="space-y-5">
    {taxConfig&&<ReportExportMenu report={shipmentReport} settings={taxConfig}/>}
@@ -131,7 +132,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
        {displayedRows.map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
          <div className="min-w-0"><p className="font-bold text-slate-900">{row.shipment_reference} · {row.po_number}</p>
            <p className="mt-1 text-xs text-slate-600">{row.supplier_name} · {row.origin_country} · {row.invoice_currency} · {row.container_number||'Container not entered'}</p>
-           <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?String(row.eta_date).slice(0,10):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
+           <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?reportDay(row.eta_date):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
          <div className="flex shrink-0 items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status==='Received'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-800'}`}>{row.status}</span>
            {mode==='receiving'&&['In Transit','Partially Received'].includes(row.status)&&<button type="button" disabled={saving} onClick={()=>setReceivingPo({id:row.purchase_order_id,number:row.po_number})} className="rounded-xl bg-[#172a47] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Receive quantities</button>}
          </div>

@@ -11,6 +11,7 @@ export interface BusinessReport {
   rows: ReportCell[][];
   summary?: {label:string; value:ReportCell}[];
   moneyColumns?: number[];
+  csvPreamble?: ReportCell[][];
 }
 export function reportBrand(settings:StoreSettings) {
   const shop=settings.shopProfiles?.find(s=>s.id===settings.activeShopId);
@@ -19,7 +20,7 @@ export function reportBrand(settings:StoreSettings) {
 const escapeHtml=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function saveReportCsv(report:BusinessReport) {
   const cell=(value:ReportCell)=>'"'+(typeof value==='string'&&/^[\s\u0000-\u001f]*[=+@-]/.test(value)?"'"+value:String(value??'')).replace(/"/g,'""')+'"';
-  downloadReport(new Blob(['\uFEFF'+[report.headers,...report.rows].map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),report.filename+'.csv');
+  downloadReport(new Blob(['\uFEFF'+[...(report.csvPreamble || []),report.headers,...report.rows].map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),report.filename+'.csv');
 }
 export function downloadReport(blob:Blob,filename:string) {
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
@@ -29,9 +30,9 @@ export function safeReportLogo(value:string) {
   if(!value)return '';
   try { const url=new URL(value,window.location.origin); return url.origin===window.location.origin&&/^https?:$/.test(url.protocol)?url.href:/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)?value:''; } catch{return '';}
 }
-export function printBusinessReport(report:BusinessReport,settings:StoreSettings) {
+export function printBusinessReport(report:BusinessReport,settings:StoreSettings,existingWindow?:Window) {
   const brand=reportBrand(settings),logo=safeReportLogo(brand.logo);
-  const popup=window.open('','_blank','width=1100,height=800');
+  const popup=existingWindow || window.open('','_blank','width=1100,height=800');
   if(!popup)throw new Error('Allow the report popup in your browser.');
   popup.opener=null;
   const fmt=(v:ReportCell,i:number)=>typeof v==='number'?v.toLocaleString('en-LK',{minimumFractionDigits:report.moneyColumns?.includes(i)?2:0,maximumFractionDigits:2}):v;

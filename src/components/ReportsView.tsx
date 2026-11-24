@@ -1,3 +1,4 @@
+import { inReportPeriod, lineProfit, lineRevenue, reportDay, saleProfit } from '../utils/reporting';
 import React, { useState, useMemo } from 'react';
 import {
   BarChart2,
@@ -22,8 +23,8 @@ interface ReportsViewProps {
 
 export default function ReportsView({ transactions, products, manualExpenses, authToken, taxConfig }: ReportsViewProps) {
   const currencySymbol = 'Rs.';
-  const today = new Date().toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = reportDay(new Date());
+  const thirtyDaysAgo = reportDay(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
 
   const [fromDate, setFromDate] = useState(thirtyDaysAgo);
   const [toDate, setToDate] = useState(today);
@@ -33,27 +34,14 @@ export default function ReportsView({ transactions, products, manualExpenses, au
   const productCostMap = useMemo(() => new Map(products.map((p) => [p.id, p.costPrice])), [products]);
 
   const filteredTx = useMemo(() => {
-    const from = new Date(fromDate + 'T00:00:00');
-    const to = new Date(toDate + 'T23:59:59');
-    return transactions.filter((t) => {
-      const d = new Date(t.date);
-      return d >= from && d <= to;
-    });
+    return transactions.filter(t => inReportPeriod(t.date, fromDate, toDate));
   }, [transactions, fromDate, toDate]);
 
   const filteredExpenses = useMemo(() => {
-    return manualExpenses.filter((e) => e.date >= fromDate && e.date <= toDate);
+    return manualExpenses.filter((e) => inReportPeriod(e.date, fromDate, toDate));
   }, [manualExpenses, fromDate, toDate]);
 
-  const calcProfit = (tx: SalesTransaction) => {
-    if (tx.status === 'Refunded') return 0;
-    const itemProfit = tx.items.reduce((sum, item) => {
-      const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-      const cost = (item.costPrice || productCostMap.get(item.productId) || item.sellingPrice) * item.quantity;
-      return sum + (rev - cost);
-    }, 0);
-    return Math.round((itemProfit - (tx.discountAmount || 0)) * 100) / 100;
-  };
+  const calcProfit = (tx: SalesTransaction) => saleProfit(tx, productCostMap);
 
   const totalRevenue = filteredTx.filter((t) => t.status !== 'Refunded').reduce((s, t) => s + t.total, 0);
   const totalProfit = filteredTx.reduce((s, t) => s + calcProfit(t), 0);
@@ -67,13 +55,12 @@ export default function ReportsView({ transactions, products, manualExpenses, au
     filteredTx.filter((t) => t.status !== 'Refunded').forEach((t) => {
       t.items.forEach((item) => {
         const existing = map.get(item.productId) || { name: item.productName, qty: 0, revenue: 0, profit: 0 };
-        const rev = item.sellingPrice * item.quantity * (1 - (item.discount || 0) / 100) - (item.discountAmount || 0);
-        const cost = (item.costPrice || productCostMap.get(item.productId) || item.sellingPrice) * item.quantity;
+        const rev = lineRevenue(item);
         map.set(item.productId, {
           name: item.productName,
           qty: existing.qty + item.quantity,
           revenue: existing.revenue + rev,
-          profit: existing.profit + (rev - cost),
+          profit: existing.profit + lineProfit(item, productCostMap),
         });
       });
     });
@@ -90,15 +77,15 @@ export default function ReportsView({ transactions, products, manualExpenses, au
 
   const buildReport = (): BusinessReport => {
     const base = {filename:'ars-'+activeTab+'-'+fromDate+'-to-'+toDate,period:fromDate+' to '+toDate};
-    if(activeTab==='sales') return {...base,title:'Sales performance report',headers:['Invoice','Date','Customer','Sales Representative','Items','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Profit (LKR)','Payment','Status'],rows:filteredTx.map(t=>[t.invoiceNumber,t.date.split('T')[0],t.customerName,t.salesRepName||'Not recorded',t.items.length,t.subtotal,t.tax,t.discountAmount,t.total,calcProfit(t),t.paymentMethod,t.status||'Completed']),moneyColumns:[5,6,7,8,9],summary:[{label:'Revenue (LKR, excluding refunds)',value:totalRevenue},{label:'Gross profit (LKR)',value:totalProfit},{label:'Refunded invoices',value:refundCount},{label:'Invoices in report',value:filteredTx.length}]};
+    if(activeTab==='sales') return {...base,title:'Sales performance report',headers:['Invoice','Date','Customer','Sales Representative','Items','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Profit (LKR)','Payment','Status'],rows:filteredTx.map(t=>[t.invoiceNumber,reportDay(t.date),t.customerName,t.salesRepName||'Not recorded',t.items.length,t.subtotal,t.tax,t.discountAmount,t.total,calcProfit(t),t.paymentMethod,t.status||'Completed']),moneyColumns:[5,6,7,8,9],summary:[{label:'Revenue (LKR, excluding refunds)',value:totalRevenue},{label:'Gross profit (LKR)',value:totalProfit},{label:'Refunded invoices',value:refundCount},{label:'Invoices in report',value:filteredTx.length}]};
     if(activeTab==='products')return {...base,title:'Product performance report',headers:['Product','Units Sold','Revenue (LKR)','Profit (LKR)'],rows:productSales.map(p=>[p.name,p.qty,p.revenue,p.profit]),moneyColumns:[2,3],summary:[{label:'Products sold',value:productSales.length},{label:'Units sold',value:productSales.reduce((s,p)=>s+p.qty,0)},{label:'Product revenue before invoice discounts (LKR)',value:productSales.reduce((s,p)=>s+p.revenue,0)}]};
-    return {...base,title:'Expense report',headers:['Date','Description','Category','Amount (LKR)'],rows:filteredExpenses.map(e=>[e.date,e.desc,e.category,e.amount]),moneyColumns:[3],summary:[{label:'Total expenses (LKR)',value:totalExpenses},{label:'Expense records',value:filteredExpenses.length}]};
+    return {...base,title:'Expense report',headers:['Date','Description','Category','Amount (LKR)'],rows:filteredExpenses.map(e=>[reportDay(e.date),e.desc,e.category,e.amount]),moneyColumns:[3],summary:[{label:'Total expenses (LKR)',value:totalExpenses},{label:'Expense records',value:filteredExpenses.length}]};
   };
 
   const setPreset = (days: number) => {
     setVisibleRows(20);
     setToDate(today);
-    setFromDate(new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+    setFromDate(reportDay(new Date(Date.now() - days * 24 * 60 * 60 * 1000)));
   };
 
   return (
@@ -185,7 +172,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                   return (
                     <tr key={t.id} className="hover:bg-slate-50/50">
                       <td className="px-4 py-2.5 font-mono text-indigo-600 font-semibold">{t.invoiceNumber}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{t.date.split('T')[0]}</td>
+                      <td className="px-4 py-2.5 text-slate-500">{reportDay(t.date)}</td>
                       <td className="px-4 py-2.5 font-medium text-slate-800">{t.customerName}</td>
                       <td className="px-4 py-2.5 text-slate-500">{t.salesRepName || 'Not recorded'}</td>
                       <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">Rs.{t.total.toFixed(2)}</td>
