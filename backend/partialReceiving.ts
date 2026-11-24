@@ -1,3 +1,4 @@
+import { postReceiptBatch } from './receiptJournal';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { allocateReceiptCost, weightedAverageReceiptCost } from './receiptCosting';
@@ -158,6 +159,9 @@ export const receivePartialOrder = async (
       `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
        VALUES($1,$2,NOW(),$3,'Inventory Staff','Goods Received',$4)`,
        ['activity-'+batchId,shopId,user,`Goods receipt ${batchId} for ${po.po_number}`]);
+    // Post only this receipt batch, in the same transaction as stock and receipt costing.
+    // The adapter does nothing while accounting cutover is disabled.
+    await postReceiptBatch(client,shopId,batchId);
     await client.query('COMMIT');
     return { batchId, repeated: false, status };
   } catch (error) {
