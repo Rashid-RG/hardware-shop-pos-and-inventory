@@ -52,3 +52,31 @@ export async function savePackagingDraft(pool: Pool, shopId: string, productId: 
   if (!result.rowCount) throw new Error('Product not found in this shop.');
   return result.rows[0].configuration;
 }
+
+/** Conservative first-release eligibility. No inventory or history is modified. */
+export async function checkPackagingActivation(pool: Pool, shopId: string, productId: string) {
+  const result = await pool.query(`
+    SELECT p.quantity,p.status,p.variants_json,p.shared_stock_units,d.configuration,
+      EXISTS(SELECT 1 FROM sales_transaction_items s WHERE s.product_id=p.id) AS has_sales,
+      EXISTS(SELECT 1 FROM purchase_order_items i WHERE i.product_id=p.id) AS has_purchases,
+      EXISTS(SELECT 1 FROM stock_logs l WHERE l.product_id=p.id) AS has_stock_history,
+      EXISTS(SELECT 1 FROM quotations q WHERE q.shop_id=p.shop_id
+        AND q.items @> jsonb_build_array(jsonb_build_object('productId',p.id))) AS has_quotes
+    FROM products p LEFT JOIN ars_packaging_drafts d ON d.product_id=p.id AND d.shop_id=p.shop_id
+    WHERE p.id=$1 AND p.shop_id=$2`,[productId,shopId]);
+  const row=result.rows[0];
+  if (!row) throw new Error('Product not found in this shop.');
+  const reasons:string[]=[];
+  if (row.shared_stock_units) reasons.push('Shared stock already active.');
+  if (row.status==='Inactive') reasons.push('Product is inactive.');
+  if (Number(row.quantity)!==0) reasons.push('Existing stock requires a separate conversion and reconciliation.');
+  if (row.variants_json?.length) reasons.push('Independent variants cannot be converted automatically.');
+  if (row.has_sales || row.has_purchases || row.has_stock_history || row.has_quotes) reasons.push('Existing transaction or stock history requires manual reconciliation.');
+  if (!row.configuration) reasons.push('Save a packaging draft first.');
+  else {
+    try { const config=parsePackagingDraft(row.configuration);
+      if (config.units.filter(u=>u.baseUnits===1).length!==1) reasons.push('Exactly one base selling unit is required.');
+    } catch { reasons.push('Packaging configuration is invalid.'); }
+  }
+  return {eligible:reasons.length===0,reasons,active:Boolean(row.shared_stock_units)};
+}
