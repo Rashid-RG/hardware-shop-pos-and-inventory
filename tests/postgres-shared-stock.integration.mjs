@@ -209,6 +209,43 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM ars_receipt_batches WHERE purchase_order_id=$1',[importPo])).rows[0].count,2);
   const originalCosts=(await pool.query('SELECT cost_price FROM sales_transaction_items WHERE transaction_id=$1 ORDER BY selling_unit_id',[invoiceId])).rows;
   assert.deepEqual(originalCosts.map(r=>Number(r.cost_price)),[3600,300]);
+  // Reconcile already-paid import charges, not a second withdrawal.
+  const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,recordPaidExpense,listFinancialAccounts,financialProfitReport,financialCashFlow}=await import('../backend/financialAccounts.ts');
+  const {linkImportExpense,listImportExpenseReview}=await import('../backend/importExpenseReconciliation.ts');
+  await initFinancialAccounts(pool);
+  const bank='import-bank-'+suffix,day='2026-11-24',actor='CI Admin';
+  await createFinancialAccount(pool,{id:bank,shopId:shop,name:'Import bank',kind:'Bank',recordedBy:actor});
+  await registerFinancialOpeningBalance(pool,{id:randomUUID(),shopId:shop,accountId:bank,amount:5000,effectiveDate:day,recordedBy:actor});
+  const payment=async(description,amount,verified=true)=>{
+    const id='exp-'+randomUUID();
+    await recordPaidExpense(pool,{id,shopId:shop,desc:description,category:'Import charges',amount,date:day,recordedBy:actor,role:'Super Admin',...(verified?{sourceAccountId:bank,paymentMethod:'Bank Transfer'}:{})});
+    return id;
+  };
+  const freight=await payment('Freight payment',1200),customs=await payment('Customs payment',600),excess=await payment('Excess clearance',361),legacyExpense=await payment('Unverified historical expense',100,false);
+  const before=await financialProfitReport(pool,shop,day,day),cashBefore=await financialCashFlow(pool,shop,day,day);
+  const accountBefore=(await listFinancialAccounts(pool,shop)).find(a=>a.id===bank).balance;
+  assert.equal(before.expenses,2261);assert.equal(before.capitalizedImportExpenses,0);
+  const link={id:randomUUID(),shopId:shop,approvalId:approval.id,expenseId:freight,chargeKind:'Freight',expectedAmount:1200,evidence:'CI verified freight receipt',recordedBy:actor};
+  const review=await listImportExpenseReview(pool,shop);
+  assert.ok(review.expenses.some(e=>e.id===freight));assert.ok(!review.expenses.some(e=>e.id===legacyExpense));
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),shopId:'other-shop'}),/not found/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expectedAmount:1199}),/amount changed/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expenseId:legacyExpense,expectedAmount:100}),/verified financial payment/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expenseId:excess,chargeKind:'Clearance',expectedAmount:361}),/exceeds remaining/);
+  const retries=await Promise.all([linkImportExpense(pool,link),linkImportExpense(pool,link)]);
+  assert.deepEqual(retries.map(r=>r.replayed).sort(),[false,true]);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID()}),/already reconciled/);
+  await linkImportExpense(pool,{...link,id:randomUUID(),expenseId:customs,chargeKind:'Customs',expectedAmount:600,evidence:'CI customs receipt'});
+  const after=await financialProfitReport(pool,shop,day,day);
+  assert.equal(after.capitalizedImportExpenses,1800);assert.equal(after.expenses,461);
+  assert.equal(after.operatingEstimate-before.operatingEstimate,1800);
+  assert.deepEqual(await financialCashFlow(pool,shop,day,day),cashBefore);
+  assert.equal((await listFinancialAccounts(pool,shop)).find(a=>a.id===bank).balance,accountBefore);
+  assert.deepEqual(await currentInventory(),[200,310.8]);
+  const reviewed=await listImportExpenseReview(pool,shop);
+  assert.equal(reviewed.approvals.find(a=>a.id===approval.id).links.length,2);
+  assert.ok(!reviewed.expenses.some(e=>e.id===freight));
+
 
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
