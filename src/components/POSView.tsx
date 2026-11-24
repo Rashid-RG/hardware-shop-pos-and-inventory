@@ -196,6 +196,11 @@ export default function POSView({
   const [discountInput, setDiscountInput] = useState<string>(restoredDraft?.discountInput || '0');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Credit Account');
   const managerFinancialPosting=['Super Admin','Store Manager'].includes(currentRole);
+  const [creditDueDate,setCreditDueDate]=useState<string>(typeof restoredDraft?.creditDueDate==='string'?restoredDraft.creditDueDate:'');
+  const [creditEvidence,setCreditEvidence]=useState<string>(typeof restoredDraft?.creditEvidence==='string'?restoredDraft.creditEvidence:'');
+  const creditToday=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const activeCreditTerms=managerFinancialPosting&&paymentMethod==='Credit Account';
+  const invalidCreditTerms=activeCreditTerms&&Boolean(creditDueDate||creditEvidence.trim())&&(!creditDueDate||creditDueDate<creditToday||!creditEvidence.trim()||creditEvidence.trim().length>500);
   const [invoiceAccounts,setInvoiceAccounts]=useState<{id:string;name:string;kind:string;active:boolean;balance:number}[]>([]);
   const [invoiceAccountId,setInvoiceAccountId]=useState('');
   const [invoiceAccountsLoading,setInvoiceAccountsLoading]=useState(false);
@@ -231,14 +236,14 @@ export default function POSView({
       if (cart.length === 0 && !requestBody) sessionStorage.removeItem(draftKey);
       else sessionStorage.setItem(draftKey, JSON.stringify({
         cart, customer: selectedCustomer, repId: selectedSalesRepId,
-        discountMode, discountInput, wholesaleMeta: wholesaleMetaDraft, pending, requestBody:pending?requestBody:null,
+        discountMode, discountInput, creditDueDate, creditEvidence, wholesaleMeta: wholesaleMetaDraft, pending, requestBody:pending?requestBody:null,
       }));
       return true;
     } catch { return false; }
   };
   useEffect(() => {
     setDraftSaved(persistDraft());
-  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, checkoutUncertain,pendingCheckoutBody]);
+  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, creditDueDate,creditEvidence,checkoutUncertain,pendingCheckoutBody]);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [barcodeNotification, setBarcodeNotification] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
   const [lastScannedItem, setLastScannedItem] = useState<{ label: string; code: string } | null>(null);
@@ -299,7 +304,7 @@ export default function POSView({
       try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{notify.error('Unable to clear the saved draft.');return;}
       setCart([]);setSelectedCustomer({id:'',name:'',phone:'',email:'',address:'',loyaltyBalance:0,purchaseCount:0});
       setSelectedSalesRepId('');setBillingCustomerName('');setBillingCustomerPhone('');setBillingCustomerAddress('');
-      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Credit Account');
+      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Credit Account');setCreditDueDate('');setCreditEvidence('');
       setWholesaleMetaDraft({transportCharges:'',deliveryCharges:'',warrantyInformation:'',dispatchMethod:'',vehicleNumber:'',deliveryNoteNumber:'',batchNumber:'',supplierReference:'',deliveryStatus:''});
       setIsReviewOpen(false);setReceiptModel(null);setEditingDescriptionKey(null);setDescriptionDraft('');
       setDraftCustomerId('');setDraftRepId('');setCustomerSearch('');setSetupDialog('customer');
@@ -1158,6 +1163,7 @@ export default function POSView({
       return;
     }
     if (paymentMethod === 'Credit Account' && !creditAccountAllowed) { notify.warning('Customer credit limit must cover this invoice.'); return; }
+    if(invalidCreditTerms){notify.warning('Enter a valid agreed due date and payment agreement reference, or leave both blank.');return;}
     if(needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0)){notify.warning('Select an active receiving account for the paid invoice.');return;}
     if (paymentMethod !== 'Credit Account' && !window.confirm('Confirm full payment of '+formatMoney(total)+' has already been received. Otherwise choose Pay later.')) return;
     const requestBody=JSON.stringify({requestId:crypto.randomUUID(),
@@ -1169,6 +1175,7 @@ export default function POSView({
           salesRepId: selectedSalesRepId,
           paymentMethod: paymentMethod,
           destinationAccountId:needsInvoiceAccount?selectedInvoiceAccount?.id:undefined,
+          creditTerms:activeCreditTerms&&creditDueDate?{dueDate:creditDueDate,evidence:creditEvidence.trim()}:undefined,
           paymentStatus: paymentMethod === 'Credit Account'
             ? 'CREDIT SALE'
             : 'PAID',
@@ -1264,7 +1271,7 @@ export default function POSView({
         setCart([]);
         setDiscountMode('amount');
         setDiscountInput('0');
-        setPaymentMethod('Credit Account');
+        setPaymentMethod('Credit Account');setCreditDueDate('');setCreditEvidence('');
         onRefreshDb(); // Reload stock amounts parent state
       } else {
         // Keep the exact request until confirmed or manually reconciled; a retry must never create a new ID.
@@ -1819,6 +1826,7 @@ export default function POSView({
                   if(setupDialog === 'customer'){
                     const buyer=customers.find(c=>c.id===draftCustomerId && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
                     if(!buyer)return;
+                    if(buyer.id!==selectedCustomer.id){setCreditDueDate('');setCreditEvidence('');}
                     setSelectedCustomer(buyer);
                   } else {
                     if(!activeSalesReps.some(rep=>rep.id===draftRepId))return;
@@ -1989,6 +1997,8 @@ export default function POSView({
                 </div>
               )}
 
+          {activeCreditTerms&&<fieldset disabled={isSubmitting||checkoutUncertain} className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs"><legend className="font-semibold px-1">Agreed payment terms (optional)</legend><label className="block font-semibold" htmlFor="credit-due-date">Payment due date</label><input id="credit-due-date" type="date" min={creditToday} max="9999-12-31" value={creditDueDate} onChange={e=>{setCreditDueDate(e.target.value);if(!e.target.value)setCreditEvidence('');}} className="w-full rounded border border-slate-300 p-2"/><label className="block font-semibold" htmlFor="credit-evidence">Payment agreement reference {creditDueDate?'*':''}</label><input id="credit-evidence" value={creditEvidence} maxLength={500} disabled={!creditDueDate||isSubmitting||checkoutUncertain} onChange={e=>setCreditEvidence(e.target.value)} placeholder="Agreed with customer / order reference" className="w-full rounded border border-slate-300 p-2"/><p className="text-slate-500">Leave blank if no due date has been agreed. No money is collected now.</p>{invalidCreditTerms&&<p role="alert" className="text-rose-700">Enter a valid due date and agreement reference.</p>}</fieldset>}
+
           <div className="space-y-1.5 text-xs text-slate-600 font-sans">
             <div className="flex justify-between">
               <span>Items Total</span>
@@ -2068,7 +2078,7 @@ export default function POSView({
                         {/* Checkout Submit Trigger */}
           <button
             id="pos-pay-trigger" type="button"
-            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || invalidCreditTerms || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
             onClick={handleCheckout}
             className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)
