@@ -36,7 +36,8 @@ interface CustomerEmployeeViewProps {
   onUpdateCustomer: (customerId: string, details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>) => Promise<void>;
   onAddEmployee: (empData: Omit<Employee, 'id' | 'performanceScore'>) => Promise<void>;
   onSetCreditLimit: (customerId: string, creditLimit: number) => Promise<void>;
-  onAddCreditPayment: (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<void>;
+  onAddCreditPayment: (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<CustomerCreditPayment>;
+  onFetchPaymentReceipt: (paymentId:string)=>Promise<Blob>;
 }
 
 export default function CustomerEmployeeView({
@@ -52,6 +53,7 @@ export default function CustomerEmployeeView({
   onAddEmployee,
   onSetCreditLimit,
   onAddCreditPayment,
+  onFetchPaymentReceipt,
 }: CustomerEmployeeViewProps) {
   const activeTab = viewMode;
   const [searchTerm, setSearchTerm] = useState('');
@@ -304,7 +306,25 @@ export default function CustomerEmployeeView({
   const selectedCollectionInvoice=collectibleInvoices.find(tx=>tx.id===paymentInvoiceId);
   const collectionMaximum=Math.min(Number(paymentDraft?.creditBalance||0),hasUnallocatedCollections?Number(paymentDraft?.creditBalance||0):selectedCollectionInvoice?.balance||0);
 
-  const handleSubmitCreditPayment = async (e: React.FormEvent) => {
+  const openPaymentReceipt=async(paymentId:string,mode:'print'|'download',preview?:Window|null)=>{
+    let target=preview;
+    if(mode==='print'&&target===undefined)target=window.open('','_blank');
+    try{
+      const blob=await onFetchPaymentReceipt(paymentId);
+      const url=URL.createObjectURL(blob);
+      if(mode==='print'&&target&&!target.closed){
+        target.location.replace(url);
+        target.focus();
+        const cleanup=window.setInterval(()=>{if(target?.closed){URL.revokeObjectURL(url);window.clearInterval(cleanup);}},5000);
+      }else{
+        const link=document.createElement('a');link.href=url;link.download='payment-'+paymentId+'.pdf';document.body.appendChild(link);link.click();link.remove();
+        window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+        if(mode==='print')notify.warning('Print preview unavailable. Receipt downloaded instead.');
+      }
+    }catch(error){target?.close();notify.warning('Payment receipt unavailable. Do not record the payment again; retry from payment history.');}
+  };
+
+  const handleSubmitCreditPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!paymentDraft || isPaymentSubmitting) return;
     const amount = Number(paymentAmount);
@@ -314,9 +334,12 @@ export default function CustomerEmployeeView({
       notify.warning('Enter a valid payment amount.');
       return;
     }
+    const printRequested=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-receipt')==='print';
+    const preview=printRequested?window.open('','_blank'):undefined;
+    if(preview)preview.document.body.textContent='Saving payment…';
     setIsPaymentSubmitting(true);
     try {
-      await onAddCreditPayment({
+      const savedPayment=await onAddCreditPayment({
         customerId: paymentDraft.id,
         invoiceId: hasUnallocatedCollections?undefined:paymentInvoiceId,
         amount,
@@ -330,7 +353,9 @@ export default function CustomerEmployeeView({
       setPaymentMethod('Cash');
       setPaymentDate(reportDay(new Date()));
       setPaymentNote('');
+      if(printRequested)await openPaymentReceipt(savedPayment.id,'print',preview);
     } catch (err) {
+      preview?.close();
       notify.error('Failed to record customer payment: ' + err);
     } finally {
       setIsPaymentSubmitting(false);
@@ -603,7 +628,7 @@ export default function CustomerEmployeeView({
                     <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
                       <th className="p-3">Date</th><th className="p-3">Record</th>
                       <th className="p-3">Reference</th><th className="p-3">Details</th>
-                      <th className="p-3">Status</th><th className="p-3 text-right">Amount</th>
+                      <th className="p-3">Status</th><th className="p-3 text-right">Amount</th><th className="p-3">Receipt</th>
                     </tr></thead>
                     <tbody>
                       {historyRows.map((row) => (
@@ -619,6 +644,7 @@ export default function CustomerEmployeeView({
                           <td className="p-3">{row.description}</td>
                           <td className="p-3">{row.status}</td>
                           <td className="p-3 text-right font-semibold">{formatMoney(row.amount)}</td>
+                          <td className="p-3">{row.type==='Payment'&&<div className="flex flex-wrap gap-2"><button type="button" onClick={()=>void openPaymentReceipt(row.id,'print')} className="rounded border px-2 py-1 text-xs font-semibold">Reprint</button><button type="button" onClick={()=>void openPaymentReceipt(row.id,'download')} className="rounded border px-2 py-1 text-xs font-semibold">PDF</button></div>}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -777,6 +803,7 @@ export default function CustomerEmployeeView({
                 <button type="submit" disabled={isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
+                <button type="submit" data-receipt="print" disabled={isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
               </div>
             </form>
           </div>
