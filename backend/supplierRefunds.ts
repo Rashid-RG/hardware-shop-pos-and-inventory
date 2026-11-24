@@ -48,3 +48,23 @@ export async function recordSupplierRefund(db:Pool,i:Input){
  await c.query('COMMIT');return {id:i.id,replayed:false};
  }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
 }
+
+/** Advisory preview only: posting locks the order and rechecks all limits. */
+export async function supplierRefundAvailability(db:Pool,shopId:string,returnId:string){
+ const c=await db.connect();
+ try{
+ await c.query('BEGIN');
+ const h=(await c.query("SELECT h.purchase_order_id,h.return_date::text AS day,j.id AS journal_id FROM ars_gl_purchase_returns h JOIN ars_gl_journals j ON j.shop_id=h.shop_id AND j.source_kind='PurchaseReturn' AND j.source_id=h.id WHERE h.shop_id=$1 AND h.id=$2",[shopId,returnId])).rows[0];
+ if(!h)throw Error('Posted purchase return required before refund.');
+ const cut=(await c.query('SELECT posting_enabled FROM ars_gl_cutover WHERE shop_id=$1 FOR SHARE',[shopId])).rows[0];
+ if(!cut?.posting_enabled)throw Error('Active accounting required for supplier refunds.');
+ const b=await supplierOrderBalances(c,shopId,h.purchase_order_id);
+ const credit=moneyCents((await c.query('SELECT COALESCE(sum(debit-credit),0)::text AS credit FROM ars_gl_lines WHERE shop_id=$1 AND journal_id=$2 AND account_code=$3',[shopId,h.journal_id,b.advanceAccount])).rows[0].credit);
+ const used=moneyCents((await c.query('SELECT COALESCE(sum(amount),0)::text AS amount FROM ars_gl_supplier_refunds WHERE shop_id=$1 AND return_id=$2',[shopId,returnId])).rows[0].amount);
+ const remaining=credit>used?credit-used:0n;
+ const available=remaining<b.advance?remaining:b.advance;
+ const accounts=(await c.query("SELECT f.id,f.name,f.kind FROM ars_financial_accounts f JOIN ars_gl_account_mappings m ON m.shop_id=f.shop_id AND m.mapping_kind='financialAccount' AND m.source_id=f.id JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code WHERE f.shop_id=$1 AND f.active AND f.kind IN ('Office Cash','Bank') AND a.active AND a.kind='Asset' AND a.code<>ALL($2::text[]) ORDER BY f.name,f.id",[shopId,[b.advanceAccount,b.payableAccount]])).rows;
+ await c.query('COMMIT');
+ return {returnId,returnDate:h.day,returnCredit:decimal(credit),refunded:decimal(used),orderAdvance:decimal(b.advance),available:decimal(available),accounts};
+ }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
+}
