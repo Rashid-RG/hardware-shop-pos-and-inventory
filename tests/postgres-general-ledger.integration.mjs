@@ -152,3 +152,20 @@ test('supplier order journal balances across partial receipts, settlement and ro
   await db.end();
  }
 });
+
+import {buildImportReceiptJournal} from '../backend/importCapitalization.ts';
+test('paid import charges capitalize once without a second cash payment',()=>{
+ const base={goods:100000n,landed:125000n,rounding:0n,verifiedUnusedCharges:25000n,goodsCredits:[{accountCode:'2000',debit:'0.00',credit:'1000.00'}],inventoryAccount:'1300',expenseAccount:'5100',roundingAccount:'5050'};
+ const lines=buildImportReceiptJournal(base);
+ assert.deepEqual(lines,[{accountCode:'1300',debit:'1250.00',credit:'0.00'},{accountCode:'2000',debit:'0.00',credit:'1000.00'},{accountCode:'5100',debit:'0.00',credit:'250.00'}]);
+ assert.equal(validateJournal(lines).totalCents,'125000');
+ assert.deepEqual(buildImportReceiptJournal({...base,rounding:2n}).at(-1),{accountCode:'5050',debit:'0.00',credit:'0.02'});
+ assert.deepEqual(buildImportReceiptJournal({...base,rounding:-2n}).at(-1),{accountCode:'5050',debit:'0.02',credit:'0.00'});
+ assert.throws(()=>buildImportReceiptJournal({...base,verifiedUnusedCharges:24999n}));
+ assert.throws(()=>buildImportReceiptJournal({...base,verifiedUnusedCharges:0n}));
+ assert.throws(()=>buildImportReceiptJournal({...base,expenseAccount:'1300'}));
+ assert.throws(()=>buildImportReceiptJournal({...base,landed:99999n}));
+ const domestic=buildImportReceiptJournal({...base,landed:100000n,verifiedUnusedCharges:0n,expenseAccount:'',roundingAccount:''});
+ assert.equal(domestic.length,2);
+ assert.equal(validateJournal(domestic).totalCents,'100000');
+});
