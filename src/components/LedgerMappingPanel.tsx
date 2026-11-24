@@ -5,7 +5,7 @@ type Financial={id:string;name:string;kind:string;active:boolean};
 type Mapping={kind:string;sourceId:string;accountCode:string;evidence:string;recorded_by:string;name:string;active:boolean};
 type Source={kind:string;sourceId:string;label:string;classification:string};
 const controls:Source[]=[
- ['receivables','Customer receivables','Asset'],['inventory','Inventory','Asset'],['cheques','Cheques receivable','Asset'],['fixedAssets','Fixed assets','Asset'],
+ ['supplierAdvances','Supplier advances','Asset'],['receivables','Customer receivables','Asset'],['inventory','Inventory','Asset'],['cheques','Cheques receivable','Asset'],['fixedAssets','Fixed assets','Asset'],
  ['supplierPayables','Supplier payables','Liability'],['customerCredits','Customer credit balances','Liability'],['loans','Loans','Liability'],['tax','Taxes','Liability'],
  ['capital','Partner capital','Equity'],['retainedEarnings','Retained earnings','Equity'],['sales','Wholesale sales','Revenue'],['costOfGoods','Cost of goods sold','Expense'],
  ['operatingExpense','Operating expenses','Expense'],['salary','Salaries','Expense']
