@@ -3,6 +3,7 @@ import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPackagingDrafts, getPackagingDraft, savePackagingDraft } from './backend/packagingDrafts';
+import { initSharedStockSchema } from './backend/sharedStock';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -6360,6 +6361,7 @@ async function startServer() {
   await initPostgres();
   await initPartialReceivingTables(pool);
   await initPackagingDrafts(pool);
+  await initSharedStockSchema(pool);
   await initArsProfitLedger(pool);
   await loadDb();
 
