@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5973,6 +5973,62 @@ app.post('/api/financial-transfers',requireRole(['Super Admin','Store Manager'])
     if(['Select two active financial accounts in this shop.','Settlement accounts are not supported for fund transfers.','Insufficient recorded funds in source account.','Transfer request identifier already used for different details.','Invalid financial transfer details.','Only previously committed transfers can be retried for earlier dates.','Handover requires a representative cash account and an office cash account.'].includes(message))return res.status(409).json({error:message});
     console.error('Financial transfer failed',error);
     return res.status(500).json({error:'Unable to confirm transfer. Reconcile or retry the same request identifier.'});
+  }
+});
+
+
+const chequeShopAccess=(req:express.Request)=>{
+  const auth=(req as AppRequest).authUser;
+  const {activeShopId}=getActiveShopContext(db,req);
+  const requested=getRequestedShopId(req);
+  if(!auth||!db.settings.shopProfiles?.some(s=>s.id===activeShopId)||
+    (requested&&requested!==activeShopId)||(auth.scopedShopId&&auth.scopedShopId!==activeShopId)||
+    (auth.fixedShopId&&auth.fixedShopId!==activeShopId)||
+    (Array.isArray(auth.allowedShopIds)&&!auth.allowedShopIds.includes(activeShopId)))return null;
+  return {shopId:activeShopId,recordedBy:auth.email};
+};
+const validChequeRequestId=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+app.get('/api/customer-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  try{res.setHeader('Cache-Control','no-store');return res.json(await listCustomerCheques(pool,scope.shopId));}
+  catch(error){console.error('Cheque register read failed',error);return res.status(500).json({error:'Unable to load cheque register.'});}
+});
+app.post('/api/customer-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,customerId,invoiceId,chequeNumber,issuingBank,drawerName,amount,receivedDate,dueDate,note}=req.body||{};
+  if(!validChequeRequestId(requestId)||typeof customerId!=='string'||!customerId.trim()||customerId.length>200||
+    (invoiceId!==undefined&&(typeof invoiceId!=='string'||!invoiceId.trim()||invoiceId.length>200))||
+    typeof chequeNumber!=='string'||typeof issuingBank!=='string'||typeof drawerName!=='string'||typeof amount!=='number'||
+    typeof receivedDate!=='string'||receivedDate>reportDay(new Date())||typeof dueDate!=='string'||
+    (note!==undefined&&typeof note!=='string'))return res.status(400).json({error:'Enter valid cheque details.'});
+  try{
+    const result=await registerCustomerCheque(pool,{...scope,id:'cheque-'+requestId,customerId,invoiceId,chequeNumber,issuingBank,drawerName,amount,receivedDate,dueDate,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid cheque details.','Cheque request identifier already used for different details.','Select a valid customer credit invoice.','Cheque exceeds invoice outstanding balance.','Cheque exceeds customer outstanding balance or customer is unavailable.','Pending cheques plus this cheque exceed customer outstanding balance.','Pending cheques plus this cheque exceed invoice outstanding balance.','Cheque already registered for this customer.'].includes(message))return res.status(409).json({error:message});
+    console.error('Cheque registration failed',error);return res.status(500).json({error:'Unable to confirm cheque registration. Retry the same request identifier.'});
+  }
+});
+app.post('/api/customer-cheques/:id/status',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,nextStatus,effectiveDate,depositAccountId,note}=req.body||{};
+  if(!validChequeRequestId(requestId)||!['Deposited','Bounced','Cancelled','Returned'].includes(nextStatus)||
+    typeof effectiveDate!=='string'||effectiveDate>reportDay(new Date())||
+    (depositAccountId!==undefined&&(typeof depositAccountId!=='string'||depositAccountId.length>200))||
+    (note!==undefined&&typeof note!=='string'))return res.status(400).json({error:'Enter valid cheque transition details. Clearance is not yet enabled.'});
+  try{
+    const result=await transitionCustomerCheque(pool,{...scope,chequeId:String(req.params.id),eventId:'cheque-event-'+requestId,nextStatus,effectiveDate,depositAccountId,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid cheque transition details.','Cheque not found in this shop.','Cheque event identifier already used for different details.','Invalid cheque status transition.','Cheque event date precedes its history.','Post-dated cheque cannot be deposited before its due date.','Select an active bank account in this shop.'].includes(message))return res.status(409).json({error:message});
+    console.error('Cheque transition failed',error);return res.status(500).json({error:'Unable to confirm cheque status. Retry the same request identifier.'});
   }
 });
 
