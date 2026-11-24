@@ -398,7 +398,9 @@ export default function App() {
       const err = await res.json();
       throw new Error(err.message || 'Failed to add product');
     }
+    const created: Product = await res.json();
     await handleRefreshDb();
+    return created;
   };
 
   const handleEditProduct = async (id: string, payload: Partial<Product> & { reason?: string; user?: string }) => {
