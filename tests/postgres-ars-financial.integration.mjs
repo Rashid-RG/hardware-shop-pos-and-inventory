@@ -141,6 +141,38 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.equal(paymentRows.rows.reduce((sum,row)=>sum+Number(row.amount),0),550);
     assert.equal((await listCustomerCheques(pool,shopId)).find(c=>c.id===bounced.id).status,'Bounced');
     assert.equal((await receivableAging(pool,otherShop)).customers.some(c=>c.id===customerId),false);
+    // Supplier aging: fully received orders only; advances and partial receipts remain visible.
+    const {supplierPayableAging,registerSupplierDueDate}=await import('../backend/payableAging.ts');
+    const poIds={received:id(),partial:id(),ordered:id(),cancelled:id(),unknown:id(),paid:id()};
+    for(const [name,status,total] of [['received','Received',500],['partial','Partially Received',700],['ordered','Ordered',900],['cancelled','Cancelled',1000],['unknown','Received',80],['paid','Received',50]]){
+      await pool.query('INSERT INTO purchase_orders(id,shop_id,po_number,date,supplier_id,supplier_name,total,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[poIds[name],shopId,'CI-PO-'+poIds[name],day,supplierId,'CI supplier',total,status]);
+    }
+    const terms={shopId,purchaseOrderId:poIds.received,dueDate:'2099-12-31',evidence:'CI supplier agreement',recordedBy};
+    await assert.rejects(registerSupplierDueDate(pool,{...terms,shopId:otherShop}),/not found in this shop/);
+    await assert.rejects(registerSupplierDueDate(pool,{...terms,purchaseOrderId:poIds.partial}),/Only received/);
+    await assert.rejects(registerSupplierDueDate(pool,{...terms,dueDate:'2000-01-01'}),/cannot precede/);
+    const termResults=await Promise.all([registerSupplierDueDate(pool,terms),registerSupplierDueDate(pool,terms)]);
+    assert.deepEqual(termResults.map(r=>r.replayed).sort(),[false,true]);
+    await assert.rejects(registerSupplierDueDate(pool,{...terms,evidence:'Changed agreement'}),/already registered/);
+    for(const [name,amount] of [['received',100],['ordered',20],['paid',50]]){
+      const linked={...supplierPayment,id:'spay-'+id(),purchaseOrderId:poIds[name],amount};
+      await insertSupplierPayment(linked,bank);
+      await insertSupplierPayment(linked,bank);
+    }
+    const payables=await supplierPayableAging(pool,shopId);
+    const byId=Object.fromEntries(payables.orders.map(o=>[o.id,o]));
+    assert.equal(payables.estimatedPayable,480);
+    assert.equal(byId[poIds.received].outstanding,400);
+    assert.equal(byId[poIds.received].bucket,'Not overdue');
+    assert.equal(byId[poIds.unknown].bucket,'No due date');
+    assert.equal(byId[poIds.partial].outstanding,null);
+    assert.equal(byId[poIds.ordered].bucket,'Review');
+    assert.equal(byId[poIds.cancelled],undefined);
+    assert.equal(byId[poIds.paid],undefined);
+    assert.equal(payables.unmatchedPayments.length,1);
+    assert.equal(payables.unmatchedPayments[0].paid,100);
+    assert.equal(payables.needsReview,3);
+    assert.equal((await supplierPayableAging(pool,otherShop)).estimatedPayable,0);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
