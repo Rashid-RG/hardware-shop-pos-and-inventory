@@ -14,6 +14,7 @@ import { inventoryValuation, inventoryCostHistory } from './backend/inventoryVal
 import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './backend/receivableAging';
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
+import { submitOpeningProposal, listOpeningProposals } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
@@ -6263,6 +6264,23 @@ function ledgerApiError(res:express.Response,error:unknown){
  if(['Valid account code, name, classification and status required.','Account code already exists.','Account not found in this shop.','Account classification is immutable; create a new account.','Shop and account code required.'].includes(message))return res.status(409).json({error:message});
  console.error('Chart of accounts operation failed',error);return res.status(500).json({error:'Unable to complete accounting account operation.'});
 }
+app.get('/api/ledger/opening-proposals',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await listOpeningProposals(pool,scope.shopId));}
+ catch(error){console.error('Opening proposals failed',error);return res.status(500).json({error:'Unable to load opening proposals.'});}
+});
+app.post('/api/ledger/opening-proposals',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {id,cutoverDate,evidence,lines}=req.body||{};
+ try{const result=await submitOpeningProposal(pool,scope.shopId,scope.recordedBy,{id,cutoverDate,evidence,lines});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid cutover date and supporting evidence required.','A journal needs between 2 and 500 lines.','Invalid ledger account code.','Use a non-negative decimal amount with at most two decimal places.','Each line must have exactly one positive debit or credit.','Journal debits and credits must balance.','Use one opening balance line per account.','Opening proposal identifier already used.','Accounting already active; opening proposal not permitted.','Opening balances require active asset, liability or equity accounts in this shop.'].includes(message))return res.status(409).json({error:message});
+ console.error('Opening proposal submission failed',error);return res.status(500).json({error:'Unable to confirm opening proposal. Retry the identical proposal.'});}
+});
 app.get('/api/ledger/accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
