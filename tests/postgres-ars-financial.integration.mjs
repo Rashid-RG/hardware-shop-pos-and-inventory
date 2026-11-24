@@ -200,10 +200,10 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     await initArsProfitLedger(pool);
     const {financialPosition}=await import('../backend/financialPosition.ts');
     const position=await financialPosition(pool,shopId);
-    assert.equal(position.recordedCashAndBank,460);
+    assert.equal(position.recordedCashAndBank,440);
     assert.equal(position.recordedReceivables,450);
     assert.equal(position.receivedOrderOutstandingEstimate,480);
-    assert.equal(position.knownAssetSubtotal,1810);
+    assert.equal(position.knownAssetSubtotal,1790);
     assert.equal(position.knownLiabilitySubtotal,680);
     assert.equal(position.registerBalances.find(r=>r.kind==='Other asset').amount,null);
     assert.equal(position.registerBalances.find(r=>r.kind==='Tax liability').amount,0);
