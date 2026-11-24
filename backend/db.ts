@@ -1,3 +1,4 @@
+import { postFinancialJournal } from './financialJournalPosting';
 import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
 import { initReceivableAging } from './receivableAging';
@@ -1427,6 +1428,7 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
       if(updated.rowCount!==1)throw Error('Cheque clearance state changed.');
       await client.query("INSERT INTO ars_customer_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Deposited','Cleared',$4,$5,$6)",[chequeClearance.eventId,p.shopId,chequeClearance.chequeId,p.date,chequeClearance.recordedBy,p.note||null]);
     }
+    await postFinancialJournal(client,p.shopId,p.id,'CustomerCollection');
     await client.query('COMMIT');
     return receiptSnapshot;
   } catch (error) {
@@ -1536,6 +1538,7 @@ export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
         VALUES($1,$2,$3,-$4::numeric,'Supplier Payment',$5,$6,$7,$8)`,['supplier-out-'+p.id,p.shopId,sourceAccountId,p.amount,p.id,p.createdBy||'Manager',p.date,p.note||null]);
     }
+    await postFinancialJournal(client,p.shopId,p.id,'SupplierPayment');
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
