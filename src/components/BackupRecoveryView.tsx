@@ -30,6 +30,21 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
   const [cloudReady,setCloudReady] = useState<{ready:boolean;installed:boolean;configured:boolean}|null>(null);
   const [cloudMessage,setCloudMessage] = useState('');
   const [cloudBusy,setCloudBusy] = useState(false);
+  const [recoveryArchive,setRecoveryArchive] = useState('');
+  const [recoveryConfirmation,setRecoveryConfirmation] = useState('');
+  const [recoveryResult,setRecoveryResult] = useState<{target:string;counts:{products:string;customers:string;sales:string}}|null>(null);
+  const [recoveryError,setRecoveryError] = useState('');
+  async function recoverTest() {
+    if (recoveryConfirmation !== 'RESTORE TEST' || !recoveryArchive || action) return;
+    setAction(recoveryArchive);setRecoveryResult(null);setRecoveryError('');
+    try {
+      const response = await fetch('/api/backup/recovery-test',{method:'POST',headers:{Authorization:'Bearer '+authToken,'Content-Type':'application/json'},body:JSON.stringify({archive:recoveryArchive,confirmation:recoveryConfirmation})});
+      const data=await response.json();
+      if (!response.ok||!data.success) throw new Error(data.error||'Recovery test failed.');
+      setRecoveryResult(data);setRecoveryConfirmation('');
+    } catch(err) {setRecoveryError(err instanceof Error?err.message:'Recovery test failed.');}
+    finally {setAction('');}
+  }
   async function checkCloud() {
     try {
       const response = await fetch('/api/backup/cloud-readiness',{headers:{Authorization:'Bearer '+authToken}});
@@ -186,6 +201,16 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
         <div className="mt-2 flex flex-wrap gap-2"><button type="button" disabled={!row.complete || busy || cloudBusy || !!action || local.running} onClick={()=>downloadPackage(row.name)} className="rounded bg-amber-400 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Download complete package</button><button type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>verifySet(row.name)} className="rounded border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Verify set</button>
         {[row.name,row.name+'.sha256',...(row.includesUploads?[row.name.slice(0,-5)+'-uploads.zip',row.name.slice(0,-5)+'-uploads.zip.sha256']:[])].map((member,i)=><button key={member} type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>downloadSetMember(row.name,member)} className="rounded border px-3 py-1.5 text-xs disabled:opacity-40">{['Database','Database checksum','Uploads ZIP','Uploads checksum'][i]}</button>)}</div>
       </div>)}</div>
+    </section>}
+    {local?.enabled && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+      <h3 className="font-bold text-slate-900">Recovery test wizard</h3>
+      <p className="text-xs text-slate-600">Restore a verified backup into a new isolated database. This does not replace the working database. The test database and recovered uploads are retained for inspection.</p>
+      <label className="block text-xs font-semibold">1. Choose a complete backup<select className="mt-1 block w-full rounded border p-2" value={recoveryArchive} disabled={!!action||busy||cloudBusy} onChange={e=>{setRecoveryArchive(e.target.value);setRecoveryConfirmation('');setRecoveryResult(null);}}><option value="">Select a backup</option>{history.filter(row=>row.complete).map(row=><option key={row.name} value={row.name}>{new Date(row.createdAt).toLocaleString()} · {row.name}</option>)}</select></label>
+      <label className="block text-xs font-semibold">2. Type RESTORE TEST to confirm<input className="mt-1 block w-full rounded border p-2" value={recoveryConfirmation} onChange={e=>setRecoveryConfirmation(e.target.value)} disabled={!!action||busy||cloudBusy} placeholder="RESTORE TEST"/></label>
+      <button type="button" disabled={!recoveryArchive||recoveryConfirmation!=='RESTORE TEST'||!!action||busy||cloudBusy||local.running} onClick={recoverTest} className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">3. Run isolated recovery test</button>
+      {action&&action===recoveryArchive&&<p role="status" className="text-xs">Backup operation in progress. Do not start another restore.</p>}
+      {recoveryError&&<p role="alert" className="text-xs text-rose-700">{recoveryError}</p>}
+      {recoveryResult&&<div role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-900"><strong>Isolated recovery completed</strong><p className="break-all">{recoveryResult.target}</p><p>Products: {recoveryResult.counts.products} · Customers: {recoveryResult.counts.customers} · Sales: {recoveryResult.counts.sales}</p><p>Compare these counts with the original records and inspect recovered uploads before approving any recovery.</p></div>}
     </section>}
     <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-slate-800">Advanced setup, verification and recovery tools</summary>
     <div className="mt-4 space-y-4">
