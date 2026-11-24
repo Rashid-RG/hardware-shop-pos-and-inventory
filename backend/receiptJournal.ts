@@ -1,4 +1,4 @@
-import {buildImportReceiptJournal,verifiedImportChargeBalance} from './importCapitalization';
+import {buildImportLiabilityReceiptJournal,verifiedImportChargeFunding,allocateImportChargeFunding,recordImportReceiptAllocations} from './importCapitalization';
 import {supplierReceiptCredits} from './supplierAdvance';
 import type {PoolClient} from 'pg';
 import {moneyCents} from './generalLedger';
@@ -46,7 +46,11 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
  const inventory=await map('inventory','Asset'),credits=await supplierReceiptCredits(client,shopId,batch.purchase_order_id,goods);
  const expense=landed>goods?await map('operatingExpense','Expense'):'';
  const roundingAccount=rounding!==0n?await map('inventoryRounding','Expense'):'';
- const verifiedUnusedCharges=landed>goods?await verifiedImportChargeBalance(client,shopId,batch.purchase_order_id,expense):0n;
- const lines=buildImportReceiptJournal({goods,landed,rounding,verifiedUnusedCharges,goodsCredits:credits,inventoryAccount:inventory,expenseAccount:expense,roundingAccount});
- return {posted:true,...await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines})};
+ const funding=landed>goods?await verifiedImportChargeFunding(client,shopId,batch.purchase_order_id,expense):{fundedRemaining:0n,approvedUnpaidRemaining:0n,available:[]};
+ const allocation=allocateImportChargeFunding({charges:landed-goods,fundedRemaining:funding.fundedRemaining,approvedUnpaidRemaining:funding.approvedUnpaidRemaining});
+ const importPayableAccount=allocation.unpaid>0n?await map('importPayables','Liability'):'';
+ const lines=buildImportLiabilityReceiptJournal({goods,landed,rounding,fundedRemaining:funding.fundedRemaining,approvedUnpaidRemaining:funding.approvedUnpaidRemaining,goodsCredits:credits,inventoryAccount:inventory,expenseAccount:expense,roundingAccount,importPayableAccount});
+ const result=await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines});
+ if(!result.replayed&&allocation.unpaid>0n)await recordImportReceiptAllocations(client,shopId,batchId,result.id,allocation.unpaid,funding.available);
+ return {posted:true,...result};
 }
