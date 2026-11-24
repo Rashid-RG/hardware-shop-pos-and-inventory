@@ -1,3 +1,4 @@
+import {recordSupplierRefund} from './backend/supplierRefunds';
 import {recordPurchaseReturn} from './backend/purchaseReturns';
 import {settleImportCreditor} from './backend/importSettlements';
 import {listImportObligations,submitImportObligation,reviewImportObligation} from './backend/importObligations';
@@ -6357,6 +6358,26 @@ app.get('/api/ledger/purchase-returns/:poId',requireRole(['Super Admin','Store M
  COALESCE((SELECT jsonb_agg(jsonb_build_object('itemId',l.purchase_order_item_id,'baseQuantity',l.base_quantity,'inventoryCost',l.inventory_cost::text,'supplierCredit',l.supplier_credit::text) ORDER BY l.purchase_order_item_id) FROM ars_gl_purchase_return_lines l WHERE l.shop_id=h.shop_id AND l.return_id=h.id),'[]'::jsonb) AS items
  FROM ars_gl_purchase_returns h WHERE h.shop_id=$1 AND h.purchase_order_id=$2 ORDER BY h.return_date DESC,h.id LIMIT 500`,[scope.shopId,req.params.poId]);return res.json(result.rows);}
  catch(error){console.error('Purchase return history failed',error);return res.status(500).json({error:'Unable to load purchase returns.'});}
+});
+app.post('/api/ledger/supplier-refunds',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Supplier refund access denied.'});
+ const {requestId,returnId,accountId,amount,date,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||![returnId,accountId,evidence].every(v=>typeof v==='string'&&v.trim()&&v.length<=500)||typeof amount!=='string'||!/^\d{1,12}(\.\d{1,2})?$/.test(amount)||typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||date>reportDay(new Date()))return res.status(400).json({error:'Valid supplier refund details required.'});
+ try{const result=await recordSupplierRefund(pool,{shopId:scope.shopId,id:requestId,returnId,accountId,amount,date,evidence,actor:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid supplier refund details required.','Valid positive refund amount required.','Refund identifier already used.','Active accounting required for supplier refunds.','Posted purchase return required before refund.','Refund date precedes later supplier transactions.','Refund exceeds available supplier return credit.','Active cash or bank account required.','Distinct active refund accounting mapping required.','Supplier order not found.','Historical supplier payments require reconciliation.','Supplier balances require reconciliation.','Accounting period is closed'].includes(message)||message.startsWith('Missing supplier accounting mapping:'))return res.status(409).json({error:message});
+ console.error('Supplier refund failed',error);return res.status(500).json({error:'Unable to confirm supplier refund. Retry the same request.'});}
+});
+app.get('/api/ledger/supplier-refunds/:returnId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Supplier refund access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{
+ const h=await pool.query('SELECT id FROM ars_gl_purchase_returns WHERE shop_id=$1 AND id=$2',[scope.shopId,req.params.returnId]);
+ if(!h.rowCount)return res.status(404).json({error:'Purchase return not found.'});
+ const history=await pool.query(`SELECT f.id,f.amount::text,f.refund_date::text,f.evidence,f.recorded_by,f.journal_id,f.account_id,a.name AS account_name FROM ars_gl_supplier_refunds f LEFT JOIN ars_financial_accounts a ON a.shop_id=f.shop_id AND a.id=f.account_id WHERE f.shop_id=$1 AND f.return_id=$2 ORDER BY f.refund_date DESC,f.id LIMIT 500`,[scope.shopId,req.params.returnId]);
+ return res.json(history.rows);
+ }catch(error){console.error('Supplier refund history failed',error);return res.status(500).json({error:'Unable to load supplier refunds.'});}
 });
 function ledgerApiError(res:express.Response,error:unknown){
  const message=error instanceof Error?error.message:'';
