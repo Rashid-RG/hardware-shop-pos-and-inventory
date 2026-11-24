@@ -1623,7 +1623,7 @@ export const updateStoreSettings = async (s: StoreSettings) => {
  * 5) Update Customer credit/loyalty balances.
  * 6) Write ActivityLogs.
  */
-export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string, financialPayment?:{destinationAccountId:string;recordedBy:string;effectiveDate:string}, request?:{fingerprint:string;actor:string}) => {
+export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string, financialPayment?:{destinationAccountId:string;recordedBy:string;effectiveDate:string}, request?:{fingerprint:string;actor:string}, creditTerms?:{dueDate:string;evidence:string;recordedBy:string}) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1814,6 +1814,14 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
           );
         }
       }
+    }
+
+    if(creditTerms){
+      const {dueDate,recordedBy}=creditTerms,evidence=creditTerms.evidence.trim();
+      if(!request||request.actor!==recordedBy||!['Super Admin','Store Manager'].includes(cashierRole)||tx.paymentMethod!=='Credit Account'||!tx.shopId||!tx.customerId||tx.customerId==='cust-walkin'||!evidence||evidence.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)||Number.isNaN(Date.parse(dueDate))||new Date(dueDate).toISOString().slice(0,10)!==dueDate||dueDate>'9999-12-31')throw Error('Invalid agreed credit payment terms.');
+      const day=await client.query("SELECT ($1::timestamptz AT TIME ZONE 'Asia/Colombo')::date::text AS day",[tx.date]);
+      if(dueDate<day.rows[0].day)throw Error('Due date cannot precede the invoice date.');
+      await client.query('INSERT INTO ars_invoice_due_dates(shop_id,invoice_id,due_date,evidence,recorded_by) VALUES($1,$2,$3,$4,$5)',[tx.shopId,tx.id,dueDate,evidence,recordedBy]);
     }
 
     // 5) Log activity
