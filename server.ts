@@ -1,3 +1,4 @@
+import {listImportObligations,submitImportObligation,reviewImportObligation} from './backend/importObligations';
 import {supplierReconciliation} from './backend/supplierReconciliation';
 import {ledgerStatements,ledgerActivity} from './backend/ledgerReports';
 import { renderArsDisbursementVoucherPdf } from './src/utils/arsDisbursementVoucherPdf';
@@ -6264,6 +6265,30 @@ app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async
  if(!validChequeRequestId(requestId)||typeof approvalId!=='string'||!approvalId||typeof expenseId!=='string'||!expenseId||!['Freight','Customs','Clearance'].includes(chargeKind)||typeof expectedAmount!=='number'||!Number.isFinite(expectedAmount)||expectedAmount<=0||typeof evidence!=='string'||!evidence.trim()||evidence.length>500)return res.status(400).json({error:'Select a verified payment, approved charge and evidence.'});
  try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
+});
+function importObligationError(res:express.Response,error:unknown){
+ const message=error instanceof Error?error.message:'';
+ if(['Valid creditor, document, due date and evidence required.','Positive obligation amount required.','Approved shipment not found.','Existing import charges require reconciliation.','Obligation identifier already used.','Obligation exceeds remaining approved charge.','Valid obligation review required.','Import obligation not found.','Independent obligation reviewer required.','Obligation review already recorded.'].includes(message))return res.status(409).json({error:message});
+ if((error as any)?.code==='23505')return res.status(409).json({error:'Obligation document or identifier already registered.'});
+ console.error('Import obligation operation failed',error);return res.status(500).json({error:'Unable to complete import obligation operation.'});
+}
+app.get('/api/import-obligations/:approvalId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import obligation access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await listImportObligations(pool,scope.shopId,req.params.approvalId));}catch(error){return importObligationError(res,error);}
+});
+app.post('/api/import-obligations',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import obligation access denied.'});
+ const {requestId,approvalId,chargeKind,creditorName,documentReference,amount,dueDate,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof amount!=='string'||!/^\d{1,14}(\.\d{1,2})?$/.test(amount)||typeof dueDate!=='string')return res.status(400).json({error:'Valid obligation details required.'});
+ try{const result=await submitImportObligation(pool,{id:requestId,shopId:scope.shopId,actor:scope.recordedBy,approvalId,chargeKind,creditorName,documentReference,amount,dueDate,evidence});return res.status(result.replayed?200:201).json(result);}catch(error){return importObligationError(res,error);}
+});
+app.post('/api/import-obligations/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import obligation approval access denied.'});
+ const {decision,evidence}=req.body||{};
+ try{return res.json(await reviewImportObligation(pool,{shopId:scope.shopId,id:req.params.id,actor:scope.recordedBy,decision,evidence}));}catch(error){return importObligationError(res,error);}
 });
 function ledgerApiError(res:express.Response,error:unknown){
  const message=error instanceof Error?error.message:'';
