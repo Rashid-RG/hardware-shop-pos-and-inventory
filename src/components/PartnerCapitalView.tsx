@@ -1,3 +1,5 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState} from 'react';
 import {Landmark,ShieldCheck,RefreshCcw,Plus,Users,Wallet,History,ChartNoAxesColumn,ArrowRight} from 'lucide-react';
 type Partner={id:string;name:string;ownership_percent:string|null;is_active:boolean;};
@@ -5,9 +7,10 @@ type OwnershipAudit={id:string;partner_id:string;partner_name:string;old_percent
 type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';amount_lkr:string;entry_date:string;reference:string;note:string;created_by:string;};
 type ProfitAllocation={id:string;period_key:string;approved_profit_lkr:string;approval_reference:string;allocated_at:string;approved_by:string;shares:Array<{partnerId:string;name:string;ownershipPercent:number;allocatedLkr:string}>};
 type Agreement={id:string;effective_period:string;approval_reference:string;approved_by:string;approved_at:string;shares:Array<{partnerId:string;name:string;ownershipBasisPoints:number}>;};
-type Props={authToken:string;shopId:string;};
+import type {StoreSettings} from '../types';
+type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;};
 type PartnerWorkspace='overview'|'partners'|'agreements'|'capital'|'profits'|'history';
-export default function PartnerCapitalView({authToken,shopId}:Props){
+export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const [partners,setPartners]=useState<Partner[]>([]);
  const [workspace,setWorkspace]=useState<PartnerWorkspace>('overview');
  const [entries,setEntries]=useState<Capital[]>([]);
@@ -127,11 +130,18 @@ export default function PartnerCapitalView({authToken,shopId}:Props){
  const activePartners=partners.filter(p=>p.is_active);
  const ownershipTotal=activePartners.reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
  const allocationReady=activePartners.length>0&&activePartners.every(p=>p.ownership_percent!==null)&&Math.abs(ownershipTotal-100)<0.00001;
+ const partnerReport=():BusinessReport=>{
+ const base={period:'All available records | Confidential'};
+ if(workspace==='profits')return {...base,title:'Approved partner profit allocations',filename:'ars-partner-profits',headers:['Period','Approval reference','Partner','Ownership (%)','Allocated (LKR)','Approved by','Allocated at'],moneyColumns:[4],rows:profits.flatMap(p=>p.shares.map(s=>[p.period_key,p.approval_reference,s.name,s.ownershipPercent,Number(s.allocatedLkr),p.approved_by,p.allocated_at])),summary:[{label:'Approved allocations',value:profits.length},{label:'Approved profit (LKR)',value:profits.reduce((a,p)=>a+Number(p.approved_profit_lkr),0)}]};
+ if(workspace==='capital')return {...base,title:'Partner capital ledger',filename:'ars-partner-capital',headers:['Date','Partner','Type','Amount (LKR)','Reference','Note','Created by'],moneyColumns:[3],rows:entries.map(e=>[e.entry_date,partners.find(p=>p.id===e.partner_id)?.name||e.partner_id,e.entry_type,Number(e.amount_lkr),e.reference,e.note,e.created_by]),summary:[{label:'Contributions (LKR)',value:entries.filter(e=>e.entry_type==='Contribution').reduce((a,e)=>a+Number(e.amount_lkr),0)},{label:'Drawings (LKR)',value:entries.filter(e=>e.entry_type==='Drawing').reduce((a,e)=>a+Number(e.amount_lkr),0)}]};
+ return {...base,title:'Partner ownership register',filename:'ars-partner-ownership',headers:['Partner','Ownership (%)','Status'],rows:partners.map(p=>[p.name,p.ownership_percent===null?'Not assigned':Number(p.ownership_percent),p.is_active?'Active':'Inactive']),summary:[{label:'Active partners',value:activePartners.length},{label:'Assigned active ownership (%)',value:ownershipTotal}]};
+ };
  const formField='mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 focus:border-amber-400 focus:outline-none';
  return <div className="space-y-3">
   <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
     <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold"><Landmark className="h-6 w-6"/>Partner Capital & Ownership Ledger</h2>
     <p className="mt-1 text-xs text-slate-300">Add or deactivate partners as the business evolves. Profit allocations require all active ownership shares to total 100%, and never transfer funds.</p></header>
+  {taxConfig&&['overview','partners','capital','profits'].includes(workspace)&&<ReportExportMenu report={partnerReport} settings={taxConfig}/>}
   {error&&<p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
   {notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
   <nav aria-label="Partner management workspaces" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
