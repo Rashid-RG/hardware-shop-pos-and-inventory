@@ -1,7 +1,9 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState} from 'react';
 import {Ship,PackageCheck,Plus,RefreshCcw,ShieldCheck} from 'lucide-react';
 import PartialReceiptPanel from './PartialReceiptPanel';
-import type {PurchaseOrder,Role} from '../types';
+import type {PurchaseOrder,Role,StoreSettings} from '../types';
 
 type Shipment = {
  id:string; shop_id:string; purchase_order_id:string; shipment_reference:string;
@@ -9,8 +11,8 @@ type Shipment = {
  invoice_currency:string; exchange_rate_lkr:string; freight_lkr:string; customs_lkr:string;
  clearance_lkr:string; notes:string; status:string; po_number:string; supplier_name:string;
 };
-type Props={authToken:string;shopId:string;currentRole:Role;purchaseOrders:PurchaseOrder[];onRefreshDb:()=>void;mode:'shipments'|'receiving'};
-export default function ImportShipmentView({authToken,shopId,currentRole,purchaseOrders,onRefreshDb,mode}:Props){
+type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;currentRole:Role;purchaseOrders:PurchaseOrder[];onRefreshDb:()=>void;mode:'shipments'|'receiving'};
+export default function ImportShipmentView({taxConfig,authToken,shopId,currentRole,purchaseOrders,onRefreshDb,mode}:Props){
  const [rows,setRows]=useState<Shipment[]>([]);
  const [loading,setLoading]=useState(false);
  const [receivingPo,setReceivingPo]=useState<{id:string;number:string}|null>(null);
@@ -57,8 +59,10 @@ export default function ImportShipmentView({authToken,shopId,currentRole,purchas
    const matchesDate=(!etaFrom||(eta&&eta>=etaFrom))&&(!etaTo||(eta&&eta<=etaTo));
    return statusAllowed&&matchesSearch&&matchesDate;
  });
+ const shipmentReport=():BusinessReport=>{const financial=['Super Admin','Store Manager'].includes(currentRole);return {title:mode==='shipments'?'Import shipment register':'Warehouse receiving status',filename:'ars-'+mode,period:'Matching shipments | ETA '+(etaFrom||'Any')+' to '+(etaTo||'Any'),headers:['Shipment','Purchase order','Supplier','Container','Origin','ETA','Status',...(financial?['Invoice currency','Exchange rate (LKR)','Freight (LKR)','Customs (LKR)','Clearance (LKR)']:[])],moneyColumns:financial?[8,9,10,11]:[],rows:visibleRows.map(r=>[r.shipment_reference,r.po_number,r.supplier_name,r.container_number,r.origin_country,r.eta_date||'',r.status,...(financial?[r.invoice_currency,Number(r.exchange_rate_lkr),Number(r.freight_lkr),Number(r.customs_lkr),Number(r.clearance_lkr)]:[])]),summary:[{label:'Matching shipments',value:visibleRows.length},{label:'Partially received',value:visibleRows.filter(r=>r.status==='Partially Received').length}]};};
  const displayedRows=hasActiveFilters||showAll?visibleRows:visibleRows.slice(0,12);
  return <div className="space-y-5">
+   {taxConfig&&<ReportExportMenu report={shipmentReport} settings={taxConfig}/>}
    <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5">
      <p className="text-xs font-bold uppercase tracking-wider text-amber-300">ARS Import Operations</p>
      <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold">{mode==='shipments'?<Ship className="h-6 w-6"/>:<PackageCheck className="h-6 w-6"/>}{mode==='shipments'?'Import Shipment Register':'Warehouse Receiving'}</h2>
