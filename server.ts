@@ -126,7 +126,16 @@ const CONTENT_SECURITY_POLICY = [
 
 const isCorsOriginAllowed = (origin: string) => CORS_ALLOWED_ORIGINS.includes(origin);
 
-if (!Number.isInteger(PORT) || PORT <= 0 || PORT > 65535) {
+// Allow OS-assigned ports only for loopback integration servers using isolated CI databases.
+const isolatedEphemeralPort = (() => {
+  if (PORT !== 0 || process.env.ARS_LISTEN_HOST !== '127.0.0.1') return false;
+  try {
+    const url = new URL(process.env.DATABASE_URL || '');
+    return ['127.0.0.1','localhost'].includes(url.hostname) &&
+      /^\/hardware_pos_(?:ci|bootstrap_ci_[a-f0-9]{12})$/.test(url.pathname);
+  } catch { return false; }
+})();
+if (!Number.isInteger(PORT) || (PORT <= 0 && !isolatedEphemeralPort) || PORT > 65535) {
   throw new Error('PORT must be a valid TCP port between 1 and 65535.');
 }
 
