@@ -316,3 +316,22 @@ hardware-erp/
 - `manager@hardwarepos.local` (Store Manager)
 - `cashier@hardwarepos.local` (Cashier)
 - `inventory@hardwarepos.local` (Inventory Staff)
+
+## Linux Mint Cinnamon desktop installation
+
+For a fresh local installation, keep this project in a permanent folder on the shop laptop.
+Install Node.js 22 or newer with npm, Docker Engine with the Compose v2 plugin, Python 3,
+Zenity and the standard Mint desktop utilities. Enable Docker Engine at boot and confirm
+the shop's signed-in account can run `docker info` and `docker compose version`.
+As that desktop user, run once from the project folder:
+
+```bash
+bash scripts/mint/install.sh
+```
+
+Open **ARS Hardware POS** from the desktop or applications menu. If Cinnamon asks, trust the
+launcher on first use. On a fresh database, create the first administrator. Later clicks open
+the sign-in screen or existing session once PostgreSQL and ARS are ready. Startup uses the
+local build and a dedicated Docker volume. The installer requires internet for dependencies.
+Keep the project folder and its private `.env.local` together. The Windows backup scheduler
+requires a separate Linux implementation before use on this laptop.
