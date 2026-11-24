@@ -20,6 +20,9 @@ app="$HOME/.local/share/ars-hardware"
 mkdir -p "$app" "$HOME/.config/systemd/user" "$HOME/.local/share/applications"
 ln -sfnT "$root" "$app/project"
 ln -sfnT "$(command -v node)" "$app/node"
+# Keep the guard outside release folders so it survives a pointer switch.
+mkdir -p "$app/update-tools"
+install -m 600 scripts/mint/startup_guard.py scripts/mint/interrupted_switch.py "$app/update-tools/"
 install -m 644 scripts/mint/ars-hardware.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable ars-hardware.service
