@@ -103,20 +103,24 @@ export default function CustomerEmployeeView({
   const [collectionAccounts,setCollectionAccounts]=useState<CollectionAccount[]>([]);
   const [destinationError,setDestinationError]=useState('');
   const [destinationLoading,setDestinationLoading]=useState(false);
+  const representativeCollection=currentRole==='Cashier';
+  const [representativeBalance,setRepresentativeBalance]=useState<number|null>(null);
   const destinationEnabled=!!collectionAuthToken&&!!collectionShopId&&['Super Admin','Store Manager'].includes(currentRole);
   const compatibleDestinations=collectionAccounts.filter(a=>a.active&&(paymentMethod==='Cash'?['Office Cash','Representative Cash'].includes(a.kind):paymentMethod==='Bank Transfer'?a.kind==='Bank':false));
   useEffect(()=>{
     setDestinationAccountId('');setCollectionAccounts([]);setDestinationError('');
-    if(!paymentDraft||!destinationEnabled)return;
+    setRepresentativeBalance(null);setDestinationLoading(false);
+    if(!paymentDraft||(!destinationEnabled&&!representativeCollection))return;
+    if(representativeCollection&&(!collectionAuthToken||!collectionShopId)){setDestinationError('Representative account access is unavailable.');return;}
     const controller=new AbortController();
     setDestinationLoading(true);
-    fetch('/api/financial-accounts',{headers:{Authorization:'Bearer '+collectionAuthToken,'X-Shop-Id':collectionShopId||''},cache:'no-store',signal:controller.signal})
-      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load destinations.');return data as CollectionAccount[];})
+    fetch(representativeCollection?'/api/representative/me':'/api/financial-accounts',{headers:{Authorization:'Bearer '+collectionAuthToken,'X-Shop-Id':collectionShopId||''},cache:'no-store',signal:controller.signal})
+      .then(async r=>{const data=await r.json();if(!r.ok)throw Error(data.error||'Unable to load destinations.');if(representativeCollection){if(!data.accountId||!data.accountName||!Number.isFinite(data.balance))throw Error('Assigned cash account unavailable.');if(!controller.signal.aborted){setRepresentativeBalance(data.balance);setDestinationAccountId(data.accountId);}return [{id:data.accountId,name:data.accountName,kind:'Representative Cash',active:true}] as CollectionAccount[];}if(!Array.isArray(data))throw Error('Unable to load destinations.');return data as CollectionAccount[];})
       .then(data=>{if(!controller.signal.aborted)setCollectionAccounts(data);})
       .catch(error=>{if(!controller.signal.aborted)setDestinationError(error.message||'Unable to load destinations.');})
       .finally(()=>{if(!controller.signal.aborted)setDestinationLoading(false);});
     return ()=>controller.abort();
-  },[paymentDraft?.id,destinationEnabled,collectionAuthToken,collectionShopId]);
+  },[paymentDraft?.id,destinationEnabled,representativeCollection,collectionAuthToken,collectionShopId]);
 
 
   // Employee Form states
@@ -364,6 +368,7 @@ export default function CustomerEmployeeView({
       notify.warning('Enter a valid payment amount.');
       return;
     }
+    if(representativeCollection&&(paymentMethod!=='Cash'||destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId))){notify.warning('Your assigned representative cash account must be available before collection.');return;}
     if(destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod)&&!compatibleDestinations.some(a=>a.id===destinationAccountId)){notify.warning('Select a valid financial destination.');return;}
     const printRequested=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-receipt')==='print';
     const preview=printRequested?window.open('','_blank'):undefined;
@@ -374,7 +379,7 @@ export default function CustomerEmployeeView({
         invoiceId: hasUnallocatedCollections?undefined:paymentInvoiceId,
         amount,
         paymentMethod,
-        destinationAccountId: destinationEnabled&&compatibleDestinations.some(a=>a.id===destinationAccountId)?destinationAccountId:undefined,
+        destinationAccountId: (destinationEnabled||representativeCollection)&&compatibleDestinations.some(a=>a.id===destinationAccountId)?destinationAccountId:undefined,
         date: paymentDate,
         note: paymentNote || undefined,
       };
@@ -832,9 +837,7 @@ export default function CustomerEmployeeView({
                   <label className="block text-slate-500 font-semibold mb-1">Method</label>
                   <select value={paymentMethod} onChange={(e) => {setPaymentMethod(e.target.value);setDestinationAccountId('');}} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
                     <option>Cash</option>
-                    <option>Bank Transfer</option>
-                    <option>Credit Card</option>
-                    <option>QR Code</option>
+                    {!representativeCollection&&<><option>Bank Transfer</option><option>Credit Card</option><option>QR Code</option></>}
                   </select>
                 </div>
                 <div>
@@ -843,6 +846,7 @@ export default function CustomerEmployeeView({
                 </div>
               </div>
 
+              {representativeCollection&&<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1"><p className="font-semibold">Your assigned cash account</p>{destinationLoading?<p role="status">Loading account…</p>:destinationError?<p role="alert" className="text-red-700">{destinationError}</p>:compatibleDestinations.length?<><p>{compatibleDestinations[0].name}</p><p>Recorded cash held: {formatMoney(representativeBalance??0)}</p><p className="text-xs text-slate-500">Cash will be posted automatically to your assigned account.</p></>:<p className="text-amber-800">Ask a Super Admin to link your account before collecting.</p>}</div>}
               {destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod)&&<div>
                 <label htmlFor="collection-destination" className="block text-slate-500 font-semibold mb-1">Received into *</label>
                 <select id="collection-destination" required disabled={destinationLoading||isPaymentSubmitting} value={destinationAccountId} onChange={e=>setDestinationAccountId(e.target.value)} className="w-full rounded border p-2">
@@ -858,10 +862,10 @@ export default function CustomerEmployeeView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
+                <button type="submit" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum || (representativeCollection&&(destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId)))} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
-                <button type="submit" data-receipt="print" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
+                <button type="submit" data-receipt="print" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum || (representativeCollection&&(destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId)))} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
               </div>
             </form>
           </div>
