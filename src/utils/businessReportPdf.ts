@@ -1,3 +1,4 @@
+import { arsPrintLogoPath, isArsPrintBrand } from './arsPrintLogo';
 import PDFDocument from 'pdfkit';
 import type { BusinessReport } from './businessReport';
 
@@ -15,7 +16,8 @@ export function renderBusinessReportPdf(report:BusinessReport, brand:{name:strin
    const sum=weights.reduce((a,b)=>a+b,0), widths=weights.map(w=>width*w/sum);
    let y=0;
    const header=()=>{
-    if(logo){try{doc.image(logo,left,22,{fit:[78,45]});}catch{text('ARS',left,28,78,24,true,navy);}}
+    if(isArsPrintBrand(brand.name)){doc.save().translate(left,22).scale(45/615).translate(-245,-320).path(arsPrintLogoPath).fill('#000000','even-odd').restore();}
+    else if(logo){try{doc.image(logo,left,22,{fit:[78,45]});}catch{text('ARS',left,28,78,24,true,navy);}}
     else text('ARS',left,28,78,24,true,navy);
     text(brand.name,left+90,22,width-95,18,true,navy);
     text([brand.address,brand.phone].filter(Boolean).join(' | '),left+90,46,width-95,9);
