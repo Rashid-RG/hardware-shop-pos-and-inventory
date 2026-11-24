@@ -4821,7 +4821,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     databaseWriteHealthy = false;
     console.error('Checkout saved but state hydration failed. Further writes disabled.', refreshError);
   }
-  res.json({...tx,creditDueDate:creditTerms?.dueDate});
+  if(creditTerms)tx.creditDueDate=creditTerms.dueDate;
+  res.json(tx);
 });
 
 // Printing is authorized before creating its immutable audit record. The DB
