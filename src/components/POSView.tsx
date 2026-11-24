@@ -32,6 +32,7 @@ interface POSViewProps {
   customers: Customer[];
   employees: Employee[];
   cashierName: string;
+  draftOwner: string;
   currentRole: 'Super Admin' | 'Store Manager' | 'Cashier' | 'Inventory Staff';
   taxConfig?: StoreSettings;
   onRefreshDb: () => void;
@@ -43,6 +44,7 @@ export default function POSView({
   customers,
   employees,
   cashierName,
+  draftOwner,
   currentRole,
   taxConfig = { taxRate: 18, storeName: 'Lanka Smart Hardware', currency: 'LKR', invoicePrefix: 'SL-INV' },
   onRefreshDb,
@@ -125,9 +127,20 @@ export default function POSView({
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
 
+  // Drafts are tab-local and scoped to the authenticated operator and shop.
+  const draftKey = taxConfig.activeShopId && draftOwner ? `ars:invoice-draft:v1:${encodeURIComponent(draftOwner)}:${encodeURIComponent(taxConfig.activeShopId)}` : '';
+  const [restoredDraft] = useState(() => {
+    try {
+      const raw = draftKey && sessionStorage.getItem(draftKey);
+      const value = raw ? JSON.parse(raw) : null;
+      return value && Array.isArray(value.cart) ? value : null;
+    } catch { return null; }
+  });
+  const [checkoutUncertain, setCheckoutUncertain] = useState<boolean>(Boolean(restoredDraft?.pending));
+  const [draftSaved, setDraftSaved] = useState(false);
   // Customer & Cart states
   // Never silently assign an invoice to the first customer in the database.
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer>({
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer>(() => restoredDraft?.customer || {
     id: '', name: '', phone: '', email: '', address: '',
     loyaltyBalance: 0, purchaseCount: 0,
   });
@@ -135,13 +148,13 @@ export default function POSView({
   const [customerSearch, setCustomerSearch] = useState('');
   const [billingCustomerPhone, setBillingCustomerPhone] = useState<string>('');
   const [billingCustomerAddress, setBillingCustomerAddress] = useState<string>('');
-  const [selectedSalesRepId, setSelectedSalesRepId] = useState('');
+  const [selectedSalesRepId, setSelectedSalesRepId] = useState<string>(restoredDraft?.repId || '');
   const activeSalesReps = employees.filter(rep => rep.shopId === taxConfig.activeShopId && rep.name.trim());
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(restoredDraft?.cart || []);
   const [editingDescriptionKey, setEditingDescriptionKey] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState('');
-  const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>('amount');
-  const [discountInput, setDiscountInput] = useState<string>('0');
+  const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>(restoredDraft?.discountMode === 'percent' ? 'percent' : 'amount');
+  const [discountInput, setDiscountInput] = useState<string>(restoredDraft?.discountInput || '0');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Cash');
   const [cashReceived, setCashReceived] = useState<string>('');
   const [wholesaleMetaDraft, setWholesaleMetaDraft] = useState({
@@ -154,7 +167,22 @@ export default function POSView({
     batchNumber: '',
     supplierReference: '',
     deliveryStatus: '',
+    ...restoredDraft?.wholesaleMeta,
   });
+  const persistDraft = (pending = checkoutUncertain) => {
+    if (!draftKey) return false;
+    try {
+      if (cart.length === 0) sessionStorage.removeItem(draftKey);
+      else sessionStorage.setItem(draftKey, JSON.stringify({
+        cart, customer: selectedCustomer, repId: selectedSalesRepId,
+        discountMode, discountInput, wholesaleMeta: wholesaleMetaDraft, pending,
+      }));
+      return true;
+    } catch { return false; }
+  };
+  useEffect(() => {
+    setDraftSaved(persistDraft());
+  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, checkoutUncertain]);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [barcodeNotification, setBarcodeNotification] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
   const [lastScannedItem, setLastScannedItem] = useState<{ label: string; code: string } | null>(null);
@@ -1439,7 +1467,7 @@ export default function POSView({
 
   // Process core checkout
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || isSubmitting || checkoutUncertain) return;
     if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin' && customer.shopId === taxConfig.activeShopId)) {
       notify.warning('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
@@ -1452,6 +1480,11 @@ export default function POSView({
       notify.warning(`Cash received must be at least ${formatMoney(total)}.`);
       return;
     }
+    if (!persistDraft(true)) {
+      notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
+      return;
+    }
+    setCheckoutUncertain(true);
     const printWindow = createPrintWindow();
     setIsSubmitting(true);
 
@@ -1492,6 +1525,10 @@ export default function POSView({
       });
 
       if (response.ok) {
+        // The sale is committed; never restore it as an unfinished invoice.
+        try { sessionStorage.removeItem(draftKey); } catch { /* keep checkout locked if storage fails */ }
+        setCart([]);
+        setCheckoutUncertain(false);
         const completedTx = await response.json();
         let invoiceQrData = '';
         try {
@@ -1541,6 +1578,7 @@ export default function POSView({
         setCashReceived('');
         onRefreshDb(); // Reload stock amounts parent state
       } else {
+        if (response.status >= 400 && response.status < 500) setCheckoutUncertain(false);
         if (printWindow) {
           printWindow.close();
         }
@@ -1826,6 +1864,13 @@ export default function POSView({
             </div>
           )}
         </div>
+          {checkoutUncertain && !isSubmitting && <div role="alert" className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            Previous checkout outcome is uncertain. Check Sales Reports before continuing to avoid a duplicate invoice.
+            <div className="mt-1 flex flex-wrap gap-2">
+              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Confirm you checked Sales Reports and this invoice was NOT saved.')) setCheckoutUncertain(false); }}>Invoice not saved — resume</button>
+              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Discard this draft after confirming the sale was already saved?')) { setCart([]); setCheckoutUncertain(false); } }}>Already saved — discard draft</button>
+            </div>
+          </div>}
           {/* Cart Header */}
           <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
             <span>Invoice items · {cart.length} lines</span>
@@ -1944,9 +1989,9 @@ export default function POSView({
           <div className="flex flex-1 items-center justify-between gap-3 pb-2 lg:pb-0">
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.reduce((sum, item) => sum + item.quantity, 0)} units</p>
               <strong id="pos-total-price" className="text-xl font-bold text-slate-900">{formatMoney(total)}</strong></div>
-            <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">Not saved</span>
+            <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">{draftSaved && cart.length > 0 ? 'Draft saved locally' : 'Not saved'}</span>
           </div>
-          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting}
+          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting || checkoutUncertain}
             onClick={() => {
               if (!selectedCustomer.id || selectedCustomer.id === 'cust-walkin' ||
                   !customers.some(c => c.id === selectedCustomer.id && c.shopId === taxConfig.activeShopId)) {
