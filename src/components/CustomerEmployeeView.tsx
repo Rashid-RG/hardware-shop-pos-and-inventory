@@ -16,11 +16,15 @@ import {
   Wallet,
   Receipt,
 } from 'lucide-react';
-import { Customer, Employee, Role, CustomerCreditPayment, SalesTransaction } from '../types';
+import { Customer, Employee, Role, CustomerCreditPayment, SalesTransaction, StoreSettings } from '../types';
 import { CustomerLedgerPanel } from './CustomerLedgerPanel';
 import { CustomerReportsView } from './CustomerReportsView';
 
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
+
 interface CustomerEmployeeViewProps {
+  taxConfig: StoreSettings;
   viewMode: 'customers' | 'employees';
   customers: Customer[];
   employees: Employee[];
@@ -35,6 +39,7 @@ interface CustomerEmployeeViewProps {
 }
 
 export default function CustomerEmployeeView({
+  taxConfig,
   viewMode,
   customers,
   employees,
@@ -240,43 +245,18 @@ export default function CustomerEmployeeView({
       e.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const downloadCsv = (filename: string, headers: string[], rows: (string | number)[][]) => {
-    // Escape spreadsheet formulas so customer-entered data cannot execute on open.
-    const cell = (value: string | number) => {
-      const raw = String(value ?? '');
-      const safe = /^\s*[=+@-]/.test(raw) && typeof value !== 'number' ? "'" + raw : raw;
-      return '"' + safe.replace(/"/g, '""') + '"';
-    };
-    const content = '\uFEFF' + [headers, ...rows].map((row) => row.map(cell).join(',')).join('\r\n');
-    const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-
-  const exportCustomerDirectory = () => {
-    downloadCsv('ars-customer-directory.csv',
-      ['Customer ID', 'Shop name', 'Phone', 'Email', 'Address', 'Credit limit (LKR)', 'Outstanding (LKR)', 'Invoice count'],
-      filteredCustomers.map((customer) => [
-        customer.id, customer.name, customer.phone, customer.email, customer.address,
-        Number(customer.creditLimit || 0), Number(customer.creditBalance || 0), customer.purchaseCount,
-      ])
-    );
-  };
-
-  const exportCustomerStatement = () => {
-    if (!selectedCustomer) return;
-    downloadCsv('ars-customer-statement-' + selectedCustomer.id.replace(/[^a-zA-Z0-9_-]/g, '') + '.csv',
-      ['Customer ID', 'Shop name', 'Date', 'Record type', 'Reference', 'Details', 'Status', 'Amount (LKR)'],
-      historyRows.map((row) => [
-        selectedCustomer.id, selectedCustomer.name, String(row.date).slice(0, 10),
-        row.type, row.reference, row.description, row.status, row.amount,
-      ])
-    );
+  const customerDirectoryReport = ():BusinessReport => ({
+    title:'Customer directory',filename:'ars-customer-directory',period:'Current matching customers',
+    headers:['Customer ID','Shop name','Phone','Email','Address','Credit limit (LKR)','Outstanding (LKR)','Invoice count'],
+    rows:filteredCustomers.map(c=>[c.id,c.name,c.phone,c.email,c.address,Number(c.creditLimit||0),Number(c.creditBalance||0),c.purchaseCount]),moneyColumns:[5,6],
+    summary:[{label:'Matching customers',value:filteredCustomers.length},{label:'Outstanding (LKR)',value:filteredCustomers.reduce((sum,c)=>sum+Number(c.creditBalance||0),0)}]
+  });
+  const customerStatementReport = ():BusinessReport => {
+    if(!selectedCustomer)throw new Error('Select a customer first.');
+    return {title:'Customer statement — '+selectedCustomer.name,filename:'ars-customer-statement-'+selectedCustomer.id.replace(/[^a-zA-Z0-9_-]/g,''),period:(customerHistoryFrom||'All dates')+' to '+(customerHistoryTo||'Latest')+' | '+customerHistoryType,
+    headers:['Customer ID','Shop name','Date','Record type','Reference','Details','Status','Amount (LKR)'],
+    rows:historyRows.map(row=>[selectedCustomer.id,selectedCustomer.name,String(row.date).slice(0,10),row.type,row.reference,row.description,row.status,row.amount]),moneyColumns:[7],
+    summary:[{label:'Matching activity records',value:historyRows.length},{label:'Current outstanding (LKR; not period total)',value:Number(selectedCustomer.creditBalance||0)}]};
   };
 
   const formatSalary = (amount: number) => `Rs.${amount.toLocaleString('en-US')}`;
@@ -374,10 +354,7 @@ export default function CustomerEmployeeView({
               className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-800">
               Open customer reports
             </button>
-            <button type="button" onClick={exportCustomerDirectory}
-              className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
-              Export all matching customers (CSV)
-            </button>
+            <ReportExportMenu report={customerDirectoryReport} settings={taxConfig}/>
           </div>
         )}
         <div>
@@ -657,10 +634,7 @@ export default function CustomerEmployeeView({
                   </section>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" onClick={exportCustomerStatement}
-                    className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
-                    Export filtered statement (CSV)
-                  </button>
+                  <ReportExportMenu report={customerStatementReport} settings={taxConfig}/>
                   <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
                   {selectedCustomer.id !== 'cust-walkin' && (
