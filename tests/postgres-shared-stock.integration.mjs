@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci')throw Error('Refusing shared-stock test outside local hardware_pos_ci');
 const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder,checkoutTransaction,refundTransaction}=await import('../backend/db.ts');
-const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices,getPackagingDraft}=await import('../backend/packagingDrafts.ts');
+const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices,getPackagingDraft,convertLegacyPackaging}=await import('../backend/packagingDrafts.ts');
 const {initSharedStockSchema,deductSharedSale,restoreSharedSale}=await import('../backend/sharedStock.ts');
 test('shared packaging activation, purchase, mixed sale and rollback against PostgreSQL',async()=>{
  const suffix=randomUUID(),shop='ci-shared-'+suffix,product='prod-'+suffix,supplier='supplier-'+suffix,po='po-'+suffix;
@@ -15,6 +15,39 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   await initDbTables();await initSharedStockSchema(pool);await initPackagingDrafts(pool);
   await pool.query("INSERT INTO suppliers(id,shop_id,name,company_name,phone) VALUES($1,$2,'CI','CI','0700000000')",[supplier,shop]);
   await pool.query("INSERT INTO products(id,shop_id,name,sku,brand,category,cost_price,selling_price,quantity,reorder_level,warranty,description,variants_json) VALUES($1,$2,'Door lock',$1,'CI','Parts',300,500,0,1,'None','Test','[]'::jsonb)",[product,shop]);
+  const legacy='legacy-'+suffix;
+  await pool.query("INSERT INTO products(id,shop_id,name,sku,brand,category,cost_price,selling_price,quantity,reorder_level,warranty,description,variants_json) VALUES($1,$2,'Legacy door locks',$1,'CI','Parts',3600,5400,20,5,'None','Test','[]'::jsonb)",[legacy,shop]);
+  await savePackagingDraft(pool,shop,legacy,'CI Manager',config);
+  const request={confirmed:true,legacyUnitId:'box',expected:{quantity:20,reorderLevel:5,costPrice:3600,sellingPrice:5400},configuration:config};
+  const legacyRow=async()=>(await pool.query('SELECT quantity,reorder_level,cost_price,selling_price,shared_stock_units FROM products WHERE id=$1',[legacy])).rows[0];
+  delete process.env.ARS_SHARED_STOCK_PILOT;
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/disabled/);
+  process.env.ARS_SHARED_STOCK_PILOT='true';
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Cashier','Cashier',request),/confirmation/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,confirmed:false}),/confirmation/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,'other-shop',legacy,'CI Manager','Store Manager',request),/not eligible/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,expected:{...request.expected,quantity:19}}),/changed/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,configuration:{...config,units:config.units.map(u=>({...u,sellingPrice:u.sellingPrice+1}))}}),/Save the current/);
+  assert.equal(Number((await legacyRow()).quantity),20);
+  assert.equal((await legacyRow()).shared_stock_units,null);
+  const conversion=await convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request);
+  assert.equal(conversion.valuationDifference,0);
+  const converted=await legacyRow();
+  assert.deepEqual([Number(converted.quantity),Number(converted.reorder_level),Number(converted.cost_price),Number(converted.selling_price)],[240,60,300,500]);
+  assert.equal(Number(converted.quantity)*Number(converted.cost_price),72000);
+  assert.deepEqual(converted.shared_stock_units,config);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/not eligible/);
+  const convertedAudit=await pool.query("SELECT details FROM activity_logs WHERE shop_id=$1 AND action='Converted Legacy Packaging'",[shop]);
+  assert.equal(convertedAudit.rowCount,1);
+  assert.equal(JSON.parse(convertedAudit.rows[0].details).productId,legacy);
+  const legacyClient=await pool.connect();
+  try{
+    await legacyClient.query('BEGIN');
+    await deductSharedSale(legacyClient,shop,legacy,'box',2);
+    await deductSharedSale(legacyClient,shop,legacy,'piece',4);
+    await legacyClient.query('COMMIT');
+  }finally{await legacyClient.query('ROLLBACK').catch(()=>{});legacyClient.release();}
+  assert.equal(Number((await legacyRow()).quantity),212);
   await savePackagingDraft(pool,shop,product,'CI Manager',config);
   assert.equal((await checkPackagingActivation(pool,shop,product)).eligible,true);
   delete process.env.ARS_SHARED_STOCK_PILOT;
