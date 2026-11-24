@@ -1,3 +1,4 @@
+import LandedCostApprovalPanel from './LandedCostApprovalPanel';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
@@ -16,6 +17,7 @@ type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;currentRole:
 export default function ImportShipmentView({taxConfig,authToken,shopId,currentRole,purchaseOrders,onRefreshDb,mode}:Props){
  const [rows,setRows]=useState<Shipment[]>([]);
  const [loading,setLoading]=useState(false);
+ const [costReview,setCostReview]=useState<{id:string;reference:string;shopId:string}|null>(null);
  const [receivingPo,setReceivingPo]=useState<{id:string;number:string}|null>(null);
  const [saving,setSaving]=useState(false);
  const [error,setError]=useState('');
@@ -142,6 +144,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
            <p className="mt-1 text-xs text-slate-600">{row.supplier_name} · {row.origin_country} · {row.invoice_currency} · {row.container_number||'Container not entered'}</p>
            <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?reportDay(row.eta_date):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
          <div className="flex shrink-0 items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs font-bold ${row.status==='Received'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-800'}`}>{row.status}</span>
+           {mode==='shipments'&&['Super Admin','Store Manager'].includes(currentRole)&&<button type="button" onClick={()=>setCostReview({id:row.id,reference:row.shipment_reference,shopId})} className="rounded-lg border bg-white px-3 py-2 text-xs font-bold">Review landed cost</button>}
            {mode==='receiving'&&['In Transit','Partially Received'].includes(row.status)&&<button type="button" disabled={saving} onClick={()=>setReceivingPo({id:row.purchase_order_id,number:row.po_number})} className="rounded-xl bg-[#172a47] px-4 py-2.5 text-xs font-bold text-white disabled:opacity-50">Receive quantities</button>}
          </div>
        </article>)}
@@ -153,6 +156,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
      </div>
      {mode==='receiving'&&<p className="mt-4 text-xs text-amber-800">Only record verified goods actually received. Damaged or missing items must remain outstanding; formal discrepancy resolution is still pending.</p>}
    </section>
+   {mode==='shipments'&&costReview?.shopId===shopId&&['Super Admin','Store Manager'].includes(currentRole)&&<LandedCostApprovalPanel key={shopId+':'+costReview.id} shipmentId={costReview.id} reference={costReview.reference} authToken={authToken} shopId={shopId} canApprove={currentRole==='Super Admin'} settings={taxConfig} onClose={()=>setCostReview(null)} onChanged={()=>void refresh()} />}
    {mode==='receiving'&&receivingPo&&<PartialReceiptPanel poId={receivingPo.id} poNumber={receivingPo.number} authToken={authToken} shopId={shopId} onClose={()=>setReceivingPo(null)} onCommitted={()=>{void refresh();onRefreshDb();}} />}
  </div>;
 }
