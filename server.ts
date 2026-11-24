@@ -1710,6 +1710,8 @@ const initPostgres = async () => {
     ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE stock_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
     ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
+    ALTER TABLE manual_expenses ADD COLUMN IF NOT EXISTS shop_id TEXT;
+    CREATE INDEX IF NOT EXISTS manual_expenses_shop_date ON manual_expenses(shop_id,date);
     ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS logo_url TEXT;
     ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS store_address TEXT;
     ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS store_phone TEXT;
@@ -2138,10 +2140,10 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
   for (const expense of state.manualExpenses) {
     await client.query(
       `
-      INSERT INTO manual_expenses (id, description, amount, date, category)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO manual_expenses (id, description, amount, date, category, shop_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
       `,
-      [expense.id, expense.desc, expense.amount, expense.date, expense.category]
+      [expense.id, expense.desc, expense.amount, expense.date, expense.category, expense.shopId || null]
     );
   }
 
@@ -2455,6 +2457,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     },
     manualExpenses: expensesRes.rows.map((row) => ({
       id: row.id,
+      shopId: row.shop_id || undefined,
       desc: row.description,
       amount: Number(row.amount),
       date: row.date,
@@ -3719,6 +3722,7 @@ app.get('/api/db', (req, res) => {
     purchaseOrders: byActiveShop(db.purchaseOrders),
     stockLogs: byActiveShop(db.stockLogs),
     activityLogs: byActiveShop(db.activityLogs),
+    manualExpenses: byActiveShop(db.manualExpenses),
     supplierPayments: db.supplierPayments.filter((sp) => sp.shopId === activeShopId),
     quotations: db.quotations.filter((q) => q.shopId === activeShopId),
     cashShifts: db.cashShifts.filter((s) => s.shopId === activeShopId),
@@ -3936,49 +3940,70 @@ app.put('/api/settings', requireRole(['Super Admin', 'Store Manager']), async (r
   }
 });
 
-app.get('/api/manual-expenses', (_req, res) => {
-  res.json(db.manualExpenses);
+app.get('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Expense shop access denied.'});
+  res.json(db.manualExpenses.filter(e=>e.shopId===scope.shopId));
+});
+app.get('/api/manual-expenses/unassigned',requireRole(['Super Admin']),async(req,res)=>{
+  const auth=(req as AppRequest).authUser;
+  if(!auth||auth.scopedShopId||auth.fixedShopId||(auth.allowedShopIds||[]).length)return res.status(403).json({error:'Global administrator access required.'});
+  res.setHeader('Cache-Control','no-store');
+  res.json(db.manualExpenses.filter(e=>!e.shopId));
 });
 
 app.post('/api/manual-expenses',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled until recovery.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Expense shop access denied.'});
   const desc=String(req.body?.desc||'').trim();
   const category=String(req.body?.category||'Other').trim();
   const amount=Number(req.body?.amount);
+  const {sourceAccountId,requestId,paymentMethod}=req.body||{};
+  const linked=sourceAccountId!==undefined;
   if(!desc||desc.length>1000||!category||category.length>100||
      !Number.isFinite(amount)||amount<=0||amount>1_000_000_000||
-     Math.abs(amount*100-Math.round(amount*100))>0.00001){
-    return res.status(400).json({error:'Enter a description, valid category, and positive amount with up to two decimals.'});
+     Math.abs(amount*100-Math.round(amount*100))>0.00001||
+     (linked&&(typeof sourceAccountId!=='string'||!sourceAccountId.trim()||sourceAccountId.length>200||!validChequeRequestId(requestId)||!['Cash','Bank Transfer'].includes(paymentMethod)))){
+    return res.status(400).json({error:'Enter valid expense details and a matching payment source.'});
   }
-  const {activeShopId}=getActiveShopContext(db,req);
-  const authUser=(req as AppRequest).authUser;
-  const expense:ManualExpense={id:'exp-'+randomUUID(),desc,amount,category,date:reportDay(new Date())};
+  const expense:ManualExpense={id:'exp-'+(linked?requestId:randomUUID()),shopId:scope.shopId,desc,amount,category,date:reportDay(new Date())};
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
-    await client.query(
-      'INSERT INTO manual_expenses(id,description,amount,date,category) VALUES($1,$2,$3,$4,$5)',
-      [expense.id,expense.desc,expense.amount,expense.date,expense.category]);
-    await client.query(
-      `INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
-       VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,
-      ['act-'+randomUUID(),activeShopId,authUser?.name||'System',authUser?.role||'Store Manager',
-       `Added manual expense ${expense.desc} (LKR ${expense.amount.toFixed(2)}).`]);
+    if(linked){
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[expense.id]);
+      const prior=await client.query("SELECT e.*,e.date::text AS day,m.account_id,m.recorded_by FROM manual_expenses e LEFT JOIN ars_financial_movements m ON m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' WHERE e.id=$1",[expense.id]);
+      if(prior.rowCount){
+        const p=prior.rows[0];
+        if(p.shop_id!==scope.shopId||p.description!==desc||p.category!==category||Number(p.amount)!==amount||p.account_id!==sourceAccountId||p.recorded_by!==scope.recordedBy)throw Error('Expense request identifier already used for different details.');
+        await client.query('COMMIT');
+        return res.json({...expense,date:p.day});
+      }
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[scope.shopId,sourceAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!((paymentMethod==='Cash'&&kind==='Office Cash')||(paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active expense account matching the payment method.');
+      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[scope.shopId,sourceAccountId,amount]);
+      if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for expense.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+        VALUES($1,$2,$3,-$4::numeric,'Expense',$5,$6,$7,$8)`,['expense-out-'+expense.id,scope.shopId,sourceAccountId,amount,expense.id,scope.recordedBy,expense.date,desc]);
+    }
+    await client.query('INSERT INTO manual_expenses(id,description,amount,date,category,shop_id) VALUES($1,$2,$3,$4,$5,$6)',[expense.id,desc,amount,expense.date,category,scope.shopId]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details)
+      VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,['expense-audit-'+expense.id,scope.shopId,scope.recordedBy,(req as AppRequest).authUser?.role||'Store Manager','Added manual expense '+desc+' (LKR '+amount.toFixed(2)+').']);
     await client.query('COMMIT');
   }catch(error){
     await client.query('ROLLBACK').catch(()=>{});
-    return res.status(409).json({error:'Expense could not be recorded.'});
+    const message=error instanceof Error?error.message:'';
+    if(['Expense request identifier already used for different details.','Select an active expense account matching the payment method.','Insufficient recorded funds for expense.'].includes(message))return res.status(409).json({error:message});
+    console.error('Expense recording failed',error);return res.status(500).json({error:'Unable to confirm expense. Retry the same request identifier.'});
   }finally{client.release();}
   try{
     const refreshed=await loadStateFromNormalized();
-    if(!refreshed)throw new Error('Cannot reload committed expense');
+    if(!refreshed)throw Error('Cannot reload committed expense');
     db=refreshed;
-    res.status(201).json(expense);
-  }catch(error){
-    databaseWriteHealthy=false;
-    console.error('Expense committed but refresh failed; writes disabled',error);
-    res.status(503).json({error:'Expense was committed but reload failed. Reconcile before retrying.'});
-  }
+  }catch(error){databaseWriteHealthy=false;console.error('Expense committed but refresh failed; writes disabled',error);}
+  return res.status(201).json(expense);
 });
 
 // Products Routes
