@@ -1,3 +1,4 @@
+import {recordPurchaseReturn} from './backend/purchaseReturns';
 import {settleImportCreditor} from './backend/importSettlements';
 import {listImportObligations,submitImportObligation,reviewImportObligation} from './backend/importObligations';
 import {supplierReconciliation} from './backend/supplierReconciliation';
@@ -6306,6 +6307,24 @@ app.get('/api/import-obligations/:id/settlements',requireRole(['Super Admin','St
  res.setHeader('Cache-Control','no-store');
  try{const result=await pool.query('SELECT s.id,s.amount::text,s.payment_date::text,s.evidence,s.recorded_by,s.journal_id,s.account_id,a.name AS account_name FROM ars_gl_import_settlements s LEFT JOIN ars_financial_accounts a ON a.shop_id=s.shop_id AND a.id=s.account_id WHERE s.shop_id=$1 AND s.obligation_id=$2 ORDER BY s.payment_date DESC,s.id LIMIT 500',[scope.shopId,req.params.id]);return res.json(result.rows);}
  catch(error){console.error('Import settlement history failed',error);return res.status(500).json({error:'Unable to load settlement history.'});}
+});
+app.post('/api/ledger/purchase-returns',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Purchase return access denied.'});
+ const {requestId,poId,date,reason,evidence,items}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof poId!=='string'||typeof date!=='string'||typeof reason!=='string'||typeof evidence!=='string'||!Array.isArray(items)||items.length<1||items.length>200||items.some((x:any)=>!x||typeof x.supplierCredit!=='string'||!/^\d{1,14}(\.\d{1,2})?$/.test(x.supplierCredit)))return res.status(400).json({error:'Valid purchase return details required.'});
+ try{const result=await recordPurchaseReturn(pool,{shopId:scope.shopId,id:requestId,poId,date,reason,evidence,items,actor:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid purchase return details required.','Valid unique return lines required.','Return identifier already used.','Active accounting required for purchase returns.','Received purchase order required.','Import returns require landed charge reconciliation.','Unposted receipt history requires reconciliation.','Return line not found in purchase order.','Returned product unavailable.','Incompatible purchase unit snapshot.','Mixed receipt history requires reconciliation.','Return exceeds received quantity or available stock.','Return credit exceeds verified purchase cost.','Historical supplier payments require reconciliation.','Supplier balances require reconciliation.'].includes(message)||message.startsWith('Missing purchase return accounting mapping:'))return res.status(409).json({error:message});
+ console.error('Purchase return failed',error);return res.status(500).json({error:'Unable to confirm purchase return. Retry the same request.'});}
+});
+app.get('/api/ledger/purchase-returns/:poId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Purchase return access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{const result=await pool.query(`SELECT h.id,h.return_date::text,h.reason,h.evidence,h.recorded_by,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('itemId',l.purchase_order_item_id,'baseQuantity',l.base_quantity,'inventoryCost',l.inventory_cost::text,'supplierCredit',l.supplier_credit::text) ORDER BY l.purchase_order_item_id) FROM ars_gl_purchase_return_lines l WHERE l.shop_id=h.shop_id AND l.return_id=h.id),'[]'::jsonb) AS items
+ FROM ars_gl_purchase_returns h WHERE h.shop_id=$1 AND h.purchase_order_id=$2 ORDER BY h.return_date DESC,h.id LIMIT 500`,[scope.shopId,req.params.poId]);return res.json(result.rows);}
+ catch(error){console.error('Purchase return history failed',error);return res.status(500).json({error:'Unable to load purchase returns.'});}
 });
 function ledgerApiError(res:express.Response,error:unknown){
  const message=error instanceof Error?error.message:'';
