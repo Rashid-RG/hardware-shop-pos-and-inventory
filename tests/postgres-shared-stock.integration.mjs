@@ -63,5 +63,25 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   assert.equal(await stock(),104);
   await assert.rejects(()=>refundTransaction(invoiceId,shop,'Duplicate return','CI Manager','Store Manager'),/already been refunded/);
   assert.equal(await stock(),104);
+  const partialPo='partial-'+suffix;
+  const {initPartialReceivingTables,receivePartialOrder}=await import('../backend/partialReceiving.ts');
+  await initPartialReceivingTables(pool);
+  await createPurchaseOrder({id:partialPo,shopId:shop,poNumber:partialPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:5,costPrice:3600}],total:18000,status:'Pending'});
+  const line=(await pool.query('SELECT id,base_units_per_purchase_unit FROM purchase_order_items WHERE purchase_order_id=$1',[partialPo])).rows[0];
+  assert.equal(Number(line.base_units_per_purchase_unit),12);
+  const receipt=(requestKey,quantity)=>({shopId:shop,poId:partialPo,requestKey,user:'CI Manager',items:[{purchaseOrderItemId:Number(line.id),quantity}]});
+  const first=await receivePartialOrder(pool,receipt('first',2));
+  assert.equal(first.status,'Partially Received');assert.equal(await stock(),128);
+  const retry=await receivePartialOrder(pool,receipt('first',2));
+  assert.equal(retry.repeated,true);assert.equal(retry.batchId,first.batchId);assert.equal(await stock(),128);
+  await assert.rejects(()=>receivePartialOrder(pool,receipt('too-many',4)),/exceeds ordered/);
+  await assert.rejects(()=>receivePurchaseOrder(partialPo,shop,'CI Manager'),/Only open orders/);
+  assert.equal(await stock(),128);
+  const last=await receivePartialOrder(pool,receipt('last',3));
+  assert.equal(last.status,'Received');assert.equal(await stock(),164);
+  const logs=(await pool.query('SELECT quantity FROM stock_logs WHERE reference_id IN ($1,$2) ORDER BY quantity',[first.batchId,last.batchId])).rows;
+  assert.deepEqual(logs.map(row=>Number(row.quantity)),[24,36]);
+  await assert.rejects(()=>receivePartialOrder(pool,receipt('extra',1)),/not open/);
+  assert.equal(await stock(),164);
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
