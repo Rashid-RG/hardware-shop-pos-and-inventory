@@ -7,7 +7,7 @@ const connection = new URL(process.env.DATABASE_URL || 'postgresql://invalid/inv
 if (!['127.0.0.1', 'localhost'].includes(connection.hostname) || connection.pathname !== '/hardware_pos_ci') {
   throw new Error('ARS end-to-end acceptance only runs against isolated hardware_pos_ci PostgreSQL.');
 }
-const { pool, initDbTables, createPurchaseOrder, checkoutTransaction, addCustomerCreditPayment } =
+const { pool, initDbTables, createPurchaseOrder, checkoutTransaction, addCustomerCreditPayment, refundTransaction } =
   await import('../backend/db.ts');
 const { initPartialReceivingTables, receivePartialOrder } = await import('../backend/partialReceiving.ts');
 
@@ -106,12 +106,52 @@ test('ARS wholesale lifecycle: supplier PO, partial goods receipt, billing, repa
     assert.equal(await readStock(), 5, 'Repayment must never alter inventory');
     await assert.rejects(() => addCustomerCreditPayment({ ...payment, id: 'ci-flow-overpay-' + suffix, amount: 351 }), /exceeds the customer outstanding credit balance/);
     assert.equal(await readDebt(), 350);
+    // Historical account payments remain preserved and cannot be guessed onto invoices.
+    await assert.rejects(()=>addCustomerCreditPayment({...payment,id:'ci-flow-legacy-linked-'+suffix,invoiceId:txId,amount:50}),/Historical unallocated payments/);
+    const historical=await pool.query('SELECT invoice_id,receipt_snapshot FROM customer_credit_payments WHERE id=$1',[paymentId]);
+    assert.equal(historical.rows[0].invoice_id,null);
+    assert.equal(historical.rows[0].receipt_snapshot.balanceAfter,350);
+
+    // Separate new customer: exact invoice allocations with no historical ambiguity.
+    const linkedCustomer='ci-linked-customer-'+suffix;
+    const linkedInvoice='ci-linked-invoice-'+suffix;
+    await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'CI Linked Customer',0,0,2000,0)",[linkedCustomer,shopId]);
+    const linkedSale={...sale,id:linkedInvoice,invoiceNumber:'CI-LINKED-'+suffix,customerId:linkedCustomer,customerName:'CI Linked Customer',items:[{...sale.items[0],quantity:2}],subtotal:400,total:400};
+    await checkoutTransaction(linkedSale,'Cashier','ARS CI Test');
+    const linkedStock=await readStock();
+    const linkedPayment=(key,amount,overrides={})=>({...payment,id:'ci-linked-'+key+'-'+suffix,customerId:linkedCustomer,customerName:'CI Linked Customer',invoiceId:linkedInvoice,amount,...overrides});
+    const linkedState=async()=>{
+      const {rows:[row]}=await pool.query('SELECT t.payment_status,t.total,c.credit_balance FROM sales_transactions t JOIN customers c ON c.id=t.customer_id AND c.shop_id=t.shop_id WHERE t.id=$1',[linkedInvoice]);
+      return [row.payment_status,Number(row.total),Number(row.credit_balance)];
+    };
+    await assert.rejects(()=>addCustomerCreditPayment(linkedPayment('wrong',100,{shopId:wrongShop})),/belonging to this customer/);
+    await assert.rejects(()=>addCustomerCreditPayment(linkedPayment('wrong-customer',100,{customerId})),/belonging to this customer/);
+    const firstPayment=linkedPayment('first',100);
+    const snapshot=await addCustomerCreditPayment(firstPayment);
+    assert.deepEqual(snapshot,{invoiceNumber:linkedSale.invoiceNumber,invoiceTotal:400,previousPayments:0,balanceAfter:300});
+    assert.deepEqual(await linkedState(),['PARTIALLY PAID',400,300]);
+    await assert.rejects(()=>addCustomerCreditPayment(firstPayment),/duplicate key/);
+    await assert.rejects(()=>addCustomerCreditPayment(linkedPayment('excess',301)),/exceeds/);
+    await assert.rejects(()=>addCustomerCreditPayment(linkedPayment('unallocated',50,{invoiceId:undefined})),/Select an invoice/);
+    await assert.rejects(()=>refundTransaction(linkedInvoice,shopId,'CI refund before reconciliation','CI Manager','Store Manager'),/Reconcile customer payments/);
+    assert.deepEqual(await linkedState(),['PARTIALLY PAID',400,300]);
+    const outcomes=await Promise.allSettled([addCustomerCreditPayment(linkedPayment('concurrent-a',200)),addCustomerCreditPayment(linkedPayment('concurrent-b',200))]);
+    assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
+    assert.deepEqual(await linkedState(),['PARTIALLY PAID',400,100]);
+    const finalSnapshot=await addCustomerCreditPayment(linkedPayment('final',100));
+    assert.equal(finalSnapshot.balanceAfter,0);
+    assert.deepEqual(await linkedState(),['PAID',400,0]);
+    assert.equal(await readStock(),linkedStock,'Payment and rejected refund never change stock');
+    const saved=await pool.query('SELECT receipt_snapshot FROM customer_credit_payments WHERE id=$1',[firstPayment.id]);
+    assert.deepEqual(saved.rows[0].receipt_snapshot,snapshot,'Later payments must not rewrite earlier receipt balances');
+    const linkedCount=await pool.query('SELECT COUNT(*)::int AS n FROM customer_credit_payments WHERE invoice_id=$1',[linkedInvoice]);
+    assert.equal(linkedCount.rows[0].n,3);
     const received = await pool.query('SELECT status FROM purchase_orders WHERE id=$1', [poId]);
     assert.equal(received.rows[0].status, 'Received');
     const warehouse = await pool.query("SELECT COALESCE(SUM(quantity),0) AS qty FROM stock_logs WHERE shop_id=$1 AND product_id=$2 AND type='Stock In'", [shopId, productId]);
     const sales = await pool.query("SELECT COALESCE(SUM(quantity),0) AS qty FROM stock_logs WHERE shop_id=$1 AND product_id=$2 AND type='Stock Out'", [shopId, productId]);
     assert.equal(Number(warehouse.rows[0].qty), 8);
-    assert.equal(Number(sales.rows[0].qty), -3);
+    assert.equal(Number(sales.rows[0].qty), -5);
     assert.equal(Number(warehouse.rows[0].qty) + Number(sales.rows[0].qty), await readStock());
     const customer = await pool.query('SELECT purchase_count,credit_balance FROM customers WHERE id=$1 AND shop_id=$2', [customerId, shopId]);
     assert.equal(Number(customer.rows[0].purchase_count), 1);
