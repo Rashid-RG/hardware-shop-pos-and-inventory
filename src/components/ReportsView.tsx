@@ -9,11 +9,12 @@ import {
   FileText,
   RefreshCw,
 } from 'lucide-react';
-import { SalesTransaction, Product, ManualExpense, StoreSettings } from '../types';
+import { SalesTransaction, Product, ManualExpense, StoreSettings, CustomerCreditPayment } from '../types';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 
 interface ReportsViewProps {
+  customerCreditPayments: CustomerCreditPayment[];
   transactions: SalesTransaction[];
   products: Product[];
   manualExpenses: ManualExpense[];
@@ -21,14 +22,14 @@ interface ReportsViewProps {
   taxConfig: StoreSettings;
 }
 
-export default function ReportsView({ transactions, products, manualExpenses, authToken, taxConfig }: ReportsViewProps) {
+export default function ReportsView({ customerCreditPayments, transactions, products, manualExpenses, authToken, taxConfig }: ReportsViewProps) {
   const currencySymbol = 'Rs.';
   const today = reportDay(new Date());
   const thirtyDaysAgo = reportDay(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
 
   const [fromDate, setFromDate] = useState(thirtyDaysAgo);
   const [toDate, setToDate] = useState(today);
-  const [activeTab, setActiveTab] = useState<'sales' | 'products' | 'expenses'>('sales');
+  const [activeTab, setActiveTab] = useState<'sales' | 'products' | 'expenses' | 'collections'>('sales');
   const [visibleRows, setVisibleRows] = useState(20);
 
   const productCostMap = useMemo(() => new Map(products.map((p) => [p.id, p.costPrice])), [products]);
@@ -41,6 +42,9 @@ export default function ReportsView({ transactions, products, manualExpenses, au
     return manualExpenses.filter((e) => inReportPeriod(e.date, fromDate, toDate));
   }, [manualExpenses, fromDate, toDate]);
 
+  const collections=customerCreditPayments.filter(p=>inReportPeriod(p.date,fromDate,toDate)).sort((a,b)=>reportDay(b.date).localeCompare(reportDay(a.date)));
+  const collectionTotal=collections.reduce((s,p)=>s+Number(p.amount),0);
+  const collectionMethods=Array.from(collections.reduce((map,p)=>map.set(p.paymentMethod,(map.get(p.paymentMethod)||0)+Number(p.amount)),new Map<string,number>()).entries());
   const calcProfit = (tx: SalesTransaction) => saleProfit(tx, productCostMap);
 
   const totalRevenue = filteredTx.filter((t) => t.status !== 'Refunded').reduce((s, t) => s + t.total, 0);
@@ -80,6 +84,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
 
   const buildReport = (): BusinessReport => {
     const base = {filename:'ars-'+activeTab+'-'+fromDate+'-to-'+toDate,period:fromDate+' to '+toDate};
+    if(activeTab==='collections')return {...base,title:'Customer payment collections',headers:['Date','Receipt reference','Customer','Invoice','Method','Recorded by','Amount (LKR)'],rows:collections.map(p=>[reportDay(p.date),p.id,p.customerName,p.receiptSnapshot?.invoiceNumber||p.invoiceId||'Account payment',p.paymentMethod,p.createdBy||'Not recorded',p.amount]),moneyColumns:[6],summary:[{label:'Credit collections (LKR)',value:collectionTotal},{label:'Payment records',value:collections.length}]};
     if(activeTab==='sales') return {...base,title:'Sales performance report',headers:['Invoice','Date','Customer','Sales Representative','Items','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Profit (LKR)','Payment','Status'],rows:filteredTx.map(t=>[t.invoiceNumber,reportDay(t.date),t.customerName,t.salesRepName||'Not recorded',t.items.length,t.subtotal,t.tax,t.discountAmount,t.total,calcProfit(t),t.paymentMethod,t.status||'Completed']),moneyColumns:[5,6,7,8,9],summary:[{label:'Revenue (LKR, excluding refunds)',value:totalRevenue},{label:'Gross profit (LKR)',value:totalProfit},{label:'Refunded invoices',value:refundCount},{label:'Invoices in report',value:filteredTx.length}]};
     if(activeTab==='products')return {...base,title:'Product performance report',headers:['Product','U/M','Qty Sold','Base Qty','Revenue (LKR)','Profit (LKR)'],rows:productSales.map(p=>[p.name,p.unit,p.qty,p.factor===null?'Not recorded':p.qty*p.factor,p.revenue,p.profit]),moneyColumns:[4,5],summary:[{label:'Product / unit groups',value:productSales.length},{label:'Product revenue before invoice discounts (LKR)',value:productSales.reduce((s,p)=>s+p.revenue,0)}]};
     return {...base,title:'Expense report',headers:['Date','Description','Category','Amount (LKR)'],rows:filteredExpenses.map(e=>[reportDay(e.date),e.desc,e.category,e.amount]),moneyColumns:[3],summary:[{label:'Total expenses (LKR)',value:totalExpenses},{label:'Expense records',value:filteredExpenses.length}]};
@@ -140,6 +145,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
             { id: 'sales', label: 'Sales Transactions', icon: FileText },
             { id: 'products', label: 'Product Performance', icon: ShoppingBag },
             { id: 'expenses', label: 'Expenses', icon: TrendingUp },
+            { id: 'collections', label: 'Payment Collections', icon: Calendar },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -232,6 +238,13 @@ export default function ReportsView({ transactions, products, manualExpenses, au
             </table>
           )}
 
+          {activeTab==='collections'&&<section className="p-4">
+            <p className="text-xs text-slate-600">Credit repayments by payment date. These amounts are not additional sales or verified bank balances.</p>
+            <p className="my-3 text-lg font-bold">Total collected: Rs. {collectionTotal.toFixed(2)}</p>
+            <div className="flex flex-wrap gap-2 mb-3">{collectionMethods.map(([method,amount])=><span key={method} className="rounded border px-3 py-2 text-xs">{method}: Rs. {amount.toFixed(2)}</span>)}</div>
+            <table className="w-full text-left text-xs"><thead><tr>{['Date','Receipt','Customer','Invoice','Method','Recorded by','Amount'].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{collections.slice(0,visibleRows).map(p=><tr key={p.id} className="border-t">{[reportDay(p.date),p.id,p.customerName,p.receiptSnapshot?.invoiceNumber||p.invoiceId||'Account payment',p.paymentMethod,p.createdBy||'Not recorded','Rs. '+Number(p.amount).toFixed(2)].map((v,i)=><td key={i} className="p-2">{v}</td>)}</tr>)}</tbody></table>
+            {!collections.length&&<p className="p-4 text-center text-slate-500">No collections in selected period.</p>}
+          </section>}
           {activeTab === 'expenses' && (
             <div>
               <table className="w-full text-xs text-left">
@@ -269,7 +282,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
         </div>
 
         {(() => {
-          const count=activeTab==='sales'?filteredTx.length:activeTab==='products'?productSales.length:filteredExpenses.length;
+          const count=activeTab==='sales'?filteredTx.length:activeTab==='products'?productSales.length:activeTab==='collections'?collections.length:filteredExpenses.length;
           return count>visibleRows ? (
             <div className="flex justify-center border-t border-slate-100 bg-white p-3">
               <button type="button" onClick={()=>setVisibleRows(countNow=>countNow+20)}
@@ -283,7 +296,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
         {/* Payment method breakdown */}
         {activeTab === 'sales' && paymentMethodBreakdown.length > 0 && (
           <div className="border-t border-slate-100 px-4 py-4 bg-slate-50/50">
-            <p className="text-[10px] font-semibold text-slate-500 uppercase mb-3">Payment Method Breakdown</p>
+            <p className="text-[10px] font-semibold text-slate-500 uppercase mb-3">Invoice Payment Arrangement Breakdown</p>
             <div className="flex flex-wrap gap-3">
               {paymentMethodBreakdown.map(([method, total]) => (
                 <div key={method} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs">
