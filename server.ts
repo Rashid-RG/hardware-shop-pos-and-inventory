@@ -1807,6 +1807,7 @@ const initPostgres = async () => {
     );
 
     ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS invoice_id TEXT;
+    ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS receipt_snapshot JSONB;
 
     CREATE TABLE IF NOT EXISTS invoice_print_logs (
       id TEXT PRIMARY KEY,
@@ -2166,9 +2167,9 @@ const saveStateToNormalized = async (client: PoolClient, state: DBState) => {
 
   for (const cp of (state.customerCreditPayments || [])) {
     await client.query(
-      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [cp.id, cp.shopId || null, cp.customerId, cp.customerName, cp.amount, cp.date, cp.paymentMethod, cp.note || null, cp.createdBy || null, cp.invoiceId || null]
+      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id, receipt_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
+      [cp.id, cp.shopId || null, cp.customerId, cp.customerName, cp.amount, cp.date, cp.paymentMethod, cp.note || null, cp.createdBy || null, cp.invoiceId || null, cp.receiptSnapshot ? JSON.stringify(cp.receiptSnapshot) : null]
     );
   }
 
@@ -2502,6 +2503,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     customerCreditPayments: creditPaymentsRes.rows.map((row) => ({
       id: row.id,
       invoiceId: row.invoice_id || undefined,
+      receiptSnapshot: row.receipt_snapshot || undefined,
       shopId: row.shop_id || undefined,
       customerId: row.customer_id,
       customerName: row.customer_name,
@@ -5825,7 +5827,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     createdBy: authUser?.name,
   };
   try {
-    await addCustomerCreditPayment(payment);
+    payment.receiptSnapshot = await addCustomerCreditPayment(payment);
   } catch (error) {
     return res.status(409).json({ error: (error as Error).message });
   }
