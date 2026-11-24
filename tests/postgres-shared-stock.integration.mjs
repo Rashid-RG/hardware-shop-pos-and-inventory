@@ -20,9 +20,9 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   await savePackagingDraft(pool,shop,legacy,'CI Manager',config);
   const request={confirmed:true,legacyUnitId:'box',expected:{quantity:20,reorderLevel:5,costPrice:3600,sellingPrice:5400},configuration:config};
   const legacyRow=async()=>(await pool.query('SELECT quantity,reorder_level,cost_price,selling_price,shared_stock_units FROM products WHERE id=$1',[legacy])).rows[0];
-  delete process.env.ARS_SHARED_STOCK_PILOT;
+  process.env.ARS_SHARED_STOCK_PILOT='false';
   await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/disabled/);
-  process.env.ARS_SHARED_STOCK_PILOT='true';
+  delete process.env.ARS_SHARED_STOCK_PILOT;
   await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Cashier','Cashier',request),/confirmation/);
   await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,confirmed:false}),/confirmation/);
   await assert.rejects(()=>convertLegacyPackaging(pool,'other-shop',legacy,'CI Manager','Store Manager',request),/not eligible/);
@@ -72,9 +72,9 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   assert.equal(Number((await legacyRow()).quantity),236);
   await savePackagingDraft(pool,shop,product,'CI Manager',config);
   assert.equal((await checkPackagingActivation(pool,shop,product)).eligible,true);
-  delete process.env.ARS_SHARED_STOCK_PILOT;
+  process.env.ARS_SHARED_STOCK_PILOT='false';
   await assert.rejects(()=>activatePackaging(pool,shop,product,'CI Manager','Store Manager',true),/disabled/);
-  process.env.ARS_SHARED_STOCK_PILOT='true';
+  delete process.env.ARS_SHARED_STOCK_PILOT;
   await assert.rejects(()=>activatePackaging(pool,shop,product,'CI Cashier','Cashier',true),/confirmation/);
   await activatePackaging(pool,shop,product,'CI Manager','Store Manager',true);
   assert.equal(await stock(),0);
