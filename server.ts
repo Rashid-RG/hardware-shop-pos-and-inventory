@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5850,8 +5850,20 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const { activeShopId } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const { amount, paymentMethod, note, invoiceId, date, requestId, destinationAccountId } = req.body || {};
-  if(destinationAccountId!==undefined){
+  const { amount, paymentMethod, note, invoiceId, date, requestId, destinationAccountId: requestedDestination } = req.body || {};
+  let destinationAccountId=requestedDestination;
+  let representative:{userId:string}|undefined;
+  if(authUser?.role==='Cashier'){
+    const scope=chequeShopAccess(req);
+    const user=db.users.find(u=>u.email.toLowerCase()===authUser.email.toLowerCase()&&u.role==='Cashier');
+    if(!scope||!user||!eligibleRepresentativeLogin(user,activeShopId))return res.status(403).json({error:'Representative shop access denied.'});
+    const identity=await resolveRepresentativeFinancialIdentity(pool,activeShopId,user.id);
+    if(!identity)return res.status(403).json({error:'Ask a Super Admin to link your representative cash account before collecting payments.'});
+    if((paymentMethod??'Cash')!=='Cash'||!validChequeRequestId(requestId)||(requestedDestination!==undefined&&requestedDestination!==identity.accountId))return res.status(400).json({error:'Representative collections require cash, a protected request ID and your own assigned account.'});
+    destinationAccountId=identity.accountId;
+    representative={userId:user.id};
+  }
+  if(destinationAccountId!==undefined&&!representative){
     const requested=getRequestedShopId(req);
     if(!authUser||!['Super Admin','Store Manager'].includes(authUser.role)||
       !db.settings.shopProfiles?.some(s=>s.id===activeShopId)||
@@ -5892,7 +5904,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     createdBy: authUser?.name,
   };
   try {
-    payment.receiptSnapshot = await addCustomerCreditPayment(payment,Boolean(requestId),destinationAccountId);
+    payment.receiptSnapshot = await addCustomerCreditPayment(payment,Boolean(requestId),destinationAccountId,undefined,representative);
   } catch (error) {
     return res.status(409).json({ error: (error as Error).message });
   }
@@ -5935,6 +5947,19 @@ const eligibleRepresentativeLogin=(user:UserAccount,shopId:string)=>{
   const access=resolveUserShopAccess(toAuthRecordFromUser(user),shopId);
   return !('error' in access)&&access.scopedShopId===shopId;
 };
+app.get('/api/representative/me',requireRole(['Cashier']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  const auth=(req as AppRequest).authUser;
+  const user=db.users.find(u=>u.email.toLowerCase()===auth?.email.toLowerCase()&&u.role==='Cashier');
+  if(!scope||!user||!eligibleRepresentativeLogin(user,scope.shopId))return res.status(403).json({error:'Representative access denied.'});
+  try{
+    const identity=await resolveRepresentativeFinancialIdentity(pool,scope.shopId,user.id);
+    if(!identity)return res.status(404).json({error:'No assigned representative cash account.'});
+    const account=(await listFinancialAccounts(pool,scope.shopId)).find(a=>a.id===identity.accountId);
+    if(!account)return res.status(404).json({error:'Assigned cash account unavailable.'});
+    res.setHeader('Cache-Control','no-store');return res.json({...identity,balance:account.balance});
+  }catch(error){console.error('Representative identity read failed',error);return res.status(500).json({error:'Unable to load your cash account.'});}
+});
 app.get('/api/representative-logins',requireRole(['Super Admin']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Representative login access denied.'});
