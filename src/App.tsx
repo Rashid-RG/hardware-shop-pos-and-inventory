@@ -1271,7 +1271,7 @@ export default function App() {
                   shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} />
               )}
 
-              {activeTab === 'my-collections' && currentRole === 'Cashier' && <MyCollectionsView authToken={sessionToken} shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} onOpenCustomers={()=>setActiveTab('customers')} />}
+              {activeTab === 'my-collections' && currentRole === 'Cashier' && <MyCollectionsView owner={authUser.email} authToken={sessionToken} shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} onOpenCustomers={()=>setActiveTab('customers')} />}
               {(activeTab === 'customers' || activeTab === 'staff') && (
                 <CustomerEmployeeView
                   taxConfig={taxConfig}
