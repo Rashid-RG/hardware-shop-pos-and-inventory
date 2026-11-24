@@ -9,6 +9,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
+import { initLandedCostTables, previewLandedCost, approveLandedCost } from './backend/landedCost';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -6885,6 +6886,21 @@ app.post('/api/ars/import-shipments', requireRole(['Super Admin','Store Manager'
 });
 // Legacy all-at-once receipt has been intentionally disabled. Staff must
 // submit a traceable GRN with explicit per-line quantities instead.
+app.get('/api/ars/import-shipments/:id/landed-cost',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Shipment cost access denied.'});
+ try{const result=await previewLandedCost(pool,scope.shopId,req.params.id);res.setHeader('Cache-Control','no-store');return res.json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(message==='Shipment not found in this shop.')return res.status(404).json({error:message});if(['Review invalid or missing purchase unit cost or conversion.','Purchase order total does not reconcile to line costs.'].includes(message))return res.status(409).json({error:message});console.error('Landed cost preview failed',error);return res.status(500).json({error:'Unable to calculate landed cost.'});}
+});
+app.post('/api/ars/import-shipments/:id/landed-cost',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Shipment cost approval access denied.'});
+ const {requestId,evidence,expectedSnapshot}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof evidence!=='string'||!evidence.trim()||evidence.length>500||!expectedSnapshot||typeof expectedSnapshot!=='object'||Array.isArray(expectedSnapshot))return res.status(400).json({error:'Review the shipment and provide an approval reference.'});
+ try{const result=await approveLandedCost(pool,{id:requestId,shopId:scope.shopId,shipmentId:req.params.id,evidence,approvedBy:scope.recordedBy,expectedSnapshot});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(['Shipment not found in this shop.','Review invalid or missing purchase unit cost or conversion.','Purchase order total does not reconcile to line costs.','Approval reference and reviewed cost snapshot are required.','Approval request identifier already used.','Only shipments with open, unreceived purchase orders can be approved.','Existing receipts require a separate historical costing review.','Shipment costs changed. Refresh and review again.','Shipment already has an approved landed cost.'].includes(message))return res.status(409).json({error:message});console.error('Landed cost approval failed',error);return res.status(500).json({error:'Unable to confirm approval. Retry the same request.'});}
+});
 app.post('/api/ars/import-shipments/:id/receive', requireRole(['Super Admin','Store Manager','Inventory Staff']), (_req,res)=>{
   res.status(409).json({error:'Use Warehouse Receiving to post verified item quantities. The legacy full-shipment receipt is disabled.'});
 });
@@ -7119,6 +7135,7 @@ async function startServer() {
   await acquireSingleWriterLease();
   await initPostgres();
   await initPartialReceivingTables(pool);
+  await initLandedCostTables(pool);
   await initPackagingDrafts(pool);
   await initFinancialAccounts(pool);
   await initSharedStockSchema(pool);
