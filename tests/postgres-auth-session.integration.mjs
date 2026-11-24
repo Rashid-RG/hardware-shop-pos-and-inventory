@@ -83,6 +83,14 @@ test('real login, logout and password rotation revoke previous session tokens', 
     assert.ok(firstJson.token);
     const valid = await fetch(origin + '/api/profile', { headers: withToken(firstJson.token) });
     assert.equal(valid.status, 200);
+    // Packaging mutation endpoints must reject unauthorized roles before touching stock.
+    for (const [method,action] of [['PUT','packaging-draft'],['GET','packaging-eligibility'],['POST','packaging-activate'],['PUT','packaging-prices']]) {
+      const endpoint=origin+'/api/products/nonexistent-ci-product/'+action;
+      const anonymous=await fetch(endpoint,{method});
+      assert.equal(anonymous.status,401,action+' requires authentication');
+      const forbidden=await fetch(endpoint,{method,headers:withToken(firstJson.token)});
+      assert.equal(forbidden.status,403,action+' must reject cashier access');
+    }
     const logout = await fetch(origin + '/api/auth/logout', {
       method: 'POST', headers: withToken(firstJson.token),
     });
