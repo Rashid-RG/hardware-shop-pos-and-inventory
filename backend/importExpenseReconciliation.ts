@@ -34,3 +34,22 @@ export async function linkImportExpense(db:Pool,input:{id:string;shopId:string;a
  await client.query('COMMIT');return {id,replayed:false};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
+
+export async function listImportExpenseReview(db:Pool,shopId:string){
+ const result=await db.query(`WITH approvals AS (
+ SELECT a.id,a.shipment_id,a.purchase_order_id,a.approved_at,a.snapshot->>'poNumber' AS po_number,
+ a.snapshot->>'freightLkr' AS freight,a.snapshot->>'customsLkr' AS customs,a.snapshot->>'clearanceLkr' AS clearance,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('id',l.id,'expenseId',l.expense_id,'kind',l.charge_kind,'amount',l.amount,'evidence',l.evidence,'recordedBy',l.recorded_by,'recordedAt',l.recorded_at) ORDER BY l.recorded_at,l.id) FROM ars_import_expense_links l WHERE l.shop_id=a.shop_id AND l.approval_id=a.id),'[]'::jsonb) AS links
+ FROM ars_landed_cost_approvals a WHERE a.shop_id=$1 ORDER BY a.approved_at DESC,a.id LIMIT 250
+ ), expenses AS (
+ SELECT e.id,e.description,e.category,e.amount,e.date::text AS day
+ FROM manual_expenses e WHERE e.shop_id=$1 AND e.amount>0
+ AND NOT EXISTS(SELECT 1 FROM ars_import_expense_links l WHERE l.shop_id=e.shop_id AND l.expense_id=e.id)
+ AND 1=(SELECT COUNT(*) FROM ars_financial_movements m WHERE m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense')
+ AND EXISTS(SELECT 1 FROM ars_financial_movements m WHERE m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' AND m.amount=-e.amount AND m.effective_date=e.date::date)
+ ORDER BY e.date DESC,e.id LIMIT 500
+ )
+ SELECT COALESCE((SELECT jsonb_agg(approvals ORDER BY approved_at DESC,id) FROM approvals),'[]'::jsonb) AS approvals,
+ COALESCE((SELECT jsonb_agg(expenses ORDER BY day DESC,id) FROM expenses),'[]'::jsonb) AS expenses`,[shopId]);
+ return result.rows[0];
+}
