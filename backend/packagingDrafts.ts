@@ -13,6 +13,16 @@ export async function initPackagingDrafts(pool: Pool) {
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(shop_id, product_id)
   )`);
+  // Separate immutable return factors keep historical financial documents untouched.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ars_legacy_sale_return_units (
+    sale_item_id BIGINT PRIMARY KEY REFERENCES sales_transaction_items(id),
+    shop_id TEXT NOT NULL,
+    product_id TEXT NOT NULL REFERENCES products(id),
+    legacy_unit_label TEXT NOT NULL,
+    base_units INTEGER NOT NULL CHECK(base_units > 0),
+    recorded_by TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
 }
 
 export function parsePackagingDraft(raw: unknown): SharedStockUnits {
@@ -173,4 +183,14 @@ export async function convertLegacyPackaging(pool: Pool, shopId: string, product
     await client.query('COMMIT');
     return preview;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+
+/** Only a confirmed, per-invoice mapping can authorize a legacy refund. */
+export async function getLegacyReturnFactor(client: PoolClient, shopId: string, productId: string, saleItemId: string | number) {
+  const result=await client.query(`SELECT base_units FROM ars_legacy_sale_return_units
+    WHERE sale_item_id=$1 AND shop_id=$2 AND product_id=$3`,[saleItemId,shopId,productId]);
+  const factor=Number(result.rows[0]?.base_units);
+  if(!Number.isSafeInteger(factor)||factor<=0)throw Error('Legacy invoice requires a verified stock migration before refund.');
+  return factor;
 }
