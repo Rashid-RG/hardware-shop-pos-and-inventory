@@ -587,16 +587,16 @@ export default function App() {
     await handleRefreshDb();
   };
 
-  const handleAddManualExpense = async (payload: Omit<ManualExpense, 'id' | 'date'>) => {
+  const handleAddManualExpense = async (payload: Omit<ManualExpense, 'id' | 'date'> & {sourceAccountId?:string;requestId?:string;paymentMethod?:string}) => {
     const res = await apiRequest('/api/manual-expenses', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.message || 'Failed to log expense');
+      throw new Error(err.error || err.message || 'Failed to log expense');
     }
-    await handleRefreshDb();
+    try{await handleRefreshDb();}catch{console.warn('Expense committed; refresh failed.');}
   };
 
   const handleAddProductCategory = async (categoryName: string) => {
