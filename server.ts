@@ -1,3 +1,4 @@
+import {settleImportCreditor} from './backend/importSettlements';
 import {listImportObligations,submitImportObligation,reviewImportObligation} from './backend/importObligations';
 import {supplierReconciliation} from './backend/supplierReconciliation';
 import {ledgerStatements,ledgerActivity} from './backend/ledgerReports';
@@ -6289,6 +6290,22 @@ app.post('/api/import-obligations/:id/review',requireRole(['Super Admin']),async
  const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import obligation approval access denied.'});
  const {decision,evidence}=req.body||{};
  try{return res.json(await reviewImportObligation(pool,{shopId:scope.shopId,id:req.params.id,actor:scope.recordedBy,decision,evidence}));}catch(error){return importObligationError(res,error);}
+});
+app.post('/api/import-obligations/:id/settlements',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import settlement access denied.'});
+ const {requestId,accountId,amount,date,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof accountId!=='string'||typeof amount!=='string'||!/^\d{1,14}(\.\d{1,2})?$/.test(amount)||typeof date!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid settlement details required.'});
+ try{const result=await settleImportCreditor(pool,{shopId:scope.shopId,id:requestId,obligationId:req.params.id,accountId,amount,date,evidence,actor:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid creditor settlement details required.','Positive settlement required.','Settlement identifier already used.','Active accounting required for creditor settlement.','Approved creditor obligation required.','Payment exceeds recognized outstanding liability.','Active cash or bank account required.','Insufficient recorded funds.','Missing active settlement accounting mapping.'].includes(message))return res.status(409).json({error:message});
+ console.error('Import creditor settlement failed',error);return res.status(500).json({error:'Unable to confirm settlement. Retry the same request.'});}
+});
+app.get('/api/import-obligations/:id/settlements',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import settlement access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{const result=await pool.query('SELECT s.id,s.amount::text,s.payment_date::text,s.evidence,s.recorded_by,s.journal_id,s.account_id,a.name AS account_name FROM ars_gl_import_settlements s LEFT JOIN ars_financial_accounts a ON a.shop_id=s.shop_id AND a.id=s.account_id WHERE s.shop_id=$1 AND s.obligation_id=$2 ORDER BY s.payment_date DESC,s.id LIMIT 500',[scope.shopId,req.params.id]);return res.json(result.rows);}
+ catch(error){console.error('Import settlement history failed',error);return res.status(500).json({error:'Unable to load settlement history.'});}
 });
 function ledgerApiError(res:express.Response,error:unknown){
  const message=error instanceof Error?error.message:'';
