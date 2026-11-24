@@ -1,5 +1,6 @@
 import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
+import { initReceivableAging } from './receivableAging';
 import { baseQuantity } from '../src/utils/unitConversion';
 import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
 import { getLegacyReturnFactor } from './packagingDrafts';
@@ -467,6 +468,7 @@ export const initDbTables = async () => {
       CREATE UNIQUE INDEX IF NOT EXISTS products_shop_id_sku_key ON products (shop_id, sku);
     `);
 
+    await initReceivableAging(client);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
