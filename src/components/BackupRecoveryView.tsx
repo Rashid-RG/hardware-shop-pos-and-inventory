@@ -27,6 +27,41 @@ function Command({ command }: { command: string }) {
 export default function BackupRecoveryView({ authToken }: { authToken: string }) {
   const [local, setLocal] = useState<{enabled: boolean; running: boolean; platform: string} | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cloudReady,setCloudReady] = useState<{ready:boolean;installed:boolean;configured:boolean}|null>(null);
+  const [cloudMessage,setCloudMessage] = useState('');
+  const [cloudBusy,setCloudBusy] = useState(false);
+  async function checkCloud() {
+    try {
+      const response = await fetch('/api/backup/cloud-readiness',{headers:{Authorization:'Bearer '+authToken}});
+      if (!response.ok) throw new Error();
+      setCloudReady(await response.json());
+    } catch { setCloudReady(null); }
+  }
+  React.useEffect(()=>{void checkCloud();},[authToken,local?.enabled]);
+  async function cloudAction(schedule:boolean) {
+    if (schedule && !window.confirm('Enable encrypted daily backup at 8 PM on this database computer?')) return;
+    setCloudBusy(true); setCloudMessage('');
+    try {
+      const response = await fetch('/api/backup/'+(schedule?'cloud-schedule':'cloud-run'),{method:'POST',headers:{Authorization:'Bearer '+authToken,'Content-Type':'application/json'},body:JSON.stringify(schedule?{confirmation:'ENABLE DAILY BACKUP'}:{})});
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Backup operation failed.');
+      setCloudMessage(schedule?'Daily schedule installation completed. Verify the first successful run.':'Encrypted upload and remote verification completed.');
+      void refreshHistory();
+    } catch(err) { setCloudMessage(err instanceof Error?err.message:'Backup operation failed.'); }
+    finally {setCloudBusy(false);}
+  }
+  async function downloadPackage(name:string) {
+    setAction(name); setHistoryMessage('');
+    try {
+      const response = await fetch('/api/backup/local-package?'+new URLSearchParams({archive:name}),{headers:{Authorization:'Bearer '+authToken}});
+      if (!response.ok) {const data=await response.json();throw new Error(data.error||'Package download failed.');}
+      const url=URL.createObjectURL(await response.blob());
+      const link=document.createElement('a');link.href=url;link.download=name.slice(0,-5)+'.tar';document.body.appendChild(link);link.click();link.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+      setHistoryMessage('Complete backup package downloaded. Store it on encrypted external storage.');
+    } catch(err) {setHistoryMessage(err instanceof Error?err.message:'Download failed.');}
+    finally {setAction('');}
+  }
   const [history, setHistory] = useState<Array<{name:string; bytes:number; createdAt:string; complete:boolean; includesUploads:boolean}>>([]);
   const [historyError, setHistoryError] = useState('');
   const [action, setAction] = useState('');
@@ -137,7 +172,9 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
         {error && <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p>}
         {result && <div role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-900"><strong className="flex items-center gap-2"><ShieldCheck size={16}/> Backup created and checksums verified</strong><p className="mt-1 break-all">{result.archive}</p><p>{new Date(result.verifiedAt).toLocaleString()} · Saved on database computer</p><p className="mt-1">A separate recovery test is still recommended.</p></div>}
       </section>
-      <section className="rounded-xl border border-slate-200 bg-white p-4"><Cloud className="h-6 w-6 text-slate-600"/><h3 className="mt-2 font-bold text-slate-900">Google Drive backup</h3><p className="mt-1 text-xs">{status ? labels[status.phase] || 'Unknown status' : 'Checking status…'}</p><p className="mt-2 text-xs text-slate-500">Cloud setup and scheduling remain separate from the local backup button.</p></section>
+      <section className="rounded-xl border border-slate-200 bg-white p-4"><Cloud className="h-6 w-6 text-slate-600"/><h3 className="mt-2 font-bold text-slate-900">Google Drive backup</h3><p className="mt-1 text-xs">{status ? labels[status.phase] || 'Unknown status' : 'Checking status…'}</p><p className="mt-2 text-xs text-slate-500">{cloudReady?.ready?'Drive and crypt remotes detected. Upload verification is still required.':cloudReady?.installed?'Configure both ARS remotes using the setup instructions below.':'Install rclone on the database computer first.'}</p>
+      <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={checkCloud} className="rounded border px-2 py-1.5 text-xs">Check connection setup</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(false)} className="rounded bg-amber-400 px-3 py-2 text-xs font-bold disabled:opacity-40">{cloudBusy?'Working…':'Encrypted backup now'}</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(true)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40">Enable daily 8 PM backup</button></div>
+      {cloudMessage&&<p role="status" className="mt-2 text-xs">{cloudMessage}</p>}</section>
     </div>
     {local?.enabled && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
       <div className="flex items-center justify-between gap-2"><div><h3 className="font-bold text-slate-900">Local backup history</h3><p className="text-xs text-slate-500">Backup sets retained on this database computer.</p></div><button type="button" onClick={refreshHistory} className="rounded-lg border px-3 py-2 text-xs font-semibold">Refresh</button></div>
@@ -146,7 +183,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       {!history.length && !historyError && <p className="text-xs text-slate-500">No managed local backup sets found.</p>}
       <div className="space-y-2">{history.map(row => <div key={row.name} className="rounded-lg border p-3">
         <div className="flex flex-wrap justify-between gap-2"><div className="min-w-0"><p className="font-semibold">{new Date(row.createdAt).toLocaleString()}</p><p className="break-all text-xs text-slate-500">{row.name}</p><p className="text-xs text-slate-600">{(row.bytes/1048576).toFixed(2)} MB database · {row.includesUploads?'Includes uploads':'Database only'}</p></div><span className="text-xs font-medium">{verified[row.name]?'Checksums verified this session':row.complete?'Files present · not yet verified':'Incomplete set'}</span></div>
-        <div className="mt-2 flex flex-wrap gap-2"><button type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>verifySet(row.name)} className="rounded border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Verify set</button>
+        <div className="mt-2 flex flex-wrap gap-2"><button type="button" disabled={!row.complete || busy || cloudBusy || !!action || local.running} onClick={()=>downloadPackage(row.name)} className="rounded bg-amber-400 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Download complete package</button><button type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>verifySet(row.name)} className="rounded border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Verify set</button>
         {[row.name,row.name+'.sha256',...(row.includesUploads?[row.name.slice(0,-5)+'-uploads.zip',row.name.slice(0,-5)+'-uploads.zip.sha256']:[])].map((member,i)=><button key={member} type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>downloadSetMember(row.name,member)} className="rounded border px-3 py-1.5 text-xs disabled:opacity-40">{['Database','Database checksum','Uploads ZIP','Uploads checksum'][i]}</button>)}</div>
       </div>)}</div>
     </section>}
