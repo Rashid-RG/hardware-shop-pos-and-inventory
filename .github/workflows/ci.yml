@@ -58,6 +58,10 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: PostgreSQL maintenance lock contention (isolated database)
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+        run: node --test tests/postgres-maintenance-lock.integration.mjs
       - name: TypeScript checks
         run: npm run lint
       - name: Regression tests
