@@ -147,7 +147,7 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     assert.equal(await balance(bank),0);assert.equal(await quantity(),10);
 
     // Historical profit must remain independent of current catalogue costs.
-    const {financialProfitReport,financialCashFlow}=await import('../backend/financialAccounts.ts');
+    const {financialProfitReport,financialCashFlow,correctHistoricalInvoiceCost}=await import('../backend/financialAccounts.ts');
     const businessDay=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     const profitSale={...tx(2,'ci-profit-'+randomUUID()),paymentMethod:'Cash',paymentStatus:'PAID',subtotal:200,discountAmount:20,tax:18,total:198,cashReceived:198,changeDue:0};
     await checkoutTransaction(profitSale,'Store Manager','CI Shop');
@@ -159,7 +159,25 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     await pool.query('UPDATE sales_transaction_items SET cost_price=0 WHERE transaction_id=$1',[profitSale.id]);
     const incomplete=await financialProfitReport(pool,shopId,businessDay,businessDay);
     assert.equal(incomplete.complete,false);assert.equal(incomplete.grossProfit,null);assert.equal(incomplete.operatingEstimate,null);
-    await pool.query('UPDATE sales_transaction_items SET cost_price=60 WHERE transaction_id=$1',[profitSale.id]);
+    const line=(await pool.query('SELECT id::text AS id,cost_price FROM sales_transaction_items WHERE transaction_id=$1',[profitSale.id])).rows[0];
+    const correction={id:randomUUID(),shopId,transactionId:profitSale.id,itemId:line.id,expectedCost:0,correctedCost:65,evidence:'CI supplier invoice',reason:'Verified historical unit cost',recordedBy:'CI Admin'};
+    await assert.rejects(correctHistoricalInvoiceCost(pool,{...correction,shopId:'other-shop'}),/not found in this shop/);
+    await assert.rejects(correctHistoricalInvoiceCost(pool,{...correction,evidence:''}),/Invalid historical cost correction/);
+    await assert.rejects(correctHistoricalInvoiceCost(pool,{...correction,correctedCost:0}),/Invalid historical cost correction/);
+    const duplicates=await Promise.all([correctHistoricalInvoiceCost(pool,correction),correctHistoricalInvoiceCost(pool,correction)]);
+    assert.deepEqual(duplicates.map(r=>r.replayed).sort(),[false,true]);
+    await assert.rejects(correctHistoricalInvoiceCost(pool,{...correction,correctedCost:70}),/identifier already used/);
+    const corrected=await financialProfitReport(pool,shopId,businessDay,businessDay);
+    assert.equal(corrected.complete,true);assert.equal(corrected.knownCost,beforeProfit.knownCost+10);
+    const competing=await Promise.allSettled([60,62].map(correctedCost=>correctHistoricalInvoiceCost(pool,{...correction,id:randomUUID(),expectedCost:65,correctedCost})));
+    assert.equal(competing.filter(r=>r.status==='fulfilled').length,1);
+    const revisions=(await pool.query('SELECT original_cost,previous_cost,corrected_cost FROM ars_invoice_cost_corrections WHERE shop_id=$1 AND transaction_id=$2 AND item_id=$3 ORDER BY revision',[shopId,profitSale.id,line.id])).rows;
+    assert.equal(revisions.length,2);assert.equal(Number(revisions[0].original_cost),0);assert.equal(Number(revisions[0].previous_cost),0);assert.equal(Number(revisions[1].previous_cost),65);
+    const current=Number(revisions[1].corrected_cost);
+    if(current!==60)await correctHistoricalInvoiceCost(pool,{...correction,id:randomUUID(),expectedCost:current,correctedCost:60});
+    assert.equal(Number((await pool.query('SELECT cost_price FROM sales_transaction_items WHERE id=$1',[line.id])).rows[0].cost_price),0);
+    assert.equal((await financialProfitReport(pool,shopId,businessDay,businessDay)).knownCost,beforeProfit.knownCost);
+    // Keep the original zero snapshot and its append-only correction history for backup verification.
     await refundTransaction(profitSale.id,shopId,'Profit report fixture return','CI Manager','Store Manager');
     const afterRefund=await financialProfitReport(pool,shopId,businessDay,businessDay);
     assert.equal(afterRefund.netSales,beforeProfit.netSales-180);
