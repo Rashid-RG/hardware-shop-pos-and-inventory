@@ -1,3 +1,4 @@
+import { arsDisplayName } from './utils/arsPrintLogo';
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import NotificationCenter from './components/NotificationCenter';
@@ -1268,7 +1269,7 @@ export default function App() {
               {activeTab === 'db-admin' && (
                 <DBAdminView
                   shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || ''}
-                  shopName={taxConfig.shopProfiles?.find(shop => shop.id === (authUser.scopedShopId || selectedShopId || taxConfig.activeShopId))?.name || taxConfig.storeName}
+                  shopName={arsDisplayName(taxConfig.shopProfiles?.find(shop => shop.id === (authUser.scopedShopId || selectedShopId || taxConfig.activeShopId))?.name || taxConfig.storeName)}
                   onSamplesAdded={handleRefreshDb}
                   authToken={sessionToken}
                 />
