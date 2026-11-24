@@ -1,3 +1,4 @@
+import { arsPrintLogoPath, isArsPrintBrand } from './arsPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { invoiceFooter } from './invoiceFooter.ts';
 import type { SalesTransaction, InvoiceCompanyMeta } from '../types';
@@ -69,7 +70,9 @@ export const renderArsInvoicePdf = async (
     label(invoiceFooter.credit, 320, 824, 240, 8, 'right', true);
   };
   const header = (continuation: boolean) => {
-    if (logo) {
+    if (isArsPrintBrand(shopName)) {
+      doc.save().translate(LEFT,22).scale(48/615).translate(-245,-320).path(arsPrintLogoPath).fill('#000000','even-odd').restore();
+    } else if (logo) {
       try { doc.image(logo, LEFT, 22, { fit: [68, 48] }); }
       catch { label('ARS', LEFT, 32, 68, 23, 'left', true); }
     } else { label('ARS', LEFT, 32, 68, 23, 'left', true); }
