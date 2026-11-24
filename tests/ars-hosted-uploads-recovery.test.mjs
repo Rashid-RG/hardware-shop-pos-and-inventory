@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const smoke = readFileSync(new URL('../scripts/verify-hosted-container-ci.sh', import.meta.url), 'utf8');
+// Git on Windows may check out shell scripts with CRLF. Assert their logic independently of line endings.
+const smoke = readFileSync(new URL('../scripts/verify-hosted-container-ci.sh', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 
 test('hosted uploads recovery drill is restricted to disposable GitHub CI resources', () => {
   assert.match(smoke, /GITHUB_ACTIONS:-.*CI:-/s);
