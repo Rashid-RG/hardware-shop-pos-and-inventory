@@ -1601,7 +1601,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         // Subtract stock from product
         await client.query(
           `UPDATE products SET quantity = GREATEST(0, quantity - $1), updated_at = NOW() WHERE id = $2`,
-          [stockIn, dbProduct.id]
+          [item.quantity, dbProduct.id]
         );
       }
 
