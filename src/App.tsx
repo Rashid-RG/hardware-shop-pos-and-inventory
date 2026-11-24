@@ -1219,7 +1219,7 @@ export default function App() {
               )}
 
               {activeTab === 'backup-recovery' && currentRole === 'Super Admin' && (
-                <BackupRecoveryView />
+                <BackupRecoveryView authToken={sessionToken} />
               )}
 
               {activeTab === 'calculators' && (

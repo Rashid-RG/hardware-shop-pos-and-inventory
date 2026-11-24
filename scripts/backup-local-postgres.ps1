@@ -5,7 +5,8 @@ param(
   [string]$Database = '',
   [string]$DbUser = 'postgres',
   [string]$Destination = 'backups',
-  [int]$Keep = 30
+  [int]$Keep = 30,
+  [switch]$OutputArchive
 )
 $ErrorActionPreference = 'Stop'
 if ($Keep -lt 7 -or $Keep -gt 3650) { throw 'Keep must be between 7 and 3650 successful backups.' }
@@ -96,3 +97,4 @@ try {
 } finally {
   & docker exec $Container rm -f $remoteFile *> $null
 }
+if ($OutputArchive) { Write-Output "ARS_ARCHIVE=$backupFile" }

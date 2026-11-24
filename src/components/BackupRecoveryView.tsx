@@ -24,7 +24,30 @@ function Command({ command }: { command: string }) {
   </div>;
 }
 
-export default function BackupRecoveryView() {
+export default function BackupRecoveryView({ authToken }: { authToken: string }) {
+  const [status, setStatus] = useState<{phase: string; verifiedAt: string | null; attemptedAt: string | null} | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    async function refresh() {
+      try {
+        const response = await fetch('/api/backup/drive-status', { headers: { Authorization: 'Bearer ' + authToken }, signal: controller.signal });
+        if (!response.ok) throw new Error();
+        const data = await response.json();
+        if (!controller.signal.aborted) setStatus(data);
+      } catch {
+        if (!controller.signal.aborted) setStatus({ phase: 'unavailable', verifiedAt: null, attemptedAt: null });
+      }
+    }
+    void refresh();
+    const timer = window.setInterval(refresh, 60000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [authToken]);
+  const labels: Record<string, string> = {
+    never: 'No daily run recorded', verified: 'Upload verified', local: 'Creating local backup',
+    upload: 'Uploading and checking files', 'local-failed': 'Local backup failed',
+    'upload-failed': 'Upload or verification failed', unavailable: 'Status unavailable',
+  };
+  const overdue = status?.verifiedAt && Date.now() - Date.parse(status.verifiedAt) > 24 * 3600000;
   const [archive, setArchive] = useState('');
   // Accept names produced by both generations of the Windows archive script.
   const valid = /^[a-z0-9_-][a-z0-9_. -]*\.dump$/i.test(archive);
@@ -35,6 +58,27 @@ export default function BackupRecoveryView() {
       <h2 className="flex items-center gap-2 text-xl font-bold"><DatabaseBackup /> Backup &amp; recovery</h2>
       <p className="mt-2 text-slate-200">Run these commands from the ARS project folder in PowerShell on the Windows database computer.</p>
     </header>
+    <section className={card}>
+      <h3 className="text-base font-bold text-slate-900">Daily Google Drive backup</h3>
+      <p role="status">{status ? labels[status.phase] : 'Loading status…'}{status?.verifiedAt && ' · Last verified ' + new Date(status.verifiedAt).toLocaleString()}</p>
+      {overdue && <p className="font-semibold text-amber-800">More than 24 hours since the last verified upload.</p>}
+      <details><summary className="cursor-pointer font-semibold">Set up on the database computer</summary>
+        <ol className="my-3 list-decimal space-y-1 pl-5">
+          <li>Install rclone and run <code>rclone config</code>. Create a Google Drive remote named <code>ars-drive</code> using the ARS business account.</li>
+          <li>Create a crypt remote named <code>ars-encrypted</code> pointing to <code>ars-drive:ARS-Backups</code>. Save the encryption password and salt offline for recovery.</li>
+          <li>Register the schedule below. It runs at 8 PM Windows local time while the configured user is signed in. Keep Docker running.</li>
+        </ol>
+        <Command command="powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-drive-backup.ps1 -At 20:00"/>
+        <p className="my-2">ARS keeps the latest 30 local backup sets. Drive keeps each uploaded set until the owner removes it.</p>
+        <p className="my-2">Run the scheduled task once now and check the verified time above.</p>
+        <Command command="Start-ScheduledTask -TaskName 'ARS Hardware - Daily Drive Backup'"/>
+      </details>
+      <details><summary className="cursor-pointer font-semibold">Download a set for a recovery drill</summary>
+        <p className="my-2">List the dated folders, then replace SET with one folder name. Download into the project backups folder and follow the restore steps below.</p>
+        <Command command="rclone lsf ars-encrypted:daily --dirs-only"/>
+        <Command command={'rclone copy "ars-encrypted:daily/SET" backups --immutable'}/>
+      </details>
+    </section>
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <section className={card}>
         <h3 className="text-base font-bold text-slate-900">1. Create a backup</h3>

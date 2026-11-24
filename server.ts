@@ -3202,6 +3202,24 @@ const requireLocalDatabaseDiagnostics: express.RequestHandler = (_req, res, next
   }
   next();
 };
+app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const raw = await fs.promises.readFile(path.resolve('backups', 'drive-status.json'), 'utf8');
+    const { phase, attemptedAt, verifiedAt } = JSON.parse(raw);
+    if (!['local', 'upload', 'verified', 'local-failed', 'upload-failed'].includes(phase) ||
+        !Number.isFinite(Date.parse(attemptedAt)) || (verifiedAt !== null && !Number.isFinite(Date.parse(verifiedAt)))) {
+      throw new Error('Invalid status');
+    }
+    res.json({ phase, attemptedAt, verifiedAt });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return res.json({ phase: 'never', attemptedAt: null, verifiedAt: null });
+    }
+    res.status(503).json({ error: 'Backup status unavailable.' });
+  }
+});
+
 app.get('/api/db-admin/tables', requireRole(['Super Admin']), requireLocalDatabaseDiagnostics, async (_req, res) => {
   const result = await pool.query<{ table_name: string }>(
     `
