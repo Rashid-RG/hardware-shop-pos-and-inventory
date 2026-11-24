@@ -15,6 +15,7 @@ import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
 import { openingReconciliation } from './backend/openingReconciliation';
+import { listDocumentaryReviews, submitDocumentaryReview } from './backend/documentaryReconciliation';
 import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
@@ -6293,6 +6294,24 @@ app.get('/api/ledger/opening-proposals/:id/reconciliation',requireRole(['Super A
  if(message==='Opening proposal not found in this shop.')return res.status(404).json({error:message});
  if(message==='Opening proposal integrity check failed.')return res.status(409).json({error:message});
  console.error('Opening reconciliation failed',error);return res.status(500).json({error:'Unable to compare opening balances.'});}
+});
+app.get('/api/ledger/opening-proposals/:id/documents',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await listDocumentaryReviews(pool,scope.shopId,req.params.id));}
+ catch(error){if(error instanceof Error&&error.message==='Valid opening proposal required.')return res.status(400).json({error:error.message});
+ console.error('Documentary history failed',error);return res.status(500).json({error:'Unable to load documentary review history.'});}
+});
+app.post('/api/ledger/opening-proposals/:id/documents',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {id,snapshotHash,evidence}=req.body||{};
+ try{const result=await submitDocumentaryReview(pool,scope.shopId,scope.recordedBy,{id,proposalId:req.params.id,snapshotHash,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid documentary review required.','Document reference and explanation required for each reconciliation row.','Duplicate documentary evidence row.','Documentary review identifier already used.','Reconciliation snapshot changed. Refresh and review the new balances.','Evidence must cover every reconciliation row exactly once.','Opening proposal not found in this shop.','An independent administrator must record documentary review.','Rejected proposal cannot receive a new documentary review.','Accounting already active.','Opening proposal integrity check failed.'].includes(message))return res.status(409).json({error:message});
+ console.error('Documentary review failed',error);return res.status(500).json({error:'Unable to confirm documentary review. Retry identical details.'});}
 });
 app.post('/api/ledger/opening-proposals/:id/review',requireRole(['Super Admin']),async(req,res)=>{
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
