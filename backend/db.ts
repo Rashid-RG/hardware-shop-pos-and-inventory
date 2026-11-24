@@ -592,6 +592,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       description: row.description,
       location: row.location || undefined,
       variants: Array.isArray(row.variants_json) ? row.variants_json as ProductVariant[] : undefined,
+      sharedStockUnits: row.shared_stock_units ?? undefined,
     })),
     suppliers: suppliersRes.rows.map((row) => ({
       id: row.id,
@@ -641,6 +642,9 @@ export const loadStateFromNormalized = async (): Promise<any> => {
         productName: item.product_name,
         invoiceDescription: item.invoice_description ?? undefined,
         variantUnit: item.variant_unit ?? undefined,
+        sellingUnitId: item.selling_unit_id ?? undefined,
+        sellingUnitLabel: item.selling_unit_label ?? undefined,
+        baseUnitsPerSaleUnit: item.base_units_per_sale_unit ?? undefined,
         quantity: Number(item.quantity),
         sellingPrice: Number(item.selling_price),
         costPrice: item.cost_price == null ? undefined : Number(item.cost_price),
