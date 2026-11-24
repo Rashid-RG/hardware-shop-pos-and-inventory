@@ -1,3 +1,4 @@
+import {postPurchaseReceipt,postSaleRefund} from './purchaseJournal';
 import { postFinancialJournal } from './financialJournalPosting';
 import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
@@ -2016,6 +2017,7 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
           VALUES($1,$2,$3,-$4::numeric,'Invoice Refund',$5,$6,(NOW() AT TIME ZONE 'Asia/Colombo')::date,$7)`,['invoice-out-'+txId,shopId,entry.account_id,entry.amount,txId,cashierName,reason||'Invoice refund']);
       }
     }
+    await postSaleRefund(client,shopId,txId,cashierName,reason);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -2159,6 +2161,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       [poId, shopId]
     );
 
+    await postPurchaseReceipt(client,shopId,poId,receiveUser);
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
