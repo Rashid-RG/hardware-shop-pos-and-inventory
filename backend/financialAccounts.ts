@@ -316,3 +316,30 @@ export async function listFinancialMovements(db:Pool|PoolClient,input:{shopId:st
   if(!r)throw Error('Financial account not found in this shop.');
   return {account:{id:r.id,name:r.name,kind:r.kind,active:r.active},fromDate,toDate,offset,limit,total:Number(r.count),opening:Number(r.opening),inflows:Number(r.inflows),outflows:Number(r.outflows),closing:Number(r.closing),rows:r.rows.map((m:any)=>({...m,amount:Number(m.amount),runningBalance:Number(m.runningBalance)}))};
 }
+
+export async function recordPaidExpense(db:Pool,input:{id:string;shopId:string;desc:string;category:string;amount:number;date:string;recordedBy:string;role:string;sourceAccountId?:string;paymentMethod?:string}){
+  const {id,shopId,desc,category,amount,date,recordedBy,role,sourceAccountId,paymentMethod}=input;
+  if(!id||!shopId||!recordedBy||!desc.trim()||desc.length>1000||!category.trim()||category.length>100||!Number.isFinite(amount)||amount<=0||amount>1_000_000_000||Math.abs(amount*100-Math.round(amount*100))>0.00001||!validChequeDay(date)||(sourceAccountId&&!['Cash','Bank Transfer'].includes(paymentMethod||'')))throw Error('Invalid expense details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    if(sourceAccountId){
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[id]);
+      const prior=await client.query("SELECT e.*,e.date::text AS day,m.account_id,m.recorded_by,a.kind FROM manual_expenses e LEFT JOIN ars_financial_movements m ON m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Expense' LEFT JOIN ars_financial_accounts a ON a.shop_id=m.shop_id AND a.id=m.account_id WHERE e.id=$1",[id]);
+      if(prior.rowCount){
+        const p=prior.rows[0];
+        if(p.shop_id!==shopId||p.description!==desc||p.category!==category||Number(p.amount)!==amount||p.account_id!==sourceAccountId||p.recorded_by!==recordedBy||!((paymentMethod==='Cash'&&p.kind==='Office Cash')||(paymentMethod==='Bank Transfer'&&p.kind==='Bank')))throw Error('Expense request identifier already used for different details.');
+        await client.query('COMMIT');return {id,date:p.day as string,replayed:true};
+      }
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,sourceAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!((paymentMethod==='Cash'&&kind==='Office Cash')||(paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active expense account matching the payment method.');
+      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,sourceAccountId,amount]);
+      if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for expense.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note) VALUES($1,$2,$3,-$4::numeric,'Expense',$5,$6,$7,$8)`,['expense-out-'+id,shopId,sourceAccountId,amount,id,recordedBy,date,desc]);
+    }
+    await client.query('INSERT INTO manual_expenses(id,description,amount,date,category,shop_id) VALUES($1,$2,$3,$4,$5,$6)',[id,desc,amount,date,category,shopId]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,['expense-audit-'+id,shopId,recordedBy,role,'Added manual expense '+desc+' (LKR '+amount.toFixed(2)+').']);
+    await client.query('COMMIT');return {id,date,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
