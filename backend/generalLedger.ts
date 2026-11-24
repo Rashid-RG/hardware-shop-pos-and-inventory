@@ -205,6 +205,31 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_documentary_review_immutable ON ars_gl_documentary_reviews;
  CREATE TRIGGER ars_gl_documentary_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_documentary_reviews
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_import_obligations(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,approval_id TEXT NOT NULL,
+  charge_kind TEXT NOT NULL CHECK(charge_kind IN ('Freight','Customs','Clearance')),
+  creditor_name TEXT NOT NULL CHECK(length(trim(creditor_name)) BETWEEN 1 AND 200),
+  document_reference TEXT NOT NULL CHECK(length(trim(document_reference)) BETWEEN 1 AND 200),
+  amount NUMERIC(16,2) NOT NULL CHECK(amount>0),
+  due_date DATE NOT NULL,evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),UNIQUE(shop_id,approval_id,charge_kind,creditor_name,document_reference)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_import_obligation_immutable ON ars_gl_import_obligations;
+ CREATE TRIGGER ars_gl_import_obligation_immutable BEFORE UPDATE OR DELETE ON ars_gl_import_obligations
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_import_obligation_reviews(
+  shop_id TEXT NOT NULL,obligation_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('Approved','Rejected')),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  reviewed_by TEXT NOT NULL,reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,obligation_id),
+  FOREIGN KEY(shop_id,obligation_id) REFERENCES ars_gl_import_obligations(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_import_review_immutable ON ars_gl_import_obligation_reviews;
+ CREATE TRIGGER ars_gl_import_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_import_obligation_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_import_obligation_approval ON ars_gl_import_obligations(shop_id,approval_id,charge_kind);
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
