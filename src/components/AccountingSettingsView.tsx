@@ -1,5 +1,6 @@
 import ReceivableAgingPanel from './ReceivableAgingPanel';
 import SupplierPayablePanel from './SupplierPayablePanel';
+import PositionRegisterPanel from './PositionRegisterPanel';
 import ImportExpenseReviewPanel from './ImportExpenseReviewPanel';
 import InventoryValuationPanel from './InventoryValuationPanel';
 import HistoricalCostReviewPanel from './HistoricalCostReviewPanel';
@@ -429,6 +430,7 @@ export default function AccountingSettingsView({
           {currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
           {isManager && <ReceivableAgingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <ImportExpenseReviewPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
           {isManager && <FinancialProfitPanel correctionRevision={costCorrectionRevision} authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
