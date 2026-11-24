@@ -253,13 +253,13 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
           <input type="file" accept=".dump" className="mt-2 block w-full text-xs" onChange={event => setArchive(event.target.files?.[0]?.name ?? '')}/>
         </label>
         {archive && !valid && <p role="alert">Choose an ARS .dump file with its original filename.</p>}
-        {valid && <Command key={archive} command={'node scripts/verify-backup.mjs ' + path}/>}
+        {valid && <Command command={'node scripts/verify-backup.mjs ' + path}/>}
       </section>
     </div>
     <section className={card}>
       <h3 className="text-base font-bold text-slate-900">3. Test recovery in a separate database</h3>
       <p>The drill checks the files, asks you to type <strong>RESTORE TEST</strong>, and restores into a new database. Compare the reported product, customer and sales counts with your records. Inspect the recovered logos and product images in the temporary folder printed by the script.</p>
-      {valid ? <Command key={archive} command={(mint ? 'python3 scripts/mint/backup.py --restore ' : 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-local-postgres-test.ps1 -BackupFile ') + path}/> :
+      {valid ? <Command command={(mint ? 'python3 scripts/mint/backup.py --restore ' : 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-local-postgres-test.ps1 -BackupFile ') + path}/> :
         <p className="text-xs font-semibold text-amber-800">Choose a database archive above to prepare the restore command.</p>}
     </section>
     {valid && <fieldset key={archive} className={card}>
