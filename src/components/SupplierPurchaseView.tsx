@@ -1,3 +1,4 @@
+import ImportChargeRecovery from './ImportChargeRecovery';
 import DisbursementVoucherActions from './DisbursementVoucherActions';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
@@ -55,6 +56,8 @@ export default function SupplierPurchaseView({
   onAddSupplierPayment,
   financialAuthToken,financialShopId,financialOwner,
 }: SupplierPurchaseViewProps) {
+  const [recoveryReturnId,setRecoveryReturnId]=useState('');
+  useEffect(()=>setRecoveryReturnId(''),[financialAuthToken,financialShopId,financialOwner,currentRole]);
   const [returnHistoryOrder,setReturnHistoryOrder]=useState<PurchaseOrder|null>(null);
   const [returnHistory,setReturnHistory]=useState<Array<{id:string;return_date:string;reason:string;evidence:string;recorded_by:string;items:Array<{itemId:number;baseQuantity:number;inventoryCost:string;supplierCredit:string}>}>>([]);
   const [returnHistoryError,setReturnHistoryError]=useState('');
@@ -515,10 +518,11 @@ export default function SupplierPurchaseView({
           {!refundHistory.length?<p className="text-xs text-slate-600">No refund records loaded.</p>:refundHistory.map(f=><div key={f.id} className="rounded border p-2 text-xs"><p className="font-semibold">{f.refund_date} · Rs. {f.amount} · {f.account_name||f.account_id}</p><p>{f.evidence} · {f.recorded_by}</p>{financialAuthToken&&financialShopId&&<DisbursementVoucherActions kind="supplier-refund" id={f.id} authToken={financialAuthToken} shopId={financialShopId}/>}</div>)}
         </>}
       </section>}
+      {canViewReturns&&recoveryReturnId&&financialAuthToken&&financialShopId&&<ImportChargeRecovery key={JSON.stringify([financialShopId,financialOwner,currentRole,recoveryReturnId])} returnId={recoveryReturnId} authToken={financialAuthToken} shopId={financialShopId} owner={financialOwner||''} canPost={canPostReturn} onClose={()=>setRecoveryReturnId('')}/>}
       {canViewReturns&&returnHistoryOrder&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return history">
         <div className="flex justify-between gap-3"><div><h3 className="font-semibold">Purchase return history</h3><p className="text-xs text-slate-600">{returnHistoryOrder.poNumber} · {returnHistoryOrder.supplierName}</p></div><button type="button" className="text-sm underline" onClick={()=>setReturnHistoryOrder(null)}>Close history</button></div>
         {returnHistoryLoading?<p role="status">Loading returns…</p>:returnHistoryError?<p role="alert" className="text-red-700">{returnHistoryError}</p>:returnHistory.length===0?<p className="text-sm text-slate-500">No recorded purchase returns.</p>:returnHistory.map(entry=><article key={entry.id} className="rounded-lg border p-3 text-sm space-y-1">
-          <p className="font-semibold">{entry.return_date} · {entry.id}</p><p>{entry.reason}</p><p>Evidence: {entry.evidence}</p><p>Recorded by: {entry.recorded_by}</p><button type="button" disabled={!!refundSaved||refundBusy} onClick={()=>openRefund(entry.id)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-50">View / record supplier refunds</button>
+          <p className="font-semibold">{entry.return_date} · {entry.id}</p><p>{entry.reason}</p><p>Evidence: {entry.evidence}</p><p>Recorded by: {entry.recorded_by}</p><button type="button" disabled={!!refundSaved||refundBusy} onClick={()=>openRefund(entry.id)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-50">View / record supplier refunds</button> <button type="button" onClick={()=>setRecoveryReturnId(entry.id)} className="rounded border px-3 py-2 text-xs font-semibold">View import charge recoveries</button>
           <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>PO line ID</th><th>Base units returned</th><th>Inventory cost (LKR)</th><th>Supplier credit (LKR)</th></tr></thead><tbody>{entry.items.map(line=><tr key={line.itemId}><td>{line.itemId}</td><td>{line.baseQuantity}</td><td>{line.inventoryCost}</td><td>{line.supplierCredit}</td></tr>)}</tbody></table></div>
         </article>)}
       </section>}
