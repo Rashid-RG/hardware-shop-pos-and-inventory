@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ARS Distributor Setup
+Comment=Prepare local ARS Distributor POS installation
+Exec=python3 -c "import pathlib,runpy,sys; p=pathlib.Path(sys.argv[1]).resolve().parent/'scripts/mint/setup.py'; sys.path.insert(0,str(p.parent)); runpy.run_path(str(p),run_name='__main__')" %k
+Icon=applications-office
+Terminal=false
+Categories=Office;
