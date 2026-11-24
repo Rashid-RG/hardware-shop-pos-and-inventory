@@ -64,7 +64,7 @@ test('first owner setup creates only one PostgreSQL admin and becomes permanentl
         assert.equal(count.rows[0].n, 0, 'Unexpected demo rows in fresh table ' + table);
       }
       const shop = await freshProbe.query("SELECT store_name FROM store_settings WHERE id='default'");
-      assert.equal(shop.rows[0]?.store_name, 'ARS Distribution');
+      assert.equal(shop.rows[0]?.store_name, 'ARS Distributor');
     } finally {
       await freshProbe.end().catch(() => {});
     }
