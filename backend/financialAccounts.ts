@@ -1,3 +1,4 @@
+import { postFinancialJournal } from './financialJournalPosting';
 import { initLandedCostTables } from './landedCost';
 import { initImportExpenseReconciliation } from './importExpenseReconciliation';
 import type { Pool, PoolClient } from 'pg';
@@ -239,6 +240,7 @@ export async function recordFinancialTransfer(db:Pool,input:{
     await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
       VALUES($1,$2,$3,-$5::numeric,'Transfer Out',$6,$7,$8,$9),($4,$2,$10,$5::numeric,'Transfer In',$6,$7,$8,$9)`,
       [sourceId+'-out',shopId,fromAccountId,sourceId+'-in',amount,sourceId,recordedBy,effectiveDate,note,toAccountId]);
+    await postFinancialJournal(client,shopId,sourceId,'Transfer');
     await client.query('COMMIT');
     return {sourceId,replayed:false};
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
@@ -415,6 +417,7 @@ export async function recordPaidExpense(db:Pool,input:{id:string;shopId:string;d
     }
     await client.query('INSERT INTO manual_expenses(id,description,amount,date,category,shop_id) VALUES($1,$2,$3,$4,$5,$6)',[id,desc,amount,date,category,shopId]);
     await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,['expense-audit-'+id,shopId,recordedBy,role,'Added manual expense '+desc+' (LKR '+amount.toFixed(2)+').']);
+    await postFinancialJournal(client,shopId,id,'Expense');
     await client.query('COMMIT');return {id,date,replayed:false};
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
@@ -535,6 +538,7 @@ export async function decideCashHandover(db:Pool,input:{id:string;shopId:string;
   }
   await client.query('UPDATE ars_cash_handovers SET status=$3,decided_by=$4,decided_at=NOW(),decision_note=$5,effective_date=$6 WHERE shop_id=$1 AND id=$2',[shopId,id,decision,recordedBy,note,decision==='Confirmed'?effectiveDate:null]);
   await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,'Store Manager',$4,$5)`,['handover-decision-'+id,shopId,recordedBy,'Cash Handover '+decision,id+' / '+h.amount]);
+  if(decision==='Confirmed')await postFinancialJournal(client,shopId,'handover-'+id,'Transfer');
   await client.query('COMMIT');return {id,status:decision,replayed:false};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
