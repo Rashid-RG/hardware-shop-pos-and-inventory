@@ -9,7 +9,7 @@ export const wholesaleAccounts:ReadonlyArray<readonly [string,string,LedgerAccou
  ['2100','Loans Payable','Liability'],['2200','Taxes Payable','Liability'],
  ['3000','Partner Capital','Equity'],['3100','Retained Earnings','Equity'],
  ['4000','Wholesale Sales','Revenue'],['5000','Cost of Goods Sold','Expense'],
- ['5050','Inventory Rounding Adjustments','Expense'],['5100','Operating Expenses','Expense'],['5200','Staff Salaries','Expense']
+ ['5050','Inventory Rounding Adjustments','Expense'],['5060','Purchase Return Variance','Expense'],['5100','Operating Expenses','Expense'],['5200','Staff Salaries','Expense']
 ];
 
 type Account={code:string;name:string;kind:LedgerAccountKind;active:boolean};
