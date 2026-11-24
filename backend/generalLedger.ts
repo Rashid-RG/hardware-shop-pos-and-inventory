@@ -253,6 +253,44 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_import_settlement_obligation ON ars_gl_import_settlements(shop_id,obligation_id);
  CREATE INDEX IF NOT EXISTS ars_gl_import_obligation_approval ON ars_gl_import_obligations(shop_id,approval_id,charge_kind);
+ CREATE TABLE IF NOT EXISTS ars_gl_sales_returns(
+ shop_id TEXT NOT NULL,id TEXT NOT NULL,invoice_id TEXT NOT NULL,customer_id TEXT NOT NULL,
+ return_date DATE NOT NULL,reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 1 AND 500),
+ evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+ recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ original_journal_id TEXT NOT NULL,journal_id TEXT NOT NULL,
+ net_revenue NUMERIC(16,2) NOT NULL CHECK(net_revenue>=0),
+ tax NUMERIC(16,2) NOT NULL CHECK(tax>=0),
+ inventory_cost NUMERIC(16,2) NOT NULL CHECK(inventory_cost>=0),
+ receivable_reduction NUMERIC(16,2) NOT NULL CHECK(receivable_reduction>=0),
+ customer_credit NUMERIC(16,2) NOT NULL CHECK(customer_credit>=0),
+ PRIMARY KEY(shop_id,id),UNIQUE(shop_id,journal_id),
+ FOREIGN KEY(shop_id,original_journal_id) REFERENCES ars_gl_journals(shop_id,id),
+ FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id),
+ CHECK(net_revenue+tax=receivable_reduction+customer_credit),
+ CHECK(net_revenue+tax+inventory_cost>0)
+ );
+ CREATE TABLE IF NOT EXISTS ars_gl_sales_return_lines(
+ shop_id TEXT NOT NULL,return_id TEXT NOT NULL,invoice_line_index INTEGER NOT NULL CHECK(invoice_line_index>=0),
+ product_id TEXT NOT NULL,variant_id TEXT,selling_unit_id TEXT,selling_unit_label TEXT,
+ sold_quantity BIGINT NOT NULL CHECK(sold_quantity>0),
+ units_per_sale_unit BIGINT NOT NULL CHECK(units_per_sale_unit>0),
+ returned_base_quantity BIGINT NOT NULL CHECK(returned_base_quantity>0),
+ net_revenue NUMERIC(16,2) NOT NULL CHECK(net_revenue>=0),
+ tax NUMERIC(16,2) NOT NULL CHECK(tax>=0),
+ inventory_cost NUMERIC(16,2) NOT NULL CHECK(inventory_cost>=0),
+ PRIMARY KEY(shop_id,return_id,invoice_line_index),
+ FOREIGN KEY(shop_id,return_id) REFERENCES ars_gl_sales_returns(shop_id,id),
+ CHECK(returned_base_quantity::numeric<=sold_quantity::numeric*units_per_sale_unit)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_sales_return_immutable ON ars_gl_sales_returns;
+ CREATE TRIGGER ars_gl_sales_return_immutable BEFORE UPDATE OR DELETE ON ars_gl_sales_returns
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ DROP TRIGGER IF EXISTS ars_gl_sales_return_line_immutable ON ars_gl_sales_return_lines;
+ CREATE TRIGGER ars_gl_sales_return_line_immutable BEFORE UPDATE OR DELETE ON ars_gl_sales_return_lines
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_sales_return_invoice ON ars_gl_sales_returns(shop_id,invoice_id);
+ CREATE INDEX IF NOT EXISTS ars_gl_sales_return_customer ON ars_gl_sales_returns(shop_id,customer_id);
  CREATE TABLE IF NOT EXISTS ars_gl_purchase_returns(
  shop_id TEXT NOT NULL,id TEXT NOT NULL,purchase_order_id TEXT NOT NULL,
  return_date DATE NOT NULL,reason TEXT NOT NULL CHECK(length(trim(reason)) BETWEEN 1 AND 500),
