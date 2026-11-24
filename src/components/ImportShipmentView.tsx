@@ -94,6 +94,14 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
           className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
           <option value="CNY">CNY</option><option value="USD">USD</option><option value="LKR">LKR</option></select></label>
       </div>
+      {form.purchaseOrderId && <div className="mt-3 rounded-xl border border-slate-200 p-3">
+        <h4 className="mb-2 text-xs font-bold text-slate-700">Linked purchase order · packaging quantities</h4>
+        <div className="overflow-x-auto"><table className="w-full text-left text-xs">
+          <thead className="bg-slate-50"><tr><th className="p-2">Product</th><th className="p-2">U/M</th><th className="p-2">Ordered</th><th className="p-2">Base quantity</th></tr></thead>
+          <tbody>{purchaseOrders.find(po=>po.id===form.purchaseOrderId && po.shopId===shopId)?.items.map((item,index)=><tr key={index} className="border-t border-slate-100"><td className="p-2">{item.productName}</td><td className="p-2">{item.sellingUnitLabel || '—'}</td><td className="p-2">{item.quantity}</td><td className="p-2">{item.baseUnitsPerPurchaseUnit ? item.quantity*item.baseUnitsPerPurchaseUnit : '—'}</td></tr>)}</tbody>
+        </table></div>
+        <p className="mt-2 text-xs text-slate-500">Quantities are ordered quantities, not received stock. Conversion uses the saved purchase-order factor.</p>
+      </div>}
       <label className="mt-3 block text-xs font-semibold">Notes / shipping documents
         <textarea value={form.notes} onChange={e=>setForm(v=>({...v,notes:e.target.value}))} rows={2} maxLength={2000} className="mt-1 w-full rounded-xl border border-slate-200 p-3 text-sm" />
       </label>
