@@ -1,3 +1,5 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import React, { useEffect, useState } from 'react';
 import { notify } from '../utils/notifications';
 import {
@@ -365,6 +367,7 @@ export default function AccountingSettingsView({
       {/* RENDER TAB 1: FINANCIAL LEDGER */}
       {activeTab === 'accounting' && (
         <div className="space-y-6">
+          {isManager&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Financial ledger overview',filename:'ars-financial-ledger',period:'All available records | operational figures, not audited accounts',headers:['Type','Date','Reference / description','Status','Amount (LKR)'],moneyColumns:[4],rows:[...transactions.map(t=>['Sale',t.date,t.invoiceNumber,t.status||'Completed',t.total]),...purchaseOrders.map(p=>['Purchase order',p.date,p.poNumber,p.status,p.total]),...manualExpenses.map(e=>['Manual expense',e.date,e.desc,e.category,e.amount])],summary:[{label:'Non-refunded invoice totals (LKR)',value:transactions.filter(t=>t.status!=='Refunded').reduce((a,t)=>a+t.total,0)},{label:'Received purchase orders (LKR)',value:purchaseOrders.filter(p=>p.status==='Received').reduce((a,p)=>a+p.total,0)},{label:'Manual expenses (LKR)',value:manualExpenses.reduce((a,e)=>a+e.amount,0)}]})}/>}
           {/* KPI Analytics Block */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
