@@ -8,7 +8,7 @@ const empty:Account={code:'',name:'',kind:'Asset',active:true};
 export default function ChartOfAccountsPanel(props:{authToken:string;shopId:string;canManage:boolean}){
  return <Accounts key={JSON.stringify([props.shopId,props.authToken,props.canManage])} {...props}/>;
 }
-function Accounts({authToken,shopId,canManage}:{authToken:string;shopId:string;canManage:boolean}){
+function Accounts({authToken,shopId,canManage}:{authToken:string;shopId:string;canManage:boolean;key?:string}){
  const [rows,setRows]=useState<Account[]|null>(null),[revision,setRevision]=useState(0),[error,setError]=useState(''),[message,setMessage]=useState('');
  const [search,setSearch]=useState(''),[kind,setKind]=useState(''),[status,setStatus]=useState(''),[page,setPage]=useState(0);
  const [draft,setDraft]=useState<Account|null>(null),[editing,setEditing]=useState(false),[seed,setSeed]=useState(false),[busy,setBusy]=useState(false);
