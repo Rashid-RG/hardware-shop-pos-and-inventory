@@ -3,7 +3,7 @@ import {reportDay} from '../utils/reporting';
 import {ReportExportMenu} from './ReportExportMenu';
 import type {StoreSettings} from '../types';
 import type {BusinessReport,ReportCell} from '../utils/businessReport';
-type Profit={fromDate:string;toDate:string;sales:number;refunds:number;netSales:number;knownCost:number;expenses:number;missing:number;affected:number;undatedRefunds:number;complete:boolean;grossProfit:number|null;operatingEstimate:number|null};
+type Profit={fromDate:string;toDate:string;sales:number;refunds:number;netSales:number;knownCost:number;expenses:number;capitalizedImportExpenses:number;missing:number;affected:number;undatedRefunds:number;complete:boolean;grossProfit:number|null;operatingEstimate:number|null};
 export default function FinancialProfitPanel({authToken,shopId,settings,correctionRevision=0}:{authToken:string;shopId:string;settings:StoreSettings;correctionRevision?:number}){
  const today=reportDay(new Date()),[from,setFrom]=useState(today.slice(0,7)+'-01'),[to,setTo]=useState(today),[loaded,setLoaded]=useState<{scope:string;data:Profit}|null>(null),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const valid=!!from&&!!to&&from<=to&&to<=today;
@@ -14,7 +14,7 @@ export default function FinancialProfitPanel({authToken,shopId,settings,correcti
  },[authToken,shopId,from,to,revision,valid,scope]);
  const money=(n:number)=>'Rs. '+n.toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
  const unavailable='Unavailable — review historical records';
- const lines:{label:string;value:ReportCell}[]=data?[{label:'Sales excluding tax',value:data.sales},{label:'Refunds excluding tax',value:-data.refunds},{label:'Net sales',value:data.netSales},{label:'Cost of goods sold',value:data.complete?-data.knownCost:unavailable},{label:'Gross profit',value:data.grossProfit??unavailable},{label:'Recorded manual expenses',value:-data.expenses},{label:'Estimated operating profit',value:data.operatingEstimate??unavailable}]:[];
+ const lines:{label:string;value:ReportCell}[]=data?[{label:'Sales excluding tax',value:data.sales},{label:'Refunds excluding tax',value:-data.refunds},{label:'Net sales',value:data.netSales},{label:'Cost of goods sold',value:data.complete?-data.knownCost:unavailable},{label:'Gross profit',value:data.grossProfit??unavailable},{label:'Capitalized import payments (disclosure only)',value:data.capitalizedImportExpenses},{label:'Operating expenses excluding reconciled import charges',value:-data.expenses},{label:'Estimated operating profit',value:data.operatingEstimate??unavailable}]:[];
  const quality=data?('Missing / zero cost line events: '+data.missing+'; affected invoice events: '+data.affected+'; undated historical refunds: '+data.undatedRefunds):'';
  const caveat='Management estimate only; excludes unrecorded accruals, depreciation, financing and tax expense. Landed-cost accuracy depends on original invoice cost snapshots.';
  function report():BusinessReport{
