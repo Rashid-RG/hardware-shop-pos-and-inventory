@@ -1,3 +1,4 @@
+import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
@@ -3502,6 +3503,43 @@ app.get('/api/db-admin/table/:tableName', requireRole(['Super Admin']), requireL
 });
 
 // Get complete database state
+// Render only data submitted by the authenticated operator. This endpoint never
+// queries or expands business records, nor accepts filesystem paths from the request.
+app.post('/api/reports/render-pdf', requireRole(['Super Admin','Store Manager','Cashier','Inventory Staff']), async (req,res) => {
+  res.set('Cache-Control','no-store');
+  const data=req.body;
+  const validText=(v:unknown,max:number):v is string=>typeof v==='string'&&v.length<=max;
+  const validCell=(v:unknown)=>validText(v,4000)||(typeof v==='number'&&Number.isFinite(v));
+  if(!data || !validText(data.title,200) || !validText(data.period,300) ||
+    !Array.isArray(data.headers) || data.headers.length<1 || data.headers.length>16 ||
+    !data.headers.every((h:unknown)=>validText(h,120)) ||
+    !Array.isArray(data.rows) || data.rows.length>2500 ||
+    !data.rows.every((row:unknown)=>Array.isArray(row)&&row.length===data.headers.length&&row.every(validCell)) ||
+    (data.summary!==undefined&&(!Array.isArray(data.summary)||data.summary.length>12||!data.summary.every((m:any)=>m&&validText(m.label,150)&&validCell(m.value)))) ||
+    (data.moneyColumns!==undefined&&(!Array.isArray(data.moneyColumns)||data.moneyColumns.length>16||!data.moneyColumns.every((i:unknown)=>typeof i==='number'&&Number.isInteger(i)&&i>=0&&i<data.headers.length)))) {
+    return res.status(400).json({error:'Report exceeds supported limits or contains invalid values. Use Excel for larger reports.'});
+  }
+  const {activeShopId,activeShopName}=getActiveShopContext(db,req);
+  const profile=db.settings.shopProfiles?.find(s=>s.id===activeShopId);
+  const logo=profile?.logoUrl||(!db.settings.shopProfiles?.length?db.settings.logoUrl:'')||'';
+  let logoBuffer:Buffer|null=null;
+  try {
+    if(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(logo)&&logo.length<2000000) logoBuffer=resolvePrintableLogoBuffer(logo);
+    else if(/^\/uploads\/shops\/[a-zA-Z0-9_.-]+$/.test(logo)){
+      const file=path.resolve(process.cwd(),'.'+logo);
+      const info=await fs.promises.lstat(file);
+      if(info.isFile()&&!info.isSymbolicLink()&&info.size<2000000&&path.dirname(await fs.promises.realpath(file))===path.resolve(process.cwd(),'uploads','shops')) logoBuffer=await fs.promises.readFile(file);
+    }
+  } catch { /* fall back to company text */ }
+  try {
+    const pdf=await renderBusinessReportPdf({title:data.title,filename:'ars-report',period:data.period,headers:data.headers,rows:data.rows,summary:data.summary,moneyColumns:data.moneyColumns},
+      {name:profile?.name||activeShopName,address:profile?.address||'',phone:profile?.phone||''},logoBuffer);
+    res.type('application/pdf').attachment('ars-report.pdf').send(pdf);
+  } catch {
+    res.status(422).json({error:'PDF could not fit the report. Use Advanced Excel or reduce the report range.'});
+  }
+});
+
 app.get('/api/db', (req, res) => {
   const { activeShopId } = getActiveShopContext(db, req);
   const byActiveShop = <T extends { shopId?: string }>(items: T[]) => items.filter((item) => item.shopId === activeShopId);
