@@ -59,3 +59,23 @@ test('PostgreSQL journal constraints and transaction rollback', {timeout:60000},
   await db.end();
  }
 });
+
+import {buildSalesJournal} from '../backend/salesJournal.ts';
+test('wholesale sales journal records net revenue, tax and selling-unit inventory costs',()=>{
+ const accounts={destination:'1200',sales:'4000',tax:'2200',inventory:'1300',costOfGoods:'5000'};
+ const invoice={total:'3000.00',tax:'300.00',items:[{quantity:4,costPerSellingUnit:'500.00'}]};
+ assert.deepEqual(buildSalesJournal(invoice,accounts),[
+ {accountCode:'1200',debit:'3000.00',credit:'0.00'},
+ {accountCode:'4000',debit:'0.00',credit:'2700.00'},
+ {accountCode:'2200',debit:'0.00',credit:'300.00'},
+ {accountCode:'5000',debit:'2000.00',credit:'0.00'},
+ {accountCode:'1300',debit:'0.00',credit:'2000.00'}]);
+ const cash=buildSalesJournal({total:'12000',tax:'0',items:[{quantity:2,costPerSellingUnit:'4500'}]},{...accounts,destination:'1000'});
+ assert.equal(cash.length,4);
+ assert.equal(cash[0].accountCode,'1000');
+ assert.equal(cash[2].debit,'9000.00');
+ assert.equal(validateJournal(cash).totalCents,'2100000');
+ for(const bad of [{...invoice,tax:'3001'},{...invoice,total:'0'},{...invoice,items:[]},{...invoice,items:[{quantity:0,costPerSellingUnit:'500'}]},{...invoice,items:[{quantity:1.5,costPerSellingUnit:'500'}]},{...invoice,items:[{quantity:4,costPerSellingUnit:'0'}]},{...invoice,items:[{quantity:4,costPerSellingUnit:'0.001'}]}])assert.throws(()=>buildSalesJournal(bad,accounts));
+ assert.throws(()=>buildSalesJournal(invoice,{...accounts,inventory:'1200'}));
+ assert.throws(()=>buildSalesJournal(invoice,{...accounts,tax:'bad'}));
+});
