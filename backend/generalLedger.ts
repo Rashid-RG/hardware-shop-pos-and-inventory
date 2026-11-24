@@ -274,6 +274,21 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_purchase_return_line_immutable ON ars_gl_purchase_return_lines;
  CREATE TRIGGER ars_gl_purchase_return_line_immutable BEFORE UPDATE OR DELETE ON ars_gl_purchase_return_lines
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_import_return_costs(
+ shop_id TEXT NOT NULL,return_id TEXT NOT NULL,purchase_order_item_id BIGINT NOT NULL,
+ approval_id TEXT NOT NULL,historical_goods_cost NUMERIC(16,2) NOT NULL CHECK(historical_goods_cost>=0),
+ historical_import_charges NUMERIC(16,2) NOT NULL CHECK(historical_import_charges>=0),
+ carrying_cost NUMERIC(16,2) NOT NULL CHECK(carrying_cost>0),
+ supplier_credit NUMERIC(16,2) NOT NULL CHECK(supplier_credit>0),
+ carrying_variance NUMERIC(16,2) NOT NULL,
+ recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ PRIMARY KEY(shop_id,return_id,purchase_order_item_id),
+ FOREIGN KEY(shop_id,return_id,purchase_order_item_id) REFERENCES ars_gl_purchase_return_lines(shop_id,return_id,purchase_order_item_id),
+ CHECK(carrying_variance=carrying_cost-supplier_credit)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_import_return_cost_immutable ON ars_gl_import_return_costs;
+ CREATE TRIGGER ars_gl_import_return_cost_immutable BEFORE UPDATE OR DELETE ON ars_gl_import_return_costs
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE TABLE IF NOT EXISTS ars_gl_supplier_refunds(
  shop_id TEXT NOT NULL,id TEXT NOT NULL,return_id TEXT NOT NULL,account_id TEXT NOT NULL,
  amount NUMERIC(16,2) NOT NULL CHECK(amount>0),refund_date DATE NOT NULL,
