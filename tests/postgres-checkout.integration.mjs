@@ -112,6 +112,40 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     );
     assert.equal(returnLogs.rows[0].count, 1);
 
+    const {initFinancialAccounts,createFinancialAccount,listFinancialAccounts,recordFinancialTransfer}=await import('../backend/financialAccounts.ts');
+    await initFinancialAccounts(pool);
+    const cash=randomUUID(),bank=randomUUID(),foreign=randomUUID(),day='2026-11-24';
+    for(const [id,name,kind,scope] of [[cash,'Checkout cash '+suffix,'Office Cash',shopId],[bank,'Checkout bank '+suffix,'Bank',shopId],[foreign,'Other bank '+suffix,'Bank','other-shop']])await createFinancialAccount(pool,{id,shopId:scope,name,kind,recordedBy:'CI Manager'});
+    const balance=async id=>(await listFinancialAccounts(pool,shopId)).find(a=>a.id===id).balance;
+    const quantity=async()=>Number((await pool.query('SELECT quantity FROM products WHERE id=$1',[productId])).rows[0].quantity);
+    const paid={...tx(2,'ci-paid-'+randomUUID()),paymentMethod:'Cash',paymentStatus:'PAID',cashReceived:250,changeDue:50};
+    const request={actor:'CI Manager',fingerprint:'ci-exact-request'};
+    const destination={destinationAccountId:cash,recordedBy:'CI Manager',effectiveDate:day};
+    await assert.rejects(checkoutTransaction(paid,'Store Manager','CI Shop',undefined,{...destination,destinationAccountId:foreign},request),/matching the payment method/);
+    assert.equal(await quantity(),10);
+    assert.equal(await balance(cash),0);
+    const results=await Promise.all([checkoutTransaction(structuredClone(paid),'Store Manager','CI Shop',undefined,destination,request),checkoutTransaction(structuredClone(paid),'Store Manager','CI Shop',undefined,destination,request)]);
+    assert.deepEqual(results.map(r=>r.replayed).sort(),[false,true]);
+    assert.equal(await quantity(),8);assert.equal(await balance(cash),200);
+    assert.equal(Number((await pool.query('SELECT credit_balance FROM customers WHERE id=$1',[customerId])).rows[0].credit_balance),0);
+    await assert.rejects(checkoutTransaction(paid,'Store Manager','CI Shop',undefined,destination,{...request,fingerprint:'changed'}),/identifier already used/);
+    const transfer={requestId:randomUUID(),shopId,fromAccountId:cash,toAccountId:bank,amount:50,effectiveDate:day,recordedBy:'CI Manager'};
+    await recordFinancialTransfer(pool,transfer);
+    await assert.rejects(refundTransaction(paid.id,shopId,'Insufficient funds','CI Manager','Store Manager'),/Insufficient recorded funds/);
+    assert.equal(await quantity(),8);assert.equal(await balance(cash),150);
+    assert.equal((await pool.query('SELECT status FROM sales_transactions WHERE id=$1',[paid.id])).rows[0].status,'Completed');
+    await recordFinancialTransfer(pool,{...transfer,requestId:randomUUID(),fromAccountId:bank,toAccountId:cash});
+    await refundTransaction(paid.id,shopId,'Return paid goods','CI Manager','Store Manager');
+    assert.equal(await quantity(),10);assert.equal(await balance(cash),0);
+    await assert.rejects(refundTransaction(paid.id,shopId,'Duplicate refund','CI Manager','Store Manager'),/already been refunded/);
+    const movements=await pool.query('SELECT movement_kind,amount FROM ars_financial_movements WHERE shop_id=$1 AND source_id=$2 ORDER BY movement_kind',[shopId,paid.id]);
+    assert.deepEqual(movements.rows.map(r=>[r.movement_kind,Number(r.amount)]),[['Invoice Payment',200],['Invoice Refund',-200]]);
+    const bankPaid={...tx(1,'ci-bank-'+randomUUID()),paymentMethod:'Bank Transfer',paymentStatus:'PAID'};
+    await checkoutTransaction(bankPaid,'Store Manager','CI Shop',undefined,{...destination,destinationAccountId:bank},{...request,fingerprint:'bank-payment'});
+    assert.equal(await balance(bank),100);assert.equal(await quantity(),9);
+    await refundTransaction(bankPaid.id,shopId,'Bank refund','CI Manager','Store Manager');
+    assert.equal(await balance(bank),0);assert.equal(await quantity(),10);
+
     // Historical invoices and returned stock must survive archiving a SKU.
     await assert.rejects(
       () => archiveProduct(productId, 'other-shop', 'CI Manager', 'Super Admin'),
