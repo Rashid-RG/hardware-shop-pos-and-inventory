@@ -40,6 +40,11 @@ def checksum(path):
 def backup():
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     uploads = ROOT / 'uploads'
+    if uploads.is_symlink():
+        expected = Path.home() / '.local/share/ars-hardware/runtime/uploads'
+        if uploads.resolve(strict=True) != expected.resolve(strict=True) or expected.is_symlink():
+            raise ValueError('Unexpected uploads storage link.')
+        uploads = expected
     scope = 'with-uploads' if uploads.is_dir() else 'database-only'
     stem = f'ars-mint-{stamp}-{uuid.uuid4().hex}-{scope}'
     with tempfile.TemporaryDirectory(dir=BACKUPS) as tmp:
@@ -56,7 +61,7 @@ def backup():
                 for file in [uploads, *uploads.rglob('*')]:
                     if file.is_symlink():
                         raise ValueError('Replace the link in uploads with its actual file before backing up.')
-                    bundle.write(file, file.relative_to(ROOT))
+                    bundle.write(file, Path('uploads') / file.relative_to(uploads))
             checksum(archive)
         verify(dump)
         for companion in folder.iterdir():
