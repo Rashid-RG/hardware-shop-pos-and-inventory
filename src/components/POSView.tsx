@@ -119,8 +119,9 @@ export default function POSView({
   };
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
-  const [expandedInvoice, setExpandedInvoice] = useState(false);
-  const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('catalog');
+  const [expandedInvoice, setExpandedInvoice] = useState(true);
+  const [showInvoiceProducts, setShowInvoiceProducts] = useState(false);
+  const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('cart');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
 
@@ -1760,16 +1761,16 @@ export default function POSView({
       </div>
 
       {/* Compact order summary: 4 of 12 desktop columns */}
-      <div className={`${expandedInvoice ? 'lg:col-span-12' : 'lg:col-span-5'} min-w-0 bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex-col min-h-[400px] lg:h-[calc(100dvh-165px)] lg:min-h-[440px] lg:overflow-hidden ${expandedInvoice || activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`${expandedInvoice ? 'lg:col-span-12' : 'lg:col-span-5'} min-w-0 bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex-col min-h-[400px] lg:h-[calc(100dvh-115px)] lg:min-h-[440px] lg:overflow-hidden ${expandedInvoice || activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
         <div className="shrink-0">
           {/* Active Operator Banner */}
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
+          <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 mb-2 text-xs font-sans">
             <div>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Terminal Register 01</p>
+              <p className="text-xs font-bold text-slate-900">Current invoice</p>
               <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
             </div>
             <div className="p-1 px-2.5 bg-slate-50 rounded-md border border-slate-150 text-slate-600 text-[11px] font-mono">
-              <button type="button" aria-pressed={expandedInvoice} onClick={() => setExpandedInvoice(v => !v)} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Restore split view' : 'Expand invoice'}</button>
+              <button type="button" aria-pressed={expandedInvoice} onClick={() => { setExpandedInvoice(v => !v); setSelectedCategory('All'); setSearchTerm(''); setShowInvoiceProducts(false); }} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Quick billing' : 'Professional invoice'}</button>
               <span className="lg:hidden">Invoice</span>
             </div>
           </div>
@@ -1787,31 +1788,59 @@ export default function POSView({
               className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
               <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
-              <span className="mt-1 block text-[11px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
+              <span className="mt-0.5 block text-[10px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
             </button>
             <button type="button" id="pos-open-representative" onClick={() => {setDraftRepId(selectedSalesRepId);setSetupDialog('representative');}}
               className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">2 · Sales Representative *</span>
               <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
-              <span className="mt-1 block text-[11px] text-indigo-600">{selectedSalesRepId ? 'Change representative' : 'Tap to select rep'} →</span>
+              <span className="mt-0.5 block text-[10px] text-indigo-600">{selectedSalesRepId ? 'Change representative' : 'Tap to select rep'} →</span>
             </button>
           </div>
+          {expandedInvoice && (
+            <div className="relative mb-2 flex gap-2">
+              <input id="pos-invoice-product-search" aria-label="Find product for invoice" placeholder="Search product, SKU or barcode..." value={searchTerm}
+                onFocus={() => { setSelectedCategory('All'); setShowInvoiceProducts(true); }}
+                onChange={event => { setSearchTerm(event.target.value); setShowInvoiceProducts(true); }}
+                onKeyDown={event => { if (event.key === 'Escape') setShowInvoiceProducts(false); }}
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-amber-500" />
+              <button type="button" onClick={() => { setSelectedCategory('All'); setShowInvoiceProducts(v => !v); }} className="rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white">Browse</button>
+              <button type="button" onClick={() => { setShowInvoiceProducts(false); setShowQRFeature(true); }} className="rounded-lg border border-slate-200 px-3 text-xs font-semibold"><QrCode className="inline h-4 w-4" /> Scan</button>
+              {showInvoiceProducts && (
+                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+                  <div className="flex justify-between items-center px-2 py-1 text-xs text-slate-500"><span>{filteredProducts.length} matching products</span><button type="button" onClick={() => setShowInvoiceProducts(false)} aria-label="Close product results"><X className="h-4 w-4" /></button></div>
+                  {filteredProducts.slice(0, 30).map(product => {
+                    const variant = getSelectedVariant(product);
+                    const stock = Number(variant?.quantity ?? product.quantity);
+                    return <div key={product.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 p-2 text-xs">
+                      <span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · Stock: {stock}</span></span>
+                      {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
+                      <span>{formatMoney(Number(variant?.sellingPrice ?? product.sellingPrice))}</span>
+                      <button type="button" disabled={stock <= 0} onClick={() => { addToCart(product, variant); setSearchTerm(''); setShowInvoiceProducts(false); }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">Add</button>
+                    </div>;
+                  })}
+                  {filteredProducts.length === 0 && <p className="p-3 text-xs text-slate-500">No matching products.</p>}
+                  {filteredProducts.length > 30 && <p className="p-2 text-xs text-slate-500">Refine search to see more results.</p>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
           {/* Cart Header */}
-          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_120px_170px_140px]" : "grid-cols-1"}`}>
+          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
             <span>Invoice items · {cart.length} lines</span>
-            {expandedInvoice && <><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-right">Line total</span></>}
+            {expandedInvoice && <><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-center">Disc %</span><span className="hidden lg:block text-center">Disc Rs.</span><span className="hidden lg:block text-right">Line total</span></>}
           </div>
 
           {/* Cart Scroll list */}
-          <div id="pos-cart-scroller" className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
+          <div id="pos-cart-scroller" className="min-h-0 flex-1 overflow-y-auto space-y-1 pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
               const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
               const pricing = getLinePricing(item);
 
               return (
-                <div key={lineKey} className={`grid gap-2 items-start border-b border-slate-100 pb-2 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_120px_170px_140px]" : "grid-cols-1"}`}>
+                <div key={lineKey} className={`grid gap-2 items-center border-b border-slate-100 py-1 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
                   {/* description */}
                   <div className="min-w-0">
                     <p className="font-semibold text-slate-800 break-words" title={item.product.name}>
@@ -1834,35 +1863,12 @@ export default function POSView({
                       {pricing.rupeeDiscount > 0 && <span className="text-emerald-600">(-{formatMoney(pricing.rupeeDiscount)})</span>}
                     </div>
 
-                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      <Ticket className="w-3 h-3 text-slate-400 shrink-0" />
-                      <span className="text-[9px] text-slate-400 uppercase">Disc%:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        aria-label={`Percentage discount for ${item.product.name}`}
-                        value={item.discount}
-                        onChange={(e) => updateItemDiscount(lineKey, Number(e.target.value))}
-                        className="w-16 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
-                      />
-                      <span className="text-[9px] text-slate-400 uppercase">Disc Rs:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        aria-label={`Fixed discount for ${item.product.name}`}
-                        value={item.discountAmount || 0}
-                        onChange={(e) => updateItemDiscountAmount(lineKey, Number(e.target.value))}
-                        className="w-24 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
-                      />
-                    </div>
                   </div>
 
                   {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
                   {/* selectors and quantities */}
-                  <div className={`flex items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
-                    <div className="flex items-center justify-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md p-1">
+                  <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
+                    <div className={`flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-md p-0.5 ${expandedInvoice ? "lg:bg-white lg:border-0" : ""}`}>
                       <button
                         type="button"
                         aria-label={`Decrease quantity for ${item.product.name}`}
@@ -1879,7 +1885,7 @@ export default function POSView({
                         value={item.quantity}
                         onChange={(e) => updateCartQty(lineKey, Number(e.target.value))}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="h-7 w-14 rounded border border-slate-200 bg-white px-1 text-center font-mono text-xs font-bold text-slate-800 focus:border-amber-500 focus:outline-none"
+                        className="h-7 w-12 rounded border border-slate-200 bg-white px-1 text-center font-mono text-xs font-bold text-slate-800 focus:border-amber-500 focus:outline-none"
                       />
                       <button
                         type="button"
@@ -1891,6 +1897,24 @@ export default function POSView({
                       </button>
                     </div>
 
+                    <label className="flex flex-col gap-0.5 min-w-0"><span className={expandedInvoice ? "lg:sr-only" : "text-[10px] text-slate-500"}>Disc %</span><input
+                        type="number"
+                        min="0"
+                        max="100"
+                        aria-label={`Percentage discount for ${item.product.name}`}
+                        value={item.discount}
+                        onChange={(e) => updateItemDiscount(lineKey, Number(e.target.value))}
+                        className="w-full min-w-0 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
+                      /></label>
+                    <label className="flex flex-col gap-0.5 min-w-0"><span className={expandedInvoice ? "lg:sr-only" : "text-[10px] text-slate-500"}>Disc Rs.</span><input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        aria-label={`Fixed discount for ${item.product.name}`}
+                        value={item.discountAmount || 0}
+                        onChange={(e) => updateItemDiscountAmount(lineKey, Number(e.target.value))}
+                        className="w-full min-w-0 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
+                      /></label>
                     <div className="text-right min-w-[76px] font-mono font-bold text-slate-900">
                       {formatMoney(pricing.lineTotal)}
                       <button
@@ -1911,13 +1935,13 @@ export default function POSView({
               <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center border border-dashed border-slate-100 rounded-xl">
                 <ShoppingCart className="w-8 h-8 text-slate-200" />
                 <p className="text-xs font-semibold mt-1">Cash Register is Empty</p>
-                <p className="text-[10px] text-slate-500 mt-1">Click on products on the left to add items</p>
+                <p className="text-[10px] text-slate-500 mt-1">Search or browse products to add invoice lines</p>
               </div>
             )}
           </div>
 
-        <div className="shrink-0 border-t border-slate-200 bg-white pt-3">
-          <div className="flex items-center justify-between gap-3 pb-3">
+        <div className="shrink-0 border-t border-slate-200 bg-white pt-2 lg:flex lg:items-center lg:gap-4">
+          <div className="flex flex-1 items-center justify-between gap-3 pb-2 lg:pb-0">
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.reduce((sum, item) => sum + item.quantity, 0)} units</p>
               <strong id="pos-total-price" className="text-xl font-bold text-slate-900">{formatMoney(total)}</strong></div>
             <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">Not saved</span>
@@ -1933,7 +1957,7 @@ export default function POSView({
               }
               setIsReviewOpen(true);
             }}
-            className="w-full rounded-xl bg-slate-900 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+            className="w-full lg:w-auto rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-semibold text-slate-900 hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
             Review invoice & payment →
           </button>
         </div>
