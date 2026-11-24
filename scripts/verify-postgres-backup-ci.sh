@@ -63,7 +63,7 @@ ars_tables=(
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
   ars_customer_cheques ars_customer_cheque_events ars_financial_reconciliations
-  ars_invoice_requests ars_representative_accounts ars_representative_logins ars_cash_handovers ars_invoice_cost_corrections
+  ars_invoice_due_dates ars_invoice_requests ars_representative_accounts ars_representative_logins ars_cash_handovers ars_invoice_cost_corrections
   ars_legacy_sale_return_units
   ars_partner_profit_allocations ars_partner_profit_shares
 )
@@ -110,5 +110,9 @@ for database in hardware_pos_ci hardware_pos_restore_ci; do
       WHERE e.amount=l.amount GROUP BY a.id HAVING COUNT(*)>=2
     ) THEN 'import-expense-fixtures-present' ELSE 'missing' END" | grep -qx 'import-expense-fixtures-present'
   echo "Import expense reconciliation restoration fixtures verified: $database"
+done
+for database in hardware_pos_ci hardware_pos_restore_ci; do
+  pg psql -h 127.0.0.1 -U postgres -d "$database" -v ON_ERROR_STOP=1 -Atc "SELECT CASE WHEN EXISTS(SELECT 1 FROM ars_invoice_due_dates d JOIN sales_transactions t ON t.id=d.invoice_id AND t.shop_id=d.shop_id JOIN ars_invoice_requests r ON r.id=t.id AND r.shop_id=t.shop_id WHERE t.payment_method='Credit Account' AND d.evidence='CI agreed payment terms' AND d.due_date=DATE '2099-12-31') THEN 'credit-terms-present' ELSE 'missing' END" | grep -qx 'credit-terms-present'
+  echo "Credit terms restoration fixtures verified: $database"
 done
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
