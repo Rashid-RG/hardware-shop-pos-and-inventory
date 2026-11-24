@@ -193,6 +193,23 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_period_guard ON ars_gl_journals;
  CREATE TRIGGER ars_gl_period_guard BEFORE INSERT ON ars_gl_journals
  FOR EACH ROW EXECUTE FUNCTION ars_gl_require_open_period();
+ CREATE TABLE IF NOT EXISTS ars_gl_documentary_reviews(
+  shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,id TEXT NOT NULL,
+  snapshot_hash TEXT NOT NULL CHECK(snapshot_hash ~ '^[0-9a-f]{64} ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
+ CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
+ CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
+ `);
+}
+),
+  snapshot JSONB NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
+  evidence JSONB NOT NULL CHECK(jsonb_typeof(evidence)='array'),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,proposal_id,id),
+  FOREIGN KEY(shop_id,proposal_id) REFERENCES ars_gl_opening_proposals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_documentary_review_immutable ON ars_gl_documentary_reviews;
+ CREATE TRIGGER ars_gl_documentary_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_documentary_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
