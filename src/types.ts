@@ -288,6 +288,9 @@ export interface SupplierPayment {
 }
 
 export interface QuotationItem {
+  sellingUnitId?: string;
+  sellingUnitLabel?: string;
+  baseUnitsPerSaleUnit?: number;
   productId: string;
   productName: string;
   quantity: number;
