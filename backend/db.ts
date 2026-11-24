@@ -1,5 +1,6 @@
 import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
+import { baseQuantity } from '../src/utils/unitConversion';
 import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
 import bcrypt from 'bcryptjs';
 import { DATABASE_URL, DB_STATE_KEY } from './config';
@@ -264,6 +265,9 @@ export const initDbTables = async () => {
       );
 
       ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS selling_unit_id TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS selling_unit_label TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS base_units_per_purchase_unit INTEGER;
 
       CREATE TABLE IF NOT EXISTS stock_logs (
         id TEXT PRIMARY KEY,
@@ -673,6 +677,9 @@ export const loadStateFromNormalized = async (): Promise<any> => {
       supplierName: row.supplier_name,
       items: (poItemsByOrder.get(row.id) || []).map((item) => ({
         variantId: item.variant_id || undefined,
+        sellingUnitId: item.selling_unit_id ?? undefined,
+        sellingUnitLabel: item.selling_unit_label ?? undefined,
+        baseUnitsPerPurchaseUnit: item.base_units_per_purchase_unit ?? undefined,
         productId: item.product_id,
         productName: item.product_name,
         quantity: Number(item.quantity),
@@ -1594,7 +1601,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         // Subtract stock from product
         await client.query(
           `UPDATE products SET quantity = GREATEST(0, quantity - $1), updated_at = NOW() WHERE id = $2`,
-          [item.quantity, dbProduct.id]
+          [stockIn, dbProduct.id]
         );
       }
 
@@ -1867,13 +1874,22 @@ export const createPurchaseOrder = async (po: PurchaseOrder) => {
     );
 
     for (const item of po.items) {
-      const product = await client.query('SELECT name, variants_json FROM products WHERE id = $1 AND shop_id = $2', [item.productId, po.shopId]);
+      const product = await client.query('SELECT name, variants_json, shared_stock_units FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE', [item.productId, po.shopId]);
       if (!product.rowCount) throw new Error('Product unavailable in this shop.');
-      purchaseVariant(product.rows[0].variants_json || [], item.variantId, product.rows[0].name);
+      const p = product.rows[0];
+      const unit = p.shared_stock_units?.units?.find((u: {id:string})=>u.id===item.sellingUnitId);
+      if (p.shared_stock_units || item.sellingUnitId) {
+        if (!unit || item.variantId || p.variants_json?.length) throw new Error('Select a valid purchasing unit.');
+        baseQuantity(item.quantity,unit.baseUnits);
+        item.sellingUnitLabel=unit.label;
+        item.baseUnitsPerPurchaseUnit=unit.baseUnits;
+      } else {
+        purchaseVariant(p.variants_json || [], item.variantId, p.name);
+      }
       await client.query(
-        `INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price, variant_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [po.id, item.productId, item.productName, item.quantity, item.costPrice, item.variantId || null]
+        `INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price, variant_id, selling_unit_id, selling_unit_label, base_units_per_purchase_unit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [po.id, item.productId, item.productName, item.quantity, item.costPrice, item.variantId || null, item.sellingUnitId || null, item.sellingUnitId ? item.sellingUnitLabel : null, item.sellingUnitId ? item.baseUnitsPerPurchaseUnit : null]
       );
     }
 
@@ -1925,6 +1941,11 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       if (!Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('Invalid purchase quantity.');
       const dbProduct = productRes.rows[0];
       const variantsList: ProductVariant[] = dbProduct.variants_json || [];
+      let stockIn = Number(item.quantity);
+      if (dbProduct.shared_stock_units || item.selling_unit_id || item.base_units_per_purchase_unit != null) {
+        if (!dbProduct.shared_stock_units || !item.selling_unit_id || !item.base_units_per_purchase_unit || variantsList.length || item.variant_id) throw new Error('Incompatible purchasing unit snapshot.');
+        stockIn = baseQuantity(stockIn, Number(item.base_units_per_purchase_unit));
+      }
       const variant = purchaseVariant(variantsList, item.variant_id, dbProduct.name, true);
       if (variant) {
         variant.quantity = Number(variant.quantity || 0) + Number(item.quantity);
@@ -1945,7 +1966,7 @@ export const receivePurchaseOrder = async (poId: string, shopId: string, receive
       await client.query(
         `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
          VALUES ($1, $2, NOW(), $3, $4, 'Stock In', $5, 'Purchase Order Receipt', $6, $7)`,
-        [logId, shopId, item.product_id, item.product_name, item.quantity, receiveUser, poId]
+        [logId, shopId, item.product_id, item.product_name, stockIn, receiveUser, poId]
       );
     }
 
