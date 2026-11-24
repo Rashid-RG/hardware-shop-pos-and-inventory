@@ -1,3 +1,4 @@
+import {recordImportChargeRecovery} from './backend/importChargeRecoveries';
 import {recordSupplierRefund,supplierRefundAvailability} from './backend/supplierRefunds';
 import {recordPurchaseReturn} from './backend/purchaseReturns';
 import {settleImportCreditor} from './backend/importSettlements';
@@ -6358,6 +6359,26 @@ app.get('/api/ledger/purchase-returns/:poId',requireRole(['Super Admin','Store M
  COALESCE((SELECT jsonb_agg(jsonb_build_object('itemId',l.purchase_order_item_id,'baseQuantity',l.base_quantity,'inventoryCost',l.inventory_cost::text,'supplierCredit',l.supplier_credit::text) ORDER BY l.purchase_order_item_id) FROM ars_gl_purchase_return_lines l WHERE l.shop_id=h.shop_id AND l.return_id=h.id),'[]'::jsonb) AS items
  FROM ars_gl_purchase_returns h WHERE h.shop_id=$1 AND h.purchase_order_id=$2 ORDER BY h.return_date DESC,h.id LIMIT 500`,[scope.shopId,req.params.poId]);return res.json(result.rows);}
  catch(error){console.error('Purchase return history failed',error);return res.status(500).json({error:'Unable to load purchase returns.'});}
+});
+app.post('/api/ledger/import-charge-recoveries',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import recovery access denied.'});
+ const {requestId,returnId,chargeKind,payer,documentReference,accountId,amount,date,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||![returnId,payer,documentReference,accountId,evidence].every(v=>typeof v==='string'&&v.trim()&&v.length<=500)||!['Freight','Customs','Clearance'].includes(chargeKind)||typeof amount!=='string'||!/^\d{1,12}(\.\d{1,2})?$/.test(amount)||typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date||date>reportDay(new Date()))return res.status(400).json({error:'Valid documented import recovery required.'});
+ try{const result=await recordImportChargeRecovery(pool,{shopId:scope.shopId,id:requestId,returnId,chargeKind,payer,documentReference,accountId,amount,date,evidence,actor:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid documented import recovery required.','Valid positive recovery amount required.','Recovery identifier already used.','Active accounting required for import recovery.','Posted import return required before recovery.','Import purchase order not found.','Approved landed charges required.','Verified import return cost records required.','Active return variance account required.','Approved import charge breakdown required.','Import recovery balances require reconciliation.','Recovery date precedes later recovery.','Recovery exceeds documented available import charge loss.','Recovery document already used.','Active cash or bank account required.','Active recovery financial mapping required.','Accounting period is closed'].includes(message))return res.status(409).json({error:message});
+ console.error('Import recovery failed',error);return res.status(500).json({error:'Unable to confirm import recovery. Retry the same request.'});}
+});
+app.get('/api/ledger/import-charge-recoveries/:returnId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import recovery access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{
+ const h=await pool.query('SELECT id FROM ars_gl_purchase_returns WHERE shop_id=$1 AND id=$2',[scope.shopId,req.params.returnId]);
+ if(!h.rowCount)return res.status(404).json({error:'Purchase return not found.'});
+ const rows=await pool.query(`SELECT r.id,r.charge_kind,r.payer,r.document_reference,r.amount::text,r.recovery_date::text,r.evidence,r.recorded_by,r.journal_id,r.account_id,a.name AS account_name FROM ars_gl_import_charge_recoveries r LEFT JOIN ars_financial_accounts a ON a.shop_id=r.shop_id AND a.id=r.account_id WHERE r.shop_id=$1 AND r.return_id=$2 ORDER BY r.recovery_date DESC,r.id LIMIT 500`,[scope.shopId,req.params.returnId]);
+ return res.json(rows.rows);
+ }catch(error){console.error('Import recovery history failed',error);return res.status(500).json({error:'Unable to load import recovery history.'});}
 });
 app.post('/api/ledger/supplier-refunds',requireRole(['Super Admin']),async(req,res)=>{
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
