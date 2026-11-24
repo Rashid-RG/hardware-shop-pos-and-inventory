@@ -61,6 +61,8 @@ def test(folder, compatibility=False):
         password=secrets.token_hex(32)
         compatibility_result=False
         build_fingerprint=None
+        backward_result=False
+        previous_build=None
         def db(*args,**kwargs):
             return run(["docker","exec","-i",container,*args],**kwargs)
         try:
@@ -147,6 +149,41 @@ def test(folder, compatibility=False):
                 if fingerprint(staged)!=build_fingerprint:
                     raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
+                # Test previous version on the same migrated database, not a fresh restore.
+                # Copy only its executable build and dependencies, never runtime files.
+                import tempfile
+                import shutil
+                with tempfile.TemporaryDirectory(prefix="ars-old-build-") as temp:
+                    old=Path(temp)
+                    for part in ("dist","node_modules"):
+                        shutil.copytree(project/part,old/part,symlinks=True)
+                    previous_build=fingerprint(old)
+                    run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
+                    app_created=False
+                    run(["docker","run","-d","--pull=never","--name",app_name,
+                         "--network","container:"+container,"--read-only","--tmpfs","/tmp",
+                         "--tmpfs","/app/uploads","--cap-drop","ALL","--security-opt","no-new-privileges",
+                         "-v",str(old)+":/app:ro","-w","/app",
+                         "-e","NODE_ENV=production","-e","ARS_LISTEN_HOST=127.0.0.1",
+                         "-e","PORT=3000","-e","JWT_SECRET="+secrets.token_hex(48),
+                         "-e","DATABASE_URL=postgresql://restore_admin:"+password+"@127.0.0.1:5432/ars_update_test",
+                         node_image,"node","dist/server.cjs"],stdout=subprocess.DEVNULL)
+                    app_created=True
+                    try:
+                        for _ in range(90):
+                            probe=subprocess.run(["docker","exec",app_name,"node","-e","fetch('http://127.0.0.1:3000/api/ready').then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+                            if probe.returncode==0:
+                                break
+                            time.sleep(2)
+                        else:
+                            raise RuntimeError("Previous release cannot start on the migrated database.")
+                        run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                        if fingerprints(schema)!=before:
+                            raise RuntimeError("Previous release changed historical records on migrated database.")
+                        backward_result=True
+                    finally:
+                        run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
+                        app_created=False
             if sha(dump)!=checksum:
                 raise ValueError("Backup changed during restoration test.")
         finally:
@@ -157,7 +194,7 @@ def test(folder, compatibility=False):
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
-                "buildFingerprint":build_fingerprint,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
+                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
         temporary=folder/(".restore-"+uuid.uuid4().hex)
         temporary.write_text(json.dumps(result,indent=2)+"\n")
         temporary.replace(receipt)
