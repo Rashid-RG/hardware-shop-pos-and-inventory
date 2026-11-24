@@ -6032,6 +6032,44 @@ app.post('/api/customer-cheques/:id/status',requireRole(['Super Admin','Store Ma
   }
 });
 
+
+app.post('/api/customer-cheques/:id/clear',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,effectiveDate}=req.body||{};
+  if(!validChequeRequestId(requestId)||typeof effectiveDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
+    !Number.isFinite(Date.parse(effectiveDate+'T00:00:00Z'))||new Date(effectiveDate+'T00:00:00Z').toISOString().slice(0,10)!==effectiveDate||effectiveDate>reportDay(new Date())){
+    return res.status(400).json({error:'Enter a valid clearance date and request identifier.'});
+  }
+  try{
+    const result=await pool.query("SELECT c.*,u.name AS customer_name FROM ars_customer_cheques c JOIN customers u ON u.id=c.customer_id AND u.shop_id=c.shop_id WHERE c.shop_id=$1 AND c.id=$2",[scope.shopId,String(req.params.id)]);
+    const cheque=result.rows[0];
+    if(!cheque)return res.status(404).json({error:'Cheque not found in this shop.'});
+    if(!['Deposited','Cleared'].includes(cheque.status)||!cheque.deposit_account_id)return res.status(409).json({error:'Only deposited cheques can be cleared.'});
+    const payment:CustomerCreditPayment={
+      id:'cpay-cheque-'+cheque.id,shopId:scope.shopId,customerId:cheque.customer_id,customerName:cheque.customer_name,
+      invoiceId:cheque.invoice_id||undefined,amount:Number(cheque.amount),date:effectiveDate,paymentMethod:'Cheque',
+      note:'Cheque '+cheque.cheque_number+' / '+cheque.issuing_bank,createdBy:scope.recordedBy
+    };
+    payment.receiptSnapshot=await addCustomerCreditPayment(payment,true,cheque.deposit_account_id,{chequeId:cheque.id,eventId:'cheque-event-'+requestId,recordedBy:scope.recordedBy});
+    try{
+      const fresh=await loadStateFromNormalized();
+      if(!fresh)throw Error('Unable to reload cleared cheque payment.');
+      db=fresh;
+    }catch(error){
+      databaseWriteHealthy=false;
+      console.error('Cheque clearance committed but reload failed; writes disabled.',error);
+    }
+    return res.json({id:cheque.id,status:'Cleared',payment});
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Cheque clearance details do not match the registered cheque.','Cheque already cleared. Review the original payment.','Only deposited cheques can be cleared.','Clearance date precedes cheque history.','Payment request ID already used for different details.','Payment request ID already used for a different financial destination.','Select an outstanding credit invoice belonging to this customer.','Customer not found in this shop.','Customer has no outstanding credit balance.','Payment exceeds the customer outstanding credit balance.','Historical unallocated payments require reconciliation before invoice-specific collection.','Payment exceeds the invoice outstanding balance.','Select an invoice for this customer payment.','Select an active financial account matching the payment method.','Cheque clearance state changed.'].includes(message))return res.status(409).json({error:message});
+    console.error('Cheque clearance failed',error);
+    return res.status(500).json({error:'Unable to confirm cheque clearance. Review the register or retry the same request.'});
+  }
+});
+
 // ── Quotation Routes ─────────────────────────────────────────────────────────
 app.get('/api/quotations', (_req, res) => {
   const { activeShopId } = getActiveShopContext(db, _req);
