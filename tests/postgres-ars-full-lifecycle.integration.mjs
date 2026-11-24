@@ -138,9 +138,20 @@ test('ARS wholesale lifecycle: supplier PO, partial goods receipt, billing, repa
     const outcomes=await Promise.allSettled([addCustomerCreditPayment(linkedPayment('concurrent-a',200)),addCustomerCreditPayment(linkedPayment('concurrent-b',200))]);
     assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);
     assert.deepEqual(await linkedState(),['PARTIALLY PAID',400,100]);
-    const finalSnapshot=await addCustomerCreditPayment(linkedPayment('final',100));
+    const finalRequest=linkedPayment('final',100);
+    const finalResults=await Promise.all([addCustomerCreditPayment(finalRequest,true),addCustomerCreditPayment(finalRequest,true)]);
+    assert.deepEqual(finalResults[0],finalResults[1],'Concurrent identical requests must return the same receipt');
+    const finalSnapshot=finalResults[0];
     assert.equal(finalSnapshot.balanceAfter,0);
     assert.deepEqual(await linkedState(),['PAID',400,0]);
+    assert.deepEqual(await addCustomerCreditPayment(finalRequest,true),finalSnapshot,'Retry after full settlement must succeed');
+    assert.deepEqual(await addCustomerCreditPayment(firstPayment,true),snapshot,'Earlier payment retry must preserve its original balance');
+    for(const changed of [{amount:99},{shopId:wrongShop},{customerId},{invoiceId:txId},{paymentMethod:'Cash'},{date:'2025-01-01'},{note:'Different note'},{createdBy:'Different operator'}]){
+      await assert.rejects(()=>addCustomerCreditPayment({...finalRequest,...changed},true),/Payment request ID already used for different details/);
+    }
+    assert.deepEqual(await linkedState(),['PAID',400,0]);
+    const replayAudit=await pool.query("SELECT COUNT(*)::int AS n FROM activity_logs WHERE id=$1",['credit-payment-'+finalRequest.id]);
+    assert.equal(replayAudit.rows[0].n,1,'Replays must not duplicate payment audit entries');
     assert.equal(await readStock(),linkedStock,'Payment and rejected refund never change stock');
     const saved=await pool.query('SELECT receipt_snapshot FROM customer_credit_payments WHERE id=$1',[firstPayment.id]);
     assert.deepEqual(saved.rows[0].receipt_snapshot,snapshot,'Later payments must not rewrite earlier receipt balances');
