@@ -1,0 +1,66 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
+if(!['localhost','127.0.0.1'].includes(url.hostname)||url.port!=='5432'||url.pathname!=='/hardware_pos_ci')throw Error('Refusing financial test outside isolated CI database');
+const {pool,initDbTables,addCustomerCreditPayment}=await import('../backend/db.ts');
+const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements}=await import('../backend/financialAccounts.ts');
+
+test('financial accounts, collections, handovers, cheque clearance, reconciliation and statements on real PostgreSQL',async()=>{
+  const shopId='finance-ci-'+randomUUID(),otherShop='finance-other-'+randomUUID();
+  const id=()=>randomUUID(),recordedBy='CI manager',day='2026-11-24',customerId=id();
+  const cash=id(),bank=id(),rep=id(),foreign=id();
+  const balances=async()=>Object.fromEntries((await listFinancialAccounts(pool,shopId)).map(a=>[a.id,a.balance]));
+  const debt=async()=>Number((await pool.query('SELECT credit_balance FROM customers WHERE id=$1',[customerId])).rows[0].credit_balance);
+  try{
+    await initDbTables();await initFinancialAccounts(pool);
+    for(const [accountId,name,kind,scope] of [[cash,'Office','Office Cash',shopId],[bank,'Bank','Bank',shopId],[rep,'Representative','Representative Cash',shopId],[foreign,'Foreign bank','Bank',otherShop]])await createFinancialAccount(pool,{id:accountId,shopId:scope,name,kind,recordedBy});
+    await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'Finance CI customer',0,0,10000,1000)",[customerId,shopId]);
+    await registerFinancialOpeningBalance(pool,{id:id(),shopId,accountId:cash,amount:200,effectiveDate:day,recordedBy});
+    await assert.rejects(registerFinancialOpeningBalance(pool,{id:id(),shopId,accountId:cash,amount:100,effectiveDate:day,recordedBy}),/no recorded movements/);
+    const payment={id:'cpay-'+id(),shopId,customerId,customerName:'Finance CI customer',amount:150,date:day,paymentMethod:'Cash',createdBy:recordedBy};
+    await assert.rejects(addCustomerCreditPayment(payment,true,foreign),/active financial account/);
+    assert.equal(await debt(),1000);
+    await addCustomerCreditPayment(payment,true,rep);
+    await addCustomerCreditPayment(payment,true,rep);
+    assert.equal(await debt(),850);assert.equal((await balances())[rep],150);
+    const transfer={requestId:id(),shopId,fromAccountId:rep,toAccountId:cash,amount:100,effectiveDate:day,recordedBy,note:'CI physical cash counted',handover:true,currentBusinessDate:day};
+    await recordFinancialTransfer(pool,transfer);
+    assert.equal((await recordFinancialTransfer(pool,{...transfer,currentBusinessDate:'2026-11-25'})).replayed,true);
+    await assert.rejects(recordFinancialTransfer(pool,{...transfer,requestId:id(),amount:60}),/Insufficient/);
+    await assert.rejects(recordFinancialTransfer(pool,{...transfer,requestId:id(),toAccountId:foreign,handover:false}),/two active/);
+    assert.deepEqual(await balances(),{[cash]:300,[bank]:0,[rep]:50});
+    const cheque={id:'cheque-'+id(),shopId,customerId,chequeNumber:'CI-001',issuingBank:'CI Bank',drawerName:'CI Customer',amount:300,receivedDate:day,dueDate:'2026-11-25',recordedBy};
+    await registerCustomerCheque(pool,cheque);
+    assert.equal((await registerCustomerCheque(pool,cheque)).replayed,true);
+    await assert.rejects(registerCustomerCheque(pool,{...cheque,id:id(),chequeNumber:'CI-002',amount:600}),/Pending cheques/);
+    const deposit={shopId,chequeId:cheque.id,eventId:id(),nextStatus:'Deposited',effectiveDate:'2026-11-25',recordedBy,depositAccountId:bank};
+    await assert.rejects(transitionCustomerCheque(pool,{...deposit,effectiveDate:day}),/before its due date/);
+    await transitionCustomerCheque(pool,deposit);
+    assert.equal(await debt(),850);assert.equal((await balances())[bank],0);
+    const clearing={id:'cpay-cheque-'+cheque.id,shopId,customerId,customerName:'Finance CI customer',amount:300,date:'2026-11-25',paymentMethod:'Cheque',createdBy:recordedBy,note:'CI cheque clearance'};
+    const event={chequeId:cheque.id,eventId:id(),recordedBy};
+    await assert.rejects(addCustomerCreditPayment({...clearing,amount:301},true,bank,event),/do not match/);
+    await addCustomerCreditPayment(clearing,true,bank,event);
+    await addCustomerCreditPayment(clearing,true,bank,event);
+    assert.equal(await debt(),550);assert.equal((await balances())[bank],300);
+    assert.equal((await listCustomerCheques(pool,shopId)).find(c=>c.id===cheque.id).status,'Cleared');
+    await assert.rejects(transitionCustomerCheque(pool,{shopId,chequeId:cheque.id,eventId:id(),nextStatus:'Bounced',effectiveDate:'2026-11-25',recordedBy,note:'Invalid after clearance'}),/Invalid cheque status transition/);
+    const bounced={...cheque,id:'cheque-'+id(),chequeNumber:'CI-003',amount:100};
+    await registerCustomerCheque(pool,bounced);
+    await transitionCustomerCheque(pool,{...deposit,chequeId:bounced.id,eventId:id()});
+    await transitionCustomerCheque(pool,{shopId,chequeId:bounced.id,eventId:id(),nextStatus:'Bounced',effectiveDate:'2026-11-25',recordedBy,note:'Bank returned unpaid'});
+    assert.equal(await debt(),550);assert.equal((await balances())[bank],300);
+    const check={id:id(),shopId,accountId:cash,effectiveDate:day,currentBusinessDate:day,observedAmount:295,reference:'CI count',recordedBy};
+    await assert.rejects(recordFinancialReconciliation(pool,check),/Explain the discrepancy/);
+    const saved=await recordFinancialReconciliation(pool,{...check,note:'CI shortage'});
+    assert.equal(saved.expectedAmount,300);assert.equal(saved.variance,-5);
+    assert.equal((await recordFinancialReconciliation(pool,{...check,note:'CI shortage'})).replayed,true);
+    assert.equal((await listFinancialReconciliations(pool,shopId)).length,1);
+    assert.equal((await balances())[cash],300);
+    const statement=await listFinancialMovements(pool,{shopId,accountId:cash,fromDate:day,toDate:day,offset:1,limit:1});
+    assert.equal(statement.total,2);assert.equal(statement.opening,0);assert.equal(statement.inflows,300);assert.equal(statement.outflows,0);assert.equal(statement.closing,300);assert.equal(statement.rows[0].runningBalance,300);
+    await assert.rejects(listFinancialMovements(pool,{shopId,accountId:foreign,fromDate:day,toDate:day,offset:0,limit:10}),/not found/);
+    // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
+  }finally{await pool.end();}
+});
