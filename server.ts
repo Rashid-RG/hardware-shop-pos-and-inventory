@@ -6308,6 +6308,38 @@ app.get('/api/import-obligations/:id/settlements',requireRole(['Super Admin','St
  try{const result=await pool.query('SELECT s.id,s.amount::text,s.payment_date::text,s.evidence,s.recorded_by,s.journal_id,s.account_id,a.name AS account_name FROM ars_gl_import_settlements s LEFT JOIN ars_financial_accounts a ON a.shop_id=s.shop_id AND a.id=s.account_id WHERE s.shop_id=$1 AND s.obligation_id=$2 ORDER BY s.payment_date DESC,s.id LIMIT 500',[scope.shopId,req.params.id]);return res.json(result.rows);}
  catch(error){console.error('Import settlement history failed',error);return res.status(500).json({error:'Unable to load settlement history.'});}
 });
+// Read-only return candidates; the posting transaction revalidates every quantity.
+app.get('/api/ledger/purchase-returns/:poId/candidates',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Purchase return access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ const day=typeof req.query.date==='string'?req.query.date:reportDay(new Date());
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(Date.parse(day))||new Date(day).toISOString().slice(0,10)!==day||day>reportDay(new Date()))return res.status(400).json({error:'Valid return date required.'});
+ try{
+ const result=await pool.query(`SELECT i.id AS "itemId",i.product_name AS "productName",i.variant_id AS "variantId",i.selling_unit_label AS "purchaseUnit",i.base_units_per_purchase_unit AS "purchaseFactor",i.cost_price::text AS "purchaseCost",i.quantity AS ordered,p.id AS "productId",p.quantity AS stock,p.shared_stock_units AS packaging,p.variants_json AS variants,
+ po.status,cut.posting_enabled,cut.cutover_date::text AS cutover,
+ EXISTS(SELECT 1 FROM ars_landed_cost_approvals a WHERE a.shop_id=po.shop_id AND a.purchase_order_id=po.id) AS imported,
+ EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=po.shop_id AND j.source_kind='PurchaseReceipt' AND j.source_id=po.id AND j.posting_date<=$3) AS full,
+ EXISTS(SELECT 1 FROM ars_receipt_batches b WHERE b.shop_id=po.shop_id AND b.purchase_order_id=po.id AND NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=b.shop_id AND j.source_kind='ReceiptBatch' AND j.source_id=b.id)) AS unposted,
+ COALESCE((SELECT sum(ri.quantity) FROM ars_receipt_batch_items ri JOIN ars_receipt_batches b ON b.id=ri.batch_id JOIN ars_gl_journals j ON j.shop_id=b.shop_id AND j.source_kind='ReceiptBatch' AND j.source_id=b.id WHERE b.shop_id=po.shop_id AND b.purchase_order_id=po.id AND ri.purchase_order_item_id=i.id AND j.posting_date<=$3),0)::text AS received,
+ COALESCE((SELECT sum(l.base_quantity) FROM ars_gl_purchase_return_lines l JOIN ars_gl_purchase_returns h ON h.shop_id=l.shop_id AND h.id=l.return_id WHERE h.shop_id=po.shop_id AND h.purchase_order_id=po.id AND l.purchase_order_item_id=i.id),0)::text AS returned
+ FROM purchase_orders po JOIN purchase_order_items i ON i.purchase_order_id=po.id LEFT JOIN products p ON p.shop_id=po.shop_id AND p.id=i.product_id LEFT JOIN ars_gl_cutover cut ON cut.shop_id=po.shop_id WHERE po.shop_id=$1 AND po.id=$2 ORDER BY i.id`,[scope.shopId,req.params.poId,day]);
+ if(!result.rows.length)return res.status(404).json({error:'Purchase order lines not found.'});
+ const first=result.rows[0];
+ if(!['Received','Partially Received'].includes(first.status)||!first.posting_enabled||day<first.cutover||first.imported||first.unposted)return res.status(409).json({error:'Purchase order requires receipt or accounting reconciliation before return.'});
+ const items=result.rows.map(row=>{
+ const factor=Number(row.purchaseFactor??1);
+ const received=Number(row.full?row.ordered:row.received)*factor;
+ const returned=Number(row.returned);
+ const variants=Array.isArray(row.variants)?row.variants:[];
+ const variant=variants.find((v:any)=>v.id===row.variantId);
+ const stock=Number(variant?variant.quantity:row.stock);
+ const safe=!!row.productId&&Number.isSafeInteger(factor)&&factor>0&&Number.isSafeInteger(received)&&Number.isSafeInteger(returned)&&Number.isSafeInteger(stock)&&!(row.full&&Number(row.received)>0)&&(!variants.length||!!variant)&&(!row.packaging||(!variants.length&&!!row.purchaseFactor&&!!row.purchaseUnit));
+ const units=safe&&row.packaging&&Array.isArray(row.packaging.units)?row.packaging.units.filter((u:any)=>Number.isSafeInteger(u.baseUnits)&&u.baseUnits>0&&typeof u.label==='string').map((u:any)=>({id:u.id,label:u.label,baseUnits:u.baseUnits})):[{id:'base',label:'Base unit',baseUnits:1}];
+ return {itemId:Number(row.itemId),productName:row.productName,purchaseUnit:row.purchaseUnit,purchaseFactor:factor,purchaseCost:row.purchaseCost,receivedBaseQuantity:received,returnedBaseQuantity:returned,availableBaseQuantity:safe?Math.max(0,Math.min(stock,received-returned)):0,units};
+ });
+ return res.json({date:day,items});
+ }catch(error){console.error('Purchase return candidates failed',error);return res.status(500).json({error:'Unable to load verified purchase return lines.'});}
+});
 app.post('/api/ledger/purchase-returns',requireRole(['Super Admin']),async(req,res)=>{
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
  const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Purchase return access denied.'});
