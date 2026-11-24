@@ -1,7 +1,7 @@
 import { ReportExportMenu } from './ReportExportMenu';
 import { reportTime } from '../utils/reporting';
 import type { BusinessReport } from '../utils/businessReport';
-import { arsPrintLogoUrl, isArsPrintBrand } from '../utils/arsPrintLogo';
+import { arsPrintLogoUrl, isArsPrintBrand, arsDisplayName } from '../utils/arsPrintLogo';
 import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
@@ -112,7 +112,7 @@ export default function POSView({
   const shopAddress = (activeShopProfile ? activeShopProfile.address : taxConfig.address) || '';
   const shopPhone = (activeShopProfile ? activeShopProfile.phone : taxConfig.phone) || '';
   const invoiceCompanyMeta = {
-    companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName,
+    companyLegalName: arsDisplayName(activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName),
     companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution',
     businessRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.businessRegistrationNo || '',
     vatRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.vatRegistrationNo || '',
