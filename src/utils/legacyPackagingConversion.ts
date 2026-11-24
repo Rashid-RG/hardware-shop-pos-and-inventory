@@ -1,4 +1,4 @@
-import { baseQuantity, validateSharedStock, type SharedStockUnits } from './unitConversion';
+import { baseQuantity, validateSharedStock, type SharedStockUnits } from './unitConversion.ts';
 
 export type LegacyPackagingInput = {
   quantity: number;
