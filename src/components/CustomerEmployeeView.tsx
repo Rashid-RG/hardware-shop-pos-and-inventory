@@ -1,7 +1,7 @@
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { notify } from '../utils/notifications';
 import {
   Users,
@@ -24,7 +24,9 @@ import { CustomerLedgerPanel } from './CustomerLedgerPanel';
 import { CustomerReportsView } from './CustomerReportsView';
 
 
+type PendingCollection = {requestId:string;customerId:string;invoiceId?:string;amount:number;paymentMethod:string;date:string;note?:string};
 interface CustomerEmployeeViewProps {
+  paymentDraftOwner:string;
   taxConfig: StoreSettings;
   viewMode: 'customers' | 'employees';
   customers: Customer[];
@@ -36,7 +38,7 @@ interface CustomerEmployeeViewProps {
   onUpdateCustomer: (customerId: string, details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>) => Promise<void>;
   onAddEmployee: (empData: Omit<Employee, 'id' | 'performanceScore'>) => Promise<void>;
   onSetCreditLimit: (customerId: string, creditLimit: number) => Promise<void>;
-  onAddCreditPayment: (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<CustomerCreditPayment>;
+  onAddCreditPayment: (payload: PendingCollection) => Promise<CustomerCreditPayment>;
   onFetchPaymentReceipt: (paymentId:string)=>Promise<Blob>;
 }
 
@@ -52,6 +54,7 @@ export default function CustomerEmployeeView({
   onUpdateCustomer,
   onAddEmployee,
   onSetCreditLimit,
+  paymentDraftOwner,
   onAddCreditPayment,
   onFetchPaymentReceipt,
 }: CustomerEmployeeViewProps) {
@@ -88,6 +91,9 @@ export default function CustomerEmployeeView({
   const [paymentDate, setPaymentDate] = useState(reportDay(new Date()));
   const [paymentNote, setPaymentNote] = useState('');
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
+  const paymentStorageKey='ars:pending-collection:'+JSON.stringify([paymentDraftOwner,taxConfig.activeShopId]);
+  const [pendingCollection,setPendingCollection]=useState<PendingCollection|null>(()=>{try{return JSON.parse(localStorage.getItem(paymentStorageKey)||'null');}catch{return null;}});
+  const paymentLock=useRef(false);
 
   // Employee Form states
   const [isEmpOpen, setIsEmpOpen] = useState(false);
@@ -326,7 +332,7 @@ export default function CustomerEmployeeView({
 
   const handleSubmitCreditPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!paymentDraft || isPaymentSubmitting) return;
+    if (!paymentDraft || isPaymentSubmitting || paymentLock.current || pendingCollection) return;
     const amount = Number(paymentAmount);
     if(!hasUnallocatedCollections&&!selectedCollectionInvoice){notify.warning('Select an unpaid invoice.');return;}
     if(!Number.isFinite(amount)||amount>collectionMaximum){notify.warning('Payment exceeds the outstanding balance.');return;}
@@ -337,16 +343,27 @@ export default function CustomerEmployeeView({
     const printRequested=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-receipt')==='print';
     const preview=printRequested?window.open('','_blank'):undefined;
     if(preview)preview.document.body.textContent='Saving payment…';
-    setIsPaymentSubmitting(true);
-    try {
-      const savedPayment=await onAddCreditPayment({
+    const request:PendingCollection={
+        requestId:crypto.randomUUID(),
         customerId: paymentDraft.id,
         invoiceId: hasUnallocatedCollections?undefined:paymentInvoiceId,
         amount,
         paymentMethod,
         date: paymentDate,
         note: paymentNote || undefined,
-      });
+      };
+    try{localStorage.setItem(paymentStorageKey,JSON.stringify(request));}catch{preview?.close();notify.error('Cannot safely preserve payment request. Check browser storage.');return;}
+    setPendingCollection(request);
+    await submitPreservedCollection(request,printRequested,preview);
+  };
+  const submitPreservedCollection=async(request:PendingCollection,printRequested=false,preview?:Window|null)=>{
+    if(paymentLock.current)return;
+    paymentLock.current=true;
+    setIsPaymentSubmitting(true);
+    try{
+      const savedPayment=await onAddCreditPayment(request);
+      localStorage.removeItem(paymentStorageKey);
+      setPendingCollection(null);
       notify.success('Customer payment recorded.');
       setPaymentDraft(null);
       setPaymentAmount('');
@@ -356,8 +373,9 @@ export default function CustomerEmployeeView({
       if(printRequested)await openPaymentReceipt(savedPayment.id,'print',preview);
     } catch (err) {
       preview?.close();
-      notify.error('Failed to record customer payment: ' + err);
+      notify.error('Payment outcome not confirmed. Retry the preserved request; do not enter a new payment. '+err);
     } finally {
+      paymentLock.current=false;
       setIsPaymentSubmitting(false);
     }
   };
@@ -378,6 +396,12 @@ export default function CustomerEmployeeView({
         </p>
       </div>
 
+      {pendingCollection&&<section role="alert" className="rounded-xl border border-amber-400 bg-amber-50 p-4 text-sm">
+        <strong>Unconfirmed payment request</strong>
+        <p>Rs. {pendingCollection.amount.toFixed(2)} · {pendingCollection.paymentMethod} · {pendingCollection.date}</p>
+        <p>Retry this exact request before recording another payment. This will not deduct the amount twice.</p>
+        <button type="button" disabled={isPaymentSubmitting} onClick={()=>void submitPreservedCollection(pendingCollection)} className="mt-2 rounded bg-amber-400 px-4 py-2 font-semibold disabled:opacity-40">Retry saved payment request</button>
+      </section>}
       {/* FILTER SEARCH AREA */}
       <div className="bg-white px-3 py-2.5 rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="relative w-full sm:w-85">
@@ -749,7 +773,7 @@ export default function CustomerEmployeeView({
         </div>
       )}
 
-      {paymentDraft && (
+      {paymentDraft && !pendingCollection && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 z-40 animate-fade-in">
           <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-md border border-slate-250 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button onClick={() => setPaymentDraft(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
@@ -800,10 +824,10 @@ export default function CustomerEmployeeView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
+                <button type="submit" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
-                <button type="submit" data-receipt="print" disabled={isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
+                <button type="submit" data-receipt="print" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
               </div>
             </form>
           </div>
