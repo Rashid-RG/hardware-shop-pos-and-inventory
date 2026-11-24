@@ -1,3 +1,4 @@
+import {supplierReceiptCredits} from './supplierAdvance';
 import type {PoolClient} from 'pg';
 import {moneyCents} from './generalLedger';
 import {postJournal} from './ledgerPosting';
@@ -12,7 +13,6 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
  if(!config?.posting_enabled)return {posted:false};
  const batch=(await client.query("SELECT purchase_order_id,received_by,(created_at AT TIME ZONE 'Asia/Colombo')::date::text AS day FROM ars_receipt_batches WHERE shop_id=$1 AND id=$2",[shopId,batchId])).rows[0];
  if(!batch||batch.day<config.day||!batch.received_by)throw Error('Verified receipt batch required.');
- if((await client.query('SELECT 1 FROM supplier_payments WHERE shop_id=$1 AND purchase_order_id=$2 LIMIT 1',[shopId,batch.purchase_order_id])).rowCount)throw Error('Supplier payments require allocation reconciliation before additional receipt accounting.');
  const rows=(await client.query(`SELECT r.quantity,i.cost_price::text AS purchase_cost,i.variant_id,i.base_units_per_purchase_unit,p.cost_price::text AS carrying_cost,p.variants_json,c.received_cost::text AS landed_cost,c.rounding_difference::text AS rounding
  FROM ars_receipt_batch_items r JOIN purchase_order_items i ON i.id=r.purchase_order_item_id AND i.purchase_order_id=$3
  JOIN products p ON p.id=i.product_id AND p.shop_id=$1
@@ -43,6 +43,6 @@ export async function postReceiptBatch(client:PoolClient,shopId:string,batchId:s
   const r=(await client.query("SELECT a.code FROM ars_gl_account_mappings m JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code WHERE m.shop_id=$1 AND m.mapping_kind=$2 AND m.source_id='control' AND a.kind=$3 AND a.active FOR SHARE OF a",[shopId,kind,classification])).rows[0];
   if(!r)throw Error('Missing receipt accounting mapping: '+kind);return r.code as string;
  };
- const inventory=await map('inventory','Asset'),payables=await map('supplierPayables','Liability');
- return {posted:true,...await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines:[{accountCode:inventory,debit:decimal(goods),credit:'0.00'},{accountCode:payables,debit:'0.00',credit:decimal(goods)}]})};
+ const inventory=await map('inventory','Asset'),credits=await supplierReceiptCredits(client,shopId,batch.purchase_order_id,goods);
+ return {posted:true,...await postJournal(client,{id:'receipt:'+batchId,shopId,postingDate:batch.day,sourceKind:'ReceiptBatch',sourceId:batchId,description:'Warehouse goods receipt '+batchId,actor:batch.received_by,lines:[{accountCode:inventory,debit:decimal(goods),credit:'0.00'},...credits]})};
 }
