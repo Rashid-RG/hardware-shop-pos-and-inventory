@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import socket
+import re
 from switch_journal import sync_dir
 
 STATE=Path.home()/".local/share/ars-hardware"
@@ -34,6 +35,8 @@ def check_database_clients(project):
 def prepare(version,confirmation):
     if os.geteuid()==0 or confirmation!="STOP POS FOR BACKUP":
         raise ValueError("Explicit desktop-user maintenance approval required.")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?",version):
+        raise ValueError("Invalid staged version.")
     project=(STATE/"project").resolve(strict=True)
     guard=STATE/"update-tools/startup_guard.py"
     # Require installed guard to support the maintenance marker before stopping.
@@ -54,11 +57,18 @@ def prepare(version,confirmation):
         subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)
         stopped()
         check_database_clients(project)
-        subprocess.run(["python3",str(project/"scripts/mint/prepare-update-backup.py"),version],check=True,timeout=1800)
+        result=subprocess.run([str(STATE/"node"),str(project/"scripts/mint/locked-backup.mjs"),version],cwd=project,check=True,capture_output=True,text=True,timeout=1200)
+        archives=[x.removeprefix("Pinned recovery archive: ") for x in result.stdout.splitlines() if x.startswith("Pinned recovery archive: ")]
+        if len(archives)!=1:
+            raise RuntimeError("Protected backup did not return a unique archive.")
+        folder=Path(archives[0]).resolve(strict=True)
+        if folder.parent!=(STATE/"update-recovery").resolve(strict=True):
+            raise ValueError("Unexpected recovery archive location.")
         stopped()
         check_database_clients(project)
         print("Backup prepared with managed POS service stopped. Maintenance hold remains active.")
-        print("External clients were checked before and after backup; new connections during backup cannot be excluded. Activation is not approved.")
+        print("Protected recovery archive:",folder)
+        print("Existing public table writes were fenced during backup. Activation is not approved.")
 
 if __name__=="__main__":
     os.umask(0o077)
