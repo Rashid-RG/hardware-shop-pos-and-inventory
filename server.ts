@@ -5953,22 +5953,24 @@ app.post('/api/financial-transfers',requireRole(['Super Admin','Store Manager'])
     (Array.isArray(auth.allowedShopIds)&&!auth.allowedShopIds.includes(activeShopId))){
     return res.status(403).json({error:'Financial account shop access denied.'});
   }
-  const {requestId,fromAccountId,toAccountId,amount,effectiveDate,note}=req.body||{};
+  const {requestId,fromAccountId,toAccountId,amount,effectiveDate,note,handover}=req.body||{};
   if(typeof requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||
     typeof fromAccountId!=='string'||!fromAccountId||fromAccountId.length>200||
     typeof toAccountId!=='string'||!toAccountId||toAccountId.length>200||fromAccountId===toAccountId||
     typeof amount!=='number'||!Number.isFinite(amount)||amount<=0||amount>999999999999.99||
     Math.abs(amount*100-Math.round(amount*100))>0.001||
-    typeof effectiveDate!=='string'||effectiveDate!==reportDay(new Date())||
+    typeof effectiveDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
+    (handover!==undefined&&typeof handover!=='boolean')||
+    (handover&&(typeof note!=='string'||!note.trim()||note.trim().length>460))||
     (note!==undefined&&(typeof note!=='string'||note.length>500))){
-    return res.status(400).json({error:'Enter two different accounts, a positive amount, a request ID and today’s transfer date.'});
+    return res.status(400).json({error:'Enter two different accounts, a positive amount, a request ID and a valid transfer date.'});
   }
   try{
-    const result=await recordFinancialTransfer(pool,{requestId,shopId:activeShopId,fromAccountId,toAccountId,amount,effectiveDate,recordedBy:auth.email,note});
+    const result=await recordFinancialTransfer(pool,{requestId,shopId:activeShopId,fromAccountId,toAccountId,amount,effectiveDate,recordedBy:auth.email,note,handover,currentBusinessDate:reportDay(new Date())});
     return res.status(result.replayed?200:201).json(result);
   }catch(error){
     const message=error instanceof Error?error.message:'';
-    if(['Select two active financial accounts in this shop.','Settlement accounts are not supported for fund transfers.','Insufficient recorded funds in source account.','Transfer request identifier already used for different details.','Invalid financial transfer details.'].includes(message))return res.status(409).json({error:message});
+    if(['Select two active financial accounts in this shop.','Settlement accounts are not supported for fund transfers.','Insufficient recorded funds in source account.','Transfer request identifier already used for different details.','Invalid financial transfer details.','Only previously committed transfers can be retried for earlier dates.','Handover requires a representative cash account and an office cash account.'].includes(message))return res.status(409).json({error:message});
     console.error('Financial transfer failed',error);
     return res.status(500).json({error:'Unable to confirm transfer. Reconcile or retry the same request identifier.'});
   }
