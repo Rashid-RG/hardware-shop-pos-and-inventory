@@ -45,6 +45,15 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       PRIMARY KEY(shop_id,employee_id),
       FOREIGN KEY(shop_id,account_id) REFERENCES ars_financial_accounts(shop_id,id)
     );
+    CREATE TABLE IF NOT EXISTS ars_representative_logins (
+      shop_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      user_id TEXT NOT NULL UNIQUE,
+      linked_by TEXT NOT NULL,
+      linked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(shop_id,employee_id),
+      FOREIGN KEY(shop_id,employee_id) REFERENCES ars_representative_accounts(shop_id,employee_id)
+    );
     CREATE TABLE IF NOT EXISTS ars_invoice_requests (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -398,4 +407,39 @@ export async function listRepresentativeAccounts(db:Pool|PoolClient,shopId:strin
     LEFT JOIN ars_financial_movements m ON m.shop_id=r.shop_id AND m.account_id=r.account_id
     WHERE r.shop_id=$1 GROUP BY r.employee_id,r.account_id,r.assigned_by,r.assigned_at,e.name,e.role,a.name,a.active ORDER BY e.name,r.employee_id`,[shopId]);
   return result.rows.map(r=>({employeeId:r.employee_id,accountId:r.account_id,employeeName:r.employee_name,employeeRole:r.employee_role,accountName:r.account_name,active:r.active,balance:Number(r.balance),assignedBy:r.assigned_by,assignedAt:r.assigned_at}));
+}
+
+/** Explicit administrator-approved link. Never infer financial identity from names or email similarity. */
+export async function linkRepresentativeLogin(db:Pool,input:{shopId:string;employeeId:string;userId:string;recordedBy:string}){
+  const {shopId,employeeId,userId,recordedBy}=input;
+  if(!shopId||!employeeId||!userId||!recordedBy)throw Error('Invalid representative login link.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    const user=await client.query("SELECT id,name FROM users WHERE id=$1 AND role='Cashier' FOR UPDATE",[userId]);
+    if(!user.rowCount)throw Error('Select an existing sales representative login.');
+    const employee=await client.query("SELECT id,name FROM employees WHERE shop_id=$1 AND id=$2 AND role='Cashier' FOR UPDATE",[shopId,employeeId]);
+    if(!employee.rowCount)throw Error('Select an active representative staff record.');
+    const assigned=await client.query("SELECT r.account_id FROM ars_representative_accounts r JOIN ars_financial_accounts a ON a.id=r.account_id AND a.shop_id=r.shop_id WHERE r.shop_id=$1 AND r.employee_id=$2 AND a.active AND a.kind='Representative Cash' FOR UPDATE OF a",[shopId,employeeId]);
+    if(!assigned.rowCount)throw Error('Assign an active representative cash account first.');
+    const existing=await client.query('SELECT shop_id,employee_id,user_id FROM ars_representative_logins WHERE user_id=$1 OR (shop_id=$2 AND employee_id=$3)',[userId,shopId,employeeId]);
+    if(existing.rowCount){
+      const row=existing.rows[0];
+      if(existing.rowCount===1&&row.shop_id===shopId&&row.employee_id===employeeId&&row.user_id===userId){await client.query('COMMIT');return {replayed:true};}
+      throw Error('Login or employee already linked. Administrative reconciliation required.');
+    }
+    await client.query('INSERT INTO ars_representative_logins(shop_id,employee_id,user_id,linked_by) VALUES($1,$2,$3,$4)',[shopId,employeeId,userId,recordedBy]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,'Super Admin','Representative Login Linked',$4)`,['rep-login-'+userId,shopId,recordedBy,employee.rows[0].name+' — '+userId]);
+    await client.query('COMMIT');return {replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function resolveRepresentativeFinancialIdentity(db:Pool|PoolClient,shopId:string,userId:string){
+  const result=await db.query(`SELECT l.employee_id,r.account_id,a.name AS account_name,e.name AS employee_name
+    FROM ars_representative_logins l JOIN users u ON u.id=l.user_id AND u.role='Cashier'
+    JOIN employees e ON e.id=l.employee_id AND e.shop_id=l.shop_id AND e.role='Cashier'
+    JOIN ars_representative_accounts r ON r.shop_id=l.shop_id AND r.employee_id=l.employee_id
+    JOIN ars_financial_accounts a ON a.id=r.account_id AND a.shop_id=r.shop_id AND a.active AND a.kind='Representative Cash'
+    WHERE l.shop_id=$1 AND l.user_id=$2`,[shopId,userId]);
+  const row=result.rows[0];
+  return row?{employeeId:row.employee_id,accountId:row.account_id,accountName:row.account_name,employeeName:row.employee_name}:null;
 }
