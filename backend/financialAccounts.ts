@@ -45,3 +45,30 @@ export async function createFinancialAccount(db:Pool|PoolClient,input:{id:string
   if(!input.shopId||!input.id||!input.recordedBy||!name||name.length>120||!['Office Cash','Bank','Representative Cash','Settlement'].includes(input.kind))throw Error('Invalid financial account details.');
   await db.query('INSERT INTO ars_financial_accounts(id,shop_id,name,kind,created_by) VALUES($1,$2,$3,$4,$5)',[input.id,input.shopId,name,input.kind,input.recordedBy]);
 }
+
+/** Register a nonzero opening balance before any account activity.
+ * The account row lock serializes concurrent opening registrations.
+ * Authorization and shop scope must be established by the caller.
+ */
+export async function registerFinancialOpeningBalance(db:Pool,input:{
+  id:string;shopId:string;accountId:string;amount:number;effectiveDate:string;recordedBy:string;note?:string;
+}){
+  const {id,shopId,accountId,amount,effectiveDate,recordedBy}=input;
+  if(!id||!shopId||!accountId||!recordedBy||!Number.isFinite(amount)||amount===0||
+    Math.abs(amount)>999999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.001||
+    !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate))throw Error('Invalid opening balance details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    const account=await client.query('SELECT id FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,accountId]);
+    if(!account.rowCount)throw Error('Active financial account not found.');
+    const existing=await client.query('SELECT 1 FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2 LIMIT 1',[shopId,accountId]);
+    if(existing.rowCount)throw Error('Opening balance requires an account with no recorded movements.');
+    await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+      VALUES($1,$2,$3,$4,'Opening Balance',$3,$5,$6,$7)`,[id,shopId,accountId,amount,recordedBy,effectiveDate,input.note?.trim()||null]);
+    await client.query('COMMIT');
+  }catch(error){
+    await client.query('ROLLBACK');
+    throw error;
+  }finally{client.release();}
+}
