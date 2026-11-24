@@ -193,6 +193,24 @@ export default function POSView({
   const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>(restoredDraft?.discountMode === 'percent' ? 'percent' : 'amount');
   const [discountInput, setDiscountInput] = useState<string>(restoredDraft?.discountInput || '0');
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Credit Account');
+  const managerFinancialPosting=['Super Admin','Store Manager'].includes(currentRole);
+  const [invoiceAccounts,setInvoiceAccounts]=useState<{id:string;name:string;kind:string;active:boolean;balance:number}[]>([]);
+  const [invoiceAccountId,setInvoiceAccountId]=useState('');
+  const [invoiceAccountsLoading,setInvoiceAccountsLoading]=useState(false);
+  const [invoiceAccountsError,setInvoiceAccountsError]=useState('');
+  const needsInvoiceAccount=managerFinancialPosting&&['Cash','Bank Transfer'].includes(paymentMethod);
+  const matchingInvoiceAccounts=invoiceAccounts.filter(a=>a.active&&a.kind===(paymentMethod==='Cash'?'Office Cash':'Bank'));
+  const selectedInvoiceAccount=matchingInvoiceAccounts.find(a=>a.id===invoiceAccountId);
+  useEffect(()=>{
+    setInvoiceAccountId('');setInvoiceAccounts([]);setInvoiceAccountsError('');
+    if(!needsInvoiceAccount){setInvoiceAccountsLoading(false);return;}
+    const controller=new AbortController();setInvoiceAccountsLoading(true);
+    authFetch('/api/financial-accounts',{signal:controller.signal,cache:'no-store'}).then(async r=>{
+      const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load financial accounts.');
+      if(!controller.signal.aborted)setInvoiceAccounts(data);
+    }).catch(e=>{if(!controller.signal.aborted)setInvoiceAccountsError(e.message);}).finally(()=>{if(!controller.signal.aborted)setInvoiceAccountsLoading(false);});
+    return ()=>controller.abort();
+  },[needsInvoiceAccount,paymentMethod,authFetch]);
   const [wholesaleMetaDraft, setWholesaleMetaDraft] = useState({
     transportCharges: '',
     deliveryCharges: '',
@@ -1138,6 +1156,7 @@ export default function POSView({
       return;
     }
     if (paymentMethod === 'Credit Account' && !creditAccountAllowed) { notify.warning('Customer credit limit must cover this invoice.'); return; }
+    if(needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0)){notify.warning('Select an active receiving account for the paid invoice.');return;}
     if (paymentMethod !== 'Credit Account' && !window.confirm('Confirm full payment of '+formatMoney(total)+' has already been received. Otherwise choose Pay later.')) return;
     if (!persistDraft(true)) {
       notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
@@ -1158,6 +1177,7 @@ export default function POSView({
           customerAddress: (billingCustomerAddress || '').trim() || undefined,
           salesRepId: selectedSalesRepId,
           paymentMethod: paymentMethod,
+          destinationAccountId:needsInvoiceAccount?selectedInvoiceAccount?.id:undefined,
           paymentStatus: paymentMethod === 'Credit Account'
             ? 'CREDIT SALE'
             : 'PAID',
@@ -1922,7 +1942,7 @@ export default function POSView({
               { id: 'Credit Card', label: 'Card', icon: CreditCard },
               { id: 'QR Code', label: 'QR Pay', icon: QrCode },
               { id: 'Bank Transfer', label: 'Bank transfer', icon: DollarSign },
-            ].map((pm) => {
+            ].filter(pm=>!managerFinancialPosting||['Credit Account','Cash','Bank Transfer'].includes(pm.id)).map((pm) => {
               const Icon = pm.icon;
               const isSel = paymentMethod === pm.id;
               return (
@@ -1947,6 +1967,7 @@ export default function POSView({
           </div>
 
 
+          {needsInvoiceAccount&&<div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2 text-xs"><label className="block font-semibold" htmlFor="invoice-financial-account">Received into *</label><select id="invoice-financial-account" required value={invoiceAccountId} disabled={invoiceAccountsLoading||isSubmitting||checkoutUncertain} onChange={e=>setInvoiceAccountId(e.target.value)} className="w-full rounded border border-slate-300 p-2"><option value="">{invoiceAccountsLoading?'Loading accounts…':'Select receiving account'}</option>{matchingInvoiceAccounts.map(a=><option key={a.id} value={a.id}>{a.name} · {formatMoney(a.balance)}</option>)}</select>{invoiceAccountsError&&<p role="alert" className="text-red-700">{invoiceAccountsError}</p>}{!invoiceAccountsLoading&&!invoiceAccountsError&&!matchingInvoiceAccounts.length&&<p className="text-amber-800">Create a matching account in Accounting first, or choose Pay later if payment has not been received.</p>}{selectedInvoiceAccount&&<p>Estimated balance after receipt: <strong>{formatMoney(selectedInvoiceAccount.balance+total)}</strong></p>}</div>}
                         {paymentMethod === 'Credit Account' && (
                 <div role="status" className={`mb-3 rounded-lg border px-3 py-2 text-xs ${creditAccountAllowed?'border-amber-200 bg-amber-50 text-amber-900':'border-rose-200 bg-rose-50 text-rose-800'}`}>
                   {creditLimit <= 0 ? 'This customer has no credit limit configured.'
@@ -2034,7 +2055,7 @@ export default function POSView({
                         {/* Checkout Submit Trigger */}
           <button
             id="pos-pay-trigger" type="button"
-            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)}
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
             onClick={handleCheckout}
             className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)
