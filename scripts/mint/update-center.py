@@ -96,6 +96,17 @@ def view_history(folder,kind):
         counts=data.get("counts",{})
         if isinstance(counts,dict):
             details.extend(str(key)+": "+str(value) for key,value in counts.items())
+        finance=data.get("financialChecks")
+        if isinstance(finance,dict):
+            details.append("Financial recovery checks (restored values only):")
+            for section in ("ledgerCounts","restoredTotals"):
+                values=finance.get(section,{})
+                if isinstance(values,dict):
+                    details.extend(str(key)+": "+str(value) for key,value in values.items())
+            missing=finance.get("missingTables",[])
+            if isinstance(missing,list) and missing:
+                details.append("Missing ledger tables: "+", ".join(map(str,missing)))
+            details.append("Original-source reconciliation: not verified.")
         details.append("Live database replacement is not approved.")
     else:
         details.append("Last verified cloud backup at this attempt: "+str(data.get("verifiedAt") or "None"))
