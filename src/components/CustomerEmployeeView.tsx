@@ -1,3 +1,5 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import React, { useState } from 'react';
 import { notify } from '../utils/notifications';
 import {
@@ -259,6 +261,10 @@ export default function CustomerEmployeeView({
     summary:[{label:'Matching activity records',value:historyRows.length},{label:'Current outstanding (LKR; not period total)',value:Number(selectedCustomer.creditBalance||0)}]};
   };
 
+  const staffReport = ():BusinessReport => ({
+ title:'Staff directory',filename:'ars-staff',period:'Matching employees',headers:['Name','Role','Phone','Email','Attendance','Performance score',...(!hidesSalaries?['Salary (LKR)']:[])],moneyColumns:!hidesSalaries?[6]:[],
+ rows:filteredEmployees.map(e=>[e.name,e.role,e.phone,e.email,e.attendanceStatus,e.performanceScore,...(!hidesSalaries?[e.salary]:[])]),summary:[{label:'Matching employees',value:filteredEmployees.length}]
+ });
   const formatSalary = (amount: number) => `Rs.${amount.toLocaleString('en-US')}`;
   const formatMoney = (amount: number) => `Rs.${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -357,6 +363,7 @@ export default function CustomerEmployeeView({
             <ReportExportMenu report={customerDirectoryReport} settings={taxConfig}/>
           </div>
         )}
+        {activeTab==='employees'&&canOnboard&&<ReportExportMenu report={staffReport} settings={taxConfig}/>}
         <div>
           {activeTab === 'customers' ? (
             <button
