@@ -58,7 +58,7 @@ done
 # Additional ARS ledgers use some composite primary keys instead of an id column.
 # Compare full sorted JSON rows for every ARS table present in the source DB.
 ars_tables=(
-  ars_import_shipments ars_business_partners ars_partner_capital_entries
+  ars_import_shipments ars_landed_cost_approvals ars_business_partners ars_partner_capital_entries
   ars_receipt_batches ars_receipt_batch_items
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
