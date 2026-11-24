@@ -28,3 +28,21 @@ test('A4 invoice preserves saved packaging labels, quantities and historical rat
   assert.doesNotMatch(content,/CI Cashier|Sales By/);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('payment receipts print one A4 page with original collection balance and ARS branding',async()=>{
+ const {renderArsPaymentReceiptPdf}=await import('../src/utils/arsPaymentReceiptPdf.ts');
+ const dir=await mkdtemp(join(tmpdir(),'ars-payment-ci-'));
+ try{
+  const payment={id:'cpay-ci-0001',customerId:'ci-customer',customerName:'North Road Hardware',invoiceId:'ci-invoice',amount:20000,date:'2026-11-24',paymentMethod:'Cash',createdBy:'CI Manager',receiptSnapshot:{invoiceNumber:'ARS-INV-0001',invoiceTotal:50000,previousPayments:0,balanceAfter:30000}};
+  for(const [name,record] of [['linked',payment],['historical',{...payment,receiptSnapshot:undefined}]]){
+   const pdf=await renderArsPaymentReceiptPdf(record,'ARS Distributor',null,{address:'CI address',phone:'0700000000'});
+   assert.equal(pdf.subarray(0,5).toString(),'%PDF-');
+   const file=join(dir,name+'.pdf');await writeFile(file,pdf);
+   assert.match(execFileSync('pdfinfo',[file],{encoding:'utf8'}),/Pages:\s+1\b/);
+   const body=execFileSync('pdftotext',['-layout',file,'-'],{encoding:'utf8'});
+   for(const label of ['ARS Distributor','PAYMENT RECEIPT','North Road Hardware','20,000.00','Powered by RS Nextward','cpay-ci-0001'])assert.ok(body.includes(label),label);
+   if(name==='linked'){assert.match(body,/ARS-INV-0001/);assert.match(body,/50,000\.00/);assert.match(body,/30,000\.00/);}
+   else{assert.match(body,/Historical balance at collection was not recorded/);assert.doesNotMatch(body,/30,000\.00/);}
+  }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
