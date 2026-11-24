@@ -2,7 +2,7 @@ import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/r
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft, updatePackagingPrices, convertLegacyPackaging, listLegacyInvoiceLines } from './backend/packagingDrafts';
+import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft, updatePackagingPrices, convertLegacyPackaging, listLegacyInvoiceLines, sharedStockActivationEnabled } from './backend/packagingDrafts';
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
@@ -4317,7 +4317,7 @@ app.put('/api/products/:id/packaging-draft', requireRole(['Super Admin', 'Store 
 
 app.get('/api/products/:id/packaging-eligibility', requireRole(['Super Admin','Store Manager']), async(req,res)=>{
   const {activeShopId}=getActiveShopContext(db,req);
-  try {res.json({...await checkPackagingActivation(pool,activeShopId,req.params.id),pilotEnabled:process.env.ARS_SHARED_STOCK_PILOT==='true'});}
+  try {res.json({...await checkPackagingActivation(pool,activeShopId,req.params.id),pilotEnabled:sharedStockActivationEnabled()});}
   catch(error){res.status(409).json({error:(error as Error).message});}
 });
 app.put('/api/products/:id/packaging-prices',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
