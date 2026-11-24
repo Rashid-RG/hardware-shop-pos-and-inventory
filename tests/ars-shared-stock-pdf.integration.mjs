@@ -46,3 +46,28 @@ test('payment receipts print one A4 page with original collection balance and AR
   }
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('supplier refund receipt prints A4 with incoming payment wording and ARS branding',async()=>{
+ const {renderArsDisbursementVoucherPdf}=await import('../src/utils/arsDisbursementVoucherPdf.ts');
+ const dir=await mkdtemp(join(tmpdir(),'ars-supplier-refund-ci-'));
+ try{
+ const fixture={id:'refund-ci-001',kind:'Supplier Refund',date:'2026-11-25',amount:15000,payee:'CI Wholesale Supplier',reference:'PO-CI-001 / RETURN-CI-001',method:'Bank Transfer',account:'Main Bank',recordedBy:'CI Manager',note:'BANK-REF-001'};
+ for(const kind of ['Supplier Refund','Supplier Payment','Expense']){
+ const pdf=await renderArsDisbursementVoucherPdf({...fixture,kind},'ARS Distributor',null,{address:'CI address',phone:'0700000000'});
+ assert.equal(pdf.subarray(0,5).toString(),'%PDF-');
+ const file=join(dir,kind.replaceAll(' ','-')+'.pdf');await writeFile(file,pdf);
+ const info=execFileSync('pdfinfo',[file],{encoding:'utf8'});
+ assert.match(info,/Pages:\s+1\b/);
+ assert.match(info,/Page size:\s+595(?:\.\d+)? x 841(?:\.\d+)? pts \(A4\)/);
+ const body=execFileSync('pdftotext',['-layout',file,'-'],{encoding:'utf8'});
+ for(const label of ['ARS Distributor','Powered by RS Nextward','15,000.00','refund-ci-001','Main Bank','CI Manager','BANK-REF-001'])assert.ok(body.includes(label),label);
+ if(kind==='Supplier Refund'){
+ for(const label of ['SUPPLIER REFUND RECEIPT','CI Wholesale Supplier','PO-CI-001 / RETURN-CI-001','Received into','Amount received','Received by'])assert.ok(body.includes(label),label);
+ assert.doesNotMatch(body,/Amount paid|Paid from|SUPPLIER PAYMENT VOUCHER/);
+ }else{
+ assert.match(body,kind==='Supplier Payment'?/SUPPLIER PAYMENT VOUCHER/:/EXPENSE PAYMENT VOUCHER/);
+ assert.match(body,/Amount paid/);assert.match(body,/Paid from/);
+ }
+ }
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
