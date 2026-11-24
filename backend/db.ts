@@ -1,5 +1,6 @@
 import { Pool, PoolClient, types } from 'pg';
 import { purchaseVariant } from './purchaseVariant';
+import { deductSharedSale, restoreSharedSale, type SharedSaleSnapshot } from './sharedStock';
 import bcrypt from 'bcryptjs';
 import { DATABASE_URL, DB_STATE_KEY } from './config';
 import {
@@ -1527,6 +1528,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         throw new Error('Quotation was modified. Reload it before converting.');
     }
 
+    const sharedSnapshots = new Map<SalesTransaction['items'][number], SharedSaleSnapshot>();
     // 1) Verify and update stock using SELECT FOR UPDATE to lock rows
     for (const item of tx.items) {
       const productRes = await client.query(
@@ -1543,7 +1545,18 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       }
       const variantsList = Array.isArray(dbProduct.variants_json) ? dbProduct.variants_json as ProductVariant[] : [];
 
-      if (item.variantId) {
+      let stockOut = item.quantity;
+      const requestedUnit = (item as typeof item & { sellingUnitId?: string }).sellingUnitId;
+      if (dbProduct.shared_stock_units || requestedUnit) {
+        if (!requestedUnit || item.variantId || quotationId || !tx.shopId) throw new Error('Shared stock requires an explicit selling unit and direct sale.');
+        const snapshot = await deductSharedSale(client, tx.shopId, item.productId, requestedUnit, item.quantity);
+        // Totals have already been calculated. Reject stale or untrusted prices rather than rewriting them.
+        if (Math.round(item.sellingPrice * 100) !== Math.round(snapshot.sellingPrice * 100)) throw new Error('Selling-unit price changed. Reload product.');
+        item.costPrice = snapshot.costPrice;
+        item.variantUnit = snapshot.sellingUnitLabel;
+        sharedSnapshots.set(item, snapshot);
+        stockOut = snapshot.baseQuantity;
+      } else if (item.variantId) {
         const variantIndex = variantsList.findIndex((v) => v.id === item.variantId);
         if (variantIndex === -1) {
           throw new Error(`Variant ${item.variantName} not found for product ${dbProduct.name}.`);
@@ -1582,7 +1595,7 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       await client.query(
         `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
          VALUES ($1, $2, NOW(), $3, $4, 'Stock Out', $5, 'Invoice Sale Checkout', $6, $7)`,
-        [logId, tx.shopId, item.productId, item.productName, -item.quantity, tx.cashierName, tx.id]
+        [logId, tx.shopId, item.productId, item.productName, -stockOut, tx.cashierName, tx.id]
       );
     }
 
@@ -1617,8 +1630,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
     // 3) Save Transaction items
     for (const item of tx.items) {
       await client.query(
-        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode, invoice_description)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode, invoice_description, selling_unit_id, selling_unit_label, base_units_per_sale_unit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
         [
           tx.id,
           item.productId,
@@ -1634,6 +1647,9 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
           item.variantSku || null,
           item.variantBarcode || null,
           item.invoiceDescription ?? null,
+          sharedSnapshots.get(item)?.sellingUnitId ?? null,
+          sharedSnapshots.get(item)?.sellingUnitLabel ?? null,
+          sharedSnapshots.get(item)?.baseUnitsPerSaleUnit ?? null,
         ]
       );
     }
@@ -1735,7 +1751,13 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
       const product = productRes.rows[0];
       const variants: ProductVariant[] = Array.isArray(product.variants_json) ? product.variants_json : [];
 
-      if (item.variant_id) {
+      let stockReturned = quantity;
+      if (item.selling_unit_id || item.base_units_per_sale_unit != null) {
+        if (!item.selling_unit_id || !item.base_units_per_sale_unit || item.variant_id) throw new Error('Incomplete shared-unit invoice snapshot.');
+        stockReturned = await restoreSharedSale(client, shopId, item.product_id, quantity, Number(item.base_units_per_sale_unit));
+      } else if (product.shared_stock_units) {
+        throw new Error('Legacy invoice requires a verified stock migration before refund.');
+      } else if (item.variant_id) {
         const variant = variants.find((entry) => entry.id === item.variant_id);
         if (!variant) throw new Error(`Cannot refund: product variant ${item.variant_name || item.variant_id} is missing.`);
         variant.quantity = Number(variant.quantity || 0) + quantity;
@@ -1757,7 +1779,7 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
       await client.query(
         `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
          VALUES ($1, $2, NOW(), $3, $4, 'Return', $5, $6, $7, $8)`,
-        ['return-' + txId + '-' + item.id, shopId, item.product_id, item.product_name, quantity,
+        ['return-' + txId + '-' + item.id, shopId, item.product_id, item.product_name, stockReturned,
           reason ? 'Refund processed: ' + reason : 'Refund of invoice ' + tx.invoice_number, cashierName, txId]
       );
     }
