@@ -246,19 +246,24 @@ export default function ProductManagementView({
   const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
   const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
   const [packagingBusy, setPackagingBusy] = useState(false);
+  const [packagingEligibility,setPackagingEligibility]=useState<{eligible:boolean;reasons:string[];pilotEnabled:boolean}|null>(null);
+  const [savedPackaging,setSavedPackaging]=useState('');
+  const canActivatePackaging=['Super Admin','Store Manager'].includes(currentRole);
   const openPackaging = async (product: Product) => {
     setPackagingBusy(true);
+    setPackagingEligibility(null);setSavedPackaging('');
     try {
       const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to load selling units.');
-      setPackaging(body.configuration || {baseUnit:'Piece',units:[{id:crypto.randomUUID(),label:'Piece',baseUnits:1,sellingPrice:product.sellingPrice}]});
+      setSavedPackaging(body.configuration ? JSON.stringify(body.configuration) : '');
+      setPackaging(product.sharedStockUnits || body.configuration || {baseUnit:'Piece',units:[{id:crypto.randomUUID(),label:'Piece',baseUnits:1,sellingPrice:product.sellingPrice}]});
       setPackagingProduct(product);
     } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
     finally { setPackagingBusy(false); }
   };
   const savePackaging = async () => {
-    if (!packagingProduct || packagingBusy) return;
+    if (!packagingProduct || packagingBusy || packagingProduct.sharedStockUnits) return;
     setPackagingBusy(true);
     try {
       validateSharedStock(packaging);
@@ -268,9 +273,23 @@ export default function ProductManagementView({
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to save selling units.');
       notify.success('Packaging draft saved. Stock and billing remain unchanged.');
-      setPackagingProduct(null);
+      setPackaging(body.configuration);setSavedPackaging(JSON.stringify(body.configuration));setPackagingEligibility(null);
     } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
     finally { setPackagingBusy(false); }
+  };
+
+  const checkPackaging = async () => {
+    if(!packagingProduct || packagingBusy || !canActivatePackaging)return;
+    setPackagingBusy(true);setPackagingEligibility(null);
+    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-eligibility');const body=await response.json();if(!response.ok)throw Error(body.error);setPackagingEligibility(body);}
+    catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
+  };
+  const activateSavedPackaging = async () => {
+    if(!packagingProduct || packagingBusy || !canActivatePackaging || !packagingEligibility?.eligible || !packagingEligibility.pilotEnabled || savedPackaging!==JSON.stringify(packaging))return;
+    if(!window.confirm('Activate the saved packaging configuration? Stock will remain unchanged; packaging factors cannot be edited after activation.'))return;
+    setPackagingBusy(true);
+    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})});const body=await response.json();if(!response.ok)throw Error(body.error);notify.success('Shared stock activated. Reloading product data.');window.location.reload();}
+    catch(error){notify.error(String(error));}finally{setPackagingBusy(false);setPackagingEligibility(null);}
   };
 
   const categories = Array.from(
@@ -1408,7 +1427,7 @@ export default function ProductManagementView({
                 </div>
               )}
 
-              {editingProduct && <div className="px-4 py-2"><button type="button" disabled={packagingBusy || isSubmitting} onClick={()=>openPackaging(editingProduct)} className="rounded border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700">Configure selling units (draft)</button></div>}
+              {editingProduct && <div className="px-4 py-2"><button type="button" disabled={packagingBusy || isSubmitting} onClick={()=>openPackaging(editingProduct)} className="rounded border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700">Configure selling units</button></div>}
               {/* Submitting buttons */}
               <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-5 flex gap-3">
                 <button
@@ -1436,7 +1455,8 @@ export default function ProductManagementView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
             <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
-            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">Draft only. These settings do not change stock or enable shared-unit billing yet.</p>
+            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — read only." : "Save a draft, then check eligibility. Activation is restricted to the verified pilot."}</p>
+            <fieldset disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="space-y-4">
             <label className="block text-sm">Base stock unit
               <input className="block w-full border rounded p-2" value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
             </label>
@@ -1451,9 +1471,12 @@ export default function ProductManagementView({
               ))}
             </div>
             <button type="button" disabled={packagingBusy || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
-            <div className="flex justify-end gap-2">
-              <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Cancel</button>
-              <button type="button" disabled={packagingBusy} className="bg-indigo-600 text-white rounded p-2" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
+            </fieldset>
+            {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Close</button>
+              {!packagingProduct.sharedStockUnits && canActivatePackaging && <><button type="button" disabled={packagingBusy || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2" onClick={checkPackaging}>Check eligibility</button><button type="button" disabled={packagingBusy || !packagingEligibility?.eligible || !packagingEligibility?.pilotEnabled || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2 disabled:opacity-40" onClick={activateSavedPackaging}>Activate shared stock</button></>}
+              <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
             </div>
           </section>
         </div>
