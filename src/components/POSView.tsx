@@ -273,6 +273,22 @@ export default function POSView({
   const [setupDialog, setSetupDialog] = useState<'customer' | 'representative' | null>(null);
   const [draftCustomerId, setDraftCustomerId] = useState('');
   const [draftRepId, setDraftRepId] = useState('');
+  useEffect(() => {
+    const startNewInvoice=()=>{
+      if(isSubmitting || checkoutUncertain){notify.warning('Resolve the current checkout before starting a new invoice.');return;}
+      if(cart.length && !window.confirm('Discard the current unpaid invoice draft and start a new invoice?'))return;
+      try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{notify.error('Unable to clear the saved draft.');return;}
+      setCart([]);setSelectedCustomer({id:'',name:'',phone:'',email:'',address:'',loyaltyBalance:0,purchaseCount:0});
+      setSelectedSalesRepId('');setBillingCustomerName('');setBillingCustomerPhone('');setBillingCustomerAddress('');
+      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Cash');setCashReceived('');
+      setWholesaleMetaDraft({transportCharges:'',deliveryCharges:'',warrantyInformation:'',dispatchMethod:'',vehicleNumber:'',deliveryNoteNumber:'',batchNumber:'',supplierReference:'',deliveryStatus:''});
+      setIsReviewOpen(false);setReceiptModel(null);setEditingDescriptionKey(null);setDescriptionDraft('');
+      setDraftCustomerId('');setDraftRepId('');setCustomerSearch('');setSetupDialog('customer');
+      notify.success('New invoice started.');
+    };
+    window.addEventListener('ars:new-invoice',startNewInvoice);
+    return ()=>window.removeEventListener('ars:new-invoice',startNewInvoice);
+  },[isSubmitting,checkoutUncertain,cart.length,draftKey]);
   const [selectedCopyType, setSelectedCopyType] = useState<InvoiceCopyType>('Duplicate Copy');
   const [isLoggingPrint, setIsLoggingPrint] = useState(false);
   const [invoicePrintHistory, setInvoicePrintHistory] = useState<Array<{ copyType: InvoiceCopyType; printSequence: number; printedBy: string; printedAt: string }>>([]);
@@ -648,6 +664,8 @@ export default function POSView({
 
   const inferUnitLabel = (productName: string) => {
     const name = String(productName || '').toLowerCase();
+    const packaging = /(?:^|[·–-]\s*)(box|pack|pair|piece|carton|bundle|roll|set)(?:\s+of\s+\d+)?\s*$/.exec(name);
+    if(packaging)return packaging[1][0].toUpperCase()+packaging[1].slice(1);
     if (name.includes('bag')) return 'Bag';
     if (name.includes('pipe') || name.includes('bulb') || name.includes('hammer')) return 'Piece';
     if (name.includes('kg')) return 'Kg';
@@ -1556,7 +1574,7 @@ export default function POSView({
 
                   </div>
 
-                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.sharedStockUnits ? <select aria-label={`Shared selling unit for ${item.product.name}`} value={item.sellingUnitId || ''} onChange={e=>changeSharedSellingUnit(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs">{item.product.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select> : item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit || inferUnitLabel(item.product.name) || '—'}</span>}</div>
+                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.sharedStockUnits ? <select aria-label={`Shared selling unit for ${item.product.name}`} value={item.sellingUnitId || ''} onChange={e=>changeSharedSellingUnit(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs">{item.product.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select> : item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit && item.variantUnit !== 'Unit' ? item.variantUnit : inferUnitLabel(item.product.name)} <span className="block text-[10px] text-slate-400" title="Configure shared selling units in Product Catalog to enable Box/Piece conversion">Fixed U/M</span></span>}</div>
                   {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
                   {/* selectors and quantities */}
                   <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
