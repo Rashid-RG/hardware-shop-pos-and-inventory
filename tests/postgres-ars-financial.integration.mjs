@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.port!=='5432'||url.pathname!=='/hardware_pos_ci')throw Error('Refusing financial test outside isolated CI database');
-const {pool,initDbTables,addCustomerCreditPayment}=await import('../backend/db.ts');
-const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements}=await import('../backend/financialAccounts.ts');
+const {pool,initDbTables,addCustomerCreditPayment,insertSupplierPayment,insertSupplier}=await import('../backend/db.ts');
+const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements,recordPaidExpense}=await import('../backend/financialAccounts.ts');
 
 test('financial accounts, collections, handovers, cheque clearance, reconciliation and statements on real PostgreSQL',async()=>{
   const shopId='finance-ci-'+randomUUID(),otherShop='finance-other-'+randomUUID();
@@ -61,6 +61,33 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     const statement=await listFinancialMovements(pool,{shopId,accountId:cash,fromDate:day,toDate:day,offset:1,limit:1});
     assert.equal(statement.total,2);assert.equal(statement.opening,0);assert.equal(statement.inflows,300);assert.equal(statement.outflows,0);assert.equal(statement.closing,300);assert.equal(statement.rows[0].runningBalance,300);
     await assert.rejects(listFinancialMovements(pool,{shopId,accountId:foreign,fromDate:day,toDate:day,offset:0,limit:10}),/not found/);
+    const supplierId=id();
+    await insertSupplier({id:supplierId,shopId,name:'CI supplier',companyName:'CI supplier',phone:'',email:'',address:'',taxNumber:''});
+    const supplierPayment={id:'spay-'+id(),shopId,supplierId,supplierName:'CI supplier',amount:100,date:'2026-11-25',paymentMethod:'Bank Transfer',createdBy:recordedBy};
+    await assert.rejects(insertSupplierPayment(supplierPayment,foreign),/matching the payment method/);
+    await assert.rejects(insertSupplierPayment({...supplierPayment,amount:301},bank),/Insufficient/);
+    assert.equal(Number((await pool.query('SELECT COUNT(*) AS n FROM supplier_payments WHERE id=$1',[supplierPayment.id])).rows[0].n),0);
+    await insertSupplierPayment(supplierPayment,bank);
+    await insertSupplierPayment(supplierPayment,bank);
+    await assert.rejects(insertSupplierPayment({...supplierPayment,amount:101},bank),/identifier already used/);
+    assert.equal((await balances())[bank],200);
+    const expense={id:'exp-'+id(),shopId,desc:'CI delivery fuel',category:'Vehicle fuel',amount:40,date:day,recordedBy,role:'Store Manager',sourceAccountId:cash,paymentMethod:'Cash'};
+    await assert.rejects(recordPaidExpense(pool,{...expense,sourceAccountId:foreign}),/matching the payment method/);
+    await assert.rejects(recordPaidExpense(pool,{...expense,amount:301}),/Insufficient/);
+    assert.equal(Number((await pool.query('SELECT COUNT(*) AS n FROM manual_expenses WHERE id=$1',[expense.id])).rows[0].n),0);
+    await recordPaidExpense(pool,expense);
+    assert.equal((await recordPaidExpense(pool,{...expense,date:'2026-11-25'})).replayed,true);
+    await assert.rejects(recordPaidExpense(pool,{...expense,amount:41}),/identifier already used/);
+    await assert.rejects(recordPaidExpense(pool,{...expense,paymentMethod:'Bank Transfer'}),/identifier already used/);
+    assert.equal((await balances())[cash],260);
+    const expenseRow=(await pool.query('SELECT shop_id,amount FROM manual_expenses WHERE id=$1',[expense.id])).rows[0];
+    assert.equal(expenseRow.shop_id,shopId);assert.equal(Number(expenseRow.amount),40);
+    const after=await listFinancialMovements(pool,{shopId,accountId:cash,fromDate:day,toDate:day,offset:0,limit:100});
+    assert.equal(after.outflows,40);assert.equal(after.closing,260);
+    const legacyId='legacy-exp-'+id();
+    await pool.query("INSERT INTO manual_expenses(id,description,amount,date,category) VALUES($1,'Legacy CI',10,$2,'Other')",[legacyId,day]);
+    await initDbTables();
+    assert.equal((await pool.query('SELECT shop_id FROM manual_expenses WHERE id=$1',[legacyId])).rows[0].shop_id,null);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
