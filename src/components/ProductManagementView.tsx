@@ -16,6 +16,7 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { Product, ProductVariant, Role } from '../types';
+import { previewLegacyPackaging } from '../utils/legacyPackagingConversion';
 import { validateSharedStock, type SharedStockUnits } from '../utils/unitConversion';
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
 
@@ -246,13 +247,14 @@ export default function ProductManagementView({
   const [newProductMultipleUnits,setNewProductMultipleUnits]=useState(false);
   const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
   const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
+  const [legacyUnitId,setLegacyUnitId]=useState('');
   const [packagingBusy, setPackagingBusy] = useState(false);
   const [packagingEligibility,setPackagingEligibility]=useState<{eligible:boolean;reasons:string[];pilotEnabled:boolean}|null>(null);
   const [savedPackaging,setSavedPackaging]=useState('');
   const canActivatePackaging=['Super Admin','Store Manager'].includes(currentRole);
   const openPackaging = async (product: Product) => {
     setPackagingBusy(true);
-    setPackagingEligibility(null);setSavedPackaging('');
+    setPackagingEligibility(null);setSavedPackaging('');setLegacyUnitId('');
     try {
       const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
       const body = await response.json();
@@ -303,6 +305,11 @@ export default function ProductManagementView({
     }catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
   };
 
+  const conversionPreview=useMemo(()=>{
+    if(!packagingProduct || packagingProduct.sharedStockUnits || !legacyUnitId)return null;
+    try{return {result:previewLegacyPackaging({quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice,legacyUnitId,configuration:packaging}),error:''};}
+    catch(error){return {result:null,error:error instanceof Error?error.message:String(error)};}
+  },[packagingProduct,legacyUnitId,packaging]);
   const categories = Array.from(
     new Set([
       ...defaultCategories,
@@ -1487,6 +1494,21 @@ export default function ProductManagementView({
             </div>
             <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
             </fieldset>
+            {!packagingProduct.sharedStockUnits && packagingProduct.quantity>0 && <section className="rounded-lg border border-slate-300 p-3 space-y-2">
+              <h4 className="font-semibold text-sm">Existing stock conversion preview</h4>
+              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. This is a calculation only; no stock or history will change.</p>
+              <label className="block text-xs">Current stock unit<select className="w-full border rounded p-2" value={legacyUnitId} onChange={e=>setLegacyUnitId(e.target.value)}><option value="">Select current unit explicitly</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}</select></label>
+              {conversionPreview?.error && <p role="alert" className="text-xs text-rose-700">{conversionPreview.error}</p>}
+              {conversionPreview?.result && <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>Current stock<strong className="block">{conversionPreview.result.oldQuantity} {conversionPreview.result.legacyUnit}</strong></div>
+                <div>Converted stock<strong className="block">{conversionPreview.result.newQuantity} {conversionPreview.result.baseUnit}</strong></div>
+                <div>Current inventory value<strong className="block">Rs. {conversionPreview.result.valueBefore.toFixed(2)}</strong></div>
+                <div>Converted inventory value<strong className="block">Rs. {conversionPreview.result.valueAfter.toFixed(2)}</strong></div>
+                <div>Cost per base unit<strong className="block">Rs. {conversionPreview.result.newCostPrice.toFixed(2)}</strong></div>
+                <div>Converted reorder level<strong className="block">{conversionPreview.result.newReorderLevel}</strong></div>
+                <p className="col-span-2 text-amber-800">{conversionPreview.result.eligible?'Arithmetic checks passed. Actual conversion is not yet enabled.':conversionPreview.result.reasons.join(' ')}</p>
+              </div>}
+            </section>}
             {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
             <div className="flex flex-wrap justify-end gap-2">
               <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Close</button>
