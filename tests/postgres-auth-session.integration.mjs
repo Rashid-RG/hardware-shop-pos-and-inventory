@@ -39,6 +39,7 @@ test('real login, logout and password rotation revoke previous session tokens', 
       cwd: process.cwd(),
       env: {
         ...process.env, NODE_ENV: 'production', PORT: String(port),
+        PASSWORD_RECOVERY_ENABLED: 'false',
         JWT_SECRET: 'auth_ci_hex_721e5bfc1d3a6e094b9c503e88cc2247',
         ADMIN_PASSWORD: 'admin-CI-28-value-long',
         MANAGER_PASSWORD: 'manager-CI-28-value-long',
@@ -61,6 +62,15 @@ test('real login, logout and password rotation revoke previous session tokens', 
       await pause(350);
     }
     assert.ok(ready, 'POS server failed to start: ' + output.slice(-3000));
+
+    const recoveryStatus = await fetch(origin + '/api/auth/recovery-status');
+    assert.equal(recoveryStatus.status, 200);
+    assert.equal((await recoveryStatus.json()).emailEnabled, false);
+    const disabledRecovery = await fetch(origin + '/api/auth/recovery/request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(disabledRecovery.status, 503, 'Unconfigured email recovery must fail closed');
 
     const login = async (pass) => fetch(origin + '/api/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
