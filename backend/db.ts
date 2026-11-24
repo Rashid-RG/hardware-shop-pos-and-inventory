@@ -1301,7 +1301,7 @@ export const updateCustomerCreditLimit = async (customerId: string, shopId: stri
   if (!result.rowCount) throw new Error('Customer not found in this shop.');
 };
 
-export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
+export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       !Number.isSafeInteger(Math.round(p.amount * 100)) ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
@@ -1310,6 +1310,17 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(replaySafe){
+      // Serialize identical request IDs, including when the original invoice is already settled.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[p.id]);
+      const existing=await client.query('SELECT shop_id,customer_id,invoice_id,amount,date::text AS payment_date,payment_method,note,created_by,receipt_snapshot FROM customer_credit_payments WHERE id=$1',[p.id]);
+      const row=existing.rows[0];
+      if(row){
+        if(row.shop_id!==p.shopId||row.customer_id!==p.customerId||(row.invoice_id||null)!==(p.invoiceId||null)||Number(row.amount)!==p.amount||row.payment_date!==p.date||row.payment_method!==p.paymentMethod||(row.note||null)!==(p.note||null)||(row.created_by||null)!==(p.createdBy||null)||!row.receipt_snapshot)throw Error('Payment request ID already used for different details.');
+        await client.query('COMMIT');
+        return row.receipt_snapshot as NonNullable<CustomerCreditPayment['receiptSnapshot']>;
+      }
+    }
     // Match refund lock ordering: invoice first, then customer.
     let invoiceTotalCents=0;
     let invoiceNumber: string | undefined;
