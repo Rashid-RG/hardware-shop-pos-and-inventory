@@ -192,8 +192,7 @@ export default function POSView({
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>(restoredDraft?.discountMode === 'percent' ? 'percent' : 'amount');
   const [discountInput, setDiscountInput] = useState<string>(restoredDraft?.discountInput || '0');
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Cash');
-  const [cashReceived, setCashReceived] = useState<string>('');
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Credit Account');
   const [wholesaleMetaDraft, setWholesaleMetaDraft] = useState({
     transportCharges: '',
     deliveryCharges: '',
@@ -280,7 +279,7 @@ export default function POSView({
       try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{notify.error('Unable to clear the saved draft.');return;}
       setCart([]);setSelectedCustomer({id:'',name:'',phone:'',email:'',address:'',loyaltyBalance:0,purchaseCount:0});
       setSelectedSalesRepId('');setBillingCustomerName('');setBillingCustomerPhone('');setBillingCustomerAddress('');
-      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Cash');setCashReceived('');
+      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Credit Account');
       setWholesaleMetaDraft({transportCharges:'',deliveryCharges:'',warrantyInformation:'',dispatchMethod:'',vehicleNumber:'',deliveryNoteNumber:'',batchNumber:'',supplierReference:'',deliveryStatus:''});
       setIsReviewOpen(false);setReceiptModel(null);setEditingDescriptionKey(null);setDescriptionDraft('');
       setDraftCustomerId('');setDraftRepId('');setCustomerSearch('');setSetupDialog('customer');
@@ -623,9 +622,7 @@ export default function POSView({
       ? subtotal * Math.min(100, normalizedDiscountInput) / 100
       : normalizedDiscountInput));
   const { tax, total } = invoiceTotals(subtotal, taxConfig.taxRate, cashDiscount);
-  const numericCashReceived = Number(cashReceived) || 0;
-  const changeDue = paymentMethod === 'Cash' ? Math.max(0, Math.round((numericCashReceived - total) * 100) / 100) : 0;
-  const cashShortage = paymentMethod === 'Cash' && numericCashReceived < total;
+
   const creditLimit = Number(selectedCustomer.creditLimit || 0);
   const currentCreditBalance = Number(selectedCustomer.creditBalance || 0);
   const projectedCreditBalance = currentCreditBalance + total;
@@ -1140,10 +1137,8 @@ export default function POSView({
       notify.warning('Select the Sales Representative responsible for this invoice.');
       return;
     }
-    if (paymentMethod === 'Cash' && numericCashReceived < total) {
-      notify.warning(`Cash received must be at least ${formatMoney(total)}.`);
-      return;
-    }
+    if (paymentMethod === 'Credit Account' && !creditAccountAllowed) { notify.warning('Customer credit limit must cover this invoice.'); return; }
+    if (paymentMethod !== 'Credit Account' && !window.confirm('Confirm full payment of '+formatMoney(total)+' has already been received. Otherwise choose Pay later.')) return;
     if (!persistDraft(true)) {
       notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
       return;
@@ -1165,9 +1160,7 @@ export default function POSView({
           paymentMethod: paymentMethod,
           paymentStatus: paymentMethod === 'Credit Account'
             ? 'CREDIT SALE'
-            : ((Number(cashReceived || 0) <= 0 && paymentMethod === 'Cash')
-              ? 'UNPAID'
-              : ((paymentMethod === 'Cash' && Number(cashReceived || 0) < total) ? 'PARTIALLY PAID' : 'PAID')),
+            : 'PAID',
           wholesaleMeta: {
             invoiceDiscountMode: discountMode,
             invoiceDiscountPercent: discountMode === 'percent' ? Math.min(100, normalizedDiscountInput) : undefined,
@@ -1184,7 +1177,7 @@ export default function POSView({
               } : {}),
           },
           discountAmount: cashDiscount,
-          cashReceived: paymentMethod === 'Cash' ? numericCashReceived : undefined,
+          cashReceived: paymentMethod === 'Cash' ? total : undefined,
         }),
       });
 
@@ -1239,7 +1232,7 @@ export default function POSView({
         setCart([]);
         setDiscountMode('amount');
         setDiscountInput('0');
-        setCashReceived('');
+        setPaymentMethod('Credit Account');
         onRefreshDb(); // Reload stock amounts parent state
       } else {
         if (response.status >= 400 && response.status < 500) setCheckoutUncertain(false);
@@ -1814,7 +1807,7 @@ export default function POSView({
             className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-2 sm:px-5">
               <div><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Final review · no invoice saved yet</p>
-                <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & complete invoice</h2>
+                <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & issue invoice</h2>
                 <p className="mt-0.5 text-xs text-slate-600">{selectedCustomer.name} · {activeSalesReps.find(rep => rep.id === selectedSalesRepId)?.name || 'Representative not selected'}</p></div>
               <button type="button" aria-label="Close payment review" disabled={isSubmitting} onClick={() => setIsReviewOpen(false)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
@@ -1823,16 +1816,16 @@ export default function POSView({
               <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain lg:border-r lg:border-slate-200">
               <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
-                <div className="grid grid-cols-[minmax(0,1fr)_40px_95px_100px] gap-2 border-b border-slate-200 pb-2 text-[10px] font-semibold text-slate-500"><span>Product / description</span><span className="text-right">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span></div>
+                <div className="grid grid-cols-[minmax(0,1fr)_48px_36px_85px_95px] gap-2 border-b border-slate-200 pb-2 text-[10px] font-semibold text-slate-500"><span>Product / description</span><span>U/M</span><span className="text-right">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span></div>
                 <div className="divide-y divide-slate-100">
                   {cart.map(item => {
                     const line = getLinePricing(item);
-                    return <div key={getCartKey(item)} className="grid grid-cols-[minmax(0,1fr)_40px_95px_100px] items-start gap-2 py-2 text-xs text-slate-700">
+                    return <div key={getCartKey(item)} className="grid grid-cols-[minmax(0,1fr)_48px_36px_85px_95px] items-start gap-2 py-2 text-xs text-slate-700">
                       <span className="min-w-0 flex-1">
                         <span className="block break-words font-semibold">{item.product.name}</span>
                         {item.invoiceDescription && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{item.invoiceDescription}</span>}
                       </span>
-                      <span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
+                      <span className="break-words">{item.product.sharedStockUnits?.units.find(u=>u.id===item.sellingUnitId)?.label || (item.variantUnit && item.variantUnit!=='Unit' ? item.variantUnit : inferUnitLabel(item.product.name))}</span><span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
                     </div>;
                   })}
                 </div>
@@ -1920,14 +1913,15 @@ export default function POSView({
               </div>
         {/* Payment and invoice totals */}
         <div className="min-w-0 space-y-2 bg-slate-50/60 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain">
-          <h3 className="text-sm font-bold text-slate-900">Payment summary</h3>
+          <h3 className="text-sm font-bold text-slate-900">Invoice & payment arrangement</h3>
                     {/* Payment Method Selector Grid */}
           <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
             {[
-              { id: 'Cash', label: 'Cash', icon: DollarSign },
+              { id: 'Credit Account', label: 'Pay later', icon: BookUser },
+              { id: 'Cash', label: 'Paid cash', icon: DollarSign },
               { id: 'Credit Card', label: 'Card', icon: CreditCard },
               { id: 'QR Code', label: 'QR Pay', icon: QrCode },
-              { id: 'Credit Account', label: 'On Credit', icon: BookUser },
+              { id: 'Bank Transfer', label: 'Bank transfer', icon: DollarSign },
             ].map((pm) => {
               const Icon = pm.icon;
               const isSel = paymentMethod === pm.id;
@@ -1937,9 +1931,7 @@ export default function POSView({
                   id={`paymethod-${pm.id.replace(/\s+/g, '-').toLowerCase()}`}
                   onClick={() => {
                     setPaymentMethod(pm.id as any);
-                    if (pm.id === 'Cash' && (!cashReceived || Number(cashReceived) === 0)) {
-                      setCashReceived(total.toFixed(2));
-                    }
+
                   }}
                   className={`py-1.5 rounded-lg text-xs font-sans font-medium flex items-center justify-center gap-1 border transition-all ${
                     isSel
@@ -2029,31 +2021,9 @@ export default function POSView({
               <span className="tabular-nums text-amber-300">{formatMoney(total)}</span>
             </div>
 
-            {paymentMethod === 'Cash' && (
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                  <span>Cash Received ({currencySymbol})</span>
-                  <span className="font-semibold text-emerald-700 tabular-nums text-sm">Change Due: {formatMoney(changeDue)}</span>
-                </div>
-                <div className="flex items-stretch gap-2">
-                <input
-                  aria-label="Cash received in rupees"
-                  id="pos-cash-received-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashReceived}
-                  onChange={(e) => setCashReceived(e.target.value)}
-                  placeholder={total.toFixed(2)}
-                  className={`min-w-0 flex-1 border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
-                />
-                <button type="button" disabled={isSubmitting} onClick={() => setCashReceived(total.toFixed(2))} className="shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-slate-900 hover:bg-amber-100 disabled:opacity-50">Exact cash</button>
-                </div>
-                {cashShortage && (
-                  <p className="text-[11px] text-rose-600 font-medium">Cash received is less than the bill total.</p>
-                )}
-              </div>
-            )}
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+              {paymentMethod==='Credit Account' ? <><strong>Payment due: {formatMoney(total)}</strong><p className="mt-1">Issue the invoice now and record payments later in the customer account. No cash is collected at this step.</p></> : <><strong>Paid in full: {formatMoney(total)}</strong><p className="mt-1">Select this arrangement only if the full amount has already been received.</p></>}
+            </div>
           </div>
 
               </div>
@@ -2064,10 +2034,10 @@ export default function POSView({
                         {/* Checkout Submit Trigger */}
           <button
             id="pos-pay-trigger" type="button"
-            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)}
             onClick={handleCheckout}
             className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
-              cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
+              cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 : 'bg-amber-400 border border-amber-400 text-slate-900 hover:bg-amber-500'
             }`}
