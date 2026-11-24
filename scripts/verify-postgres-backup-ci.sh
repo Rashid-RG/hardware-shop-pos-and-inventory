@@ -59,7 +59,7 @@ done
 # Compare full sorted JSON rows for every ARS table present in the source DB.
 ars_tables=(
   ars_import_shipments ars_landed_cost_approvals ars_business_partners ars_partner_capital_entries
-  ars_receipt_batches ars_receipt_batch_items
+  ars_receipt_batches ars_receipt_batch_items ars_receipt_cost_entries
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
   ars_customer_cheques ars_customer_cheque_events ars_financial_reconciliations
@@ -89,5 +89,16 @@ for database in hardware_pos_ci hardware_pos_restore_ci; do
       AND EXISTS(SELECT 1 FROM purchase_order_items WHERE selling_unit_id IS NOT NULL AND base_units_per_purchase_unit > 1)
       THEN 'shared-stock-fixtures-present' ELSE 'missing' END" | grep -qx 'shared-stock-fixtures-present'
   echo "Shared-stock restoration fixtures verified: $database"
+done
+# Require populated approval and receipt costing fixtures on both sides.
+for database in hardware_pos_ci hardware_pos_restore_ci; do
+  pg psql -h 127.0.0.1 -U postgres -d "$database" -v ON_ERROR_STOP=1 -Atc "
+    SELECT CASE WHEN EXISTS(
+      SELECT 1 FROM ars_landed_cost_approvals a
+      JOIN ars_receipt_cost_entries c ON c.approval_id=a.id AND c.shop_id=a.shop_id
+      GROUP BY a.id,a.landed_total
+      HAVING COUNT(*)>=2 AND SUM(c.received_cost)=a.landed_total
+    ) THEN 'landed-cost-fixtures-present' ELSE 'missing' END" | grep -qx 'landed-cost-fixtures-present'
+  echo "Landed-cost restoration fixtures verified: $database"
 done
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
