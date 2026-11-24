@@ -18,9 +18,12 @@ export function reportBrand(settings:StoreSettings) {
   return {name:arsDisplayName(shop?.name || settings.storeName || 'ARS Distributor'), address:shop?.address || settings.address || '', phone:shop?.phone || settings.phone || '', logo:isArsPrintBrand(shop?.name || settings.storeName || 'ARS Distributor') ? arsPrintLogoUrl : shop?.logoUrl || settings.logoUrl || ''};
 }
 const escapeHtml=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
-export function saveReportCsv(report:BusinessReport, settings?:StoreSettings) {
+export function buildReportCsv(report:BusinessReport, settings?:StoreSettings) {
   const cell=(value:ReportCell)=>'"'+(typeof value==='string'&&/^[\s\u0000-\u001f]*[=+@-]/.test(value)?"'"+value:String(value??'')).replace(/"/g,'""')+'"';
-  downloadReport(new Blob(['\uFEFF'+[...(settings ? [['Company',reportBrand(settings).name]] : []),...(report.csvPreamble || []),report.headers,...report.rows].map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),report.filename+'.csv');
+  return new Blob(['\uFEFF'+[...(settings ? [['Company',reportBrand(settings).name]] : []),...(report.csvPreamble || []),report.headers,...report.rows].map(r=>r.map(cell).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
+}
+export function saveReportCsv(report:BusinessReport, settings?:StoreSettings) {
+  downloadReport(buildReportCsv(report,settings),report.filename+'.csv');
 }
 export function downloadReport(blob:Blob,filename:string) {
   const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
