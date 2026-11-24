@@ -1301,7 +1301,7 @@ export const updateCustomerCreditLimit = async (customerId: string, shopId: stri
   if (!result.rowCount) throw new Error('Customer not found in this shop.');
 };
 
-export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false) => {
+export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replaySafe = false, destinationAccountId?: string) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       !Number.isSafeInteger(Math.round(p.amount * 100)) ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
@@ -1317,6 +1317,10 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
       const row=existing.rows[0];
       if(row){
         if(row.shop_id!==p.shopId||row.customer_id!==p.customerId||(row.invoice_id||null)!==(p.invoiceId||null)||Number(row.amount)!==p.amount||row.payment_date!==p.date||row.payment_method!==p.paymentMethod||(row.note||null)!==(p.note||null)||(row.created_by||null)!==(p.createdBy||null)||!row.receipt_snapshot)throw Error('Payment request ID already used for different details.');
+        if(destinationAccountId){
+          const movement=await client.query("SELECT account_id FROM ars_financial_movements WHERE shop_id=$1 AND movement_kind='Customer Collection' AND source_id=$2",[p.shopId,p.id]);
+          if(movement.rows[0]?.account_id!==destinationAccountId)throw Error('Payment request ID already used for a different financial destination.');
+        }
         await client.query('COMMIT');
         return row.receipt_snapshot as NonNullable<CustomerCreditPayment['receiptSnapshot']>;
       }
@@ -1374,6 +1378,13 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment, replayS
     if(p.invoiceId){
       const settled=invoicePaidCents+Math.round(p.amount*100)===invoiceTotalCents;
       await client.query('UPDATE sales_transactions SET payment_status=$1 WHERE id=$2 AND shop_id=$3',[settled?'PAID':'PARTIALLY PAID',p.invoiceId,p.shopId]);
+    }
+    if(destinationAccountId){
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[p.shopId,destinationAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!kind||!((p.paymentMethod==='Cash'&&['Office Cash','Representative Cash'].includes(kind))||(p.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active financial account matching the payment method.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+        VALUES($1,$2,$3,$4,'Customer Collection',$5,$6,$7,$8)`,['collection-'+p.id,p.shopId,destinationAccountId,p.amount,p.id,p.createdBy||'Unknown',p.date,p.note||null]);
     }
     await client.query('COMMIT');
     return receiptSnapshot;
