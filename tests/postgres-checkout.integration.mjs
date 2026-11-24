@@ -18,6 +18,8 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
   const variantId = 'ci-variant-' + suffix;
   try {
     await initDbTables();
+    const {initFinancialAccounts}=await import('../backend/financialAccounts.ts');
+    await initFinancialAccounts(pool);
     const variants = [{
       id: variantId, name: '50 mm', unit: 'Piece',
       sku: 'CI-50-' + suffix, barcode: 'ci-' + suffix,
@@ -124,7 +126,7 @@ test('real PostgreSQL checkout commits exact variant, credit and invoice atomica
     );
     assert.equal(returnLogs.rows[0].count, 1);
 
-    const {initFinancialAccounts,createFinancialAccount,listFinancialAccounts,recordFinancialTransfer}=await import('../backend/financialAccounts.ts');
+    const {createFinancialAccount,listFinancialAccounts,recordFinancialTransfer}=await import('../backend/financialAccounts.ts');
     await initFinancialAccounts(pool);
     const cash=randomUUID(),bank=randomUUID(),foreign=randomUUID(),day='2026-11-24';
     for(const [id,name,kind,scope] of [[cash,'Checkout cash '+suffix,'Office Cash',shopId],[bank,'Checkout bank '+suffix,'Bank',shopId],[foreign,'Other bank '+suffix,'Bank','other-shop']])await createFinancialAccount(pool,{id,shopId:scope,name,kind,recordedBy:'CI Manager'});
