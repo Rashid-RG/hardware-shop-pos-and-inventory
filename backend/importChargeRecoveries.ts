@@ -53,6 +53,7 @@ export async function recordImportChargeRecovery(db:Pool,i:Input){
  const used=(await c.query('SELECT COALESCE(sum(amount),0)::text AS total,COALESCE(sum(amount) FILTER(WHERE charge_kind=$3),0)::text AS category,MAX(recovery_date)::text AS latest FROM ars_gl_import_charge_recoveries WHERE shop_id=$1 AND return_id=$2',[i.shopId,i.returnId,i.chargeKind])).rows[0];
  if(used.latest&&i.date<used.latest)throw Error('Recovery date precedes later recovery.');
  if(amount>recoveryLimit(charges,loss,moneyCents(used.total),categoryCharges,moneyCents(used.category)))throw Error('Recovery exceeds documented available import charge loss.');
+ await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[JSON.stringify(['import-recovery-document',i.shopId,i.chargeKind,payer.toLowerCase(),reference.toLowerCase()])]);
  const duplicate=(await c.query('SELECT 1 FROM ars_gl_import_charge_recoveries WHERE shop_id=$1 AND charge_kind=$2 AND lower(trim(payer))=lower($3) AND lower(trim(document_reference))=lower($4) LIMIT 1',[i.shopId,i.chargeKind,payer,reference])).rowCount;
  if(duplicate)throw Error('Recovery document already used.');
  const account=(await c.query("SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active FOR UPDATE",[i.shopId,i.accountId])).rows[0];
