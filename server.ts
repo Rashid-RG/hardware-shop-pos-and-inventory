@@ -3323,6 +3323,67 @@ app.get('/api/backup/local-download', requireRole(['Super Admin']), async (req, 
   } finally { manualBackupRunning = false; }
 });
 
+// Fixed host commands only; never accept a command, remote name or executable from a request.
+const runBackupTool = (file: string, args: string[]) => new Promise<string>((resolve, reject) => {
+  execFile(file, args, { cwd: process.cwd(), windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout));
+});
+app.get('/api/backup/cloud-readiness', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.json({ ready: false, installed: false, configured: false });
+  try {
+    const types = await runBackupTool('rclone', ['listremotes', '--long']);
+    const configured = /^ars-drive:\s+drive\s*$/m.test(types) && /^ars-encrypted:\s+crypt\s*$/m.test(types);
+    res.json({ installed: true, configured, ready: configured });
+  } catch { res.json({ installed: false, configured: false, ready: false }); }
+});
+app.post('/api/backup/cloud-run', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Backup tools are disabled.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Another backup operation is running.' });
+  manualBackupRunning = true;
+  try {
+    await runBackupTool(process.execPath, [path.resolve('scripts/drive-backup.mjs')]);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'Encrypted cloud backup failed. Check the Google Drive setup and backup status.' }); }
+  finally { manualBackupRunning = false; }
+});
+app.post('/api/backup/cloud-schedule', requireRole(['Super Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Backup tools are disabled.' });
+  if (req.body?.confirmation !== 'ENABLE DAILY BACKUP') return res.status(400).json({ error: 'Confirmation required.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Another backup operation is running.' });
+  manualBackupRunning = true;
+  try {
+    const types = await runBackupTool('rclone', ['listremotes', '--long']);
+    if (!/^ars-drive:\s+drive\s*$/m.test(types) || !/^ars-encrypted:\s+crypt\s*$/m.test(types)) throw new Error('Configure remotes');
+    if (process.platform === 'win32') await runBackupTool('powershell.exe', ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.resolve('scripts/install-drive-backup.ps1'),'-At','20:00']);
+    else await runBackupTool('bash', [path.resolve('scripts/mint/install-drive-backup.sh')]);
+    res.json({ success: true });
+  } catch { res.status(500).json({ error: 'Schedule installation failed. Check the host user and Drive configuration.' }); }
+  finally { manualBackupRunning = false; }
+});
+app.get('/api/backup/local-package', requireRole(['Super Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Backup tools are disabled.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Another backup operation is running.' });
+  manualBackupRunning = true;
+  let temporary: string | undefined;
+  try {
+    const name = String(req.query.archive || '');
+    const members = await backupCompanions(name);
+    await verifyManagedBackup(name);
+    temporary = await fs.promises.mkdtemp(path.join(backupRoot, '.package-'));
+    const output = path.join(temporary, name.slice(0,-5) + '.tar');
+    // bsdtar on supported Windows versions; tar on Linux. No shell expansion.
+    await runBackupTool('tar', ['-cf', output, '-C', backupRoot, ...members]);
+    await new Promise<void>((resolve, reject) => res.download(output, path.basename(output), error => error ? reject(error) : resolve()));
+  } catch { if (!res.headersSent) res.status(500).json({ error: 'Package creation or download failed.' }); else res.end(); }
+  finally {
+    if (temporary) await fs.promises.rm(temporary, {recursive:true, force:true}).catch(() => {});
+    manualBackupRunning = false;
+  }
+});
+
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
