@@ -256,7 +256,7 @@ export default function ProductManagementView({
       const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || 'Unable to load selling units.');
-      setSavedPackaging(body.configuration ? JSON.stringify(body.configuration) : '');
+      setSavedPackaging(product.sharedStockUnits ? JSON.stringify(product.sharedStockUnits) : body.configuration ? JSON.stringify(body.configuration) : '');
       setPackaging(product.sharedStockUnits || body.configuration || {baseUnit:'Piece',units:[{id:crypto.randomUUID(),label:'Piece',baseUnits:1,sellingPrice:product.sellingPrice}]});
       setPackagingProduct(product);
     } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
@@ -290,6 +290,16 @@ export default function ProductManagementView({
     setPackagingBusy(true);
     try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})});const body=await response.json();if(!response.ok)throw Error(body.error);notify.success('Shared stock activated. Reloading product data.');window.location.reload();}
     catch(error){notify.error(String(error));}finally{setPackagingBusy(false);setPackagingEligibility(null);}
+  };
+
+  const saveActivePrices=async()=>{
+    if(!packagingProduct?.sharedStockUnits || !canActivatePackaging || packagingBusy)return;
+    setPackagingBusy(true);
+    try{
+      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-prices',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected:JSON.parse(savedPackaging),configuration:packaging})});
+      const body=await response.json();if(!response.ok)throw Error(body.error||'Price update failed.');
+      notify.success('Packaging prices updated. Reloading product data.');window.location.reload();
+    }catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
   };
 
   const categories = Array.from(
@@ -1455,27 +1465,28 @@ export default function ProductManagementView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
             <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
-            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — read only." : "Save a draft, then check eligibility. Activation is restricted to the verified pilot."}</p>
-            <fieldset disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="space-y-4">
+            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — packaging factors protected. Managers may edit prices." : "Save a draft, then check eligibility. Activation is restricted to the verified pilot."}</p>
+            <fieldset disabled={packagingBusy || (!!packagingProduct.sharedStockUnits && !canActivatePackaging)} className="space-y-4">
             <label className="block text-sm">Base stock unit
-              <input className="block w-full border rounded p-2" value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
+              <input className="block w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
             </label>
             <div className="space-y-2">
               {packaging.units.map((unit,index)=>(
                 <div key={unit.id} className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end border rounded p-2">
-                  <label className="text-xs">U/M<input className="w-full border rounded p-2" value={unit.label} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,label:e.target.value}:u)}))}/></label>
-                  <label className="text-xs">Base units<input type="number" min="1" step="1" className="w-full border rounded p-2" value={unit.baseUnits} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,baseUnits:Number(e.target.value)}:u)}))}/></label>
+                  <label className="text-xs">U/M<input className="w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={unit.label} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,label:e.target.value}:u)}))}/></label>
+                  <label className="text-xs">Base units<input type="number" min="1" step="1" className="w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={unit.baseUnits} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,baseUnits:Number(e.target.value)}:u)}))}/></label>
                   <label className="text-xs">Selling price<input type="number" min="0" step="0.01" className="w-full border rounded p-2" value={unit.sellingPrice} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,sellingPrice:Number(e.target.value)}:u)}))}/></label>
-                  <button type="button" disabled={packagingBusy} className="text-xs text-rose-700 p-2" onClick={()=>setPackaging(old=>({...old,units:old.units.filter(u=>u.id!==unit.id)}))}>Remove</button>
+                  <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="text-xs text-rose-700 p-2" onClick={()=>setPackaging(old=>({...old,units:old.units.filter(u=>u.id!==unit.id)}))}>Remove</button>
                 </div>
               ))}
             </div>
-            <button type="button" disabled={packagingBusy || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
+            <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
             </fieldset>
             {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
             <div className="flex flex-wrap justify-end gap-2">
               <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Close</button>
               {!packagingProduct.sharedStockUnits && canActivatePackaging && <><button type="button" disabled={packagingBusy || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2" onClick={checkPackaging}>Check eligibility</button><button type="button" disabled={packagingBusy || !packagingEligibility?.eligible || !packagingEligibility?.pilotEnabled || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2 disabled:opacity-40" onClick={activateSavedPackaging}>Activate shared stock</button></>}
+              {packagingProduct.sharedStockUnits && canActivatePackaging && <button type="button" disabled={packagingBusy || savedPackaging===JSON.stringify(packaging)} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={saveActivePrices}>Save prices</button>}
               <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
             </div>
           </section>
