@@ -9,7 +9,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6174,6 +6174,14 @@ app.post('/api/representative-accounts',requireRole(['Super Admin','Store Manage
     if(['Invalid representative assignment.','Select a registered sales representative in this shop.','Select an active representative cash account in this shop.','Representative or cash account already assigned. Reconcile before reassignment.','Assign a new cash account with no recorded movements; historical balances require reconciliation.'].includes(message))return res.status(409).json({error:message});
     console.error('Representative assignment failed',error);return res.status(500).json({error:'Unable to confirm assignment. Reload or retry the same selection.'});
   }
+});
+app.get('/api/financial-cash-flow',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Cash flow access denied.'});
+ const {fromDate,toDate}=req.query;
+ if(typeof fromDate!=='string'||typeof toDate!=='string'||toDate>reportDay(new Date()))return res.status(400).json({error:'Select a valid historical business period.'});
+ try{const result=await financialCashFlow(pool,scope.shopId,fromDate,toDate);res.setHeader('Cache-Control','no-store');return res.json(result);}
+ catch(error){if(error instanceof Error&&error.message==='Invalid cash flow period.')return res.status(400).json({error:error.message});console.error('Cash flow failed',error);return res.status(500).json({error:'Unable to load cash flow.'});}
 });
 app.get('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   const {activeShopId}=getActiveShopContext(db,req);
