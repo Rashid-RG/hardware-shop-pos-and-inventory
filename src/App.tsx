@@ -529,7 +529,7 @@ export default function App() {
     await handleRefreshDb();
   };
 
-  const handleAddCreditPayment = async (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => {
+  const handleAddCreditPayment = async (payload: { requestId: string; customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => {
     const res = await apiRequest(`/api/customers/${payload.customerId}/credit-payment`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -1280,6 +1280,7 @@ export default function App() {
                   onUpdateCustomer={handleUpdateCustomer}
                   onAddEmployee={handleAddEmployee}
                   onSetCreditLimit={handleSetCreditLimit}
+                  paymentDraftOwner={authUser.email}
                   onAddCreditPayment={handleAddCreditPayment}
                   onFetchPaymentReceipt={fetchPaymentReceipt}
                 />
