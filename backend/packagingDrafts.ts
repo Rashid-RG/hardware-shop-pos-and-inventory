@@ -104,3 +104,25 @@ export async function activatePackaging(pool: Pool, shopId: string, productId: s
   } catch(error) { await client.query('ROLLBACK'); throw error; }
   finally {client.release();}
 }
+
+/** Only prices may change. Require the previously observed configuration to prevent lost updates. */
+export async function updatePackagingPrices(pool: Pool, shopId: string, productId: string, actor: string, role: string, expected: unknown, proposed: unknown) {
+  if (!['Super Admin','Store Manager'].includes(role)) throw new Error('Manager authorization required.');
+  const before=parsePackagingDraft(expected), after=parsePackagingDraft(proposed);
+  const canonical=(config:SharedStockUnits)=>JSON.stringify({baseUnit:config.baseUnit,units:[...config.units].sort((a,b)=>a.id.localeCompare(b.id))});
+  const structure=(config:SharedStockUnits)=>canonical({...config,units:config.units.map(u=>({...u,sellingPrice:0}))});
+  if(structure(before)!==structure(after))throw new Error('Only selling prices may be changed.');
+  if(after.units.some(u=>u.sellingPrice>9999999999.99 || Math.abs(u.sellingPrice*100-Math.round(u.sellingPrice*100))>0.00001))throw new Error('Prices must fit the currency range and have at most two decimal places.');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query('SELECT shared_stock_units,status FROM products WHERE id=$1 AND shop_id=$2 FOR UPDATE',[productId,shopId]);
+    const row=result.rows[0];
+    if(!row?.shared_stock_units || row.status==='Inactive')throw new Error('Active shared-stock product required.');
+    const current=parsePackagingDraft(row.shared_stock_units);
+    if(canonical(current)!==canonical(before))throw new Error('Packaging prices changed. Reload before saving.');
+    await client.query('UPDATE products SET shared_stock_units=$1::jsonb, selling_price=$2,updated_at=NOW() WHERE id=$3 AND shop_id=$4',[JSON.stringify(after),after.units.find(u=>u.baseUnits===1)!.sellingPrice,productId,shopId]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Updated Packaging Prices',$5)`,['packaging-price-'+randomUUID(),shopId,actor,role,JSON.stringify({productId,before:current.units.map(u=>({id:u.id,price:u.sellingPrice})),after:after.units.map(u=>({id:u.id,price:u.sellingPrice}))})]);
+    await client.query('COMMIT');return after;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
