@@ -134,6 +134,7 @@ export interface CartItem {
 }
 
 export interface SalesTransaction {
+  creditDueDate?: string;
   id: string;
   shopId?: string;
   invoiceNumber: string;
