@@ -1,3 +1,5 @@
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 import React, { useState } from 'react';
 import { notify } from '../utils/notifications';
 import {
@@ -12,7 +14,9 @@ import {
 } from 'lucide-react';
 import { CashShift, SalesTransaction } from '../types';
 
+import type { StoreSettings } from '../types';
 interface CashDrawerViewProps {
+  taxConfig?: StoreSettings;
   cashShifts: CashShift[];
   transactions: SalesTransaction[];
   authToken: string;
@@ -23,7 +27,7 @@ function fmt(n: number) {
   return `Rs.${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function CashDrawerView({ cashShifts, transactions, authToken, onRefreshDb }: CashDrawerViewProps) {
+export default function CashDrawerView({ taxConfig, cashShifts, transactions, authToken, onRefreshDb }: CashDrawerViewProps) {
   const authFetch = (url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers || {});
     headers.set('Authorization', `Bearer ${authToken}`);
@@ -105,6 +109,7 @@ export default function CashDrawerView({ cashShifts, transactions, authToken, on
         <p className="text-xs text-slate-500 mt-0.5">Manage opening/closing of cash drawer shifts and track cash variances.</p>
       </div>
 
+      {taxConfig&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Closed cash shift reconciliation',filename:'ars-cash-shifts',period:'All closed shifts available to this workspace',headers:['Cashier','Opened','Closed','Opening float (LKR)','Expected cash (LKR)','Closing cash (LKR)','Difference (LKR)','Notes'],moneyColumns:[3,4,5,6],rows:closedShifts.map(s=>[s.cashierName,s.openedAt,s.closedAt||'',s.openingFloat,s.expectedCash??'',s.closingCash??'',s.cashDifference??'',s.notes||'']),summary:[{label:'Closed shifts',value:closedShifts.length},{label:'Recorded net variance (LKR)',value:closedShifts.reduce((a,s)=>a+(s.cashDifference??0),0)}]})}/>}
       {/* Current shift card */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className={`rounded-xl border p-6 shadow-xs ${openShift ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100'}`}>
