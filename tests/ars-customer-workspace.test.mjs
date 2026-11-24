@@ -57,9 +57,14 @@ test('customer contact editing is a dedicated manager-only modal', () => {
 });
 
 test('customer directory and customer file export complete filtered results', () => {
-  assert.match(customer, /filteredCustomers\.map\(\(customer\) => \[/);
-  assert.match(customer, /historyRows\.map\(\(row\) => \[/);
-  assert.match(customer, /Export all matching customers \(CSV\)/);
-  assert.match(customer, /Export filtered statement \(CSV\)/);
-  assert.match(customer, /safe\.replace\(\/"\/g, '""'\)/);
+  const engine = readFileSync(new URL('../src/utils/businessReport.ts', import.meta.url), 'utf8');
+  const menu = readFileSync(new URL('../src/components/ReportExportMenu.tsx', import.meta.url), 'utf8');
+  assert.match(customer, /rows:filteredCustomers\.map/);
+  assert.match(customer, /rows:historyRows\.map/);
+  assert.match(customer, /report=\{customerDirectoryReport\}/);
+  assert.match(customer, /report=\{customerStatementReport\}/);
+  assert.match(menu, /saveReportCsv\(data\)/);
+  assert.ok(engine.includes('...report.rows'));
+  assert.ok(engine.includes('[=+@-]'));
+  assert.ok(engine.includes('.replace(/"/g,\'""\')'));
 });
