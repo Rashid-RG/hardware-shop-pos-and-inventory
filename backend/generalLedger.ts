@@ -151,6 +151,48 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_opening_proposal_immutable ON ars_gl_opening_proposals;
  CREATE TRIGGER ars_gl_opening_proposal_immutable BEFORE UPDATE OR DELETE ON ars_gl_opening_proposals
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_opening_reviews(
+  shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('Approved','Rejected')),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  reviewed_by TEXT NOT NULL,reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,proposal_id) REFERENCES ars_gl_opening_proposals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_opening_review_immutable ON ars_gl_opening_reviews;
+ CREATE TRIGGER ars_gl_opening_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_opening_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_account_mappings(
+  shop_id TEXT NOT NULL,mapping_kind TEXT NOT NULL,source_id TEXT NOT NULL,
+  account_code TEXT NOT NULL,evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,mapping_kind,source_id),
+  FOREIGN KEY(shop_id,account_code) REFERENCES ars_gl_accounts(shop_id,code)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_mapping_immutable ON ars_gl_account_mappings;
+ CREATE TRIGGER ars_gl_mapping_immutable BEFORE UPDATE OR DELETE ON ars_gl_account_mappings
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
+  shop_id TEXT NOT NULL,through_date DATE NOT NULL,
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  closed_by TEXT NOT NULL,closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,through_date)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_period_immutable ON ars_gl_period_closures;
+ CREATE TRIGGER ars_gl_period_immutable BEFORE UPDATE OR DELETE ON ars_gl_period_closures
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE OR REPLACE FUNCTION ars_gl_require_open_period() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('ars-gl-period:'||NEW.shop_id,0));
+  IF EXISTS(SELECT 1 FROM ars_gl_period_closures WHERE shop_id=NEW.shop_id AND through_date>=NEW.posting_date) THEN
+   RAISE EXCEPTION 'Accounting period is closed' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_period_guard ON ars_gl_journals;
+ CREATE TRIGGER ars_gl_period_guard BEFORE INSERT ON ars_gl_journals
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_require_open_period();
  CREATE INDEX IF NOT EXISTS ars_gl_opening_proposals_shop ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
