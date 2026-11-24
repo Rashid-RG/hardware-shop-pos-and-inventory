@@ -1,6 +1,8 @@
 [Unit]
 Description=Back up ARS and verify the encrypted Google Drive copy
 
+OnFailure=ars-drive-backup-failed.service
+
 [Service]
 Type=oneshot
 WorkingDirectory=%h/.local/share/ars-hardware/project

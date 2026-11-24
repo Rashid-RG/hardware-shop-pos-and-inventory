@@ -20,15 +20,17 @@ def validate():
     run("rclone","lsd","ars-encrypted:","--crypt-remote","ars-drive:ARS-Backups",stdout=subprocess.DEVNULL)
     print("Encrypted remote is accessible. Upload and recovery tests are still required.")
 
-def manage(action):
+def manage(action, daily_time=None):
     if os.geteuid()==0:
         raise ValueError("Run as the desktop user.")
+    if daily_time is not None and (action != "enable" or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", daily_time)):
+        raise ValueError("Enter a daily backup time between 00:00 and 23:59.")
     project=(STATE/"project").resolve(strict=True)
     if action=="validate":
         validate()
     elif action=="enable":
         validate()
-        run("bash",str(project/"scripts/mint/install-drive-backup.sh"))
+        run("bash",str(project/"scripts/mint/install-drive-backup.sh"), *([daily_time] if daily_time else []))
     elif action=="disable":
         run("systemctl","--user","disable","--now",TIMER)
         print("Scheduled backups disabled. Existing backups are preserved.")
@@ -45,7 +47,8 @@ if __name__=="__main__":
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action",choices=["validate","enable","disable","backup"])
+    parser.add_argument("--daily-time", metavar="HH:MM")
     args=parser.parse_args()
-    try: manage(args.action)
+    try: manage(args.action, args.daily_time)
     except (OSError,ValueError,subprocess.SubprocessError) as error:
         sys.exit("Cloud backup action failed: "+str(error))

@@ -173,17 +173,27 @@ def main():
                 if selected and dialog("--question","--no-markup","--text=Verify and restore this backup in a disposable isolated PostgreSQL instance? This does not replace the live database.").returncode==0:
                     execute(project,"disaster-recovery-test.py",selected)
             elif action=="Google Drive backup setup":
-                option=dialog("--list","--no-markup","--text=Google Drive authorization and encryption must be configured before enabling backups. Keep the encryption recovery credentials in a secure separate location.","--column=Action","--width=640","--height=360","Configuration instructions","Validate encrypted connection","Enable daily backup at 8 PM","Disable daily backup","Back up now","Return")
+                option=dialog("--list","--no-markup","--text=Google Drive authorization and encryption must be configured before enabling backups. Keep the encryption recovery credentials in a secure separate location.","--column=Action","--width=640","--height=360","Configuration instructions","Validate encrypted connection","Set daily backup time","Disable daily backup","Back up now","Return")
                 if option.returncode!=0: continue
                 selected=option.stdout.strip()
                 if selected=="Configuration instructions":
                     notice("Ask RS Nextward to configure rclone on this computer: ars-drive must be a Google Drive remote, and ars-encrypted must be a crypt remote backed by ars-drive:ARS-Backups. Authorize your own Google account. Keep the encryption password and salt securely offline. Never send them in support logs.")
                 elif selected=="Validate encrypted connection":
                     execute(project,"cloud-backup-control.py","validate")
-                elif selected in ("Enable daily backup at 8 PM","Disable daily backup","Back up now"):
-                    command={"Enable daily backup at 8 PM":"enable","Disable daily backup":"disable","Back up now":"backup"}[selected]
+                elif selected in ("Set daily backup time","Disable daily backup","Back up now"):
+                    command={"Set daily backup time":"enable","Disable daily backup":"disable","Back up now":"backup"}[selected]
+                    schedule = []
+                    if command == "enable":
+                        answer = dialog("--entry", "--text=Daily backup time on this computer (24-hour HH:MM)", "--entry-text=20:00")
+                        if answer.returncode != 0: continue
+                        daily_time = answer.stdout.strip()
+                        if not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", daily_time):
+                            notice("Enter a time between 00:00 and 23:59.", True)
+                            continue
+                        schedule = ["--daily-time", daily_time]
+                        selected = "Enable daily backup at " + daily_time
                     if dialog("--question","--no-markup","--text=Confirm: "+selected+"? Enabling or running backups sends encrypted business backup files to your configured Google Drive account.").returncode==0:
-                        execute(project,"cloud-backup-control.py",command)
+                        execute(project,"cloud-backup-control.py",command,*schedule)
             elif action=="View backup history":
                 view_history(project/"backups/drive-history","cloud")
             elif action=="View recovery reports":

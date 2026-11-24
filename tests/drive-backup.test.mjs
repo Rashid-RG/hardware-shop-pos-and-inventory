@@ -18,13 +18,18 @@ test('encrypted backup verifies the whole set and can be downloaded', async t =>
   const cloud = join(dir, 'encrypted');
   const download = join(dir, 'download');
   await mkdir(local);
-  const stem = 'ars-sample-20261124-with-uploads';
+  const stem = 'ars-mint-20261124-v2-with-uploads';
   const name = stem + '.dump';
   for (const file of [name, stem + '-uploads.zip']) {
     await writeFile(join(local, file), 'test payload ' + file);
     const hash = createHash('sha256').update(await readFile(join(local, file))).digest('hex');
     await writeFile(join(local, file + '.sha256'), hash + '  ' + file);
   }
+  const dumpDigest = createHash('sha256').update(await readFile(join(local, name))).digest('hex');
+  const manifestName = stem + '.manifest.json';
+  const manifest = JSON.stringify({ version: 1, archive: name, dumpSha256: dumpDigest, tables: {} });
+  await writeFile(join(local, manifestName), manifest);
+  await writeFile(join(local, manifestName + '.sha256'), createHash('sha256').update(manifest).digest('hex') + '  ' + manifestName);
   const config = join(dir, 'rclone.conf');
   const pass = (await exec('rclone', ['obscure', 'disposable-test-password'])).stdout.trim();
   await writeFile(config, '[ars-encrypted]\ntype = crypt\nremote = ' + cloud + '\npassword = ' + pass + '\n');
