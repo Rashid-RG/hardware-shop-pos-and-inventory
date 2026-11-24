@@ -21,7 +21,8 @@ test('every A4 invoice page uses the full configured ARS company and buyer heade
 test('page footer is repeated and numbered using buffered PDF pages',()=>{
   assert.match(pdf,/const footer = \(pageNumber: number, totalPages: number\)/);
   assert.match(pdf,/Page \$\{pageNumber\} of \$\{totalPages\}/);
-  assert.match(pdf,/invoiceFooter\.credit, 320, 824, 240, 8, 'right'/);
+  assert.match(pdf,/invoiceFooter\.credit, 320, 810, 240, 9, 'right', true/);
+  assert.match(pdf,/'Smart systems for business\.',320,824,240,7\.5,'right'/);
   assert.match(pdf,/invoiceFooter\.goods\+' '\+invoiceFooter\.thanks/);
   assert.match(pdf,/doc\.bufferedPageRange\(\)/);
   assert.match(pdf,/doc\.switchToPage\(range\.start \+ offset\)/);
