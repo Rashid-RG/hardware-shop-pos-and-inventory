@@ -1634,6 +1634,9 @@ const initPostgres = async () => {
     );
 
     ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS selling_unit_id TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS selling_unit_label TEXT;
+      ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS base_units_per_purchase_unit INTEGER;
     CREATE TABLE IF NOT EXISTS stock_logs (
       id TEXT PRIMARY KEY,
       shop_id TEXT,
@@ -2389,6 +2392,9 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       supplierName: row.supplier_name,
       items: (poItemsByOrder.get(row.id) || []).map((item) => ({
         variantId: item.variant_id || undefined,
+        sellingUnitId: item.selling_unit_id ?? undefined,
+        sellingUnitLabel: item.selling_unit_label ?? undefined,
+        baseUnitsPerPurchaseUnit: item.base_units_per_purchase_unit ?? undefined,
         productId: item.product_id,
         productName: item.product_name,
         quantity: Number(item.quantity),
@@ -5107,6 +5113,14 @@ app.post('/api/purchases', requireRole(['Super Admin', 'Store Manager', 'Invento
       return res.status(400).json({ error: 'Invalid purchase product, quantity or cost' });
     }
     try {
+      const unit = product.sharedStockUnits?.units.find(u=>u.id===item.sellingUnitId);
+      if (product.sharedStockUnits || item.sellingUnitId) {
+        if (!unit || item.variantId || product.variants?.length) throw new Error('Select a valid purchasing unit.');
+        baseQuantity(quantity,unit.baseUnits);
+        sum += quantity * costPrice;
+        parts.push({productId:product.id,productName:product.name,quantity,costPrice,sellingUnitId:unit.id,sellingUnitLabel:unit.label,baseUnitsPerPurchaseUnit:unit.baseUnits});
+        continue;
+      }
       const variant = purchaseVariant(product.variants || [], item.variantId, product.name);
       sum += quantity * costPrice;
       parts.push({ productId: product.id, productName: variant ? `${product.name} (${(variant as ProductVariant & { name: string }).name})` : product.name,
