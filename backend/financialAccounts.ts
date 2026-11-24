@@ -151,3 +151,45 @@ export async function recordFinancialTransfer(db:Pool,input:{
     return {sourceId,replayed:false};
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
+
+type ChequeRegistration={id:string;shopId:string;customerId:string;invoiceId?:string;chequeNumber:string;issuingBank:string;drawerName:string;amount:number;receivedDate:string;dueDate:string;recordedBy:string;note?:string};
+function validChequeDay(value:string){
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+}
+export async function registerCustomerCheque(db:Pool,input:ChequeRegistration){
+  const {id,shopId,customerId,invoiceId,amount,receivedDate,dueDate,recordedBy}=input;
+  const chequeNumber=input.chequeNumber.trim(),issuingBank=input.issuingBank.trim(),drawerName=input.drawerName.trim(),note=input.note?.trim()||null;
+  if(!id||!shopId||!customerId||!recordedBy||!chequeNumber||chequeNumber.length>80||!issuingBank||issuingBank.length>120||!drawerName||drawerName.length>160||
+    !Number.isFinite(amount)||amount<=0||amount>999999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.001||
+    !validChequeDay(receivedDate)||!validChequeDay(dueDate)||(note&&note.length>500))throw Error('Invalid cheque details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[id]);
+    const prior=await client.query('SELECT *,received_date::text AS received_day,due_date::text AS due_day FROM ars_customer_cheques WHERE id=$1',[id]);
+    if(prior.rowCount){
+      const p=prior.rows[0];
+      if(p.shop_id!==shopId||p.customer_id!==customerId||(p.invoice_id||null)!==(invoiceId||null)||p.cheque_number!==chequeNumber||p.issuing_bank!==issuingBank||p.drawer_name!==drawerName||Number(p.amount)!==amount||p.received_day!==receivedDate||p.due_day!==dueDate||p.recorded_by!==recordedBy||(p.note||null)!==note)throw Error('Cheque request identifier already used for different details.');
+      await client.query('COMMIT');return {id,replayed:true};
+    }
+    if(invoiceId){
+      const invoice=await client.query("SELECT total FROM sales_transactions WHERE id=$1 AND shop_id=$2 AND customer_id=$3 AND payment_method='Credit Account' AND status='Completed' FOR UPDATE",[invoiceId,shopId,customerId]);
+      if(!invoice.rowCount)throw Error('Select a valid customer credit invoice.');
+      const paid=await client.query('SELECT COALESCE(SUM(amount),0) AS paid FROM customer_credit_payments WHERE shop_id=$1 AND invoice_id=$2',[shopId,invoiceId]);
+      if(Math.round(amount*100)>Math.round(Number(invoice.rows[0].total)*100)-Math.round(Number(paid.rows[0].paid)*100))throw Error('Cheque exceeds invoice outstanding balance.');
+    }
+    const customer=await client.query('SELECT credit_balance FROM customers WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,customerId]);
+    if(!customer.rowCount||Math.round(amount*100)>Math.round(Number(customer.rows[0].credit_balance)*100))throw Error('Cheque exceeds customer outstanding balance or customer is unavailable.');
+    const duplicate=await client.query("SELECT 1 FROM ars_customer_cheques WHERE shop_id=$1 AND customer_id=$2 AND lower(issuing_bank)=lower($3) AND lower(cheque_number)=lower($4) AND status NOT IN ('Cancelled','Returned','Bounced')",[shopId,customerId,issuingBank,chequeNumber]);
+    if(duplicate.rowCount)throw Error('Cheque already registered for this customer.');
+    await client.query(`INSERT INTO ars_customer_cheques(id,shop_id,customer_id,invoice_id,cheque_number,issuing_bank,drawer_name,amount,received_date,due_date,recorded_by,note)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[id,shopId,customerId,invoiceId||null,chequeNumber,issuingBank,drawerName,amount,receivedDate,dueDate,recordedBy,note]);
+    await client.query("INSERT INTO ars_customer_cheque_events(id,shop_id,cheque_id,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Received',$4,$5,$6)",[id+'-received',shopId,id,receivedDate,recordedBy,note]);
+    await client.query('COMMIT');return {id,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function listCustomerCheques(db:Pool|PoolClient,shopId:string){
+  const result=await db.query(`SELECT c.id,c.customer_id AS "customerId",u.name AS "customerName",c.invoice_id AS "invoiceId",c.cheque_number AS "chequeNumber",c.issuing_bank AS "issuingBank",c.drawer_name AS "drawerName",c.amount,c.received_date::text AS "receivedDate",c.due_date::text AS "dueDate",c.status,c.deposit_account_id AS "depositAccountId",c.note
+    FROM ars_customer_cheques c LEFT JOIN customers u ON u.id=c.customer_id AND u.shop_id=c.shop_id WHERE c.shop_id=$1 ORDER BY c.due_date,c.id`,[shopId]);
+  return result.rows.map(r=>({...r,amount:Number(r.amount)}));
+}
