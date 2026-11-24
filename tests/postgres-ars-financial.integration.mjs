@@ -193,6 +193,25 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.equal((await listPositionRegisters(pool,otherShop)).length,0);
     assert.equal((await pool.query('SELECT id FROM ars_position_register WHERE shop_id=$1 AND reference=$2',[shopId,snapshot.reference])).rowCount,2);
     assert.equal((await balances())[bank],30);
+    // The server normally initializes partner tables before exposing financial position.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ars_business_partners(id TEXT PRIMARY KEY,shop_id TEXT NOT NULL,name TEXT NOT NULL,ownership_percent NUMERIC(5,2),is_active BOOLEAN NOT NULL DEFAULT TRUE,created_by TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+    CREATE TABLE IF NOT EXISTS ars_partner_capital_entries(id TEXT PRIMARY KEY,shop_id TEXT NOT NULL,partner_id TEXT NOT NULL REFERENCES ars_business_partners(id),entry_type TEXT NOT NULL CHECK(entry_type IN ('Contribution','Drawing')),amount_lkr NUMERIC(16,2) NOT NULL CHECK(amount_lkr>0),entry_date DATE NOT NULL,reference TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
+    const {initArsProfitLedger}=await import('../backend/partnerProfit.ts');
+    await initArsProfitLedger(pool);
+    const {financialPosition}=await import('../backend/financialPosition.ts');
+    const position=await financialPosition(pool,shopId);
+    assert.equal(position.recordedCashAndBank,460);
+    assert.equal(position.recordedReceivables,450);
+    assert.equal(position.receivedOrderOutstandingEstimate,480);
+    assert.equal(position.knownAssetSubtotal,1810);
+    assert.equal(position.knownLiabilitySubtotal,680);
+    assert.equal(position.registerBalances.find(r=>r.kind==='Other asset').amount,null);
+    assert.equal(position.registerBalances.find(r=>r.kind==='Tax liability').amount,0);
+    assert.equal(position.complete,false);
+    for(const key of ['totalAssets','totalLiabilities','totalEquity','balanceDifference'])assert.equal(position[key],null);
+    const foreignPosition=await financialPosition(pool,otherShop);
+    assert.equal(foreignPosition.knownAssetSubtotal,0);
+    assert.equal(foreignPosition.knownLiabilitySubtotal,0);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
