@@ -2230,7 +2230,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     pool.query('SELECT * FROM suppliers ORDER BY id'),
     pool.query('SELECT * FROM customers ORDER BY id'),
     pool.query('SELECT * FROM employees ORDER BY id'),
-    pool.query('SELECT * FROM sales_transactions ORDER BY date DESC'),
+    pool.query('SELECT t.*, d.due_date::text AS credit_due_date FROM sales_transactions t LEFT JOIN ars_invoice_due_dates d ON d.shop_id=t.shop_id AND d.invoice_id=t.id ORDER BY t.date DESC'),
     pool.query('SELECT * FROM sales_transaction_items ORDER BY id DESC'),
     pool.query('SELECT * FROM purchase_orders ORDER BY date DESC'),
     pool.query('SELECT * FROM purchase_order_items ORDER BY id DESC'),
@@ -2368,6 +2368,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
       id: row.id,
       shopId: row.shop_id || undefined,
       invoiceNumber: row.invoice_number,
+      creditDueDate: row.credit_due_date || undefined,
       date: row.date,
       customerName: row.customer_name,
       customerPhone: row.customer_phone || undefined,
@@ -4820,7 +4821,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     databaseWriteHealthy = false;
     console.error('Checkout saved but state hydration failed. Further writes disabled.', refreshError);
   }
-  res.json(tx);
+  res.json({...tx,creditDueDate:creditTerms?.dueDate});
 });
 
 // Printing is authorized before creating its immutable audit record. The DB
