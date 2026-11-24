@@ -63,7 +63,7 @@ ars_tables=(
   ars_packaging_drafts
   ars_financial_accounts ars_financial_movements
   ars_customer_cheques ars_customer_cheque_events ars_financial_reconciliations
-  ars_invoice_requests ars_representative_accounts ars_representative_logins ars_cash_handovers
+  ars_invoice_requests ars_representative_accounts ars_representative_logins ars_cash_handovers ars_invoice_cost_corrections
   ars_legacy_sale_return_units
   ars_partner_profit_allocations ars_partner_profit_shares
 )
