@@ -10,7 +10,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
@@ -1495,6 +1495,21 @@ const initPostgres = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS password_recovery (
+      user_id TEXT PRIMARY KEY,
+      digest TEXT NOT NULL,
+      auth_revision TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS password_recovery_audit (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      event TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY,
       shop_id TEXT,
@@ -2832,6 +2847,98 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 // where the authenticated user's shop permissions are enforced.
 app.get('/api/public/shops', (_req, res) => {
   res.status(401).json({ error: 'Sign in to view your authorized branches.' });
+});
+
+
+const recoveryConfig = () => {
+  const host = process.env.EMAIL_SMTP_HOST?.trim();
+  const user = process.env.EMAIL_SMTP_USER?.trim();
+  const pass = process.env.EMAIL_SMTP_PASS;
+  const from = process.env.EMAIL_FROM?.trim() || user;
+  const secret = process.env.PASSWORD_RECOVERY_SECRET || '';
+  const port = Number(process.env.EMAIL_SMTP_PORT || 587);
+  return process.env.PASSWORD_RECOVERY_ENABLED === 'true' && host && user && pass && from && secret.length >= 32 && Number.isInteger(port) && port > 0 && port <= 65535
+    ? { host, user, pass, from, secret, port } : null;
+};
+const recoveryDigest = (secret: string, id: string, code: string) =>
+  createHmac('sha256', secret).update(JSON.stringify([id, code])).digest('hex');
+const recoveryLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false });
+app.get('/api/auth/recovery-status', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ emailEnabled: !!recoveryConfig() });
+});
+app.post('/api/auth/recovery/request', recoveryLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const config = recoveryConfig();
+  if (!config) return res.status(503).json({ error: 'Email recovery is unavailable.' });
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!email || email.length > 254) return res.status(400).json({error:'Enter a valid email address.'});
+  const message = { message: 'If this account is eligible, a verification code will be sent.' };
+  const account = db.users.find(u => u.email.toLowerCase() === email);
+  // Return the same response for missing accounts and cooldowns.
+  if (!account) return res.json(message);
+  try {
+    const code = String(randomInt(0, 1000000)).padStart(6, '0');
+    const result = await pool.query(`
+      INSERT INTO password_recovery (user_id,digest,auth_revision,expires_at)
+      VALUES ($1,$2,$3,NOW()+INTERVAL '5 minutes')
+      ON CONFLICT (user_id) DO UPDATE SET digest=EXCLUDED.digest,auth_revision=EXCLUDED.auth_revision,
+        expires_at=EXCLUDED.expires_at, attempts=0, requested_at=NOW()
+      WHERE password_recovery.requested_at < NOW()-INTERVAL '5 minutes'
+      RETURNING user_id`, [account.id,recoveryDigest(config.secret,account.id,code),getAuthRevision(account)]);
+    if (result.rowCount) {
+      await pool.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'requested')",[account.id]);
+      // Never log the code or SMTP credentials. Require TLS even for STARTTLS.
+      const transport = nodemailer.createTransport({host:config.host,port:config.port,secure:config.port===465,
+        requireTLS:config.port!==465,auth:{user:config.user,pass:config.pass},connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000});
+      // Delivery is intentionally outside the request response; failures fail closed.
+      void transport.sendMail({from:config.from,to:account.email,subject:'ARS Distributor password recovery',
+        text:'Your verification code is '+code+'. It expires in 5 minutes. Ignore this email if you did not request it.'})
+        .catch(() => { console.warn('Password recovery email delivery failed.'); });
+    }
+  } catch { console.warn('Password recovery request could not be processed.'); }
+  return res.json(message);
+});
+app.post('/api/auth/recovery/complete', recoveryLimiter, async (req,res) => {
+  res.setHeader('Cache-Control','no-store');
+  const config = recoveryConfig();
+  if (!config) return res.status(503).json({error:'Email recovery is unavailable.'});
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const code = typeof req.body?.code === 'string' ? req.body.code : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!email || email.length>254 || !/^\d{6}$/.test(code) || password.length<12 || Buffer.byteLength(password,'utf8')>72 || password===DEFAULT_DEMO_PASSWORD || password!==req.body?.confirmPassword)
+    return res.status(400).json({error:'Enter a six-digit code and matching new passwords (at least 12 characters, at most 72 UTF-8 bytes).'});
+  const invalid = {error:'Invalid or expired verification code.'};
+  const account = db.users.find(u=>u.email.toLowerCase()===email);
+  if (!account) return res.status(400).json(invalid);
+  let client: PoolClient | undefined;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const result = await client.query("SELECT digest,auth_revision FROM password_recovery WHERE user_id=$1 AND expires_at>NOW() AND attempts<5 FOR UPDATE",[account.id]);
+    const row = result.rows[0];
+    if (!row || row.auth_revision!==getAuthRevision(account)) {
+      await client.query('ROLLBACK'); return res.status(400).json(invalid);
+    }
+    const expected = Buffer.from(row.digest,'hex'), actual = Buffer.from(recoveryDigest(config.secret,account.id,code),'hex');
+    if (expected.length!==actual.length || !timingSafeEqual(expected,actual)) {
+      await client.query('UPDATE password_recovery SET attempts=attempts+1 WHERE user_id=$1',[account.id]);
+      await client.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'invalid_code')",[account.id]);
+      await client.query('COMMIT'); return res.status(400).json(invalid);
+    }
+    const hash = await bcrypt.hash(password,12);
+    const updated = await client.query('UPDATE users SET password_hash=$1,updated_at=NOW() WHERE id=$2 AND email=$3 AND password_hash=$4 AND role=$5 RETURNING id',[hash,account.id,account.email,account.passwordHash,account.role]);
+    if (!updated.rowCount) { await client.query('ROLLBACK'); return res.status(400).json(invalid); }
+    await client.query('UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL',[account.id]);
+    await client.query('UPDATE password_recovery SET expires_at=NOW(), attempts=5 WHERE user_id=$1',[account.id]);
+    await client.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'completed')",[account.id]);
+    await client.query('COMMIT');
+    db.users = db.users.map(u=>u.id===account.id?{...u,passwordHash:hash,updatedAt:new Date().toISOString()}:u);
+    return res.json({message:'Password updated. Sign in with your new password.'});
+  } catch {
+    if (client) await client.query('ROLLBACK').catch(()=>{});
+    return res.status(503).json({error:'Recovery could not be completed. Please try again.'});
+  } finally { client?.release(); }
 });
 
 app.use('/api', requireAuth);
