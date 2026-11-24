@@ -22,7 +22,7 @@ test('login never fetches or lists registered shops before authentication', () =
 test('ARS company mark is distinct and visible in the login and sidebar', () => {
   assert.match(sidebar, /<ARSBrand/);
   assert.match(app, /<ARSBrand featured/);
-  assert.match(brand, /ARS Hardware/);
+  assert.match(brand, /ARS Distribution/);
   assert.match(brand, /ARS <span/);
   assert.match(sidebar, /RS Nextward/);
 });
