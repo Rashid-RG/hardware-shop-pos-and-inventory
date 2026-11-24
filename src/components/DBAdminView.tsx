@@ -2,10 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Database, RefreshCcw, Table2, ShieldAlert, Users, UserPlus, PencilLine, Trash2, KeyRound } from 'lucide-react';
 
 interface DBAdminViewProps {
+  shopId: string;
+  shopName: string;
+  onSamplesAdded: () => Promise<void>;
   authToken: string;
 }
 
-export default function DBAdminView({ authToken }: DBAdminViewProps) {
+export default function DBAdminView({ authToken, shopId, shopName, onSamplesAdded }: DBAdminViewProps) {
   const [tables, setTables] = useState<string[]>([]);
   const [tableSearch, setTableSearch] = useState('');
   const [selectedTable, setSelectedTable] = useState<string>('');
@@ -34,6 +37,25 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
     }
     return fetch(url, { ...init, headers });
   };
+
+  const [addingSamples, setAddingSamples] = useState(false);
+  async function addSamples() {
+    if (!window.confirm('Add 8 labeled test records to ' + shopName + '? Sample stock will count toward this branch’s inventory.')) return;
+    setAddingSamples(true);
+    try {
+      const response = await authFetch('/api/admin/sample-records', {
+        method: 'POST', headers: { 'X-Shop-Id': shopId }, body: JSON.stringify({ shopId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Sample setup failed.');
+      window.alert(result.added ? result.added + ' sample records added to ' + shopName + '.' : 'The sample records already exist in this branch.');
+      await onSamplesAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add sample records.');
+    } finally {
+      setAddingSamples(false);
+    }
+  }
 
   const loadTables = async () => {
     setIsLoadingTables(true);
@@ -369,6 +391,14 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
           Manage employee login accounts and access roles. Raw database tables and destructive tools are not shown in the business administrator workspace.
         </p>
       </div>
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="font-semibold text-slate-900">Test records</h3>
+        <p className="my-2 text-sm text-slate-600">Add four stocked products, two customer shops, one supplier and one sales representative to {shopName}. Search for [TEST] to find them.</p>
+        <button type="button" disabled={addingSamples || !shopId} onClick={addSamples}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {addingSamples ? 'Adding records…' : 'Add sample records'}
+        </button>
+      </section>
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-lg text-xs flex items-center gap-2">
           <ShieldAlert className="w-4 h-4" /> {error}

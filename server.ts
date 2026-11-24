@@ -3826,6 +3826,73 @@ const applyProductStockDelta = (product: Product, delta: number): Product => {
   return nextProduct;
 };
 
+app.post('/api/admin/sample-records', requireRole(['Super Admin']), async (req, res) => {
+  const { activeShopId, activeShopName } = getActiveShopContext(db, req);
+  if (req.body?.shopId !== activeShopId) {
+    return res.status(409).json({ error: 'Select the test branch again before adding samples.' });
+  }
+  const actor = (req as AppRequest).authUser!;
+  const branchTag = createHash('sha256').update(activeShopId).digest('hex').slice(0, 12);
+  const prefix = 'sample-v1-' + branchTag + '-';
+  let added = 0;
+  let problem = false;
+  try {
+    const materials = [
+      { code: 'TILE', label: 'Floor tiles 2 × 2 ft', unit: 'Box of 4 tiles', cost: 2000, price: 2800, wholesale: 2500, stock: 8 },
+      { code: 'BOLT', label: 'M8 hex bolts', unit: 'Box of 100', cost: 950, price: 1500, wholesale: 1250, stock: 40 },
+      { code: 'HINGE', label: 'Stainless door hinges', unit: 'Pair', cost: 360, price: 600, wholesale: 490, stock: 60 },
+      { code: 'DISC', label: '115 mm cutting discs', unit: 'Pack of 10', cost: 1400, price: 2100, wholesale: 1800, stock: 20 },
+    ];
+    for (const item of materials) {
+      const id = prefix + item.code;
+      if (db.products.some(p => p.id === id)) continue;
+      const sku = 'TEST-' + item.code + '-' + branchTag;
+      const product = normalizeIncomingProduct({
+        name: '[TEST] ' + item.label + ' · ' + item.unit, sku, barcode: sku + '-BC',
+        brand: 'ARS Test', category: 'Test Hardware', description: item.unit,
+        costPrice: item.cost, sellingPrice: item.price, wholesalePrice: item.wholesale,
+        quantity: item.stock, reorderLevel: 5, location: 'Test rack A',
+      });
+      await createProductWithIntake({ ...product, id, shopId: activeShopId }, actor.name, actor.role, activeShopName);
+      added++;
+    }
+    for (const [code, name] of [['north', 'North Road Hardware'], ['central', 'Central Builders Supply']]) {
+      const id = prefix + code;
+      if (db.customers.some(c => c.id === id)) continue;
+      await insertCustomer({ id, shopId: activeShopId, name: '[TEST] ' + name, phone: '', email: '',
+        address: 'Sample customer address', creditLimit: 50000, creditBalance: 0, loyaltyBalance: 0, purchaseCount: 0 });
+      added++;
+    }
+    if (!db.suppliers.some(s => s.id === prefix + 'supplier')) {
+      await insertSupplier({ id: prefix + 'supplier', shopId: activeShopId, name: '[TEST] Import supplier',
+        companyName: '[TEST] Hardware Export Co.', phone: '', email: '', address: 'Sample supplier address', taxNumber: '' });
+      added++;
+    }
+    if (!db.employees.some(e => e.id === prefix + 'rep')) {
+      await pool.query(
+        `INSERT INTO employees(id,shop_id,name,role,salary,attendance_status,performance_score)
+         VALUES($1,$2,$3,'Cashier',0,'Present',85)`,
+        [prefix + 'rep', activeShopId, '[TEST] Sales Representative']);
+      added++;
+    }
+  } catch (error) {
+    problem = true;
+    console.error('Could not finish adding sample records', error);
+  }
+  // Each ordinary intake commits its own stock and audit records. Refresh even
+  // after partial progress so retrying skips completed rows and preserves sales.
+  try {
+    const fresh = await loadStateFromNormalized();
+    if (!fresh) throw new Error('Empty state');
+    db = fresh;
+  } catch {
+    databaseWriteHealthy = false;
+    return res.status(503).json({ error: 'Could not reload the database after sample setup.' });
+  }
+  if (problem) return res.status(409).json({ error: 'Sample setup stopped. Existing records were kept. Check the server log and retry.' });
+  return res.json({ added });
+});
+
 app.post('/api/products', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
