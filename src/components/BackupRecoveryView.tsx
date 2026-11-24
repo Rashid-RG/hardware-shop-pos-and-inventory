@@ -27,6 +27,43 @@ function Command({ command }: { command: string }) {
 export default function BackupRecoveryView({ authToken }: { authToken: string }) {
   const [local, setLocal] = useState<{enabled: boolean; running: boolean; platform: string} | null>(null);
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<Array<{name:string; bytes:number; createdAt:string; complete:boolean; includesUploads:boolean}>>([]);
+  const [historyError, setHistoryError] = useState('');
+  const [action, setAction] = useState('');
+  const [verified, setVerified] = useState<Record<string,string>>({});
+  const [historyMessage, setHistoryMessage] = useState('');
+  async function refreshHistory() {
+    try {
+      const response = await fetch('/api/backup/local-history', {headers: {Authorization: 'Bearer ' + authToken}});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'History unavailable');
+      setHistory(data.backups); setHistoryError('');
+    } catch (err) { setHistoryError(err instanceof Error ? err.message : 'History unavailable'); }
+  }
+  React.useEffect(() => { if (local?.enabled) void refreshHistory(); }, [local?.enabled, authToken]);
+  async function verifySet(name: string) {
+    setAction(name); setHistoryMessage('');
+    try {
+      const response = await fetch('/api/backup/local-verify', {method:'POST', headers:{Authorization:'Bearer '+authToken,'Content-Type':'application/json'}, body:JSON.stringify({archive:name})});
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Verification failed');
+      setVerified(old => ({...old,[name]:data.verifiedAt}));
+      setHistoryMessage('All backup checksums match. A recovery drill is still required.');
+    } catch (err) { setHistoryMessage(err instanceof Error ? err.message : 'Verification failed'); }
+    finally { setAction(''); }
+  }
+  async function downloadSetMember(name:string, member:string) {
+    setAction(name); setHistoryMessage('');
+    try {
+      const response = await fetch('/api/backup/local-download?' + new URLSearchParams({archive:name,member}), {headers:{Authorization:'Bearer '+authToken}});
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || 'Download failed'); }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a'); link.href=url; link.download=member; document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setHistoryMessage('Download requested. Keep every file in the set together on encrypted storage.');
+    } catch(err) { setHistoryMessage(err instanceof Error ? err.message : 'Download failed'); }
+    finally { setAction(''); }
+  }
   const [result, setResult] = useState<{archive: string; verifiedAt: string} | null>(null);
   const [error, setError] = useState('');
   const headers = { Authorization: 'Bearer ' + authToken };
@@ -52,6 +89,8 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Backup failed.');
       setResult({ archive: data.archive, verifiedAt: data.verifiedAt });
+      setVerified(old => ({...old,[data.archive]:data.verifiedAt}));
+      void refreshHistory();
     } catch (err) { setError(err instanceof Error ? err.message : 'Backup failed.'); }
     finally { setBusy(false); }
   }
@@ -92,7 +131,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <div className="grid gap-3 lg:grid-cols-3">
       <section className="rounded-xl border border-slate-200 bg-white p-4 lg:col-span-2">
         <div className="flex items-start gap-3"><HardDrive className="h-6 w-6 text-amber-700"/><div className="flex-1"><h3 className="font-bold text-slate-900">Local database backup</h3><p className="mt-1 text-xs text-slate-600">Creates the database archive and available uploads, then verifies their checksums.</p></div></div>
-        <button type="button" disabled={busy || !local?.enabled || local.running} onClick={runBackup} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-3 font-bold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><DatabaseBackup size={18}/>{busy || local?.running ? 'Backup in progress…' : 'Back up now'}</button>
+        <button type="button" disabled={busy || !!action || !local?.enabled || local.running} onClick={runBackup} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-3 font-bold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><DatabaseBackup size={18}/>{busy || local?.running ? 'Backup in progress…' : 'Back up now'}</button>
         {!local?.enabled && <p className="mt-2 text-xs text-slate-600">{local ? 'One-click backup is disabled on this host. Enable it in the server configuration first.' : 'Checking backup service availability…'}</p>}
         {busy && <p role="status" className="mt-2 flex items-center gap-2 text-xs"><RefreshCw className="h-4 w-4 animate-spin"/> Creating and verifying the backup. Keep this page open.</p>}
         {error && <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p>}
@@ -100,6 +139,17 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       </section>
       <section className="rounded-xl border border-slate-200 bg-white p-4"><Cloud className="h-6 w-6 text-slate-600"/><h3 className="mt-2 font-bold text-slate-900">Google Drive backup</h3><p className="mt-1 text-xs">{status ? labels[status.phase] || 'Unknown status' : 'Checking status…'}</p><p className="mt-2 text-xs text-slate-500">Cloud setup and scheduling remain separate from the local backup button.</p></section>
     </div>
+    {local?.enabled && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2"><div><h3 className="font-bold text-slate-900">Local backup history</h3><p className="text-xs text-slate-500">Backup sets retained on this database computer.</p></div><button type="button" onClick={refreshHistory} className="rounded-lg border px-3 py-2 text-xs font-semibold">Refresh</button></div>
+      {historyError && <p role="alert" className="text-rose-700 text-xs">{historyError}</p>}
+      {historyMessage && <p role="status" className="rounded-lg bg-slate-50 p-2 text-xs">{historyMessage}</p>}
+      {!history.length && !historyError && <p className="text-xs text-slate-500">No managed local backup sets found.</p>}
+      <div className="space-y-2">{history.map(row => <div key={row.name} className="rounded-lg border p-3">
+        <div className="flex flex-wrap justify-between gap-2"><div className="min-w-0"><p className="font-semibold">{new Date(row.createdAt).toLocaleString()}</p><p className="break-all text-xs text-slate-500">{row.name}</p><p className="text-xs text-slate-600">{(row.bytes/1048576).toFixed(2)} MB database · {row.includesUploads?'Includes uploads':'Database only'}</p></div><span className="text-xs font-medium">{verified[row.name]?'Checksums verified this session':row.complete?'Files present · not yet verified':'Incomplete set'}</span></div>
+        <div className="mt-2 flex flex-wrap gap-2"><button type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>verifySet(row.name)} className="rounded border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Verify set</button>
+        {[row.name,row.name+'.sha256',...(row.includesUploads?[row.name.slice(0,-5)+'-uploads.zip',row.name.slice(0,-5)+'-uploads.zip.sha256']:[])].map((member,i)=><button key={member} type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>downloadSetMember(row.name,member)} className="rounded border px-3 py-1.5 text-xs disabled:opacity-40">{['Database','Database checksum','Uploads ZIP','Uploads checksum'][i]}</button>)}</div>
+      </div>)}</div>
+    </section>}
     <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-slate-800">Advanced setup, verification and recovery tools</summary>
     <div className="mt-4 space-y-4">
     <label className="block text-sm font-semibold">Database computer
