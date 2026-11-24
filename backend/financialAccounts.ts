@@ -36,6 +36,15 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       CHECK(movement_kind IN ('Opening Balance','Customer Collection','Transfer In','Transfer Out','Supplier Payment','Expense','Adjustment','Invoice Payment','Invoice Refund'));
     CREATE UNIQUE INDEX IF NOT EXISTS ars_financial_invoice_movement_once ON ars_financial_movements(shop_id,movement_kind,source_id)
       WHERE movement_kind IN ('Invoice Payment','Invoice Refund');
+    CREATE TABLE IF NOT EXISTS ars_representative_accounts (
+      shop_id TEXT NOT NULL,
+      employee_id TEXT NOT NULL,
+      account_id TEXT NOT NULL UNIQUE,
+      assigned_by TEXT NOT NULL,
+      assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY(shop_id,employee_id),
+      FOREIGN KEY(shop_id,account_id) REFERENCES ars_financial_accounts(shop_id,id)
+    );
     CREATE TABLE IF NOT EXISTS ars_invoice_requests (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
@@ -357,4 +366,36 @@ export async function recordPaidExpense(db:Pool,input:{id:string;shopId:string;d
     await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Logged Expense',$5)`,['expense-audit-'+id,shopId,recordedBy,role,'Added manual expense '+desc+' (LKR '+amount.toFixed(2)+').']);
     await client.query('COMMIT');return {id,date,replayed:false};
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+/** Immutable initial assignment. Reassignment requires separate balance reconciliation and authorization. */
+export async function assignRepresentativeAccount(db:Pool,input:{shopId:string;employeeId:string;accountId:string;recordedBy:string}){
+  const {shopId,employeeId,accountId,recordedBy}=input;
+  if(!shopId||!employeeId||!accountId||!recordedBy)throw Error('Invalid representative assignment.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    const employee=await client.query("SELECT id,name FROM employees WHERE shop_id=$1 AND id=$2 AND role='Cashier' FOR UPDATE",[shopId,employeeId]);
+    if(!employee.rowCount)throw Error('Select a registered sales representative in this shop.');
+    const account=await client.query("SELECT id,name FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND kind='Representative Cash' AND active=TRUE FOR UPDATE",[shopId,accountId]);
+    if(!account.rowCount)throw Error('Select an active representative cash account in this shop.');
+    const existing=await client.query('SELECT employee_id,account_id FROM ars_representative_accounts WHERE shop_id=$1 AND (employee_id=$2 OR account_id=$3)',[shopId,employeeId,accountId]);
+    if(existing.rowCount){
+      if(existing.rowCount===1&&existing.rows[0].employee_id===employeeId&&existing.rows[0].account_id===accountId){await client.query('COMMIT');return {replayed:true};}
+      throw Error('Representative or cash account already assigned. Reconcile before reassignment.');
+    }
+    const history=await client.query('SELECT 1 FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2 LIMIT 1',[shopId,accountId]);
+    if(history.rowCount)throw Error('Assign a new cash account with no recorded movements; historical balances require reconciliation.');
+    await client.query('INSERT INTO ars_representative_accounts(shop_id,employee_id,account_id,assigned_by) VALUES($1,$2,$3,$4)',[shopId,employeeId,accountId,recordedBy]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,'Store Manager','Representative Account Assigned',$4)`,['rep-account-'+accountId,shopId,recordedBy,employee.rows[0].name+' — '+account.rows[0].name]);
+    await client.query('COMMIT');return {replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function listRepresentativeAccounts(db:Pool|PoolClient,shopId:string){
+  const result=await db.query(`SELECT r.employee_id,r.account_id,r.assigned_by,r.assigned_at,e.name AS employee_name,e.role AS employee_role,a.name AS account_name,a.active,COALESCE(SUM(m.amount),0) AS balance
+    FROM ars_representative_accounts r JOIN ars_financial_accounts a ON a.shop_id=r.shop_id AND a.id=r.account_id
+    LEFT JOIN employees e ON e.shop_id=r.shop_id AND e.id=r.employee_id
+    LEFT JOIN ars_financial_movements m ON m.shop_id=r.shop_id AND m.account_id=r.account_id
+    WHERE r.shop_id=$1 GROUP BY r.employee_id,r.account_id,r.assigned_by,r.assigned_at,e.name,e.role,a.name,a.active ORDER BY e.name,r.employee_id`,[shopId]);
+  return result.rows.map(r=>({employeeId:r.employee_id,accountId:r.account_id,employeeName:r.employee_name,employeeRole:r.employee_role,accountName:r.account_name,active:r.active,balance:Number(r.balance),assignedBy:r.assigned_by,assignedAt:r.assigned_at}));
 }
