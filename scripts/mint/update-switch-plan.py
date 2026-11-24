@@ -62,7 +62,8 @@ def plan(folder):
     ]
     if not stable:
         blockers.insert(0,"Permanent runtime storage migration required.")
-    blockers.insert(0,"Verify authenticated billing and financial operations with both versions; startup alone is insufficient.")
+    if receipt.get("authenticatedReadsPassed") is not True or receipt.get("authenticatedWritesPassed") is not True:
+        blockers.insert(0,"Successful authenticated billing and financial operations required on both versions.")
     return {"currentProject":str(current),"candidateProject":str(staged),
             "candidateVersion":version,"recoveryFolder":str(folder),
             "activationAllowed":False,"rollbackAllowed":False,"blockers":blockers}
