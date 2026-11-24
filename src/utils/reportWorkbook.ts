@@ -26,7 +26,7 @@ function col(i:number){let n=i+1,s='';while(n){n--;s=String.fromCharCode(65+n%26
 function cell(v:string|number,i:number,r:number,style:number){const ref=col(i)+r;return typeof v==='number'&&Number.isFinite(v)?'<c r="'+ref+'" s="'+style+'"><v>'+v+'</v></c>':'<c r="'+ref+'" s="'+style+'" t="inlineStr"><is><t xml:space="preserve">'+xml(v)+'</t></is></c>';}
 function row(n:number,values:(string|number)[],style:(i:number)=>number,height=22){return '<row r="'+n+'" ht="'+height+'" customHeight="1">'+values.map((v,i)=>cell(v,i,n,style(i))).join('')+'</row>';}
 const styles='<styleSheet xmlns="'+ns+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.00;[Red](#,##0.00)"/></numFmts><fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="12"/><name val="Calibri"/></font><font><b/><color rgb="FF152945"/><sz val="20"/><name val="Calibri"/></font><font><b/><color rgb="FF152945"/><sz val="12"/><name val="Calibri"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF152945"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF0F4F8"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFD66B"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="3" fillId="4" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf><xf numFmtId="164" fontId="0" fillId="3" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
-export async function exportBusinessWorkbook(report:BusinessReport,settings:StoreSettings){
+export async function buildBusinessWorkbook(report:BusinessReport,settings:StoreSettings){
  const brand=reportBrand(settings),logo=safeReportLogo(brand.logo);let png:Uint8Array|undefined;
  if(logo){try{const image=new Image();image.src=logo;await image.decode();const canvas=document.createElement('canvas');canvas.width=160;canvas.height=100;const ctx=canvas.getContext('2d')!;const scale=Math.min(160/image.width,100/image.height);ctx.drawImage(image,(160-image.width*scale)/2,(100-image.height*scale)/2,image.width*scale,image.height*scale);const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/png'));if(blob)png=new Uint8Array(await blob.arrayBuffer());}catch{/* profile text remains available */}}
  const endCol=col(Math.max(1,report.headers.length-1));
@@ -55,5 +55,9 @@ export async function exportBusinessWorkbook(report:BusinessReport,settings:Stor
   entries[relationships]=String(entries[relationships]).replace('</Relationships>','<Relationship Id="rId2" Type="'+rel+'/chart" Target="../charts/chart1.xml"/></Relationships>');
   entries['xl/charts/chart1.xml']=nativeChartXml(chart,chartStart);
  }
- downloadReport(zip(entries),report.filename+'.xlsx');
+ return zip(entries);
+}
+
+export async function exportBusinessWorkbook(report:BusinessReport,settings:StoreSettings){
+ downloadReport(await buildBusinessWorkbook(report,settings),report.filename+'.xlsx');
 }
