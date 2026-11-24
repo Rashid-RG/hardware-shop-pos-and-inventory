@@ -8,7 +8,7 @@ import {
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators' | 'my-collections';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -37,6 +37,7 @@ const MANAGERS: Role[] = ['Super Admin', 'Store Manager'];
 const pinnedItems: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ALL_ROLES },
   { id: 'pos', label: 'Wholesale Invoices', icon: ShoppingCart, roles: SALES_ROLES },
+  { id: 'my-collections', label: 'My Collections', icon: Landmark, roles: ['Cashier'] },
 ];
 const groups: NavGroup[] = [
   { id: 'sales', title: 'Wholesale & Billing', items: [
