@@ -23,6 +23,14 @@ def stopped():
         if probe.connect_ex(("127.0.0.1",3000))==0:
             raise RuntimeError("Another process is listening on the POS port.")
 
+def check_database_clients(project):
+    # Observational check only: do not terminate sessions or change PostgreSQL settings.
+    cmd=["docker","compose","-p","ars-mint","--env-file",".env.local","-f","scripts/mint/compose.yaml","exec","-T","postgres","psql","-X","-U","ars","-d","hardware_pos_ars","-v","ON_ERROR_STOP=1","-Atc",
+         "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'"]
+    result=subprocess.run(cmd,cwd=project,check=True,capture_output=True,text=True,timeout=30)
+    if result.stdout.strip()!="0":
+        raise RuntimeError("Other PostgreSQL clients detected. Close external database tools before maintenance. No connections were terminated.")
+
 def prepare(version,confirmation):
     if os.geteuid()==0 or confirmation!="STOP POS FOR BACKUP":
         raise ValueError("Explicit desktop-user maintenance approval required.")
@@ -45,10 +53,12 @@ def prepare(version,confirmation):
         sync_dir(STATE)
         subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)
         stopped()
+        check_database_clients(project)
         subprocess.run(["python3",str(project/"scripts/mint/prepare-update-backup.py"),version],check=True,timeout=1800)
         stopped()
+        check_database_clients(project)
         print("Backup prepared with managed POS service stopped. Maintenance hold remains active.")
-        print("External database writers have not been ruled out. Activation is not approved.")
+        print("External clients were checked before and after backup; new connections during backup cannot be excluded. Activation is not approved.")
 
 if __name__=="__main__":
     os.umask(0o077)
