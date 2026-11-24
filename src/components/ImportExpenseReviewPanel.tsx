@@ -33,7 +33,7 @@ export default function ImportExpenseReviewPanel({authToken,shopId,owner,canAppr
 }
 
 type Obligation={id:string;charge_kind:Kind;creditor_name:string;document_reference:string;amount:string;due_date:string;submitted_by:string;decision:'Approved'|'Rejected'|null;reviewed_by:string|null;recognized:string;settled:string;outstanding:string};
-function ImportObligations({authToken,shopId,approvalId,owner,canApprove,onChanged}:{authToken:string;shopId:string;approvalId:string;owner?:string;canApprove:boolean;onChanged:()=>void}){
+function ImportObligations({authToken,shopId,approvalId,owner,canApprove,onChanged}:{key?:string;authToken:string;shopId:string;approvalId:string;owner?:string;canApprove:boolean;onChanged:()=>void}){
  const [rows,setRows]=useState<Obligation[]|null>(null),[revision,refresh]=useState(0),[error,setError]=useState(''),[busy,setBusy]=useState(false),[kind,setKind]=useState<Kind>('Freight'),[creditor,setCreditor]=useState(''),[reference,setReference]=useState(''),[amount,setAmount]=useState(''),[due,setDue]=useState(''),[evidence,setEvidence]=useState(''),[review,setReview]=useState<{id:string;decision:'Approved'|'Rejected'}|null>(null),[reviewEvidence,setReviewEvidence]=useState('');
  const [pending,setPending]=useState<{path:string;body:Record<string,string>}|null>(null),[ready,setReady]=useState(false);
  const [payment,setPayment]=useState<Obligation|null>(null);
@@ -63,7 +63,7 @@ function ImportObligations({authToken,shopId,approvalId,owner,canApprove,onChang
  </section>;
 }
 
-function CreditorPayments({obligation,authToken,shopId,owner,canApprove,onClose,onChanged}:{obligation:Obligation;authToken:string;shopId:string;owner?:string;canApprove:boolean;onClose:()=>void;onChanged:()=>void}){
+function CreditorPayments({obligation,authToken,shopId,owner,canApprove,onClose,onChanged}:{key?:string;obligation:Obligation;authToken:string;shopId:string;owner?:string;canApprove:boolean;onClose:()=>void;onChanged:()=>void}){
  type Account={id:string;name:string;kind:string;active:boolean;balance?:number};
  type Payment={id:string;amount:string;payment_date:string;account_name:string|null;evidence:string;recorded_by:string};
  type Request={requestId:string;accountId:string;amount:string;date:string;evidence:string};
