@@ -2,6 +2,7 @@ import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   ShoppingCart,
@@ -192,6 +193,47 @@ export default function POSView({
   const [receiptModel, setReceiptModel] = useState<SalesTransaction | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
+  // A portal escapes the animated workspace's containing block and stacking context.
+  useEffect(() => {
+    if (!isReviewOpen) return;
+    const body = document.body;
+    const root = document.getElementById('root');
+    const main = root?.querySelector('main');
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const bodyOverflow = body.style.overflow;
+    const mainOverflow = main?.style.overflow;
+    const previousInert = root?.inert;
+    body.style.overflow = 'hidden';
+    if (main) main.style.overflow = 'hidden';
+    if (root) root.inert = true;
+    document.getElementById('pos-review-dialog')?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const dialog = document.getElementById('pos-review-dialog');
+      if (!dialog) return;
+      const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex="0"]')).filter(el => el.getClientRects().length > 0);
+      if (!controls.length) { event.preventDefault(); dialog.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', trapFocus);
+    return () => {
+      document.removeEventListener('keydown', trapFocus);
+      body.style.overflow = bodyOverflow;
+      if (main) main.style.overflow = mainOverflow || '';
+      if (root) root.inert = previousInert ?? false;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [isReviewOpen]);
+  useEffect(() => {
+    if (!isReviewOpen || isSubmitting) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsReviewOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [isReviewOpen, isSubmitting]);
   const [setupDialog, setSetupDialog] = useState<'customer' | 'representative' | null>(null);
   const [draftCustomerId, setDraftCustomerId] = useState('');
   const [draftRepId, setDraftRepId] = useState('');
@@ -2143,19 +2185,19 @@ export default function POSView({
         </div>
       )}
 
-      {isReviewOpen && (
-        <div id="pos-review-backdrop" className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-2 sm:p-5">
-          <section role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
-            className="flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
+      {isReviewOpen && createPortal(
+        <div id="pos-review-backdrop" className="fixed inset-0 z-[1000] flex items-center justify-center overflow-hidden bg-slate-950/60 p-3 sm:p-5">
+          <section id="pos-review-dialog" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
+            className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-2 sm:px-5">
               <div><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Final review · no invoice saved yet</p>
                 <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & complete invoice</h2>
-                <p className="mt-1 text-xs text-slate-600">{selectedCustomer.name} · {activeSalesReps.find(rep => rep.id === selectedSalesRepId)?.name || 'Representative not selected'}</p></div>
+                <p className="mt-0.5 text-xs text-slate-600">{selectedCustomer.name} · {activeSalesReps.find(rep => rep.id === selectedSalesRepId)?.name || 'Representative not selected'}</p></div>
               <button type="button" aria-label="Close payment review" disabled={isSubmitting} onClick={() => setIsReviewOpen(false)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
             </header>
-            <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:overflow-hidden">
-              <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto lg:border-r lg:border-slate-200">
+            <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:overflow-hidden overscroll-contain">
+              <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain lg:border-r lg:border-slate-200">
               <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
                 <div className="grid grid-cols-[minmax(0,1fr)_40px_95px_100px] gap-2 border-b border-slate-200 pb-2 text-[10px] font-semibold text-slate-500"><span>Product / description</span><span className="text-right">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span></div>
@@ -2254,7 +2296,7 @@ export default function POSView({
 </div>
               </div>
         {/* Payment and invoice totals */}
-        <div className="min-w-0 space-y-2 bg-slate-50/60 p-3 sm:p-4 lg:overflow-y-auto">
+        <div className="min-w-0 space-y-2 bg-slate-50/60 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain">
           <h3 className="text-sm font-bold text-slate-900">Payment summary</h3>
                     {/* Payment Method Selector Grid */}
           <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
@@ -2368,9 +2410,11 @@ export default function POSView({
               <div className="space-y-2 pt-2">
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
                   <span>Cash Received ({currencySymbol})</span>
-                  <span className="font-semibold text-emerald-700 tabular-nums">Change Due: {formatMoney(changeDue)}</span>
+                  <span className="font-semibold text-emerald-700 tabular-nums text-sm">Change Due: {formatMoney(changeDue)}</span>
                 </div>
+                <div className="flex items-stretch gap-2">
                 <input
+                  aria-label="Cash received in rupees"
                   id="pos-cash-received-input"
                   type="number"
                   min="0"
@@ -2378,8 +2422,10 @@ export default function POSView({
                   value={cashReceived}
                   onChange={(e) => setCashReceived(e.target.value)}
                   placeholder={total.toFixed(2)}
-                  className={`w-full border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
+                  className={`min-w-0 flex-1 border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
                 />
+                <button type="button" disabled={isSubmitting} onClick={() => setCashReceived(total.toFixed(2))} className="shrink-0 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-slate-900 hover:bg-amber-100 disabled:opacity-50">Exact cash</button>
+                </div>
                 {cashShortage && (
                   <p className="text-[11px] text-rose-600 font-medium">Cash received is less than the bill total.</p>
                 )}
@@ -2398,7 +2444,7 @@ export default function POSView({
             disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
             onClick={handleCheckout}
             className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
-              cart.length === 0 || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
+              cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
                 : 'bg-amber-400 border border-amber-400 text-slate-900 hover:bg-amber-500'
             }`}
@@ -2417,7 +2463,7 @@ export default function POSView({
 
             </footer>
           </section>
-        </div>
+        </div>, document.body
       )}
 
       {/* RECEIPT DIALOG MODAL ON CHECKOUT SUCCESS */}
