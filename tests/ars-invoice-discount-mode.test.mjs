@@ -54,7 +54,8 @@ test('server verifies percent discount label corresponds with authoritative line
   assert.match(server,/Invoice percentage discount does not match the discounted amount/);
 });
 test('desktop product workspace is larger than compact invoice panel and supports four product columns',()=>{
-  assert.match(pos,/lg:col-span-8 flex flex-col space-y-3/);
-  assert.match(pos,/lg:col-span-4 bg-white rounded-xl/);
-  assert.match(pos,/sm:grid-cols-3 xl:grid-cols-4/);
+  assert.match(pos,/lg:col-span-7 min-w-0 flex-col space-y-3/);
+  assert.match(pos,/lg:col-span-5/);
+  assert.match(pos,/lg:col-span-12/);
+  assert.match(pos,/sm:grid-cols-3 2xl:grid-cols-4/);
 });
