@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { PackageCheck, RefreshCcw, ShieldCheck, X } from 'lucide-react';
 
-type Line = { purchaseOrderItemId: number; productId: string; productName: string; ordered: number; received: number; remaining: number };
+type Line = { purchaseOrderItemId: number; productId: string; productName: string; ordered: number; received: number; remaining: number; sellingUnitLabel?: string; baseUnitsPerPurchaseUnit?: number };
 type Batch = { id: string; received_by: string; note: string; created_at: string };
 type Overview = { status: string; items: Line[]; batches: Batch[] };
 type Props = { poId: string; poNumber: string; authToken: string; shopId: string; onClose: () => void; onCommitted: () => void };
@@ -53,7 +53,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   });
   const submit = async () => {
     if (!valid || saving) return;
-    if (!window.confirm(`Post ${selected.reduce((sum, line) => sum + line.quantity, 0)} units to warehouse stock for ${poNumber}? This receipt cannot be edited or deleted.`)) return;
+    if (!window.confirm(`Post ${selected.length} purchase line(s) to warehouse stock for ${poNumber}? This receipt cannot be edited or deleted.`)) return;
     setSaving(true); setError(''); setSuccess('');
     try {
       const response = await fetch(`/api/ars/purchases/${encodeURIComponent(poId)}/receipts`, {
@@ -83,7 +83,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
           {loading && <p className="text-sm text-slate-500">Loading receiving balances…</p>}
           {!loading && overview && <>
             <div className="grid gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm sm:grid-cols-3">
-              <div><p className="text-xs text-emerald-800">Ordered units</p><strong>{overview.items.reduce((total,line)=>total+line.ordered,0)}</strong></div>
+              <div><p className="text-xs text-emerald-800">Ordered quantities (by line U/M)</p><strong>{overview.items.reduce((total,line)=>total+line.ordered,0)}</strong></div>
               <div><p className="text-xs text-emerald-800">Already received</p><strong>{overview.items.reduce((total,line)=>total+line.received,0)}</strong></div>
               <div><p className="text-xs text-emerald-800">Still outstanding</p><strong>{overview.items.reduce((total,line)=>total+line.remaining,0)}</strong></div>
             </div>
@@ -106,13 +106,13 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
             <div className="flex flex-wrap justify-between gap-2 text-sm"><strong>Status: {overview.status}</strong><button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 text-slate-600 underline"><RefreshCcw className="h-4 w-4" /> Refresh</button></div>
             <div className="overflow-x-auto rounded-xl border border-slate-200">
               <table className="w-full min-w-[540px] text-left text-sm">
-                <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
+                <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3">U/M</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
                 <tbody>{visibleLines.map(line => <tr key={line.purchaseOrderItemId} className="border-t border-slate-100">
-                  <td className="p-3 font-semibold text-slate-800">{line.productName}</td>
+                  <td className="p-3 font-semibold text-slate-800">{line.productName}</td><td className="p-3">{line.sellingUnitLabel || "—"}{line.baseUnitsPerPurchaseUnit && <span className="block text-xs text-slate-500">{line.baseUnitsPerPurchaseUnit} base units each</span>}</td>
                   <td className="p-3 text-right">{line.ordered}</td><td className="p-3 text-right">{line.received}</td><td className="p-3 text-right font-bold">{line.remaining}</td>
                   <td className="p-3"><input aria-label={`Receive ${line.productName}`} type="number" min="0" max={line.remaining} step="1" disabled={saving || line.remaining === 0}
                     value={quantities[line.purchaseOrderItemId] ?? ''} onChange={e => setQuantities(current => ({...current,[line.purchaseOrderItemId]:e.target.value}))}
-                    placeholder={line.remaining ? '0' : 'Complete'} className="w-28 rounded-lg border border-slate-300 p-2 disabled:bg-slate-100" /></td>
+                    placeholder={line.remaining ? '0' : 'Complete'} className="w-28 rounded-lg border border-slate-300 p-2 disabled:bg-slate-100" />{line.baseUnitsPerPurchaseUnit && <span className="block text-xs text-slate-500">{(Number(quantities[line.purchaseOrderItemId])||0)*line.baseUnitsPerPurchaseUnit} base units</span>}</td>
                 </tr>)}</tbody>
               </table>
               {visibleLines.length===0&&<p className="p-5 text-center text-sm text-slate-500">No matching purchase-order products.</p>}
@@ -127,7 +127,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
           </>}
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4">
-          <p className="text-xs text-slate-500">{selected.length} line(s) selected · {selected.reduce((sum,line) => sum + (Number.isFinite(line.quantity) ? line.quantity : 0),0)} units</p>
+          <p className="text-xs text-slate-500">{selected.length} line(s) selected · quantities use each line’s U/M</p>
           <div className="flex gap-2"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm">Close</button>
             <button type="button" onClick={() => void submit()} disabled={!valid || saving || loading || overview?.status === 'Received'} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><PackageCheck className="h-4 w-4" />{saving ? 'Recording…' : 'Confirm received quantities'}</button></div>
         </footer>
