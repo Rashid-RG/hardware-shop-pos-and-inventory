@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6067,6 +6067,31 @@ app.post('/api/customer-cheques/:id/clear',requireRole(['Super Admin','Store Man
     if(['Cheque clearance details do not match the registered cheque.','Cheque already cleared. Review the original payment.','Only deposited cheques can be cleared.','Clearance date precedes cheque history.','Payment request ID already used for different details.','Payment request ID already used for a different financial destination.','Select an outstanding credit invoice belonging to this customer.','Customer not found in this shop.','Customer has no outstanding credit balance.','Payment exceeds the customer outstanding credit balance.','Historical unallocated payments require reconciliation before invoice-specific collection.','Payment exceeds the invoice outstanding balance.','Select an invoice for this customer payment.','Select an active financial account matching the payment method.','Cheque clearance state changed.'].includes(message))return res.status(409).json({error:message});
     console.error('Cheque clearance failed',error);
     return res.status(500).json({error:'Unable to confirm cheque clearance. Review the register or retry the same request.'});
+  }
+});
+
+
+app.get('/api/financial-reconciliations',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Financial shop access denied.'});
+  try{res.setHeader('Cache-Control','no-store');return res.json(await listFinancialReconciliations(pool,scope.shopId));}
+  catch(error){console.error('Financial reconciliation read failed',error);return res.status(500).json({error:'Unable to load reconciliation history.'});}
+});
+app.post('/api/financial-reconciliations',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Financial shop access denied.'});
+  const {requestId,accountId,effectiveDate,observedAmount,reference,note}=req.body||{};
+  if(!validChequeRequestId(requestId)||typeof accountId!=='string'||!accountId.trim()||accountId.length>200||
+    typeof effectiveDate!=='string'||typeof observedAmount!=='number'||typeof reference!=='string'||
+    (note!==undefined&&typeof note!=='string'))return res.status(400).json({error:'Enter valid reconciliation details.'});
+  try{
+    const result=await recordFinancialReconciliation(pool,{...scope,id:'reconcile-'+requestId,accountId,effectiveDate,observedAmount,reference,note,currentBusinessDate:reportDay(new Date())});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid reconciliation details.','Reconciliation request identifier already used for different details.','New reconciliations must use the current business date.','Select an active cash or bank account in this shop.','Counted cash cannot be negative.','Explain the discrepancy before saving.'].includes(message))return res.status(409).json({error:message});
+    console.error('Financial reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request identifier.'});
   }
 });
 
