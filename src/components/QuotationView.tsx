@@ -1,3 +1,4 @@
+import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
@@ -54,7 +55,7 @@ export default function QuotationView({
 }: QuotationViewProps) {
   const currencySymbol = 'Rs.';
   const activeShopProfile = (taxConfig.shopProfiles || []).find((s) => s.id === taxConfig.activeShopId) || taxConfig.shopProfiles?.[0];
-  const shopName = activeShopProfile?.name || taxConfig.storeName;
+  const shopName = arsDisplayName(activeShopProfile?.name || taxConfig.storeName);
   const shopAddress = activeShopProfile?.address || '';
   const shopPhone = activeShopProfile?.phone || '';
 
