@@ -1082,6 +1082,8 @@ export default function App() {
 
               {activeTab === 'pos' && (
                 <POSView
+                  key={`${authUser.email}:${taxConfig.activeShopId || selectedShopId}`}
+                  draftOwner={authUser.email}
                   products={products}
                   customers={customers}
                   employees={employees}
