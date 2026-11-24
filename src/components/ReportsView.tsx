@@ -8,16 +8,19 @@ import {
   FileText,
   RefreshCw,
 } from 'lucide-react';
-import { SalesTransaction, Product, ManualExpense } from '../types';
+import { SalesTransaction, Product, ManualExpense, StoreSettings } from '../types';
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 
 interface ReportsViewProps {
   transactions: SalesTransaction[];
   products: Product[];
   manualExpenses: ManualExpense[];
   authToken: string;
+  taxConfig: StoreSettings;
 }
 
-export default function ReportsView({ transactions, products, manualExpenses, authToken }: ReportsViewProps) {
+export default function ReportsView({ transactions, products, manualExpenses, authToken, taxConfig }: ReportsViewProps) {
   const currencySymbol = 'Rs.';
   const today = new Date().toISOString().split('T')[0];
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -85,32 +88,11 @@ export default function ReportsView({ transactions, products, manualExpenses, au
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [filteredTx]);
 
-  const exportCSV = () => {
-    let csv = '';
-    if (activeTab === 'sales') {
-      csv = 'Invoice,Date,Customer,Sales Representative,Items,Subtotal,Tax,Discount,Total,Profit,Payment,Status\n';
-      filteredTx.forEach((t) => {
-        const p = calcProfit(t);
-        csv += `${t.invoiceNumber},${t.date.split('T')[0]},${t.customerName},${t.salesRepName || 'Not recorded'},${t.items.length},${t.subtotal},${t.tax},${t.discountAmount},${t.total},${p},${t.paymentMethod},${t.status || 'Completed'}\n`;
-      });
-    } else if (activeTab === 'products') {
-      csv = 'Product,Units Sold,Revenue,Profit\n';
-      productSales.forEach((p) => {
-        csv += `"${p.name}",${p.qty},${p.revenue.toFixed(2)},${p.profit.toFixed(2)}\n`;
-      });
-    } else {
-      csv = 'Date,Description,Category,Amount\n';
-      filteredExpenses.forEach((e) => {
-        csv += `${e.date},"${e.desc}",${e.category},${e.amount}\n`;
-      });
-    }
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `report-${activeTab}-${fromDate}-to-${toDate}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const buildReport = (): BusinessReport => {
+    const base = {filename:'ars-'+activeTab+'-'+fromDate+'-to-'+toDate,period:fromDate+' to '+toDate};
+    if(activeTab==='sales') return {...base,title:'Sales performance report',headers:['Invoice','Date','Customer','Sales Representative','Items','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Profit (LKR)','Payment','Status'],rows:filteredTx.map(t=>[t.invoiceNumber,t.date.split('T')[0],t.customerName,t.salesRepName||'Not recorded',t.items.length,t.subtotal,t.tax,t.discountAmount,t.total,calcProfit(t),t.paymentMethod,t.status||'Completed']),moneyColumns:[5,6,7,8,9],summary:[{label:'Revenue (LKR, excluding refunds)',value:totalRevenue},{label:'Gross profit (LKR)',value:totalProfit},{label:'Refunded invoices',value:refundCount},{label:'Invoices in report',value:filteredTx.length}]};
+    if(activeTab==='products')return {...base,title:'Product performance report',headers:['Product','Units Sold','Revenue (LKR)','Profit (LKR)'],rows:productSales.map(p=>[p.name,p.qty,p.revenue,p.profit]),moneyColumns:[2,3],summary:[{label:'Products sold',value:productSales.length},{label:'Units sold',value:productSales.reduce((s,p)=>s+p.qty,0)},{label:'Product revenue before invoice discounts (LKR)',value:productSales.reduce((s,p)=>s+p.revenue,0)}]};
+    return {...base,title:'Expense report',headers:['Date','Description','Category','Amount (LKR)'],rows:filteredExpenses.map(e=>[e.date,e.desc,e.category,e.amount]),moneyColumns:[3],summary:[{label:'Total expenses (LKR)',value:totalExpenses},{label:'Expense records',value:filteredExpenses.length}]};
   };
 
   const setPreset = (days: number) => {
@@ -141,9 +123,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
             <span className="text-slate-400 text-xs">–</span>
             <input type="date" value={toDate} onChange={(e) => {setToDate(e.target.value);setVisibleRows(20);}} className="text-xs text-slate-700 outline-none bg-transparent" />
           </div>
-          <button onClick={exportCSV} className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg transition">
-            <Download className="w-3.5 h-3.5" /> Export CSV
-          </button>
+          <ReportExportMenu report={buildReport} settings={taxConfig}/>
         </div>
       </div>
 
