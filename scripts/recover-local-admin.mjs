@@ -44,10 +44,19 @@ try {
     throw new Error('That email is not an existing Super Admin. No accounts were changed.');
   }
   const hash = await bcrypt.hash(password, 12);
-  await client.query(
-    'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-    [hash, existing.rows[0].id],
-  );
+  await client.query('BEGIN');
+  try {
+    const updated = await client.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND role = $3 RETURNING id',
+      [hash, existing.rows[0].id, 'Super Admin'],
+    );
+    if (updated.rowCount !== 1) throw new Error('Administrator account changed; recovery aborted.');
+    await client.query('UPDATE auth_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL', [existing.rows[0].id]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  }
   process.stdout.write('Administrator password updated in PostgreSQL. Restart the POS and sign in.\n');
 } finally {
   await client.end().catch(() => {});
