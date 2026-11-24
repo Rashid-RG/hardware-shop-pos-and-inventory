@@ -36,7 +36,7 @@ interface CustomerEmployeeViewProps {
   onUpdateCustomer: (customerId: string, details: Pick<Customer, 'name' | 'phone' | 'email' | 'address'>) => Promise<void>;
   onAddEmployee: (empData: Omit<Employee, 'id' | 'performanceScore'>) => Promise<void>;
   onSetCreditLimit: (customerId: string, creditLimit: number) => Promise<void>;
-  onAddCreditPayment: (payload: { customerId: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<void>;
+  onAddCreditPayment: (payload: { customerId: string; invoiceId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => Promise<void>;
 }
 
 export default function CustomerEmployeeView({
@@ -80,6 +80,7 @@ export default function CustomerEmployeeView({
   const [isCustSubmitting, setIsCustSubmitting] = useState(false);
   const [creditEdit, setCreditEdit] = useState<Record<string, string>>({});
   const [paymentDraft, setPaymentDraft] = useState<Customer | null>(null);
+  const [paymentInvoiceId,setPaymentInvoiceId]=useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [paymentDate, setPaymentDate] = useState(reportDay(new Date()));
@@ -219,7 +220,7 @@ export default function CustomerEmployeeView({
     }))),
     ...(customerHistoryType === 'invoices' ? [] : selectedPayments.map((payment) => ({
       id: payment.id, type: 'Payment' as const, date: payment.date,
-      reference: payment.paymentMethod, description: payment.note || 'Credit repayment',
+      reference: payment.invoiceId ? selectedInvoices.find(tx=>tx.id===payment.invoiceId)?.invoiceNumber || payment.invoiceId : payment.paymentMethod, description: payment.note || 'Credit repayment',
       amount: Number(payment.amount || 0), status: 'Received',
     }))),
   ].filter((row) => {
@@ -284,10 +285,18 @@ export default function CustomerEmployeeView({
     }
   };
 
+  const collectionPayments=customerCreditPayments.filter(p=>p.customerId===paymentDraft?.id&&p.shopId===paymentDraft?.shopId);
+  const hasUnallocatedCollections=collectionPayments.some(p=>!p.invoiceId);
+  const collectibleInvoices=transactions.filter(tx=>tx.customerId===paymentDraft?.id&&tx.shopId===paymentDraft?.shopId&&tx.paymentMethod==='Credit Account'&&tx.status==='Completed').map(tx=>({id:tx.id,number:tx.invoiceNumber,date:tx.date,balance:Math.round((Number(tx.total)-collectionPayments.filter(p=>p.invoiceId===tx.id).reduce((sum,p)=>sum+Number(p.amount),0))*100)/100})).filter(tx=>tx.balance>0);
+  const selectedCollectionInvoice=collectibleInvoices.find(tx=>tx.id===paymentInvoiceId);
+  const collectionMaximum=Math.min(Number(paymentDraft?.creditBalance||0),hasUnallocatedCollections?Number(paymentDraft?.creditBalance||0):selectedCollectionInvoice?.balance||0);
+
   const handleSubmitCreditPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!paymentDraft) return;
+    if (!paymentDraft || isPaymentSubmitting) return;
     const amount = Number(paymentAmount);
+    if(!hasUnallocatedCollections&&!selectedCollectionInvoice){notify.warning('Select an unpaid invoice.');return;}
+    if(!Number.isFinite(amount)||amount>collectionMaximum){notify.warning('Payment exceeds the outstanding balance.');return;}
     if (!amount || amount <= 0) {
       notify.warning('Enter a valid payment amount.');
       return;
@@ -296,6 +305,7 @@ export default function CustomerEmployeeView({
     try {
       await onAddCreditPayment({
         customerId: paymentDraft.id,
+        invoiceId: hasUnallocatedCollections?undefined:paymentInvoiceId,
         amount,
         paymentMethod,
         date: paymentDate,
@@ -457,7 +467,7 @@ export default function CustomerEmployeeView({
                       <span className="text-[11px] text-slate-500">Record repayment against outstanding balance.</span>
                       <button
                         onClick={() => {
-                          setPaymentDraft(c);
+                          setPaymentDraft(c);setPaymentInvoiceId('');
                           setPaymentAmount('');
                           setPaymentMethod('Cash');
                           setPaymentDate(reportDay(new Date()));
@@ -644,7 +654,7 @@ export default function CustomerEmployeeView({
                   <button type="button" onClick={() => { setCustomerHistorySearch(''); setCustomerHistoryFrom(''); setCustomerHistoryTo(''); setCustomerHistoryType('all'); }}
                     className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold hover:bg-slate-50">Clear activity filters</button>
                   {selectedCustomer.id !== 'cust-walkin' && (
-                    <button type="button" onClick={() => { setPaymentDraft(selectedCustomer); setPaymentAmount(''); setPaymentMethod('Cash'); setPaymentDate(reportDay(new Date())); }}
+                    <button type="button" onClick={() => { setPaymentDraft(selectedCustomer);setPaymentInvoiceId(''); setPaymentAmount(''); setPaymentMethod('Cash'); setPaymentDate(reportDay(new Date())); }}
                       className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-800">Record credit repayment</button>
                   )}
                 </div>
@@ -702,7 +712,7 @@ export default function CustomerEmployeeView({
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">Customer Credit Payment</h3>
+            <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">Record Customer Payment</h3>
 
             <form onSubmit={handleSubmitCreditPayment} className="space-y-2.5 text-xs font-sans">
               <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-slate-700">
@@ -711,8 +721,16 @@ export default function CustomerEmployeeView({
               </div>
 
               <div>
+                {hasUnallocatedCollections?<p role="status" className="mb-2 rounded bg-amber-50 p-2 text-amber-900">Historical payments are not allocated to invoices. Record against the customer account until reconciled.</p>:<>
+                  <label htmlFor="collection-invoice" className="block font-semibold mb-1">Outstanding invoice *</label>
+                  <select id="collection-invoice" required value={paymentInvoiceId} onChange={e=>{setPaymentInvoiceId(e.target.value);setPaymentAmount('');}} className="mb-2 w-full rounded border p-2">
+                    <option value="">Select an invoice</option>
+                    {collectibleInvoices.map(tx=><option key={tx.id} value={tx.id}>{tx.number} · {formatMoney(tx.balance)}</option>)}
+                  </select>
+                  {selectedCollectionInvoice&&<p className="mb-2 font-semibold">Invoice outstanding: {formatMoney(selectedCollectionInvoice.balance)}</p>}
+                </>}
                 <label className="block text-slate-500 font-semibold mb-1">Amount *</label>
-                <input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" required />
+                <input type="number" min="0.01" max={collectionMaximum} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" required />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -727,7 +745,7 @@ export default function CustomerEmployeeView({
                 </div>
                 <div>
                   <label className="block text-slate-500 font-semibold mb-1">Date</label>
-                  <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" />
+                  <input type="date" required max={reportDay(new Date())} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" />
                 </div>
               </div>
 
@@ -738,7 +756,7 @@ export default function CustomerEmployeeView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={isPaymentSubmitting} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
+                <button type="submit" disabled={isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
               </div>
