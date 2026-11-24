@@ -295,3 +295,35 @@ test('supplier refund posting is atomic, scoped and replay safe',{timeout:60000}
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM (SELECT journal_id FROM ars_gl_lines GROUP BY journal_id HAVING sum(debit)<>sum(credit)) x")).rows[0].n,0);
  }finally{if(pool)await pool.end();await admin.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await admin.end();}
 });
+
+test('import return allocation conserves cents across partial Box/Piece returns',async()=>{
+ const {allocateImportReturnCost}=await import('../backend/importReturnCost.ts');
+ const input={receipts:[{baseQuantity:12,landedCost:'130.01'}],goodsCostPerPurchaseUnit:'100.00',purchaseFactor:12};
+ let goods=0n,charges=0n;
+ for(const [previous,quantity] of [[0,4],[4,5],[9,3]]){
+ const a=allocateImportReturnCost({...input,previousReturnedBaseQuantity:previous,returnBaseQuantity:quantity});
+ goods+=a.goodsCost;charges+=a.allocatedCharges;
+ }
+ assert.equal(goods,10000n);assert.equal(charges,3001n);
+ assert.throws(()=>allocateImportReturnCost({...input,previousReturnedBaseQuantity:9,returnBaseQuantity:4}),/exceeds/);
+ assert.throws(()=>allocateImportReturnCost({...input,receipts:[],previousReturnedBaseQuantity:0,returnBaseQuantity:1}),/receipt history/);
+ assert.throws(()=>allocateImportReturnCost({...input,receipts:[{baseQuantity:12,landedCost:'99.99'}],previousReturnedBaseQuantity:0,returnBaseQuantity:1}),/reconcile/);
+});
+test('import recovery limits prevent category and overall over-recovery',async()=>{
+ const {recoveryLimit}=await import('../backend/importChargeRecoveries.ts');
+ assert.equal(recoveryLimit(3000000n,2000000n,500000n,1000000n,200000n),800000n);
+ assert.equal(recoveryLimit(3000000n,1000000n,900000n,2000000n,0n),100000n);
+ assert.equal(recoveryLimit(3000000n,0n,0n,1000000n,0n),0n);
+ assert.equal(recoveryLimit(3000000n,2000000n,2000000n,1000000n,0n),0n);
+ assert.equal(recoveryLimit(3000000n,2000000n,1000000n,1000000n,1000000n),0n);
+ assert.throws(()=>recoveryLimit(3000000n,2000000n,-1n,1000000n,0n),/reconciliation/);
+});
+test('import return posts carrying variance once, not historical freight twice',async()=>{
+ const {buildImportPurchaseReturnJournal}=await import('../backend/purchaseReturnJournal.ts');
+ const result=buildImportPurchaseReturnJournal({inventoryCost:'130000.00',supplierCredit:'100000.00',outstandingPayable:'80000.00',inventoryAccount:'1200',payableAccount:'2100',advanceAccount:'1250',varianceAccount:'5100',importVarianceAccount:'5100',historicalGoodsCost:'100000.00',historicalImportCharges:'30000.00'});
+ assert.equal(result.historicalLandedCost,13000000n);
+ assert.equal(result.carryingVariance,3000000n);
+ assert.deepEqual(result.lines.find(l=>l.accountCode==='5100'),{accountCode:'5100',debit:'30000.00',credit:'0.00'});
+ assert.equal(result.lines.find(l=>l.accountCode==='1250').debit,'20000.00');
+ assert.equal(validateJournal(result.lines).totalCents,'13000000');
+});
