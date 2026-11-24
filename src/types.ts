@@ -249,6 +249,7 @@ export interface StoreSettings {
 
 export interface ManualExpense {
   id: string;
+  shopId?: string;
   desc: string;
   amount: number;
   date: string;
