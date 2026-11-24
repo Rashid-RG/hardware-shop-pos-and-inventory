@@ -24,7 +24,7 @@ interface ProductManagementViewProps {
   currentRole: Role;
   taxConfig?: { taxRate: number; storeName: string; currency: string; invoicePrefix: string; productCategories?: string[] };
   authToken: string;
-  onAddProduct: (prodData: Omit<Product, 'id'>) => Promise<void>;
+  onAddProduct: (prodData: Omit<Product, 'id'>) => Promise<Product>;
   onEditProduct: (id: string, prodData: Partial<Product> & { reason?: string; user?: string }) => Promise<void>;
   onDeleteProduct: (id: string) => Promise<void>;
   onAddCategory: (categoryName: string) => Promise<void>;
@@ -243,6 +243,7 @@ export default function ProductManagementView({
     return fetch(url, { ...init, headers });
   };
 
+  const [newProductMultipleUnits,setNewProductMultipleUnits]=useState(false);
   const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
   const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
   const [packagingBusy, setPackagingBusy] = useState(false);
@@ -459,6 +460,7 @@ export default function ProductManagementView({
   // Open form for adding
   const handleOpenAdd = () => {
     setEditingProduct(null);
+    setNewProductMultipleUnits(false);
     setShowAdvancedProduct(false);
     const generatedCode = 'ARS-' + crypto.randomUUID().slice(0, 12).toUpperCase();
     setName('');
@@ -580,6 +582,7 @@ export default function ProductManagementView({
       ? cleanedVariants.reduce((sum, variant) => sum + (Number(variant.quantity) || 0), 0)
       : Number(quantity || 0);
 
+    if (!editingProduct && newProductMultipleUnits && (totalVariantQty !== 0 || hasVariants || hasSimpleAttributes)) { notify.warning('Multiple-unit products must start with zero stock and no independent variants. Receive stock after configuring packaging.'); return; }
     setIsSubmitting(true);
 
     const finalVariants = hasVariants 
@@ -628,7 +631,8 @@ export default function ProductManagementView({
       if (editingProduct) {
         await onEditProduct(editingProduct.id, { ...payload, reason: 'Modified catalog specifications' });
       } else {
-        await onAddProduct(payload);
+        const created=await onAddProduct(payload);
+        if(newProductMultipleUnits){setIsFormOpen(false);await openPackaging(created);notify.success('Product created. Configure its selling units before receiving stock.');return;}
       }
       notify.success(editingProduct ? 'Product updated successfully.' : 'Product saved and ready for billing.');
       setIsFormOpen(false);
@@ -1437,6 +1441,7 @@ export default function ProductManagementView({
                 </div>
               )}
 
+              {!editingProduct && <div className="mx-4 my-2 rounded-lg border border-slate-200 p-3"><label className="block font-semibold mb-2">Selling unit model</label><select className="w-full rounded border p-2" value={newProductMultipleUnits?'multiple':'single'} onChange={e=>setNewProductMultipleUnits(e.target.value==='multiple')}><option value="single">Single unit — fixed stock unit</option><option value="multiple">Multiple units — Box / Piece / Carton</option></select>{newProductMultipleUnits && <p className="mt-2 text-amber-800">Save with zero initial stock and no independent variants. The packaging window opens next.</p>}</div>}
               {editingProduct && <div className="px-4 py-2"><button type="button" disabled={packagingBusy || isSubmitting} onClick={()=>openPackaging(editingProduct)} className="rounded border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700">Configure selling units</button></div>}
               {/* Submitting buttons */}
               <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-5 flex gap-3">
@@ -1453,7 +1458,7 @@ export default function ProductManagementView({
                   disabled={isSubmitting}
                   className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition"
                 >
-                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : 'Save Product & Finish'}
+                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : newProductMultipleUnits ? 'Save & Configure Units' : 'Save Product & Finish'}
                 </button>
               </div>
             </form>
