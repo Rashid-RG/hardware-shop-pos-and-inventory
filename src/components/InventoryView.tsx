@@ -11,9 +11,13 @@ import {
   FileCheck2,
   X,
 } from 'lucide-react';
-import { Product, StockLog, Role } from '../types';
+import { Product, StockLog, Role, StoreSettings } from '../types';
+
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 
 interface InventoryViewProps {
+  taxConfig: StoreSettings;
   products: Product[];
   stockLogs: StockLog[];
   currentRole: Role;
@@ -22,6 +26,7 @@ interface InventoryViewProps {
 }
 
 export default function InventoryView({
+  taxConfig,
   products,
   stockLogs,
   currentRole,
@@ -123,28 +128,12 @@ export default function InventoryView({
   const isLedgerFiltered = Boolean(searchTerm.trim() || logTypeFilter !== 'All' || logDateFrom || logDateTo);
   const isProductFiltered = Boolean(productSearch.trim());
 
-  const exportLedgerCsv = () => {
-    // CSV formula injection protection for staff-entered product names and notes.
-    const csvCell = (value: string | number) => {
-      const text = String(value ?? '');
-      const escaped = typeof value === 'number' || !/^\s*[=+@-]/.test(text) ? text : "'" + text;
-      return '"' + escaped.replace(/"/g, '""') + '"';
-    };
-    const headers = ['Date', 'Product ID', 'Product', 'Type', 'Quantity', 'Operator', 'Reason', 'Reference'];
-    const rows = filteredLogs.map((log) => [
-      log.date, log.productId, log.productName, log.type, Number(log.quantity),
-      log.user, log.reason, log.referenceId || '',
-    ]);
-    const csv = '\uFEFF' + [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\r\n');
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    link.href = url;
-    link.download = 'ars-stock-movements.csv';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  const ledgerReport = ():BusinessReport => ({
+    title:'Stock movement ledger',filename:'ars-stock-movements',period:(logDateFrom||'All dates')+' to '+(logDateTo||'Latest')+' | '+logTypeFilter,
+    headers:['Date','Product ID','Product','Type','Quantity','Operator','Reason','Reference'],
+    rows:filteredLogs.map(log=>[log.date,log.productId,log.productName,log.type,Number(log.quantity),log.user,log.reason,log.referenceId||'']),
+    summary:[{label:'Matching movements',value:filteredLogs.length},{label:'Distinct products',value:new Set(filteredLogs.map(log=>log.productId)).size}]
+  });
 
   const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())));
   return (
@@ -283,10 +272,7 @@ export default function InventoryView({
             className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50">
             Clear filters
           </button>
-          <button type="button" id="ledger-export-csv" onClick={exportLedgerCsv}
-            className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-800">
-            Export all matching movements
-          </button>
+          <ReportExportMenu report={ledgerReport} settings={taxConfig}/>
         </div>
 
         {/* Chronological log feed */}
