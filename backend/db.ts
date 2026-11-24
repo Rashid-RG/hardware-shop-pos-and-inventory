@@ -532,7 +532,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
 
   const settingsRow = settingsRes.rows[0] || {
     tax_rate: 18,
-    store_name: 'ARS Distribution',
+    store_name: 'ARS Distributor',
     currency: 'LKR',
     invoice_prefix: 'SL-INV',
     logo_url: '',
@@ -543,7 +543,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
     shop_profiles: [
       {
         id: 'shop-main',
-        name: 'ARS Distribution',
+        name: 'ARS Distributor',
         logoUrl: '',
         address: '150 Galle Road, Colombo 03, Sri Lanka',
         phone: '+94 11 234 5678',
