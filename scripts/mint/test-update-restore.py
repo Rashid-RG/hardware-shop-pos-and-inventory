@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 import zipfile
+from release_fingerprint import fingerprint
 
 STATE = Path.home()/".local/share/ars-hardware"
 RECOVERY = STATE/"update-recovery"
@@ -59,6 +60,7 @@ def test(folder, compatibility=False):
         app_name=container+'-app'
         password=secrets.token_hex(32)
         compatibility_result=False
+        build_fingerprint=None
         def db(*args,**kwargs):
             return run(["docker","exec","-i",container,*args],**kwargs)
         try:
@@ -97,6 +99,7 @@ def test(folder, compatibility=False):
                 manifest=json.loads((staged/".ars-release-manifest.json").read_text())
                 if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
                     raise ValueError("Release manifest mismatch.")
+                build_fingerprint=fingerprint(staged)
                 node_image="node:22-bookworm-slim"
                 run(["docker","image","inspect",node_image],stdout=subprocess.DEVNULL)
                 def snapshot():
@@ -141,6 +144,8 @@ def test(folder, compatibility=False):
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if fingerprints(schema)!=before:
                     raise RuntimeError("Existing database rows changed during startup; automatic compatibility approval blocked.")
+                if fingerprint(staged)!=build_fingerprint:
+                    raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
             if sha(dump)!=checksum:
                 raise ValueError("Backup changed during restoration test.")
@@ -152,7 +157,7 @@ def test(folder, compatibility=False):
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
-                "migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
+                "buildFingerprint":build_fingerprint,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
         temporary=folder/(".restore-"+uuid.uuid4().hex)
         temporary.write_text(json.dumps(result,indent=2)+"\n")
         temporary.replace(receipt)
