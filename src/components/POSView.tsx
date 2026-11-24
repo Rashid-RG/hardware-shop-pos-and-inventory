@@ -119,6 +119,7 @@ export default function POSView({
   };
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
+  const [expandedInvoice, setExpandedInvoice] = useState(false);
   const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('catalog');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
@@ -1585,9 +1586,9 @@ export default function POSView({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0 items-start">
         {/* Primary product workspace: 8 of 12 desktop columns */}
-        <div className={`lg:col-span-8 flex flex-col space-y-3 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className={`lg:col-span-7 min-w-0 flex-col space-y-3 ${expandedInvoice ? 'hidden' : activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Search header bar */}
         <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 flex flex-wrap gap-2 items-center justify-between">
           <div className="relative min-w-[190px] flex-1">
@@ -1652,7 +1653,7 @@ export default function POSView({
         </div>
 
         {/* Dynamic Products Grid */}
-        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 overflow-y-auto max-h-[min(65dvh,680px)] pr-1">
+        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
             const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
@@ -1759,8 +1760,8 @@ export default function POSView({
       </div>
 
       {/* Compact order summary: 4 of 12 desktop columns */}
-      <div className={`lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-3 sm:p-4 flex flex-col min-h-[400px] lg:h-[calc(100dvh-238px)] lg:min-h-[390px] lg:overflow-hidden ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+      <div className={`${expandedInvoice ? 'lg:col-span-12' : 'lg:col-span-5'} min-w-0 bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex-col min-h-[400px] lg:h-[calc(100dvh-165px)] lg:min-h-[440px] lg:overflow-hidden ${expandedInvoice || activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className="shrink-0">
           {/* Active Operator Banner */}
           <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-3 text-xs font-sans">
             <div>
@@ -1768,7 +1769,8 @@ export default function POSView({
               <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
             </div>
             <div className="p-1 px-2.5 bg-slate-50 rounded-md border border-slate-150 text-slate-600 text-[11px] font-mono">
-              Mode: Check-out
+              <button type="button" aria-pressed={expandedInvoice} onClick={() => { setExpandedInvoice(v => !v); setActiveMobileView('cart'); }} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Restore split view' : 'Expand invoice'}</button>
+              <span className="lg:hidden">Invoice</span>
             </div>
           </div>
 
@@ -1780,22 +1782,23 @@ export default function POSView({
           )}
 
           {/* Required bill assignment is shown in summary, edited in focused dialogs. */}
-          <div className="mb-3 grid grid-cols-1 gap-2 xl:grid-cols-2" aria-label="Invoice assignment">
+          <div className="mb-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2" aria-label="Invoice assignment">
             <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setDraftCustomerId(selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id);setSetupDialog('customer');}}
-              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
-              <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
+              <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
               <span className="mt-1 block text-[11px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
             </button>
             <button type="button" id="pos-open-representative" onClick={() => {setDraftRepId(selectedSalesRepId);setSetupDialog('representative');}}
-              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
               <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">2 · Sales Representative *</span>
-              <span className="mt-1 block truncate text-sm font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
+              <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
               <span className="mt-1 block text-[11px] text-indigo-600">{selectedSalesRepId ? 'Change representative' : 'Tap to select rep'} →</span>
             </button>
           </div>
+        </div>
           {/* Cart Header */}
-          <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-50 pb-2.5 font-sans mb-3">
+          <div className="shrink-0 flex items-center justify-between text-xs text-slate-500 border-b border-slate-200 pb-2 font-sans mb-2">
             <span>Product</span>
             <div className="flex items-center gap-12">
               <span>Qty</span>
@@ -1804,17 +1807,17 @@ export default function POSView({
           </div>
 
           {/* Cart Scroll list */}
-          <div id="pos-cart-scroller" className="space-y-2.5 pr-1">
+          <div id="pos-cart-scroller" className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
               const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
               const pricing = getLinePricing(item);
 
               return (
-                <div key={lineKey} className="flex items-center justify-between text-xs font-sans">
+                <div key={lineKey} className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 pb-2 text-xs font-sans">
                   {/* description */}
-                  <div className="min-w-0 flex-1 pr-4">
-                    <p className="font-semibold text-slate-800 truncate" title={item.product.name}>
+                  <div className="min-w-[140px] flex-1">
+                    <p className="font-semibold text-slate-800 break-words" title={item.product.name}>
                       {item.product.name}
                     </p>
                     {item.variantName && (
@@ -1825,7 +1828,7 @@ export default function POSView({
                     <button type="button"
                       aria-label={`Edit invoice description for ${item.product.name}`}
                       onClick={() => {setEditingDescriptionKey(lineKey);setDescriptionDraft(item.invoiceDescription || '');}}
-                      className="mt-1 block max-w-full truncate text-left text-[10px] font-medium text-indigo-600 hover:underline">
+                      className="mt-1 block max-w-full break-words whitespace-normal text-left text-xs font-medium text-indigo-600 hover:underline">
                       {item.invoiceDescription ? `Description: ${item.invoiceDescription}` : '+ Add invoice description'}
                     </button>
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono mt-0.5">
@@ -1858,7 +1861,7 @@ export default function POSView({
                   </div>
 
                   {/* selectors and quantities */}
-                  <div className="flex items-center gap-6 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md p-1">
                       <button
                         type="button"
@@ -1885,7 +1888,7 @@ export default function POSView({
                       </button>
                     </div>
 
-                    <div className="text-right w-18 font-mono font-bold text-slate-900">
+                    <div className="text-right min-w-[76px] font-mono font-bold text-slate-900">
                       {formatMoney(pricing.lineTotal)}
                       <button
                         onClick={() => removeFromCart(lineKey)}
@@ -1907,7 +1910,6 @@ export default function POSView({
               </div>
             )}
           </div>
-        </div>
 
         <div className="shrink-0 border-t border-slate-200 bg-white pt-3">
           <div className="flex items-center justify-between gap-3 pb-3">
