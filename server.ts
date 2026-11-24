@@ -14,7 +14,8 @@ import { inventoryValuation, inventoryCostHistory } from './backend/inventoryVal
 import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './backend/receivableAging';
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
-import { submitOpeningProposal, listOpeningProposals } from './backend/openingBalances';
+import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
+import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
@@ -6280,6 +6281,33 @@ app.post('/api/ledger/opening-proposals',requireRole(['Super Admin']),async(req,
  catch(error){const message=error instanceof Error?error.message:'';
  if(['Valid cutover date and supporting evidence required.','A journal needs between 2 and 500 lines.','Invalid ledger account code.','Use a non-negative decimal amount with at most two decimal places.','Each line must have exactly one positive debit or credit.','Journal debits and credits must balance.','Use one opening balance line per account.','Opening proposal identifier already used.','Accounting already active; opening proposal not permitted.','Opening balances require active asset, liability or equity accounts in this shop.'].includes(message))return res.status(409).json({error:message});
  console.error('Opening proposal submission failed',error);return res.status(500).json({error:'Unable to confirm opening proposal. Retry the identical proposal.'});}
+});
+app.post('/api/ledger/opening-proposals/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {decision,evidence}=req.body||{};
+ try{return res.json(await reviewOpeningProposal(pool,scope.shopId,scope.recordedBy,{id:req.params.id,decision,evidence}));}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid proposal decision and review evidence required.','Opening proposal not found in this shop.','Proposal review already recorded.','An independent administrator must review the opening proposal.','Opening proposal integrity check failed.','Opening accounts changed; submit a corrected proposal.','Accounting already active.','An approved opening proposal already exists; audited supersession is required.'].includes(message))return res.status(409).json({error:message});
+ console.error('Opening review failed',error);return res.status(500).json({error:'Unable to confirm review. Retry identical details.'});}
+});
+app.get('/api/ledger/mappings',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await listLedgerMappings(pool,scope.shopId));}
+ catch(error){console.error('Ledger mappings failed',error);return res.status(500).json({error:'Unable to load mappings.'});}
+});
+app.post('/api/ledger/mappings',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {kind,sourceId,accountCode,evidence}=req.body||{};
+ try{const result=await createLedgerMapping(pool,scope.shopId,scope.recordedBy,{kind,sourceId,accountCode,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(['Valid account mapping and evidence required.','Control mappings require the control source identifier.','Mapping already exists; audited correction required.','Active accounting requires an audited mapping amendment.','Active cash, bank or representative account required.','Active ledger account with matching classification required.','Use a distinct ledger account for each mapping.'].includes(message))return res.status(409).json({error:message});
+ console.error('Ledger mapping failed',error);return res.status(500).json({error:'Unable to confirm mapping. Retry identical details.'});}
 });
 app.get('/api/ledger/accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
