@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5927,6 +5927,42 @@ app.get('/api/customer-credit-payments/:id/pdf', requireRole(['Super Admin','Sto
   }catch(error){console.error('Payment receipt PDF generation failed',error);res.status(500).json({error:'Failed to generate payment receipt.'});}
 });
 
+const eligibleRepresentativeLogin=(user:UserAccount,shopId:string)=>{
+  if(user.role!=='Cashier')return false;
+  const fixed=getUserFixedShop(user.email);
+  const allowed=getUserAllowedShops(user);
+  if((fixed&&fixed!==shopId)||(allowed&&!allowed.includes(shopId)))return false;
+  const access=resolveUserShopAccess(toAuthRecordFromUser(user),shopId);
+  return !('error' in access)&&access.scopedShopId===shopId;
+};
+app.get('/api/representative-logins',requireRole(['Super Admin']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Representative login access denied.'});
+  try{
+    const links=await pool.query('SELECT employee_id AS "employeeId",user_id AS "userId",linked_by AS "linkedBy",linked_at AS "linkedAt" FROM ars_representative_logins WHERE shop_id=$1',[scope.shopId]);
+    const assignments=await listRepresentativeAccounts(pool,scope.shopId);
+    const users=db.users.filter(u=>eligibleRepresentativeLogin(u,scope.shopId)).map(u=>({id:u.id,name:u.name,email:u.email}));
+    res.setHeader('Cache-Control','no-store');
+    return res.json({links:links.rows,assignments,users});
+  }catch(error){console.error('Representative login directory failed',error);return res.status(500).json({error:'Unable to load representative logins.'});}
+});
+app.post('/api/representative-logins',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Representative login access denied.'});
+  const {employeeId,userId}=req.body||{};
+  if(typeof employeeId!=='string'||!employeeId.trim()||employeeId.length>200||typeof userId!=='string'||!userId.trim()||userId.length>200)return res.status(400).json({error:'Select a representative and login.'});
+  const user=db.users.find(u=>u.id===userId);
+  if(!user||!eligibleRepresentativeLogin(user,scope.shopId))return res.status(403).json({error:'Login is not authorized for this shop.'});
+  try{
+    const result=await linkRepresentativeLogin(pool,{...scope,employeeId,userId});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid representative login link.','Select an existing sales representative login.','Select an active representative staff record.','Assign an active representative cash account first.','Login or employee already linked. Administrative reconciliation required.'].includes(message))return res.status(409).json({error:message});
+    console.error('Representative login link failed',error);return res.status(500).json({error:'Unable to confirm link. Refresh or retry the same selection.'});
+  }
+});
 app.get('/api/representative-accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Representative account access denied.'});
