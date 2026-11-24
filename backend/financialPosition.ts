@@ -1,4 +1,5 @@
 import type {Pool} from 'pg';
+import {inventoryValuation} from './inventoryValuation';
 
 /** Current operational position, not a statutory balance sheet. No balancing plug. */
 export async function financialPosition(db:Pool,shopId:string){
@@ -36,6 +37,7 @@ export async function financialPosition(db:Pool,shopId:string){
   const overpaidOrders=lines.rows.filter(o=>Number(o.paid)>Number(o.total)||Number(o.total)<=0||Number(o.paid)<0).length;
   const unmatched=await client.query(`SELECT COUNT(*) AS count FROM supplier_payments p WHERE p.shop_id=$1 AND NOT EXISTS(
     SELECT 1 FROM purchase_orders o WHERE o.shop_id=p.shop_id AND o.supplier_id=p.supplier_id AND o.id=p.purchase_order_id AND o.status='Received')`,[shopId]);
+  const inventory=await inventoryValuation(client,shopId);
   await client.query('COMMIT');
   return {asOf:r.day,recordedCashAndBank:Number(r.cash),negativeCashAccounts:Number(r.negative_cash),
     netSettlementBalance:Number(r.settlement),nonzeroSettlementAccounts:Number(r.settlement_count),
@@ -44,7 +46,8 @@ export async function financialPosition(db:Pool,shopId:string){
     recordedNetCapital:round(Number(r.contributions)-Number(r.drawings)),
     receivedOrderOutstandingEstimate,partialOrders:Number(r.partial_orders),overpaidOrders,
     unmatchedSupplierPayments:Number(unmatched.rows[0].count),profitAllocations:Number(r.allocations),
+    inventoryKnownValue:inventory.knownValue,inventoryTotalValue:inventory.totalValue,inventoryFlagged:inventory.flagged,
     complete:false,totalAssets:null,totalLiabilities:null,totalEquity:null,balanceDifference:null,
-    limitations:['Inventory and fixed assets require verified valuation.','Supplier liabilities require invoice reconciliation.','Opening equity, retained earnings, taxes and other liabilities require verified ledger balances.','Settlement accounts and partner allocations require classification and reconciliation.']};
+    limitations:[...(inventory.complete?[]:['Inventory contains unresolved valuation entries.']),'Fixed assets require verified valuation.','Supplier liabilities require invoice reconciliation.','Opening equity, retained earnings, taxes and other liabilities require verified ledger balances.','Settlement accounts and partner allocations require classification and reconciliation.']};
  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
