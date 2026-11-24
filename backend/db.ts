@@ -436,6 +436,7 @@ export const initDbTables = async () => {
       );
 
       ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS invoice_id TEXT;
+    ALTER TABLE customer_credit_payments ADD COLUMN IF NOT EXISTS receipt_snapshot JSONB;
 
     CREATE TABLE IF NOT EXISTS invoice_print_logs (
         id TEXT PRIMARY KEY,
@@ -779,6 +780,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
     customerCreditPayments: creditPaymentsRes.rows.map((row) => ({
       id: row.id,
       invoiceId: row.invoice_id || undefined,
+      receiptSnapshot: row.receipt_snapshot || undefined,
       shopId: row.shop_id || undefined,
       customerId: row.customer_id,
       customerName: row.customer_name,
@@ -1310,11 +1312,13 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
     await client.query('BEGIN');
     // Match refund lock ordering: invoice first, then customer.
     let invoiceTotalCents=0;
+    let invoiceNumber: string | undefined;
     if(p.invoiceId){
-      const invoice=await client.query("SELECT total,payment_method,status FROM sales_transactions WHERE id=$1 AND shop_id=$2 AND customer_id=$3 FOR UPDATE",[p.invoiceId,p.shopId,p.customerId]);
+      const invoice=await client.query("SELECT total,payment_method,status,invoice_number FROM sales_transactions WHERE id=$1 AND shop_id=$2 AND customer_id=$3 FOR UPDATE",[p.invoiceId,p.shopId,p.customerId]);
       const row=invoice.rows[0];
       if(!row||row.payment_method!=='Credit Account'||row.status!=='Completed')throw Error('Select an outstanding credit invoice belonging to this customer.');
       invoiceTotalCents=Math.round(Number(row.total)*100);
+      invoiceNumber=row.invoice_number;
     }
     const result = await client.query(
       'SELECT name, credit_balance FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
@@ -1339,10 +1343,11 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
       const linked=await client.query('SELECT 1 FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND invoice_id IS NOT NULL LIMIT 1',[p.shopId,p.customerId]);
       if(linked.rowCount)throw Error('Select an invoice for this customer payment.');
     }
+    const receiptSnapshot=p.invoiceId?{invoiceNumber,invoiceTotal:invoiceTotalCents/100,previousPayments:invoicePaidCents/100,balanceAfter:(invoiceTotalCents-invoicePaidCents-Math.round(p.amount*100))/100}:{balanceAfter:(Math.round(outstanding*100)-Math.round(p.amount*100))/100};
     await client.query(
-      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [p.id, p.shopId, p.customerId, result.rows[0].name, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null, p.invoiceId || null]
+      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id, receipt_snapshot)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+      [p.id, p.shopId, p.customerId, result.rows[0].name, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null, p.invoiceId || null, JSON.stringify(receiptSnapshot)]
     );
     await client.query(
       `UPDATE customers SET credit_balance = credit_balance - $1, updated_at = NOW()
@@ -1360,6 +1365,7 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
       await client.query('UPDATE sales_transactions SET payment_status=$1 WHERE id=$2 AND shop_id=$3',[settled?'PAID':'PARTIALLY PAID',p.invoiceId,p.shopId]);
     }
     await client.query('COMMIT');
+    return receiptSnapshot;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
