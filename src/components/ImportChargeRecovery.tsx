@@ -1,3 +1,4 @@
+import DisbursementVoucherActions from './DisbursementVoucherActions';
 import React,{useEffect,useRef,useState} from 'react';
 import {reportDay} from '../utils/reporting';
 type Request={requestId:string;returnId:string;chargeKind:string;payer:string;documentReference:string;accountId:string;amount:string;date:string;evidence:string};
@@ -44,6 +45,6 @@ export default function ImportChargeRecovery({returnId,authToken,shopId,owner,ca
  <label className="text-sm sm:col-span-2">Receipt evidence<input className={field} required maxLength={500} value={evidence} onChange={e=>setEvidence(e.target.value)}/></label>
  <p className="text-xs text-slate-600 sm:col-span-2">Record actual cash or bank receipts only, not expected claims.</p>
  <button disabled={busy||!ready||!availability.accounts.length||!available||Number(available.available)<=0} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50">Confirm recovery</button></form>}</>}
- <h4 className="font-semibold text-sm">Recovery history</h4>{history.length?history.map(h=><div key={h.id} className="rounded border p-2 text-sm"><p className="font-semibold">{h.charge_kind} · Rs. {h.amount} · {h.recovery_date}</p><p>{h.payer} · {h.document_reference} · {h.account_name}</p><p>{h.evidence}</p></div>):<p className="text-xs text-slate-600">No recovery records loaded.</p>}</>}
+ <h4 className="font-semibold text-sm">Recovery history</h4>{history.length?history.map(h=><div key={h.id} className="rounded border p-2 text-sm"><p className="font-semibold">{h.charge_kind} · Rs. {h.amount} · {h.recovery_date}</p><p>{h.payer} · {h.document_reference} · {h.account_name}</p><p>{h.evidence}</p><DisbursementVoucherActions kind="import-recovery" id={h.id} authToken={authToken} shopId={shopId}/></div>):<p className="text-xs text-slate-600">No recovery records loaded.</p>}</>}
  </section>;
 }
