@@ -64,10 +64,11 @@ export const renderArsInvoicePdf = async (
   const footer = (pageNumber: number, totalPages: number) => {
     // Repeat the footer on every printed sheet, including continuation pages.
     doc.moveTo(LEFT, 780).lineTo(RIGHT, 780).lineWidth(0.55).strokeColor(LINE).stroke();
-    label('Printed by '+shopName+'.', LEFT, 785, WIDTH, 7.4);
-    doc.font('Helvetica').fontSize(7.2).fillColor(INK).text(invoiceFooter.goods+' '+invoiceFooter.thanks, LEFT, 795, {width:WIDTH,lineGap:0});
-    label(`Page ${pageNumber} of ${totalPages}`, LEFT, 824, 110, 7.2);
-    label(invoiceFooter.credit, 320, 824, 240, 8, 'right', true);
+    label('Printed by '+shopName+'.', LEFT, 785, 350, 7.4,'left',true);
+    doc.font('Helvetica').fontSize(7.2).fillColor(INK).text(invoiceFooter.goods+' '+invoiceFooter.thanks, LEFT, 795, {width:350,lineGap:0});
+    label(`Page ${pageNumber} of ${totalPages}`, LEFT, 831, 110, 7.2);
+    label(invoiceFooter.credit, 320, 810, 240, 9, 'right', true);
+    label('Smart systems for business.',320,824,240,7.5,'right');
   };
   const header = (continuation: boolean) => {
     if (isArsPrintBrand(shopName)) {
@@ -82,8 +83,8 @@ export const renderArsInvoicePdf = async (
     label(safe(contact?.phone, ''), 118, 49, 320, 8);
     if(company?.supportEmail) label(company.supportEmail, 118, 60, 320, 8);
     doc.roundedRect(448, 34, 112, 24, 3).fill(NAVY);
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#ffffff')
-      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'INVOICE',452,41,{width:104,align:'center',lineBreak:false});
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#ffffff')
+      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'CUSTOMER INVOICE',452,41,{width:104,align:'center',lineBreak:false});
     doc.moveTo(LEFT, 78).lineTo(RIGHT, 78).lineWidth(1.5).strokeColor('#2878bc').stroke();
     section(LEFT, 88, 248, 76, 'Customer');
     section(295, 88, 265, 76, 'Invoice Details');
@@ -119,8 +120,10 @@ export const renderArsInvoicePdf = async (
   const notesAndTotals = (y: number) => {
     const top = y + 14;
     section(LEFT, top, 260, 114, 'Notes');
-    label('Please verify quantities and condition upon receipt.', 45, top + 30, 242, 8.2);
-    label('Thank you for your business.', 45, top + 43, 242, 8.2);
+    doc.rect(45,top+31,3,3).fill('#2878bc');
+    doc.font('Helvetica').fontSize(8.2).fillColor(INK).text('Goods once sold will be exchanged only with original invoice and management approval.',55,top+28,{width:228,lineGap:1});
+    doc.rect(45,top+61,3,3).fill('#2878bc');
+    label('Thank you for your business.',55,top+58,228,8.2);
     box(305, top, 255, 114);
     const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
       : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
@@ -133,15 +136,17 @@ export const renderArsInvoicePdf = async (
         formatMoney(Number(tx.discountAmount || 0))],
       ['Tax', formatMoney(Number(tx.tax || 0))],
       ['Grand Total', formatMoney(Number(tx.total || 0))],
-      ['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)],
-      ['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, Number(tx.total) - knownPaid))],
+      ...(tx.paymentMethod==='Cash'&&tx.cashReceived!=null
+        ? [['Cash Received',formatMoney(Number(tx.cashReceived))],['Change Due',formatMoney(Number(tx.changeDue??Math.max(0,tx.cashReceived-tx.total)))]] as [string,string][]
+        : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)],['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, Number(tx.total) - knownPaid))]] as [string,string][]),
     ];
     summary.forEach(([name, amount], i) => {
       const yy = top + i * 19;
-      if (i === 3 || i === 5) doc.rect(305, yy, 255, 19).fill(BLUE);
+      if (i === 3) doc.rect(305, yy, 255, 19).fill(NAVY);
+      else if(i>=4) doc.rect(305, yy, 255, 19).fill('#e6f1f9');
       if (i !== 0) doc.moveTo(305, yy).lineTo(560, yy).lineWidth(0.4).strokeColor(LINE).stroke();
-      label(name, 313, yy + 5, 117, 8.6, 'left', i === 3 || i === 5);
-      label(amount, 428, yy + 5, 123, 8.6, 'right', i === 3 || i === 5);
+      if(i===3){doc.font('Helvetica-Bold').fontSize(10).fillColor('#ffffff').text(name,313,yy+4,{width:117,lineBreak:false});doc.text(amount,428,yy+4,{width:123,align:'right',lineBreak:false});}
+      else {label(name,313,yy+5,117,8.6,'left',i>=4);label(amount,428,yy+5,123,8.6,'right',i>=4);}
     });
     const signatureY = top + 124;
     const sigs: [string, number][] = [['Prepared By', LEFT], ['Received By', 214], ['Authorized By', 393]];
