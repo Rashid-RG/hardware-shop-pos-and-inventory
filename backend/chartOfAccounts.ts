@@ -5,7 +5,7 @@ export const wholesaleAccounts:ReadonlyArray<readonly [string,string,LedgerAccou
  ['1000','Office Cash','Asset'],['1100','Bank Accounts','Asset'],
  ['1150','Representative Cash','Asset'],['1200','Customer Receivables','Asset'],
  ['1250','Supplier Advances','Asset'],['1300','Inventory','Asset'],['1400','Cheques Receivable','Asset'],
- ['1500','Fixed Assets','Asset'],['2000','Supplier Payables','Liability'],
+ ['1500','Fixed Assets','Asset'],['2000','Supplier Payables','Liability'],['2050','Import Creditor Payables','Liability'],
  ['2100','Loans Payable','Liability'],['2200','Taxes Payable','Liability'],
  ['3000','Partner Capital','Equity'],['3100','Retained Earnings','Equity'],
  ['4000','Wholesale Sales','Revenue'],['5000','Cost of Goods Sold','Expense'],
