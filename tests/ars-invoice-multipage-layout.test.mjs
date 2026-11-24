@@ -57,3 +57,17 @@ test('four saved packaging units print beside quantity on one portrait page', as
   assert.match(pages[0], /U\/M Qty/);
   for (const unit of ['Box', 'Pair', 'Pack', 'Case']) assert.ok(pages[0].includes(unit + ' 1 Rs.'));
 });
+
+for (const count of [4,48]) {
+  test('agreed credit due date prints on every A4 page without adding pages', async () => {
+    const tx={invoiceNumber:'TERMS-TEST',date:'2026-11-24T08:00:00Z',customerName:'Test buyer',paymentMethod:'Credit Account',subtotal:count*100,total:count*100,items:Array.from({length:count},(_,i)=>({productId:'SKU-'+i,productName:'Steel bolts',quantity:1,sellingPrice:100}))};
+    const meta={copyType:'Reprinted Invoice',printSequence:2,watermarkText:'REPRINTED'};
+    const plain=pageTexts(await renderArsInvoicePdf(tx,'ARS Distributor',meta,null));
+    const agreed=pageTexts(await renderArsInvoicePdf({...tx,creditDueDate:'2026-12-25'},'ARS Distributor',meta,null));
+    assert.equal(agreed.length,plain.length);
+    for(const page of agreed){assert.match(page,/Due Date/);assert.match(page,/25\/12\/2026/);}
+    for(const page of plain)assert.doesNotMatch(page,/Due Date/);
+    const paid=pageTexts(await renderArsInvoicePdf({...tx,paymentMethod:'Cash',creditDueDate:'2026-12-25'},'ARS Distributor',meta,null));
+    for(const page of paid)assert.doesNotMatch(page,/Due Date/);
+  });
+}
