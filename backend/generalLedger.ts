@@ -119,6 +119,27 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE CONSTRAINT TRIGGER ars_gl_journal_balanced AFTER INSERT ON ars_gl_journals
  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ars_gl_check_balance();
 
+ CREATE TABLE IF NOT EXISTS ars_gl_account_audit(
+  revision BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  shop_id TEXT NOT NULL,account_code TEXT NOT NULL,actor TEXT NOT NULL,
+  previous_value JSONB,new_value JSONB NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY(shop_id,account_code) REFERENCES ars_gl_accounts(shop_id,code)
+ );
+ CREATE OR REPLACE FUNCTION ars_gl_guard_account() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'Ledger accounts cannot be deleted' USING ERRCODE='23514'; END IF;
+  IF NEW.shop_id<>OLD.shop_id OR NEW.code<>OLD.code OR NEW.kind<>OLD.kind THEN
+   RAISE EXCEPTION 'Ledger account identity and classification are immutable' USING ERRCODE='23514';
+  END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_account_guard ON ars_gl_accounts;
+ CREATE TRIGGER ars_gl_account_guard BEFORE UPDATE OR DELETE ON ars_gl_accounts
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_account();
+ DROP TRIGGER IF EXISTS ars_gl_account_audit_immutable ON ars_gl_account_audit;
+ CREATE TRIGGER ars_gl_account_audit_immutable BEFORE UPDATE OR DELETE ON ars_gl_account_audit
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
  CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
  `);
