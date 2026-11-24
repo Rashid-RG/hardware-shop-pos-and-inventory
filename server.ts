@@ -15,6 +15,7 @@ import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
 import { openingReconciliation } from './backend/openingReconciliation';
+import { cutoverReadiness } from './backend/cutoverReadiness';
 import { listDocumentaryReviews, submitDocumentaryReview } from './backend/documentaryReconciliation';
 import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
@@ -6283,6 +6284,17 @@ app.post('/api/ledger/opening-proposals',requireRole(['Super Admin']),async(req,
  catch(error){const message=error instanceof Error?error.message:'';
  if(['Valid cutover date and supporting evidence required.','A journal needs between 2 and 500 lines.','Invalid ledger account code.','Use a non-negative decimal amount with at most two decimal places.','Each line must have exactly one positive debit or credit.','Journal debits and credits must balance.','Use one opening balance line per account.','Opening proposal identifier already used.','Accounting already active; opening proposal not permitted.','Opening balances require active asset, liability or equity accounts in this shop.'].includes(message))return res.status(409).json({error:message});
  console.error('Opening proposal submission failed',error);return res.status(500).json({error:'Unable to confirm opening proposal. Retry the identical proposal.'});}
+});
+app.get('/api/ledger/opening-proposals/:id/readiness',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await cutoverReadiness(pool,scope.shopId,req.params.id));}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(message==='Valid opening proposal required.')return res.status(400).json({error:message});
+ if(message==='Opening proposal not found in this shop.')return res.status(404).json({error:message});
+ if(message==='Opening proposal integrity check failed.')return res.status(409).json({error:message});
+ console.error('Cutover readiness failed',error);return res.status(500).json({error:'Unable to verify cutover readiness. Accounting activation is unavailable.'});}
 });
 app.get('/api/ledger/opening-proposals/:id/reconciliation',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
