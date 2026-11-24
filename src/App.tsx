@@ -1140,8 +1140,8 @@ export default function App() {
             <div className="flex items-center gap-3">
               <span className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
               {(['Super Admin', 'Store Manager', 'Cashier'] as Role[]).includes(currentRole) && (
-                <button type="button" onClick={() => setActiveTab('pos')} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
-                  <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">New Invoice</span><span className="sm:hidden">Invoice</span>
+                <button type="button" onClick={() => { if(activeTab==='pos')window.dispatchEvent(new Event('ars:new-invoice'));else setActiveTab('pos'); }} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
+                  <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">{activeTab==='pos'?'New Invoice':'Open Billing'}</span><span className="sm:hidden">Invoice</span>
                 </button>
               )}
             </div>
