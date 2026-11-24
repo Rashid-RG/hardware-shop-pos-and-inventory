@@ -29,6 +29,7 @@ export async function supplierOrderBalances(client:PoolClient,shopId:string,poId
  WHERE j.shop_id=$1 AND l.account_code=ANY($3::text[]) AND (
  (j.source_kind='SupplierPayment' AND EXISTS(SELECT 1 FROM supplier_payments s WHERE s.shop_id=$1 AND s.id=j.source_id AND s.purchase_order_id=$2))
  OR (j.source_kind='PurchaseReceipt' AND j.source_id=$2)
+ OR (j.source_kind='PurchaseReturn' AND EXISTS(SELECT 1 FROM ars_gl_purchase_returns h WHERE h.shop_id=$1 AND h.id=j.source_id AND h.purchase_order_id=$2))
  OR (j.source_kind='ReceiptBatch' AND EXISTS(SELECT 1 FROM ars_receipt_batches b WHERE b.shop_id=$1 AND b.id=j.source_id AND b.purchase_order_id=$2)))
  GROUP BY l.account_code`,[shopId,poId,[a,p]])).rows;
  const signed=(s:string)=>BigInt(s.replace('.',''));
