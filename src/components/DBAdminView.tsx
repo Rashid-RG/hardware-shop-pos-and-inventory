@@ -195,7 +195,7 @@ export default function DBAdminView({ authToken, shopId, shopName, onSamplesAdde
       if (!res.ok) {
         throw new Error(data.error || 'Failed to save user');
       }
-      setUserStatus(editingUserId ? 'User updated successfully.' : 'User created successfully.');
+      setUserStatus(editingUserId ? (payload.password ? 'Password reset successfully. Existing sessions are no longer valid. Ask the user to sign in again.' : 'User updated successfully.') : 'User created successfully.');
       resetUserForm();
       await loadUsers();
     } catch (err: any) {
