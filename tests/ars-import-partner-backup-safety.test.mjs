@@ -21,9 +21,13 @@ test('restore refuses operational database and validates archive integrity',()=>
   assert.match(restore,/\$TargetDatabase -eq \$activeDb/);
   assert.match(restore,/ars_restore_test_/);
   assert.match(restore,/Target database already exists/);
-  assert.match(restore,/Get-FileHash/);
-  assert.match(restore,/Checksum mismatch/);
-  assert.match(restore,/pg_restore -U \$DbUser --no-owner --no-acl --exit-on-error/);
+  const verifier=readFileSync(new URL('../scripts/verify-backup.mjs',import.meta.url),'utf8');
+  assert.match(restore,/verify-backup\.mjs/);
+  assert.match(restore,/Backup set failed checksum verification/);
+  assert.match(verifier,/createHash\('sha256'\)/);
+  assert.match(verifier,/Checksum mismatch/);
+  assert.match(restore,/pg_restore -U \$DbUser --no-owner --no-acl --single-transaction --exit-on-error/);
+  assert.match(restore,/\$confirm -cne 'RESTORE TEST'/);
   assert.doesNotMatch(restore,/DROP DATABASE|dropdb|--clean|--create/);
 });
 test('backup recovery and company profile are separate restricted business workspaces',()=>{
