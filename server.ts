@@ -1,3 +1,4 @@
+import {ledgerStatements,ledgerActivity} from './backend/ledgerReports';
 import { renderArsDisbursementVoucherPdf } from './src/utils/arsDisbursementVoucherPdf';
 import { renderArsHandoverVoucherPdf } from './src/utils/arsHandoverVoucherPdf';
 import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/reporting';
@@ -6268,6 +6269,23 @@ function ledgerApiError(res:express.Response,error:unknown){
  if(['Valid account code, name, classification and status required.','Account code already exists.','Account not found in this shop.','Account classification is immutable; create a new account.','Shop and account code required.'].includes(message))return res.status(409).json({error:message});
  console.error('Chart of accounts operation failed',error);return res.status(500).json({error:'Unable to complete accounting account operation.'});
 }
+app.get('/api/ledger/statements',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ const asOf=typeof req.query.asOf==='string'?req.query.asOf:'';
+ try{return res.json(await ledgerStatements(pool,scope.shopId,asOf));}
+ catch(error){if(error instanceof Error&&error.message==='Valid shop and reporting date required.')return res.status(400).json({error:error.message});console.error('Ledger statements failed',error);return res.status(500).json({error:'Unable to load provisional ledger statements.'});}
+});
+app.get('/api/ledger/activity',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ const from=typeof req.query.from==='string'?req.query.from:'',to=typeof req.query.to==='string'?req.query.to:'';
+ const offset=req.query.offset===undefined?0:typeof req.query.offset==='string'&&/^\d{1,6}$/.test(req.query.offset)?Number(req.query.offset):NaN;
+ try{const rows=await ledgerActivity(pool,scope.shopId,from,to,offset);return res.json({rows,offset,nextOffset:rows.length===50&&offset<100000?offset+50:null,complete:false,operationallyReconciled:false,note:'Ledger activity only; not proof of operational completeness.'});}
+ catch(error){if(error instanceof Error&&error.message==='Valid reporting range and page required.')return res.status(400).json({error:error.message});console.error('Ledger activity failed',error);return res.status(500).json({error:'Unable to load ledger activity.'});}
+});
 app.get('/api/ledger/opening-proposals',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
