@@ -36,6 +36,14 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       CHECK(movement_kind IN ('Opening Balance','Customer Collection','Transfer In','Transfer Out','Supplier Payment','Expense','Adjustment','Invoice Payment','Invoice Refund'));
     CREATE UNIQUE INDEX IF NOT EXISTS ars_financial_invoice_movement_once ON ars_financial_movements(shop_id,movement_kind,source_id)
       WHERE movement_kind IN ('Invoice Payment','Invoice Refund');
+    CREATE TABLE IF NOT EXISTS ars_invoice_requests (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS ars_invoice_requests_shop ON ars_invoice_requests(shop_id,id);
     CREATE TABLE IF NOT EXISTS ars_customer_cheques (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
