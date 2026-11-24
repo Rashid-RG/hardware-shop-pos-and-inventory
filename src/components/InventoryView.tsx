@@ -61,7 +61,7 @@ export default function InventoryView({
       notify.warning('Please select a product to adjust.');
       return;
     }
-    if (qtyDifference === 0) {
+    if (!Number.isSafeInteger(qtyDifference) || qtyDifference === 0) {
       notify.warning('Adjustment amount cannot be zero.');
       return;
     }
@@ -80,7 +80,7 @@ export default function InventoryView({
 
     // Compute new target quantity
     const newQty = product.quantity + qtyDifference;
-    if (newQty < 0) {
+    if (!Number.isSafeInteger(newQty) || newQty > 2147483647 || newQty < 0) {
       notify.error('Inventory error: Stock cannot be adjusted below zero.');
       setIsSubmitting(false);
       return;
@@ -181,7 +181,8 @@ export default function InventoryView({
                           : 'bg-slate-100 text-slate-700'
                       }`}
                     >
-                      Qty: {p.quantity}
+                      Qty: {p.quantity} {p.sharedStockUnits?.baseUnit || ''}
+                      {p.sharedStockUnits?.units.filter(u=>Number.isSafeInteger(u.baseUnits)&&u.baseUnits>1).map(u=><span key={u.id} className="block text-[10px] font-normal">{Math.floor(p.quantity/u.baseUnits)} {u.label} equivalents + {p.quantity%u.baseUnits} {p.sharedStockUnits?.baseUnit}</span>)}
                     </span>
 
                     {canAdjust && (
@@ -389,7 +390,7 @@ export default function InventoryView({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Difference amount *</label>
+                  <label className="block text-slate-500 font-semibold mb-1">Difference amount (base stock units) *</label>
                   <input
                     id="adjust-qty-diff"
                     type="number"
@@ -398,7 +399,7 @@ export default function InventoryView({
                     placeholder="e.g. +11 or -4"
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                   />
-                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract</span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract. For shared stock, enter the base-unit quantity, not the number of boxes.</span>
                 </div>
 
                 <div>
