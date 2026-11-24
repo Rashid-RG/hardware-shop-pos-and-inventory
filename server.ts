@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5888,6 +5888,42 @@ app.post('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),
     res.status(201).json({id,name:name.trim(),kind,active:true,balance:0});
   }catch(error){await client.query('ROLLBACK').catch(()=>{});console.error('Financial account creation failed',error);res.status(409).json({error:'Unable to create account. Check whether that account name already exists.'});}
   finally{client.release();}
+});
+
+
+app.post('/api/financial-accounts/:id/opening-balance',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const auth=(req as AppRequest).authUser;
+  const {activeShopId}=getActiveShopContext(db,req);
+  const requested=getRequestedShopId(req);
+  if(!auth||!db.settings.shopProfiles?.some(s=>s.id===activeShopId)||
+    (requested&&requested!==activeShopId)||
+    (auth.scopedShopId&&auth.scopedShopId!==activeShopId)||
+    (auth.fixedShopId&&auth.fixedShopId!==activeShopId)||
+    (Array.isArray(auth.allowedShopIds)&&!auth.allowedShopIds.includes(activeShopId))){
+    return res.status(403).json({error:'Financial account shop access denied.'});
+  }
+  const {amount,effectiveDate,note}=req.body||{};
+  if(typeof amount!=='number'||!Number.isFinite(amount)||amount===0||
+    Math.abs(amount)>999999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.001||
+    typeof effectiveDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
+    (note!==undefined&&(typeof note!=='string'||note.length>500))){
+    return res.status(400).json({error:'Enter a valid nonzero amount, effective date and optional note.'});
+  }
+  const date=new Date(effectiveDate+'T00:00:00Z');
+  if(!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==effectiveDate||effectiveDate>reportDay(new Date())){
+    return res.status(400).json({error:'Opening balance date must be valid and not in the future.'});
+  }
+  const id='fund-movement-'+randomUUID();
+  try{
+    await registerFinancialOpeningBalance(pool,{id,shopId:activeShopId,accountId:String(req.params.id),amount,effectiveDate,recordedBy:auth.email,note});
+    return res.status(201).json({id,accountId:req.params.id,amount,effectiveDate});
+  }catch(error){
+    if(error instanceof Error&&error.message==='Active financial account not found.')return res.status(404).json({error:error.message});
+    if(error instanceof Error&&error.message==='Opening balance requires an account with no recorded movements.')return res.status(409).json({error:error.message});
+    console.error('Opening balance registration failed',error);
+    return res.status(500).json({error:'Unable to register opening balance. Check the account before retrying.'});
+  }
 });
 
 // ── Quotation Routes ─────────────────────────────────────────────────────────
