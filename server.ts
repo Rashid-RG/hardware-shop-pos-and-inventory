@@ -6408,6 +6408,25 @@ app.get('/api/ledger/supplier-refunds/:returnId/availability',requireRole(['Supe
  if(['Active accounting required for supplier refunds.','Supplier order not found.','Historical supplier payments require reconciliation.','Supplier balances require reconciliation.'].includes(message)||message.startsWith('Missing supplier accounting mapping:'))return res.status(409).json({error:message});
  console.error('Supplier refund availability failed',error);return res.status(500).json({error:'Unable to calculate refundable credit.'});}
 });
+app.get('/api/ledger/import-charge-recovery-receipts/:id/pdf',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Import recovery receipt access denied.'});
+ try{
+ const result=await pool.query(`SELECT f.id,f.recovery_date::text AS day,f.amount::text,f.evidence,f.recorded_by,f.payer,f.charge_kind,f.document_reference,h.id AS return_id,p.id AS po_id,a.name AS account,a.kind
+ FROM ars_gl_import_charge_recoveries f JOIN ars_gl_purchase_returns h ON h.shop_id=f.shop_id AND h.id=f.return_id
+ JOIN purchase_orders p ON p.shop_id=h.shop_id AND p.id=h.purchase_order_id
+ JOIN ars_gl_journals j ON j.shop_id=f.shop_id AND j.id=f.journal_id AND j.source_kind='ImportChargeRecovery' AND j.source_id=f.id
+ JOIN ars_financial_movements m ON m.shop_id=f.shop_id AND m.source_id=f.id AND m.movement_kind='Import Charge Recovery' AND m.account_id=f.account_id AND m.amount=f.amount AND m.effective_date=f.recovery_date
+ JOIN ars_financial_accounts a ON a.shop_id=f.shop_id AND a.id=f.account_id
+ WHERE f.shop_id=$1 AND f.id=$2`,[scope.shopId,req.params.id]);
+ if(result.rowCount!==1)return res.status(404).json({error:'Verified import recovery receipt not found.'});
+ const f=result.rows[0];const amount=Number(f.amount);
+ if(!Number.isFinite(amount)||amount<=0||!['Office Cash','Bank'].includes(f.kind))return res.status(409).json({error:'Recovery requires reconciliation.'});
+ const {activeShopName}=getActiveShopContext(db,req);
+ const profile=(db.settings.shopProfiles||[]).find(s=>s.id===scope.shopId);
+ const pdf=await renderArsDisbursementVoucherPdf({id:f.id,kind:'Import Charge Recovery',date:f.day,amount,payee:f.payer,reference:f.po_id+' / '+f.return_id+' / '+f.charge_kind+' / '+f.document_reference,method:f.kind==='Bank'?'Bank Transfer':'Cash',account:f.account,recordedBy:f.recorded_by,note:f.evidence},activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
+ res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="import-charge-recovery-'+f.id.replace(/[^a-zA-Z0-9_-]/g,'-')+'.pdf"');return res.send(pdf);
+ }catch(error){console.error('Import recovery receipt failed',error);return res.status(500).json({error:'Unable to generate import recovery receipt.'});}
+});
 app.get('/api/ledger/supplier-refund-receipts/:id/pdf',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Supplier refund receipt access denied.'});
  try{
