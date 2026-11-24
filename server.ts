@@ -4495,7 +4495,9 @@ app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) =
 app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const { destinationAccountId, cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, salesRepId, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
-  const txId = `tx-${randomUUID()}`;
+  const requestId=req.body.requestId;
+  if(requestId!==undefined&&!validChequeRequestId(requestId))return res.status(400).json({error:'Invalid invoice request identifier.'});
+  const txId = `tx-${requestId||randomUUID()}`;
   let financialPayment:{destinationAccountId:string;recordedBy:string;effectiveDate:string}|undefined;
   if(destinationAccountId!==undefined){
     const scope=chequeShopAccess(req);
@@ -4505,6 +4507,22 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     financialPayment={destinationAccountId,recordedBy:scope.recordedBy,effectiveDate:reportDay(new Date())};
   }
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
+
+  const actor=(req as AppRequest).authUser?.email;
+  const request=requestId&&actor?{actor,fingerprint:createHash('sha256').update(JSON.stringify(req.body)).digest('hex')}:undefined;
+  if(request){
+    const scope=chequeShopAccess(req);
+    if(!scope||scope.shopId!==activeShopId)return res.status(403).json({error:'Invoice shop access denied.'});
+    const prior=await pool.query('SELECT shop_id,actor,fingerprint FROM ars_invoice_requests WHERE id=$1',[txId]);
+    if(prior.rowCount){
+      const row=prior.rows[0];
+      if(row.shop_id!==activeShopId||row.actor!==actor||row.fingerprint!==request.fingerprint)return res.status(409).json({error:'Invoice request identifier already used for different details.'});
+      const saved=await loadStateFromNormalized();
+      const existing=saved?.transactions.find(t=>t.id===txId&&t.shopId===activeShopId);
+      if(!existing)return res.status(503).json({error:'Invoice recorded but cannot be loaded. Check invoice history.'});
+      return res.json(existing);
+    }
+  }
 
   // Sales Representative is explicitly selected from registered ARS staff.
   // The signed-in operator stays separate for internal audit purposes only.
@@ -4744,9 +4762,16 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   // the affected rows and commits everything together, or rolls back all of it.
   // Do not call saveDb() here: it rewrites all normalized tables.
   try {
-    await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName, undefined, financialPayment);
+    const result=await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName, undefined, financialPayment,request);
+    if(result.replayed){
+      const saved=await loadStateFromNormalized();
+      const existing=saved?.transactions.find(t=>t.id===txId&&t.shopId===activeShopId);
+      if(!existing)return res.status(503).json({error:'Invoice recorded but cannot be loaded. Check invoice history.'});
+      return res.json(existing);
+    }
   } catch (error) {
     if(error instanceof Error&&['Only fully paid cash or bank invoices can post immediate funds.','Select an active invoice payment account matching the payment method.'].includes(error.message))return res.status(409).json({error:error.message});
+    if(error instanceof Error&&error.message==='Invoice request identifier already used for different details.')return res.status(409).json({error:error.message});
     console.error('Checkout database transaction failed:', error);
     return res.status(500).json({error:'Invoice could not be saved. Check the server log and database schema before retrying.'});
   }
