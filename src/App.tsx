@@ -505,7 +505,7 @@ export default function App() {
     await handleRefreshDb();
   };
 
-  const handleAddSupplierPayment = async (payload: { supplierId: string; supplierName: string; purchaseOrderId?: string; amount: number; paymentMethod: string; date: string; note?: string }) => {
+  const handleAddSupplierPayment = async (payload: { supplierId: string; supplierName: string; purchaseOrderId?: string; amount: number; paymentMethod: string; date: string; note?: string; sourceAccountId?: string; requestId?: string }) => {
     const res = await apiRequest('/api/supplier-payments', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -514,7 +514,7 @@ export default function App() {
       const err = await res.json();
       throw new Error(err.error || 'Failed to record supplier payment');
     }
-    await handleRefreshDb();
+    try{await handleRefreshDb();}catch{/* confirmed payment must not be resubmitted after refresh failure */}
   };
 
   const handleSetCreditLimit = async (customerId: string, creditLimit: number) => {
@@ -1230,6 +1230,9 @@ export default function App() {
 
               {activeTab === 'purchases' && (
                 <SupplierPurchaseView
+                  financialAuthToken={sessionToken}
+                  financialShopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'}
+                  financialOwner={authUser.email}
                   suppliers={suppliers}
                   purchaseOrders={purchaseOrders}
                   supplierPayments={supplierPayments}
