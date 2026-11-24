@@ -538,7 +538,15 @@ export default function App() {
       const err = await res.json();
       throw new Error(err.error || 'Failed to record customer payment');
     }
-    await handleRefreshDb();
+    const {payment}=await res.json() as {payment:CustomerCreditPayment};
+    try{await handleRefreshDb();}catch{/* committed payment must never be retried just because refresh failed */}
+    return payment;
+  };
+
+  const fetchPaymentReceipt=async(paymentId:string)=>{
+    const res=await apiRequest('/api/customer-credit-payments/'+encodeURIComponent(paymentId)+'/pdf');
+    if(!res.ok)throw Error('Unable to open payment receipt.');
+    return res.blob();
   };
 
   const handleOpenShift = async (openingFloat: number) => {
@@ -1272,6 +1280,7 @@ export default function App() {
                   onAddEmployee={handleAddEmployee}
                   onSetCreditLimit={handleSetCreditLimit}
                   onAddCreditPayment={handleAddCreditPayment}
+                  onFetchPaymentReceipt={fetchPaymentReceipt}
                 />
               )}
 
