@@ -61,6 +61,30 @@ export default function App() {
   const [setupStatus, setSetupStatus] = useState('');
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [recoveryEmailEnabled, setRecoveryEmailEnabled] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [recoveryCode, setRecoveryCode] = useState('');
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryConfirm, setRecoveryConfirm] = useState('');
+  const [recoveryRequested, setRecoveryRequested] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [recoveryDone, setRecoveryDone] = useState(false);
+  const openForgotPassword = async () => {
+    setRecoveryEmailEnabled(false); setRecoveryEmail(''); setRecoveryCode(''); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryRequested(false); setRecoveryMessage(''); setRecoveryDone(false); setIsForgotModalOpen(true);
+    try { const response = await fetch('/api/auth/recovery-status'); if (response.ok) setRecoveryEmailEnabled((await response.json()).emailEnabled === true); } catch {}
+  };
+  const submitRecovery = async (event: React.FormEvent) => {
+    event.preventDefault(); if (recoveryBusy || recoveryDone) return;
+    setRecoveryBusy(true); setRecoveryMessage('');
+    try {
+      const response = await fetch('/api/auth/recovery/' + (recoveryRequested ? 'complete' : 'request'), {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(recoveryRequested ? {email:recoveryEmail,code:recoveryCode,password:recoveryPassword,confirmPassword:recoveryConfirm} : {email:recoveryEmail})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Recovery could not be completed.');
+      setRecoveryMessage(data.message);
+      if (recoveryRequested) { setRecoveryDone(true); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryCode(''); } else setRecoveryRequested(true);
+    } catch (error) { setRecoveryMessage(error instanceof Error ? error.message : 'Recovery unavailable.'); } finally { setRecoveryBusy(false); }
+  };
   const [resetEmail, setResetEmail] = useState('');
   const [resetCurrentPassword, setResetCurrentPassword] = useState('');
   const [resetNewPassword, setResetNewPassword] = useState('');
@@ -868,7 +892,7 @@ export default function App() {
           >
             Change Password
           </button>
-          <button type="button" onClick={() => setIsForgotModalOpen(true)} className="w-full rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">Forgot Password?</button>
+          <button type="button" onClick={openForgotPassword} className="w-full rounded-xl px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100">Forgot Password?</button>
             </form>
             <div className="mt-3 border-t border-slate-100 pt-3 flex items-center justify-between gap-2 text-[11px] text-slate-500">
               <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> Protected business access</span>
@@ -879,13 +903,27 @@ export default function App() {
 
         {isForgotModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4" onKeyDown={e => { if (e.key === 'Escape') setIsForgotModalOpen(false); }}>
-            <section role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" className="w-full max-w-md rounded-2xl bg-white p-6 text-slate-800 shadow-2xl">
+            <section role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 text-slate-800 shadow-2xl">
               <h3 id="forgot-password-title" className="text-xl font-bold">Recover your account</h3>
               <p className="mt-2 text-sm text-slate-600">Choose the recovery method for your account. Your business records remain intact.</p>
               <div className="mt-4 space-y-3 text-sm">
                 <div className="rounded-xl border p-3"><h4 className="font-bold">Staff account</h4><p className="mt-1">Contact your authorized System Administrator. They can reset your password in System Administration → User Management.</p></div>
                 <div className="rounded-xl border p-3"><h4 className="font-bold">Owner or System Administrator</h4><p className="mt-1">For a local installation, use the protected local administrator recovery procedure on the host computer after verifying a backup. For hosted installations, contact the authorized system operator.</p></div>
-                <p className="text-xs text-slate-500">Email verification is not configured in this release. Never share your password or database credentials.</p>
+                {recoveryEmailEnabled ? (
+                  <form onSubmit={submitRecovery} className="space-y-3 rounded-xl border p-3">
+                    <h4 className="font-bold">Email verification</h4>
+                    {!recoveryDone && <>
+                      <label className="block">Registered email<input type="email" required maxLength={254} disabled={recoveryRequested || recoveryBusy} value={recoveryEmail} onChange={e=>setRecoveryEmail(e.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+                      {recoveryRequested && <>
+                        <label className="block">Six-digit verification code<input required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={recoveryCode} onChange={e=>setRecoveryCode(e.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+                        <label className="block">New password<input required type="password" autoComplete="new-password" minLength={12} maxLength={72} value={recoveryPassword} onChange={e=>setRecoveryPassword(e.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+                        <label className="block">Confirm password<input required type="password" autoComplete="new-password" minLength={12} maxLength={72} value={recoveryConfirm} onChange={e=>setRecoveryConfirm(e.target.value)} className="mt-1 w-full rounded-lg border p-2" /></label>
+                      </>}
+                      <button disabled={recoveryBusy} type="submit" className="w-full rounded-lg bg-slate-800 p-2 font-semibold text-white disabled:opacity-50">{recoveryBusy?'Processing…':recoveryRequested?'Reset Password':'Send Verification Code'}</button>
+                    </>}
+                    {recoveryMessage && <p role="status" className="text-sm">{recoveryMessage}</p>}
+                  </form>
+                ) : <p className="text-xs text-slate-500">Email verification is not configured. Never share your password or database credentials.</p>}
               </div>
               <button autoFocus type="button" onClick={() => setIsForgotModalOpen(false)} className="mt-5 w-full rounded-xl bg-[#182a45] px-4 py-3 text-sm font-bold text-white">Back to Sign In</button>
             </section>
