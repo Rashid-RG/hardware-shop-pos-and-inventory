@@ -1613,10 +1613,19 @@ export const updateStoreSettings = async (s: StoreSettings) => {
  * 5) Update Customer credit/loyalty balances.
  * 6) Write ActivityLogs.
  */
-export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string, financialPayment?:{destinationAccountId:string;recordedBy:string;effectiveDate:string}) => {
+export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string, financialPayment?:{destinationAccountId:string;recordedBy:string;effectiveDate:string}, request?:{fingerprint:string;actor:string}) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(request){
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[tx.id]);
+      const existing=await client.query('SELECT shop_id,actor,fingerprint FROM ars_invoice_requests WHERE id=$1',[tx.id]);
+      if(existing.rowCount){
+        const saved=existing.rows[0];
+        if(saved.shop_id!==tx.shopId||saved.actor!==request.actor||saved.fingerprint!==request.fingerprint)throw Error('Invoice request identifier already used for different details.');
+        await client.query('COMMIT');return {replayed:true};
+      }
+    }
     if (quotationId) {
       // Hold the quote row lock through the sale commit to make conversion
       // exactly once even with simultaneous customer-service requests.
@@ -1821,7 +1830,8 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
         [tx.id,quotationId,tx.shopId]);
       if(converted.rowCount!==1)throw new Error('Quotation was already converted.');
     }
-    await client.query('COMMIT');
+    if(request)await client.query('INSERT INTO ars_invoice_requests(id,shop_id,actor,fingerprint) VALUES($1,$2,$3,$4)',[tx.id,tx.shopId,request.actor,request.fingerprint]);
+    await client.query('COMMIT');return {replayed:false};
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
