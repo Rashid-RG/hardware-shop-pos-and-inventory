@@ -104,10 +104,12 @@ export default function QuotationView({
   );
 
   const addItem = (product: Product) => {
+    const unit = product.sharedStockUnits?.units.find(u=>u.baseUnits===1);
+    if (product.sharedStockUnits && !unit) {notify.warning('Product has no base selling unit.');return;}
     setQuoteItems((prev) => {
-      const existing = prev.find((i) => i.productId === product.id);
-      if (existing) return prev.map((i) => i.productId === product.id ? { ...i, quantity: i.quantity + 1 } : i);
-      return [...prev, { productId: product.id, productName: product.name, quantity: 1, sellingPrice: product.sellingPrice, discount: 0 }];
+      const existing = prev.find((i) => i.productId === product.id && i.sellingUnitId === unit?.id);
+      if (existing) return prev.map((i) => i.productId === product.id && i.sellingUnitId === unit?.id ? { ...i, quantity: i.quantity + 1 } : i);
+      return [...prev, { productId: product.id, productName: product.name, quantity: 1, sellingPrice: unit?.sellingPrice ?? product.sellingPrice, discount: 0, sellingUnitId:unit?.id,sellingUnitLabel:unit?.label,baseUnitsPerSaleUnit:unit?.baseUnits }];
     });
     setProdSearch('');
   };
@@ -220,7 +222,7 @@ export default function QuotationView({
     <table><thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Disc%</th><th style="text-align:right">Total</th></tr></thead>
     <tbody>${q.items.map((item) => {
       const line = item.sellingPrice * item.quantity * (1 - item.discount / 100);
-      return `<tr><td>${item.productName}</td><td>${item.quantity}</td><td>Rs.${item.sellingPrice.toFixed(2)}</td><td>${item.discount}%</td><td style="text-align:right">Rs.${line.toFixed(2)}</td></tr>`;
+      return `<tr><td>${item.productName}</td><td>${item.quantity}${item.sellingUnitLabel ? ' '+item.sellingUnitLabel.replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch] || ch)) : ''}</td><td>Rs.${item.sellingPrice.toFixed(2)}</td><td>${item.discount}%</td><td style="text-align:right">Rs.${line.toFixed(2)}</td></tr>`;
     }).join('')}</tbody></table>
     <div class="totals">
       <div>Subtotal: Rs.${q.subtotal.toFixed(2)}</div>
@@ -413,7 +415,7 @@ export default function QuotationView({
                         const lineTotal = item.sellingPrice * item.quantity * (1 - item.discount / 100);
                         return (
                           <tr key={idx}>
-                            <td className="px-3 py-2 font-medium text-slate-800">{item.productName}</td>
+                            <td className="px-3 py-2 font-medium text-slate-800">{item.productName}{products.find(p=>p.id===item.productId)?.sharedStockUnits && <select aria-label="Quotation U/M" value={item.sellingUnitId || ''} onChange={e=>{const unit=products.find(p=>p.id===item.productId)?.sharedStockUnits?.units.find(u=>u.id===e.target.value);if(unit)updateItem(idx,{sellingUnitId:unit.id,sellingUnitLabel:unit.label,baseUnitsPerSaleUnit:unit.baseUnits,sellingPrice:unit.sellingPrice,discount:0,discountAmount:0});}} className="block border rounded p-1 text-xs"><option value="">Select U/M</option>{products.find(p=>p.id===item.productId)?.sharedStockUnits?.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select>}</td>
                             <td className="px-3 py-2"><input type="number" min="1" value={item.quantity} onChange={(e) => updateItem(idx, { quantity: Math.max(1, Number(e.target.value)) })} className="w-14 border border-slate-200 rounded px-1 py-0.5 text-center outline-none" /></td>
                             <td className="px-3 py-2 font-mono text-slate-700">Rs.{item.sellingPrice.toFixed(2)}</td>
                             <td className="px-3 py-2"><input type="number" min="0" max="100" value={item.discount} onChange={(e) => updateItem(idx, { discount: Math.min(100, Number(e.target.value)) })} className="w-14 border border-slate-200 rounded px-1 py-0.5 text-center outline-none" /></td>
