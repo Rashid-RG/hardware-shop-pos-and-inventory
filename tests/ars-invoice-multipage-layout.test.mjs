@@ -22,19 +22,19 @@ for (const count of [4, 48]) {
     }));
     const pdf = await renderArsInvoicePdf({
       items, invoiceNumber: 'ARS-TEST', date: '2026-11-24T08:00:00Z', customerName: 'Test buyer',
-      salesRepName: 'Sales rep', paymentMethod: 'Cash', subtotal: count*100, total: count*100, cashReceived: count*100,
+      salesRepName: 'Sales rep', paymentMethod: 'Cash', subtotal: count*100, total: count*100, cashReceived: count*100+500, changeDue: 500,
     }, 'ARS Hardware', { watermarkText:'SHOP STAMP / PAID / AUTHORIZED' }, null);
     assert.match(pdf.toString('latin1'), /\/MediaBox \[0 0 595\.28 841\.89\]/);
     const pages = pageTexts(pdf);
     if (count === 4) assert.equal(pages.length, 1);
     else assert.ok(pages.length > 1);
     pages.forEach((page, i) => {
-      for (const label of ['ARS Hardware', 'CUSTOMER INVOICE', 'ARS-TEST', 'Test buyer', 'Sales rep',
+      for (const label of ['ARS Distributor', 'CUSTOMER INVOICE', 'ARS-TEST', 'Test buyer', 'Sales rep',
         'RS Nextward', 'Smart systems for business.', 'Page ' + (i+1) + ' of ' + pages.length]) assert.ok(page.includes(label), label);
-      for (const label of ['Prepared By', 'Received By', 'Authorized By', 'Cash Received', 'Change Due']) {
+      for (const label of ['Prepared By', 'Received By', 'Authorized By']) {
         assert.equal(page.includes(label), i === pages.length-1, label);
       }
-      assert.doesNotMatch(page, /SHOP STAMP/);
+      assert.doesNotMatch(page, /SHOP STAMP|Cash Received|Change Due|Amount Paid|Balance Due/);
     });
     const printed = pages.join(' ').replace(/\s+/g, ' ');
     assert.deepEqual(printed.match(/SKU-\d+/g), items.map(item => item.productId));
