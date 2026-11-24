@@ -4,10 +4,10 @@ import {ReportExportMenu} from './ReportExportMenu';
 import type {StoreSettings} from '../types';
 import type {BusinessReport,ReportCell} from '../utils/businessReport';
 type Profit={fromDate:string;toDate:string;sales:number;refunds:number;netSales:number;knownCost:number;expenses:number;missing:number;affected:number;undatedRefunds:number;complete:boolean;grossProfit:number|null;operatingEstimate:number|null};
-export default function FinancialProfitPanel({authToken,shopId,settings}:{authToken:string;shopId:string;settings:StoreSettings}){
+export default function FinancialProfitPanel({authToken,shopId,settings,correctionRevision=0}:{authToken:string;shopId:string;settings:StoreSettings;correctionRevision?:number}){
  const today=reportDay(new Date()),[from,setFrom]=useState(today.slice(0,7)+'-01'),[to,setTo]=useState(today),[loaded,setLoaded]=useState<{scope:string;data:Profit}|null>(null),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const valid=!!from&&!!to&&from<=to&&to<=today;
- const scope=JSON.stringify([authToken,shopId,from,to,revision]);
+ const scope=JSON.stringify([authToken,shopId,from,to,revision,correctionRevision]);
  const data=valid&&loaded?.scope===scope?loaded.data:null;
  useEffect(()=>{setLoaded(null);setError('');if(!valid)return;const controller=new AbortController();
  fetch('/api/financial-profit-report?'+new URLSearchParams({fromDate:from,toDate:to}),{headers:{Authorization:'Bearer '+authToken,'X-Shop-Id':shopId},cache:'no-store',signal:controller.signal}).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error||'Profit report unavailable.');if(!controller.signal.aborted)setLoaded({scope,data:d});}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});return()=>controller.abort();
