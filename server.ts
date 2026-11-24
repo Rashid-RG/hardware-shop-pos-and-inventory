@@ -10,6 +10,7 @@ import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initLandedCostTables, previewLandedCost, approveLandedCost } from './backend/landedCost';
+import { inventoryValuation, inventoryCostHistory } from './backend/inventoryValuation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -6223,6 +6224,20 @@ app.post('/api/invoice-cost-review/:transactionId/:itemId/corrections',requireRo
   if(['Invalid historical cost correction.','Correction request identifier already used for different details.','Invoice item not found in this shop.','Historical cost changed. Refresh before correcting.','Corrected cost must differ from the current cost.'].includes(message))return res.status(409).json({error:message});
   console.error('Cost correction failed',error);return res.status(500).json({error:'Unable to confirm correction. Retry the same request.'});
  }
+});
+app.get('/api/inventory-valuation',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Inventory valuation access denied.'});
+ try{const data=await inventoryValuation(pool,scope.shopId);res.setHeader('Cache-Control','no-store');return res.json(data);}
+ catch(error){console.error('Inventory valuation failed',error);return res.status(500).json({error:'Unable to load inventory valuation.'});}
+});
+app.get('/api/inventory-valuation/:productId/history',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Inventory costing history access denied.'});
+ const offset=Number(req.query.offset||0);
+ if(!Number.isSafeInteger(offset)||offset<0||offset>1000000)return res.status(400).json({error:'Invalid history page.'});
+ try{const data=await inventoryCostHistory(pool,scope.shopId,req.params.productId,offset);res.setHeader('Cache-Control','no-store');return res.json(data);}
+ catch(error){console.error('Inventory costing history failed',error);return res.status(500).json({error:'Unable to load inventory costing history.'});}
 });
 app.get('/api/financial-profit-report',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
