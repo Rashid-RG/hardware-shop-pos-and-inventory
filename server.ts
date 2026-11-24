@@ -3384,6 +3384,34 @@ app.get('/api/backup/local-package', requireRole(['Super Admin']), async (req, r
   }
 });
 
+app.post('/api/backup/recovery-test', requireRole(['Super Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({ error: 'Local recovery tools are disabled.' });
+  if (req.body?.confirmation !== 'RESTORE TEST') return res.status(400).json({ error: 'Type RESTORE TEST to confirm isolated recovery.' });
+  if (manualBackupRunning) return res.status(409).json({ error: 'Another backup operation is running.' });
+  manualBackupRunning = true;
+  try {
+    const name = String(req.body?.archive || '');
+    await verifyManagedBackup(name);
+    const archive = path.join(backupRoot, name);
+    const stdout = process.platform === 'win32'
+      ? await runBackupTool('powershell.exe', ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.resolve('scripts/restore-local-postgres-test.ps1'),'-BackupFile',archive,'-Confirmation','RESTORE TEST'])
+      : await runBackupTool('python3', [path.resolve('scripts/mint/backup.py'),'--restore',archive,'--confirmation','RESTORE TEST']);
+    const target = stdout.match(/ars_restore_test_[a-zA-Z0-9_]+/)?.[0];
+    if (!target) throw new Error('Recovery database not reported');
+    // Return counts from the isolated database, never the original application's credentials or configuration.
+    const url = new URL(process.env.DATABASE_URL!);
+    if (decodeURIComponent(url.pathname.slice(1)) === target) throw new Error('Unexpected recovery target');
+    url.pathname = '/' + target;
+    const testPool = new Pool({connectionString:url.toString(), max:1, connectionTimeoutMillis:5000});
+    try {
+      const counts = await testPool.query('SELECT (SELECT count(*)::text FROM public.products) AS products, (SELECT count(*)::text FROM public.customers) AS customers, (SELECT count(*)::text FROM public.sales_transactions) AS sales');
+      res.json({success:true, target, counts:counts.rows[0], verifiedAt:new Date().toISOString()});
+    } finally { await testPool.end(); }
+  } catch { res.status(500).json({error:'Recovery test did not complete. An isolated test database may remain; the operational database connection was not switched.'}); }
+  finally { manualBackupRunning = false; }
+});
+
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
