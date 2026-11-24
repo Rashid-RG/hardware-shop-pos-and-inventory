@@ -1596,6 +1596,7 @@ const initPostgres = async () => {
       transaction_id TEXT NOT NULL REFERENCES sales_transactions(id) ON DELETE CASCADE,
       product_id TEXT NOT NULL REFERENCES products(id),
       product_name TEXT NOT NULL,
+      invoice_description TEXT,
       quantity INTEGER NOT NULL,
       selling_price NUMERIC(12,2) NOT NULL,
       discount NUMERIC(5,2) NOT NULL DEFAULT 0,
@@ -1699,6 +1700,7 @@ const initPostgres = async () => {
     ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS customer_address TEXT;
     ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS payment_status TEXT;
     ALTER TABLE sales_transactions ADD COLUMN IF NOT EXISTS wholesale_meta JSONB;
+    ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS invoice_description TEXT;
     ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12,2) NOT NULL DEFAULT 0;
     ALTER TABLE sales_transaction_items ADD COLUMN IF NOT EXISTS variant_id TEXT;
@@ -4487,7 +4489,12 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   // PostgreSQL is authoritative for checkout: the transaction updates only
   // the affected rows and commits everything together, or rolls back all of it.
   // Do not call saveDb() here: it rewrites all normalized tables.
-  await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName);
+  try {
+    await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName);
+  } catch (error) {
+    console.error('Checkout database transaction failed:', error);
+    return res.status(500).json({error:'Invoice could not be saved. Check the server log and database schema before retrying.'});
+  }
 
   // The transaction has committed. Return success even if the cache refresh
   // fails, otherwise a cashier may retry and create a second paid invoice.
