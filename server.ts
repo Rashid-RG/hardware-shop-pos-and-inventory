@@ -2857,8 +2857,9 @@ const recoveryConfig = () => {
   const from = process.env.EMAIL_FROM?.trim() || user;
   const secret = process.env.PASSWORD_RECOVERY_SECRET || '';
   const port = Number(process.env.EMAIL_SMTP_PORT || 587);
+  const secure = port === 465 || process.env.EMAIL_SMTP_SECURE === 'true';
   return process.env.PASSWORD_RECOVERY_ENABLED === 'true' && host && user && pass && from && secret.length >= 32 && Number.isInteger(port) && port > 0 && port <= 65535
-    ? { host, user, pass, from, secret, port } : null;
+    ? { host, user, pass, from, secret, port, secure } : null;
 };
 const recoveryDigest = (secret: string, id: string, code: string) =>
   createHmac('sha256', secret).update(JSON.stringify([id, code])).digest('hex');
@@ -2889,8 +2890,8 @@ app.post('/api/auth/recovery/request', recoveryLimiter, async (req, res) => {
     if (result.rowCount) {
       await pool.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'requested')",[account.id]);
       // Never log the code or SMTP credentials. Require TLS even for STARTTLS.
-      const transport = nodemailer.createTransport({host:config.host,port:config.port,secure:config.port===465,
-        requireTLS:config.port!==465,auth:{user:config.user,pass:config.pass},connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000});
+      const transport = nodemailer.createTransport({host:config.host,port:config.port,secure:config.secure,
+        requireTLS:!config.secure,auth:{user:config.user,pass:config.pass},connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000});
       // Delivery is intentionally outside the request response; failures fail closed.
       void transport.sendMail({from:config.from,to:account.email,subject:'ARS Distributor password recovery',
         text:'Your verification code is '+code+'. It expires in 5 minutes. Ignore this email if you did not request it.'})
