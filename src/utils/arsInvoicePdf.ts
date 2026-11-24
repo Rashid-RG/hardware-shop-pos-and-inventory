@@ -18,7 +18,7 @@ const formatMoney = (amount: number) => 'Rs. ' + amount.toLocaleString('en-US', 
 const safe = (value: unknown, fallback = '-') => String(value ?? '').trim() || fallback;
 
 function invoiceUnit(item: SalesTransaction['items'][number]): string {
-  const saved = item.variantUnit?.trim();
+  const saved = item.sellingUnitLabel?.trim() || item.variantUnit?.trim();
   if (saved) return saved;
   // Older invoices sometimes stored the packing unit only in their description or name.
   for (const value of [item.invoiceDescription, item.productName.split(' · ').slice(1).pop()]) {
@@ -111,7 +111,7 @@ export const renderArsInvoicePdf = async (
     field('Phone', safe(tx.customerPhone), 36, 207, 48, 249);
     field('Sales Rep.', safe(tx.salesRepName, 'Not recorded'), 315, 162, 59, 245);
     field('Line Items', String(tx.items.length), 315, 178, 59, 245);
-    field('Total Units', String(tx.items.reduce((sum, item) => sum + Number(item.quantity), 0)), 315, 194, 59, 245);
+    field('Item Lines', String(tx.items.length), 315, 194, 59, 245);
     field('Tax Rate', taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%', 315, 210, 59, 245);
   };
   const cols = [left, 46, 110, 208, 292, 324, 348, 421, 493, right];
