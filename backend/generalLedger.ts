@@ -195,12 +195,7 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  FOR EACH ROW EXECUTE FUNCTION ars_gl_require_open_period();
  CREATE TABLE IF NOT EXISTS ars_gl_documentary_reviews(
   shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,id TEXT NOT NULL,
-  snapshot_hash TEXT NOT NULL CHECK(snapshot_hash ~ '^[0-9a-f]{64} ON ars_gl_opening_proposals(shop_id,submitted_at DESC);
- CREATE INDEX IF NOT EXISTS ars_gl_journal_date ON ars_gl_journals(shop_id,posting_date,id);
- CREATE INDEX IF NOT EXISTS ars_gl_line_account ON ars_gl_lines(shop_id,account_code);
- `);
-}
-),
+  snapshot_hash TEXT NOT NULL CHECK(snapshot_hash ~ '^[0-9a-f]{64}$'),
   snapshot JSONB NOT NULL CHECK(jsonb_typeof(snapshot)='object'),
   evidence JSONB NOT NULL CHECK(jsonb_typeof(evidence)='array'),
   recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
