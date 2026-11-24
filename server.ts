@@ -1248,7 +1248,7 @@ const getInitialDbState = () => {
     activityLogs: initialActivityLogs,
     settings: {
       taxRate: 0,
-      storeName: 'Lanka Smart Hardware',
+      storeName: 'ARS Distribution',
       currency: 'LKR',
       invoicePrefix: 'SL-INV',
       logoUrl: '',
@@ -1265,7 +1265,7 @@ const getInitialDbState = () => {
       shopProfiles: [
         {
           id: 'shop-main',
-          name: 'Lanka Smart Hardware',
+          name: 'ARS Distribution',
           logoUrl: '',
           address: '',
           phone: '',
@@ -1311,7 +1311,7 @@ const getCleanBusinessState = () => {
     invoicePrintLogs: [],
     settings: {
       ...demo.settings,
-      storeName: 'ARS Hardware',
+      storeName: 'ARS Distribution',
       logoUrl: '',
       address: '',
       phone: '',
@@ -1319,7 +1319,7 @@ const getCleanBusinessState = () => {
       invoicePrefix: 'ARS-INV',
       shopProfiles: [{
         id: 'shop-main',
-        name: 'ARS Hardware',
+        name: 'ARS Distribution',
         logoUrl: '',
         address: '',
         phone: '',
@@ -1340,7 +1340,7 @@ const normalizeState = (state: DBState): DBState => ({
     const rawProfiles = Array.isArray(state.settings?.shopProfiles) ? state.settings.shopProfiles : [];
     const fallbackProfile = {
       id: 'shop-main',
-      name: state.settings?.storeName || 'Lanka Smart Hardware',
+      name: state.settings?.storeName || 'ARS Distribution',
       logoUrl: state.settings?.logoUrl || '',
       address: state.settings?.address || '',
       phone: state.settings?.phone || '',
@@ -1360,7 +1360,7 @@ const normalizeState = (state: DBState): DBState => ({
       printFormat: (shop.printFormat === 'thermal' ? 'thermal' : 'a4') as 'a4' | 'thermal',
       invoiceCompanyMeta: {
         companyLegalName: String(shop?.invoiceCompanyMeta?.companyLegalName || ''),
-        companyTagline: String(shop?.invoiceCompanyMeta?.companyTagline || 'Hardware Import & Wholesale Distribution'),
+        companyTagline: String(shop?.invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution'),
         businessRegistrationNo: String(shop?.invoiceCompanyMeta?.businessRegistrationNo || ''),
         vatRegistrationNo: String(shop?.invoiceCompanyMeta?.vatRegistrationNo || ''),
         tinNo: String(shop?.invoiceCompanyMeta?.tinNo || ''),
@@ -2229,7 +2229,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
 
   const settingsRow = settingsRes.rows[0] || {
     tax_rate: 18,
-    store_name: 'Lanka Smart Hardware',
+    store_name: 'ARS Distribution',
     currency: 'LKR',
     invoice_prefix: 'SL-INV',
     logo_url: '',
@@ -2240,7 +2240,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     shop_profiles: [
       {
         id: 'shop-main',
-        name: 'Lanka Smart Hardware',
+        name: 'ARS Distribution',
         logoUrl: '',
         address: '',
         phone: '',
@@ -2849,7 +2849,7 @@ app.get('/api/support/diagnostics', requireRole(['Super Admin', 'Store Manager']
   }
   const ready = database === 'reachable' && databaseWriteHealthy && singleWriterLease !== null;
   res.status(ready ? 200 : 503).json({
-    service: 'ARS Hardware POS',
+    service: 'ARS Distribution POS',
     checkedAt: new Date().toISOString(),
     release: String(process.env.ARS_RELEASE_ID || 'not-configured').slice(0, 64),
     environment: NODE_ENV,
