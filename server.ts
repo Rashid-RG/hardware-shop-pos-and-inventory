@@ -4493,8 +4493,17 @@ app.delete('/api/products/:id', requireRole(['Super Admin']), async (req, res) =
 
 // POS Transaction Checkout Route
 app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
-  const { cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, salesRepId, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const { destinationAccountId, cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, salesRepId, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
   const txId = `tx-${randomUUID()}`;
+  let financialPayment:{destinationAccountId:string;recordedBy:string;effectiveDate:string}|undefined;
+  if(destinationAccountId!==undefined){
+    const scope=chequeShopAccess(req);
+    const auth=(req as AppRequest).authUser;
+    if(!scope||!auth||!['Super Admin','Store Manager'].includes(auth.role))return res.status(403).json({error:'Financial invoice payment access denied.'});
+    if(typeof destinationAccountId!=='string'||!destinationAccountId.trim()||destinationAccountId.length>200||!['Cash','Bank Transfer'].includes(paymentMethod))return res.status(400).json({error:'Select a valid cash or bank payment account.'});
+    financialPayment={destinationAccountId,recordedBy:scope.recordedBy,effectiveDate:reportDay(new Date())};
+  }
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
 
   // Sales Representative is explicitly selected from registered ARS staff.
@@ -4686,6 +4695,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     return res.status(400).json({ error: `Cash received must be at least Rs.${total.toFixed(2)}.` });
   }
 
+  if(financialPayment&&(normalizedPaymentStatus!=='PAID'||total<=0))return res.status(400).json({error:'Financial account posting requires a positive fully paid invoice.'});
+
   // A configured positive customer credit limit is enforced BEFORE stock changes.
   // Zero/absent legacy limits remain unrestricted until an owner sets a policy.
   if (paymentMethod === 'Credit Account' && checkoutCustomer) {
@@ -4733,8 +4744,9 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   // the affected rows and commits everything together, or rolls back all of it.
   // Do not call saveDb() here: it rewrites all normalized tables.
   try {
-    await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName);
+    await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName, undefined, financialPayment);
   } catch (error) {
+    if(error instanceof Error&&['Only fully paid cash or bank invoices can post immediate funds.','Select an active invoice payment account matching the payment method.'].includes(error.message))return res.status(409).json({error:error.message});
     console.error('Checkout database transaction failed:', error);
     return res.status(500).json({error:'Invoice could not be saved. Check the server log and database schema before retrying.'});
   }
