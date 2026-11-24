@@ -55,7 +55,9 @@ async function dailyBackup() {
   const state = { attemptedAt: new Date().toISOString(), verifiedAt: previous?.verifiedAt ?? null, phase: 'local' };
   await writeStatus(state);
   try {
-    const { stdout } = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    const { stdout } = process.platform === 'linux'
+      ? await exec('python3', [join(root, 'scripts/mint/backup.py')], { cwd: root })
+      : await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', join(root, 'scripts', 'backup-local-postgres.ps1'), '-OutputArchive'], { cwd: root });
     const archive = stdout.split(/\r?\n/).find(line => line.startsWith('ARS_ARCHIVE='))?.slice(12);
     if (!archive || dirname(resolve(archive)) !== backups) throw new Error('Backup did not return its archive.');

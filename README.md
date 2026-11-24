@@ -333,5 +333,10 @@ Open **ARS Hardware POS** from the desktop or applications menu. If Cinnamon ask
 launcher on first use. On a fresh database, create the first administrator. Later clicks open
 the sign-in screen or existing session once PostgreSQL and ARS are ready. Startup uses the
 local build and a dedicated Docker volume. The installer requires internet for dependencies.
-Keep the project folder and its private `.env.local` together. The Windows backup scheduler
-requires a separate Linux implementation before use on this laptop.
+Keep the project folder and its private `.env.local` together. In **Backup & recovery**, choose **Linux Mint** for the database computer. Once the ARS
+Drive and crypt remotes are configured, run `bash scripts/mint/install-drive-backup.sh` as
+the shop desktop user. The user timer runs at 20:00 local time and catches up a missed
+scheduled run when the user timer starts again. Run `systemctl --user start ars-drive-backup.service`
+for the first upload and check the verified timestamp. For logs use
+`journalctl --user -u ars-drive-backup.service`. Use the screen's isolated restore drill
+with a downloaded copy before depending on the backup.

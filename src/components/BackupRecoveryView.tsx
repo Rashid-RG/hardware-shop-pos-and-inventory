@@ -48,16 +48,22 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     'upload-failed': 'Upload or verification failed', unavailable: 'Status unavailable',
   };
   const overdue = status?.verifiedAt && Date.now() - Date.parse(status.verifiedAt) > 24 * 3600000;
+  const [mint, setMint] = useState(() => /Linux/.test(navigator.platform) && !/Android/.test(navigator.userAgent));
   const [archive, setArchive] = useState('');
   // Accept names produced by both generations of the Windows archive script.
   const valid = /^[a-z0-9_-][a-z0-9_. -]*\.dump$/i.test(archive);
-  const path = '"backups\\' + archive + '"';
+  const path = '"backups/' + archive + '"';
   const card = 'min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm';
   return <div className="space-y-4 text-sm text-slate-700">
     <header className="rounded-xl bg-[#152945] p-5 text-white">
       <h2 className="flex items-center gap-2 text-xl font-bold"><DatabaseBackup /> Backup &amp; recovery</h2>
-      <p className="mt-2 text-slate-200">Run these commands from the ARS project folder in PowerShell on the Windows database computer.</p>
+      <p className="mt-2 text-slate-200">Run these commands from the ARS project folder on the database computer.</p>
     </header>
+    <label className="block text-sm font-semibold">Database computer
+      <select value={mint ? 'mint' : 'windows'} onChange={event => setMint(event.target.value === 'mint')} className="ml-2 rounded border px-2 py-1">
+        <option value="mint">Linux Mint</option><option value="windows">Windows</option>
+      </select>
+    </label>
     <section className={card}>
       <h3 className="text-base font-bold text-slate-900">Daily Google Drive backup</h3>
       <p role="status">{status ? labels[status.phase] : 'Loading status…'}{status?.verifiedAt && ' · Last verified ' + new Date(status.verifiedAt).toLocaleString()}</p>
@@ -66,12 +72,12 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
         <ol className="my-3 list-decimal space-y-1 pl-5">
           <li>Install rclone and run <code>rclone config</code>. Create a Google Drive remote named <code>ars-drive</code> using the ARS business account.</li>
           <li>Create a crypt remote named <code>ars-encrypted</code> pointing to <code>ars-drive:ARS-Backups</code>. Save the encryption password and salt offline for recovery.</li>
-          <li>Register the schedule below. It runs at 8 PM Windows local time while the configured user is signed in. Keep Docker running.</li>
+          <li>Register the schedule below. It runs at 8 PM local time while the configured user is signed in. Keep Docker running.</li>
         </ol>
-        <Command command="powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-drive-backup.ps1 -At 20:00"/>
+        <Command command={mint ? 'bash scripts/mint/install-drive-backup.sh' : 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-drive-backup.ps1 -At 20:00'}/>
         <p className="my-2">ARS keeps the latest 30 local backup sets. Drive keeps each uploaded set until the owner removes it.</p>
         <p className="my-2">Run the scheduled task once now and check the verified time above.</p>
-        <Command command="Start-ScheduledTask -TaskName 'ARS Hardware - Daily Drive Backup'"/>
+        <Command command={mint ? 'systemctl --user start ars-drive-backup.service' : "Start-ScheduledTask -TaskName 'ARS Hardware - Daily Drive Backup'"}/>
       </details>
       <details><summary className="cursor-pointer font-semibold">Download a set for a recovery drill</summary>
         <p className="my-2">List the dated folders, then replace SET with one folder name. Download into the project backups folder and follow the restore steps below.</p>
@@ -82,8 +88,8 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <section className={card}>
         <h3 className="text-base font-bold text-slate-900">1. Create a backup</h3>
-        <p>Double-click <strong>Backup-Hardware-POS.bat</strong> or use the command below. Keep the dump, its checksum and any matching uploads ZIP and ZIP checksum together. Copy the set to encrypted external storage.</p>
-        <Command command={backupScript}/>
+        <p>Run the command below. Keep the dump, its checksum and any matching uploads ZIP and ZIP checksum together. Copy the set to encrypted external storage.</p>
+        <Command command={mint ? 'python3 scripts/mint/backup.py' : backupScript}/>
       </section>
       <section className={card}>
         <h3 className="text-base font-bold text-slate-900">2. Check the backup files</h3>
@@ -98,7 +104,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <section className={card}>
       <h3 className="text-base font-bold text-slate-900">3. Test recovery in a separate database</h3>
       <p>The drill checks the files, asks you to type <strong>RESTORE TEST</strong>, and restores into a new database. Compare the reported product, customer and sales counts with your records. Inspect the recovered logos and product images in the temporary folder printed by the script.</p>
-      {valid ? <Command key={archive} command={'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-local-postgres-test.ps1 -BackupFile ' + path}/> :
+      {valid ? <Command key={archive} command={(mint ? 'python3 scripts/mint/backup.py --restore ' : 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restore-local-postgres-test.ps1 -BackupFile ') + path}/> :
         <p className="text-xs font-semibold text-amber-800">Choose a database archive above to prepare the restore command.</p>}
     </section>
     {valid && <fieldset key={archive} className={card}>
