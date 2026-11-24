@@ -1,3 +1,4 @@
+import {supplierReceiptCredits} from './supplierAdvance';
 import type {PoolClient} from 'pg';
 import {moneyCents} from './generalLedger';
 import {postJournal,reverseJournal} from './ledgerPosting';
@@ -17,7 +18,6 @@ export async function postPurchaseReceipt(client:PoolClient,shopId:string,poId:s
  const c=await config(client,shopId);if(!c?.posting_enabled)return {posted:false};
  const po=(await client.query("SELECT total::text,status,(NOW() AT TIME ZONE 'Asia/Colombo')::date::text AS day FROM purchase_orders WHERE shop_id=$1 AND id=$2",[shopId,poId])).rows[0];
  if(!po||po.status!=='Received'||po.day<c.day||!actor?.trim())throw Error('Verified purchase receipt required.');
- if((await client.query('SELECT 1 FROM supplier_payments WHERE shop_id=$1 AND purchase_order_id=$2 LIMIT 1',[shopId,poId])).rowCount)throw Error('Purchase with supplier advances requires separate accounting reconciliation.');
  const items=(await client.query('SELECT i.quantity,i.cost_price::text AS purchase_cost,i.variant_id,i.base_units_per_purchase_unit,p.cost_price::text AS current_cost,p.variants_json FROM purchase_order_items i JOIN products p ON p.id=i.product_id AND p.shop_id=$1 WHERE i.purchase_order_id=$2',[shopId,poId])).rows;
  const count=(await client.query('SELECT count(*)::int AS n FROM purchase_order_items WHERE purchase_order_id=$1',[poId])).rows[0].n;
  if(!items.length||items.length!==count)throw Error('Purchase item coverage incomplete.');
@@ -32,8 +32,8 @@ export async function postPurchaseReceipt(client:PoolClient,shopId:string,poId:s
   total+=cost*BigInt(qty);
  }
  if(total!==moneyCents(po.total)||total<=0n)throw Error('Purchase total does not reconcile to verified inventory cost.');
- const inventory=await mapping(client,shopId,'inventory','Asset'),payables=await mapping(client,shopId,'supplierPayables','Liability');
- const result=await postJournal(client,{id:'purchase:'+poId,shopId,postingDate:po.day,sourceKind:'PurchaseReceipt',sourceId:poId,description:'Full purchase receipt '+poId,actor,lines:[{accountCode:inventory,debit:decimal(total),credit:'0.00'},{accountCode:payables,debit:'0.00',credit:decimal(total)}]});
+ const inventory=await mapping(client,shopId,'inventory','Asset'),credits=await supplierReceiptCredits(client,shopId,poId,total);
+ const result=await postJournal(client,{id:'purchase:'+poId,shopId,postingDate:po.day,sourceKind:'PurchaseReceipt',sourceId:poId,description:'Full purchase receipt '+poId,actor,lines:[{accountCode:inventory,debit:decimal(total),credit:'0.00'},...credits]});
  return {posted:true,...result};
 }
 
