@@ -9,7 +9,7 @@ export async function initPayableAging(db:Pool|PoolClient){
 }
 
 /** Operational estimate from received POs, not a certified supplier invoice ledger. */
-export async function supplierPayableAging(db:Pool,shopId:string){
+export async function supplierPayableAging(db:Pool|PoolClient,shopId:string){
   const result=await db.query(`WITH today AS (
     SELECT (NOW() AT TIME ZONE 'Asia/Colombo')::date AS day
   ), payments AS (

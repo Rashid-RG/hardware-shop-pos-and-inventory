@@ -1,4 +1,5 @@
 import type {Pool} from 'pg';
+import {supplierPayableAging} from './payableAging';
 import {inventoryValuation} from './inventoryValuation';
 import {listPositionRegisters,positionKinds} from './positionRegisters';
 
@@ -30,12 +31,11 @@ export async function financialPosition(db:Pool,shopId:string){
     (SELECT COUNT(*) FROM purchase_orders WHERE shop_id=$1 AND status='Partially Received') AS partial_orders,
     (SELECT COUNT(*) FROM ars_partner_profit_allocations WHERE shop_id=$1) AS allocations`,[shopId]);
   const r=result.rows[0];
-  const lines=await client.query(`SELECT o.id,o.total,COALESCE(SUM(p.amount),0) AS paid
-    FROM purchase_orders o LEFT JOIN supplier_payments p ON p.shop_id=o.shop_id AND p.supplier_id=o.supplier_id AND p.purchase_order_id=o.id
-    WHERE o.shop_id=$1 AND o.status='Received' GROUP BY o.id`,[shopId]);
+  const payables = await supplierPayableAging(client,shopId);
+  const receivedOrderOutstandingEstimate = payables.estimatedPayable;
+  const overpaidOrders = payables.orders.filter((order:{status:string;total:number;paid:number}) =>
+    order.status === 'Received' && (order.paid > order.total || order.total <= 0 || order.paid < 0)).length;
   const round=(n:number)=>Math.round(n*100)/100;
-  const receivedOrderOutstandingEstimate=round(lines.rows.reduce((n,o)=>n+Math.max(0,Number(o.total)-Number(o.paid)),0));
-  const overpaidOrders=lines.rows.filter(o=>Number(o.paid)>Number(o.total)||Number(o.total)<=0||Number(o.paid)<0).length;
   const unmatched=await client.query(`SELECT COUNT(*) AS count FROM supplier_payments p WHERE p.shop_id=$1 AND NOT EXISTS(
     SELECT 1 FROM purchase_orders o WHERE o.shop_id=p.shop_id AND o.supplier_id=p.supplier_id AND o.id=p.purchase_order_id AND o.status='Received')`,[shopId]);
   const inventory=await inventoryValuation(client,shopId);

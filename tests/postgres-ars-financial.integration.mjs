@@ -209,7 +209,14 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.equal(position.registerBalances.find(r=>r.kind==='Tax liability').amount,0);
     assert.equal(position.complete,false);
     for(const key of ['totalAssets','totalLiabilities','totalEquity','balanceDifference'])assert.equal(position[key],null);
+    // A legacy PO linked across shops is an exception in both reports, never a known liability.
+    const legacyOrder = id();
+    await pool.query(`INSERT INTO purchase_orders(id,shop_id,po_number,date,supplier_id,supplier_name,total,status)
+      VALUES($1,$2,$3,$4,$5,'CI supplier',75,'Received')`,[legacyOrder,otherShop,'CI-PO-'+legacyOrder,day,supplierId]);
+    const foreignAging = await supplierPayableAging(pool,otherShop);
+    assert.equal(foreignAging.orders.find(o=>o.id===legacyOrder).bucket,'Review');
     const foreignPosition=await financialPosition(pool,otherShop);
+    assert.equal(foreignPosition.receivedOrderOutstandingEstimate,foreignAging.estimatedPayable);
     assert.equal(foreignPosition.knownAssetSubtotal,0);
     assert.equal(foreignPosition.knownLiabilitySubtotal,0);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
