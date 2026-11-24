@@ -1308,6 +1308,14 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Match refund lock ordering: invoice first, then customer.
+    let invoiceTotalCents=0;
+    if(p.invoiceId){
+      const invoice=await client.query("SELECT total,payment_method,status FROM sales_transactions WHERE id=$1 AND shop_id=$2 AND customer_id=$3 FOR UPDATE",[p.invoiceId,p.shopId,p.customerId]);
+      const row=invoice.rows[0];
+      if(!row||row.payment_method!=='Credit Account'||row.status!=='Completed')throw Error('Select an outstanding credit invoice belonging to this customer.');
+      invoiceTotalCents=Math.round(Number(row.total)*100);
+    }
     const result = await client.query(
       'SELECT name, credit_balance FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
       [p.customerId, p.shopId]
@@ -1320,10 +1328,21 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
     if (Math.round(p.amount * 100) > Math.round(outstanding * 100)) {
       throw new Error('Payment exceeds the customer outstanding credit balance.');
     }
+    let invoicePaidCents=0;
+    if(p.invoiceId){
+      const unallocated=await client.query('SELECT 1 FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND invoice_id IS NULL LIMIT 1',[p.shopId,p.customerId]);
+      if(unallocated.rowCount)throw Error('Historical unallocated payments require reconciliation before invoice-specific collection.');
+      const allocated=await client.query('SELECT COALESCE(SUM(amount),0) AS paid FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND invoice_id=$3',[p.shopId,p.customerId,p.invoiceId]);
+      invoicePaidCents=Math.round(Number(allocated.rows[0].paid)*100);
+      if(!Number.isSafeInteger(invoiceTotalCents)||!Number.isSafeInteger(invoicePaidCents)||Math.round(p.amount*100)>invoiceTotalCents-invoicePaidCents)throw Error('Payment exceeds the invoice outstanding balance.');
+    }else{
+      const linked=await client.query('SELECT 1 FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND invoice_id IS NOT NULL LIMIT 1',[p.shopId,p.customerId]);
+      if(linked.rowCount)throw Error('Select an invoice for this customer payment.');
+    }
     await client.query(
-      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [p.id, p.shopId, p.customerId, result.rows[0].name, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null]
+      `INSERT INTO customer_credit_payments (id, shop_id, customer_id, customer_name, amount, date, payment_method, note, created_by, invoice_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [p.id, p.shopId, p.customerId, result.rows[0].name, p.amount, p.date, p.paymentMethod, p.note || null, p.createdBy || null, p.invoiceId || null]
     );
     await client.query(
       `UPDATE customers SET credit_balance = credit_balance - $1, updated_at = NOW()
@@ -1336,6 +1355,10 @@ export const addCustomerCreditPayment = async (p: CustomerCreditPayment) => {
       ['credit-payment-' + p.id, p.shopId, p.createdBy || 'Cashier',
        `Customer ${result.rows[0].name} paid Rs.${p.amount.toFixed(2)} towards credit.`]
     );
+    if(p.invoiceId){
+      const settled=invoicePaidCents+Math.round(p.amount*100)===invoiceTotalCents;
+      await client.query('UPDATE sales_transactions SET payment_status=$1 WHERE id=$2 AND shop_id=$3',[settled?'PAID':'PARTIALLY PAID',p.invoiceId,p.shopId]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -1823,6 +1846,8 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
         const total = Number(tx.total);
         const loyalty = Math.floor(total / 10);
         if (tx.payment_method === 'Credit Account') {
+          const payments=await client.query('SELECT 1 FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND (invoice_id=$3 OR invoice_id IS NULL) LIMIT 1',[shopId,tx.customer_id,txId]);
+          if(payments.rowCount)throw Error('Reconcile customer payments before refunding this credit invoice.');
           const outstanding = Number(customerRes.rows[0].credit_balance);
           if (!Number.isFinite(outstanding) || outstanding + 0.005 < total) {
             throw new Error('Credit balance is below this invoice total. Reconcile customer payments before refunding.');
