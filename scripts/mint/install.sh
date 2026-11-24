@@ -32,6 +32,8 @@ ln -sfnT "$root" "$app/project"
 ln -sfnT "$(command -v node)" "$app/node"
 install -m 644 scripts/mint/ars-hardware.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
+systemctl --user enable ars-hardware.service
+systemctl --user start --no-block ars-hardware.service
 desktop=$(xdg-user-dir DESKTOP)
 mkdir -p "$desktop"
 python3 - "$app/project/scripts/mint/open.py" "$desktop" <<'PY'
@@ -40,11 +42,11 @@ import sys
 script, desktop = sys.argv[1:]
 # Desktop Entry value escaping precedes Exec argument parsing.
 arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\\\').replace('%', '%%')
-entry = f'[Desktop Entry]\nType=Application\nName=ARS Hardware POS\nExec=python3 "{arg}"\nIcon=applications-office\nTerminal=false\nCategories=Office;\n'
+entry = f'[Desktop Entry]\nType=Application\nName=ARS Distributor POS\nExec=python3 "{arg}"\nIcon=applications-office\nTerminal=false\nCategories=Office;\n'
 for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target = folder/'ars-hardware.desktop'
     target.write_text(entry)
     target.chmod(0o755)
 PY
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
-echo "Setup complete. Open ARS Hardware POS on the desktop."
+echo "Setup complete. Open ARS Distributor POS on the desktop."
