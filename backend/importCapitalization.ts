@@ -16,3 +16,34 @@ export function buildImportReceiptJournal(input:{goods:bigint;landed:bigint;roun
  validateJournal(lines);
  return lines;
 }
+
+import type {PoolClient} from 'pg';
+import {moneyCents} from './generalLedger';
+
+/** Require whole approved charge funding, proven by original expense journals.
+ * The PO is locked by the receiving transaction; lock the approval against concurrent linking.
+ */
+export async function verifiedImportChargeBalance(client:PoolClient,shopId:string,poId:string,expenseAccount:string){
+ const a=(await client.query('SELECT id,charges_total::text,snapshot FROM ars_landed_cost_approvals WHERE shop_id=$1 AND purchase_order_id=$2 FOR UPDATE',[shopId,poId])).rows[0];
+ if(!a)throw Error('Approved landed cost required.');
+ const links=(await client.query(`SELECT x.charge_kind,x.amount::text,x.expense_id,j.id AS journal_id,
+ (SELECT COALESCE(sum(l.debit-l.credit),0)::numeric(24,2)::text FROM ars_gl_lines l WHERE l.shop_id=x.shop_id AND l.journal_id=j.id AND l.account_code=$3) AS posted
+ FROM ars_import_expense_links x LEFT JOIN ars_gl_journals j ON j.shop_id=x.shop_id AND j.source_kind='Expense' AND j.source_id=x.expense_id
+ WHERE x.shop_id=$1 AND x.approval_id=$2`,[shopId,a.id,expenseAccount])).rows;
+ const caps:Record<string,bigint>={Freight:moneyCents(String(a.snapshot.freightLkr)),Customs:moneyCents(String(a.snapshot.customsLkr)),Clearance:moneyCents(String(a.snapshot.clearanceLkr))};
+ const paid:Record<string,bigint>={Freight:0n,Customs:0n,Clearance:0n};
+ for(const l of links){
+  if(!l.journal_id||!Object.prototype.hasOwnProperty.call(paid,l.charge_kind)||moneyCents(l.amount)!==moneyCents(l.posted))throw Error('Import expense must have matching posted operating expense.');
+  paid[l.charge_kind]+=moneyCents(l.amount);
+ }
+ for(const k of Object.keys(caps))if(paid[k]!==caps[k])throw Error('All approved import charges must be funded and linked before receiving.');
+ const funded=paid.Freight+paid.Customs+paid.Clearance;
+ if(funded!==moneyCents(a.charges_total))throw Error('Approved charges do not reconcile.');
+ const used=(await client.query(`SELECT COALESCE(sum(l.credit-l.debit),0)::numeric(24,2)::text AS used
+ FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id
+ JOIN ars_receipt_batches b ON b.shop_id=j.shop_id AND b.id=j.source_id
+ WHERE j.shop_id=$1 AND j.source_kind='ReceiptBatch' AND b.purchase_order_id=$2 AND l.account_code=$3`,[shopId,poId,expenseAccount])).rows[0].used;
+ const remaining=funded-moneyCents(used);
+ if(remaining<0n)throw Error('Import charges already overallocated.');
+ return remaining;
+}
