@@ -5801,7 +5801,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const { activeShopId } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const { amount, paymentMethod, note, invoiceId, date } = req.body || {};
+  const { amount, paymentMethod, note, invoiceId, date, requestId } = req.body || {};
   const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
   if (!customer) return res.status(404).json({ error: 'Customer not found in this shop' });
   const normalizedAmount = Number(amount);
@@ -5815,9 +5815,10 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
   const today=reportDay(new Date());
   const paymentDay=date ?? today;
   if(typeof paymentDay!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(paymentDay)||!Number.isFinite(Date.parse(paymentDay+'T00:00:00Z'))||new Date(paymentDay+'T00:00:00Z').toISOString().slice(0,10)!==paymentDay||paymentDay>today)return res.status(400).json({error:'Enter a valid payment date, not later than today.'});
+  if(requestId!==undefined && (typeof requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)))return res.status(400).json({error:'Invalid payment request identifier.'});
   const payment: CustomerCreditPayment = {
     invoiceId: invoiceId || undefined,
-    id: 'cpay-' + randomUUID(),
+    id: 'cpay-' + (requestId || randomUUID()),
     shopId: activeShopId,
     customerId: customer.id,
     customerName: customer.name,
@@ -5828,7 +5829,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     createdBy: authUser?.name,
   };
   try {
-    payment.receiptSnapshot = await addCustomerCreditPayment(payment);
+    payment.receiptSnapshot = await addCustomerCreditPayment(payment,Boolean(requestId));
   } catch (error) {
     return res.status(409).json({ error: (error as Error).message });
   }
