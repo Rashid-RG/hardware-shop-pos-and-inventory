@@ -4,7 +4,7 @@ import {reportDay} from '../utils/reporting';
 type Request={requestId:string;returnId:string;chargeKind:string;payer:string;documentReference:string;accountId:string;amount:string;date:string;evidence:string};
 type Availability={returnId:string;minimumDate:string;historicalCharges:string;postedLoss:string;recovered:string;categories:{kind:string;allocatedCharges:string;recovered:string;available:string}[];accounts:{id:string;name:string;kind:string}[]};
 type History={id:string;charge_kind:string;payer:string;document_reference:string;amount:string;recovery_date:string;account_name:string;evidence:string};
-export default function ImportChargeRecovery({returnId,authToken,shopId,owner,canPost,onClose}:{returnId:string;authToken:string;shopId:string;owner:string;canPost:boolean;onClose:()=>void}){
+export default function ImportChargeRecovery({returnId,authToken,shopId,owner,canPost,onClose}:{returnId:string;authToken:string;shopId:string;owner:string;canPost:boolean;onClose:()=>void;key?:string}){
  const key='ars:pending-import-recovery:'+JSON.stringify([owner,shopId]);
  const [saved,setSaved]=useState<Request|null>(null),[ready,setReady]=useState(false),[error,setError]=useState(''),[previewError,setPreviewError]=useState(''),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[version,setVersion]=useState(0);
  const [availability,setAvailability]=useState<Availability|null>(null),[history,setHistory]=useState<History[]>([]);
