@@ -7,7 +7,7 @@ import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPacka
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -5937,6 +5937,40 @@ app.post('/api/financial-accounts/:id/opening-balance',requireRole(['Super Admin
     if(error instanceof Error&&error.message==='Opening balance requires an account with no recorded movements.')return res.status(409).json({error:error.message});
     console.error('Opening balance registration failed',error);
     return res.status(500).json({error:'Unable to register opening balance. Check the account before retrying.'});
+  }
+});
+
+
+app.post('/api/financial-transfers',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const auth=(req as AppRequest).authUser;
+  const {activeShopId}=getActiveShopContext(db,req);
+  const requested=getRequestedShopId(req);
+  if(!auth||!db.settings.shopProfiles?.some(s=>s.id===activeShopId)||
+    (requested&&requested!==activeShopId)||
+    (auth.scopedShopId&&auth.scopedShopId!==activeShopId)||
+    (auth.fixedShopId&&auth.fixedShopId!==activeShopId)||
+    (Array.isArray(auth.allowedShopIds)&&!auth.allowedShopIds.includes(activeShopId))){
+    return res.status(403).json({error:'Financial account shop access denied.'});
+  }
+  const {requestId,fromAccountId,toAccountId,amount,effectiveDate,note}=req.body||{};
+  if(typeof requestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)||
+    typeof fromAccountId!=='string'||!fromAccountId||fromAccountId.length>200||
+    typeof toAccountId!=='string'||!toAccountId||toAccountId.length>200||fromAccountId===toAccountId||
+    typeof amount!=='number'||!Number.isFinite(amount)||amount<=0||amount>999999999999.99||
+    Math.abs(amount*100-Math.round(amount*100))>0.001||
+    typeof effectiveDate!=='string'||effectiveDate!==reportDay(new Date())||
+    (note!==undefined&&(typeof note!=='string'||note.length>500))){
+    return res.status(400).json({error:'Enter two different accounts, a positive amount, a request ID and today’s transfer date.'});
+  }
+  try{
+    const result=await recordFinancialTransfer(pool,{requestId,shopId:activeShopId,fromAccountId,toAccountId,amount,effectiveDate,recordedBy:auth.email,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Select two active financial accounts in this shop.','Settlement accounts are not supported for fund transfers.','Insufficient recorded funds in source account.','Transfer request identifier already used for different details.','Invalid financial transfer details.'].includes(message))return res.status(409).json({error:message});
+    console.error('Financial transfer failed',error);
+    return res.status(500).json({error:'Unable to confirm transfer. Reconcile or retry the same request identifier.'});
   }
 });
 
