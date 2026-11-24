@@ -41,5 +41,17 @@ for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target.write_text(entry)
     target.chmod(0o755)
 PY
+python3 - "$app/project/scripts/mint/update-center.py" "$desktop" <<'PY'
+from pathlib import Path
+import sys
+script, desktop = sys.argv[1:]
+arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\\\').replace('%', '%%')
+entry = f'[Desktop Entry]\nType=Application\nName=RS Nextward Update Center\nExec=python3 "{arg}"\nIcon=system-software-update\nTerminal=false\nCategories=System;\n'
+for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
+    target = folder/'ars-update-center.desktop'
+    target.write_text(entry)
+    target.chmod(0o755)
+PY
+gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
 echo "Setup complete. Open ARS Distributor POS on the desktop."
