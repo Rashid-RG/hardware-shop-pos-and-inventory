@@ -11,6 +11,7 @@ import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initLandedCostTables, previewLandedCost, approveLandedCost } from './backend/landedCost';
 import { inventoryValuation, inventoryCostHistory } from './backend/inventoryValuation';
+import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -6224,6 +6225,21 @@ app.post('/api/invoice-cost-review/:transactionId/:itemId/corrections',requireRo
   if(['Invalid historical cost correction.','Correction request identifier already used for different details.','Invoice item not found in this shop.','Historical cost changed. Refresh before correcting.','Corrected cost must differ from the current cost.'].includes(message))return res.status(409).json({error:message});
   console.error('Cost correction failed',error);return res.status(500).json({error:'Unable to confirm correction. Retry the same request.'});
  }
+});
+app.get('/api/import-expense-reconciliation',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Import expense review access denied.'});
+ try{const data=await listImportExpenseReview(pool,scope.shopId);res.setHeader('Cache-Control','no-store');return res.json(data);}
+ catch(error){console.error('Import expense review failed',error);return res.status(500).json({error:'Unable to load import expense review.'});}
+});
+app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Import expense approval access denied.'});
+ const {requestId,approvalId,expenseId,chargeKind,expectedAmount,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof approvalId!=='string'||!approvalId||typeof expenseId!=='string'||!expenseId||!['Freight','Customs','Clearance'].includes(chargeKind)||typeof expectedAmount!=='number'||!Number.isFinite(expectedAmount)||expectedAmount<=0||typeof evidence!=='string'||!evidence.trim()||evidence.length>500)return res.status(400).json({error:'Select a verified payment, approved charge and evidence.'});
+ try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
 });
 app.get('/api/inventory-valuation',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
