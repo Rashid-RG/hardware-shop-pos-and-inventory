@@ -51,3 +51,26 @@ export async function supplierPayableAging(db:Pool,shopId:string){
   const buckets=['Not overdue','1-30','31-60','61-90','90+','No due date'].map(bucket=>({bucket,amount:Math.round(orders.filter((o:any)=>o.bucket===bucket).reduce((n:number,o:any)=>n+o.outstanding,0)*100)/100}));
   return {asOf:r.as_of,orders,unmatchedPayments,buckets,estimatedPayable:Math.round(buckets.reduce((n,b)=>n+b.amount,0)*100)/100,needsReview:orders.filter((o:any)=>o.bucket==='Review').length+unmatchedPayments.length};
 }
+
+/** Register the first verified supplier agreement without overwriting evidence. */
+export async function registerSupplierDueDate(db:Pool,input:{shopId:string;purchaseOrderId:string;dueDate:string;evidence:string;recordedBy:string}){
+  const {shopId,purchaseOrderId,dueDate,recordedBy}=input,evidence=input.evidence.trim();
+  if(!shopId||!purchaseOrderId||!recordedBy||!evidence||evidence.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)||!Number.isFinite(Date.parse(dueDate))||new Date(dueDate).toISOString().slice(0,10)!==dueDate||dueDate<'1900-01-01'||dueDate>'9999-12-31')throw Error('Valid supplier due date and evidence required.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query("SELECT o.status,o.supplier_id,(o.date AT TIME ZONE 'Asia/Colombo')::date::text AS day FROM purchase_orders o JOIN suppliers s ON s.id=o.supplier_id AND s.shop_id=o.shop_id WHERE o.shop_id=$1 AND o.id=$2 FOR UPDATE OF o",[shopId,purchaseOrderId]);
+    const order=result.rows[0];
+    if(!order)throw Error('Purchase order not found in this shop.');
+    const existing=await client.query('SELECT due_date::text AS day,evidence,recorded_by FROM ars_supplier_due_dates WHERE shop_id=$1 AND purchase_order_id=$2',[shopId,purchaseOrderId]);
+    if(existing.rowCount){
+      const old=existing.rows[0];
+      if(old.day!==dueDate||old.evidence!==evidence||old.recorded_by!==recordedBy)throw Error('Supplier due date already registered. An audited amendment is required.');
+      await client.query('COMMIT');return {purchaseOrderId,dueDate,replayed:true};
+    }
+    if(order.status!=='Received')throw Error('Only received purchase orders can receive verified payable terms.');
+    if(dueDate<order.day)throw Error('Due date cannot precede the purchase order date.');
+    await client.query('INSERT INTO ars_supplier_due_dates(shop_id,purchase_order_id,due_date,evidence,recorded_by) VALUES($1,$2,$3,$4,$5)',[shopId,purchaseOrderId,dueDate,evidence,recordedBy]);
+    await client.query('COMMIT');return {purchaseOrderId,dueDate,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
