@@ -47,3 +47,26 @@ export async function verifiedImportChargeBalance(client:PoolClient,shopId:strin
  if(remaining<0n)throw Error('Import charges already overallocated.');
  return remaining;
 }
+
+/** Allocate a receipt's import charges between already funded amounts and
+ * documented unpaid obligations. Never infer a creditor from the goods supplier.
+ * Liability approval and settlement records must be verified by the caller.
+ */
+export function allocateImportChargeFunding(input:{charges:bigint;fundedRemaining:bigint;approvedUnpaidRemaining:bigint}){
+ const {charges,fundedRemaining,approvedUnpaidRemaining}=input;
+ if(charges<0n||fundedRemaining<0n||approvedUnpaidRemaining<0n||charges>fundedRemaining+approvedUnpaidRemaining)throw Error('Import charges exceed documented funding and obligations.');
+ const paid=charges<fundedRemaining?charges:fundedRemaining;
+ return {paid,unpaid:charges-paid};
+}
+export function buildImportLiabilityReceiptJournal(input:{goods:bigint;landed:bigint;rounding:bigint;fundedRemaining:bigint;approvedUnpaidRemaining:bigint;goodsCredits:JournalLine[];inventoryAccount:string;expenseAccount:string;roundingAccount:string;importPayableAccount:string}):JournalLine[]{
+ const {goods,landed,rounding,goodsCredits,inventoryAccount,expenseAccount,roundingAccount,importPayableAccount}=input;
+ if(goods<=0n||landed<goods||landed+rounding<=0n)throw Error('Verified goods and inventory value required.');
+ const {paid,unpaid}=allocateImportChargeFunding({charges:landed-goods,fundedRemaining:input.fundedRemaining,approvedUnpaidRemaining:input.approvedUnpaidRemaining});
+ if(goodsCredits.some(l=>moneyCents(l.debit)!==0n)||goodsCredits.reduce((sum,l)=>sum+moneyCents(l.credit),0n)!==goods)throw Error('Goods credits must equal verified goods cost.');
+ const lines:JournalLine[]=[{accountCode:inventoryAccount,debit:decimal(landed+rounding),credit:'0.00'},...goodsCredits];
+ if(paid>0n)lines.push({accountCode:expenseAccount,debit:'0.00',credit:decimal(paid)});
+ if(unpaid>0n)lines.push({accountCode:importPayableAccount,debit:'0.00',credit:decimal(unpaid)});
+ if(rounding!==0n)lines.push({accountCode:roundingAccount,debit:decimal(rounding<0n?-rounding:0n),credit:decimal(rounding>0n?rounding:0n)});
+ if(new Set(lines.map(l=>l.accountCode)).size!==lines.length)throw Error('Distinct import ledger accounts required.');
+ validateJournal(lines);return lines;
+}
