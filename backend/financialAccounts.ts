@@ -1,7 +1,11 @@
+import { initLandedCostTables } from './landedCost';
+import { initImportExpenseReconciliation } from './importExpenseReconciliation';
 import type { Pool, PoolClient } from 'pg';
 
 export type FinancialAccountKind='Office Cash'|'Bank'|'Representative Cash'|'Settlement';
 export async function initFinancialAccounts(db:Pool|PoolClient){
+  await initLandedCostTables(db);
+  await initImportExpenseReconciliation(db);
   await db.query(`
     CREATE TABLE IF NOT EXISTS ars_financial_accounts (
       id TEXT PRIMARY KEY,
@@ -573,7 +577,12 @@ export async function financialProfitReport(db:Pool|PoolClient,shopId:string,fro
  LEFT JOIN LATERAL (SELECT corrected_cost FROM ars_invoice_cost_corrections WHERE shop_id=$1 AND transaction_id=e.id AND item_id=i.id AND original_cost=i.cost_price ORDER BY revision DESC LIMIT 1) c ON TRUE
  GROUP BY e.id,e.sign,e.revenue
  ), expense AS (
- SELECT COALESCE(SUM(amount),0) AS amount FROM manual_expenses WHERE shop_id=$1 AND date::date BETWEEN $2::date AND $3::date
+ SELECT COALESCE(SUM(e.amount-COALESCE(l.amount,0)),0) AS amount,COALESCE(SUM(l.amount),0) AS capitalized
+ FROM manual_expenses e LEFT JOIN ars_import_expense_links l ON l.shop_id=e.shop_id AND l.expense_id=e.id AND l.amount=e.amount
+ AND l.expense_snapshot->>'day'=e.date::date::text
+ AND l.expense_snapshot->>'description'=e.description AND l.expense_snapshot->>'category'=e.category
+ AND EXISTS(SELECT 1 FROM ars_financial_movements m WHERE m.shop_id=e.shop_id AND m.id=l.expense_snapshot->'movement'->>'id' AND m.source_id=e.id AND m.movement_kind='Expense' AND m.amount=-e.amount AND m.effective_date=e.date::date)
+ WHERE e.shop_id=$1 AND e.date::date BETWEEN $2::date AND $3::date
  )
  SELECT COALESCE(SUM(revenue) FILTER(WHERE sign=1),0) AS sales,
  COALESCE(SUM(revenue) FILTER(WHERE sign=-1),0) AS refunds,
@@ -581,12 +590,13 @@ export async function financialProfitReport(db:Pool|PoolClient,shopId:string,fro
  COALESCE(SUM(missing),0) AS missing,
  COUNT(*) FILTER(WHERE missing>0) AS affected,
  (SELECT amount FROM expense) AS expenses,
+ (SELECT capitalized FROM expense) AS capitalized_import_expenses,
  (SELECT COUNT(*) FROM sales_transactions WHERE shop_id=$1 AND status='Refunded' AND refunded_at IS NULL AND (date AT TIME ZONE 'Asia/Colombo')::date <= $3::date) AS undated_refunds
  FROM costs`,[shopId,fromDate,toDate]);
  const r=result.rows[0],sales=Number(r.sales),refunds=Number(r.refunds),knownCost=Number(r.cost),expenses=Number(r.expenses),missing=Number(r.missing),affected=Number(r.affected),undatedRefunds=Number(r.undated_refunds);
  const round=(n:number)=>Math.round(n*100)/100;
  const netSales=round(sales-refunds),complete=missing===0&&undatedRefunds===0;
- return {fromDate,toDate,sales,refunds,netSales,knownCost,expenses,missing,affected,undatedRefunds,complete,grossProfit:complete?round(netSales-knownCost):null,operatingEstimate:complete?round(netSales-knownCost-expenses):null};
+ return {fromDate,toDate,sales,refunds,netSales,knownCost,expenses,capitalizedImportExpenses:Number(r.capitalized_import_expenses),missing,affected,undatedRefunds,complete,grossProfit:complete?round(netSales-knownCost):null,operatingEstimate:complete?round(netSales-knownCost-expenses):null};
 }
 
 /** Append-only historical costing correction; never modifies invoice or inventory records. */
