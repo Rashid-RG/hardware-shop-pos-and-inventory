@@ -512,7 +512,7 @@ export default function SupplierPurchaseView({
             <button disabled={refundBusy||!refundStorageReady||!refundAvailability.accounts.length} className="rounded bg-slate-900 px-4 py-2 text-white disabled:opacity-50">Confirm supplier refund</button>
           </form>}
           <h4 className="text-sm font-semibold">Refund history</h4>
-          {!refundHistory.length?<p className="text-xs text-slate-600">No refund records loaded.</p>:refundHistory.map(f=><div key={f.id} className="rounded border p-2 text-xs"><p className="font-semibold">{f.refund_date} · Rs. {f.amount} · {f.account_name||f.account_id}</p><p>{f.evidence} · {f.recorded_by}</p></div>)}
+          {!refundHistory.length?<p className="text-xs text-slate-600">No refund records loaded.</p>:refundHistory.map(f=><div key={f.id} className="rounded border p-2 text-xs"><p className="font-semibold">{f.refund_date} · Rs. {f.amount} · {f.account_name||f.account_id}</p><p>{f.evidence} · {f.recorded_by}</p>{financialAuthToken&&financialShopId&&<DisbursementVoucherActions kind="supplier-refund" id={f.id} authToken={financialAuthToken} shopId={financialShopId}/>}</div>)}
         </>}
       </section>}
       {canViewReturns&&returnHistoryOrder&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return history">
