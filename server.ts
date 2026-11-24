@@ -1,4 +1,4 @@
-import {recordSupplierRefund} from './backend/supplierRefunds';
+import {recordSupplierRefund,supplierRefundAvailability} from './backend/supplierRefunds';
 import {recordPurchaseReturn} from './backend/purchaseReturns';
 import {settleImportCreditor} from './backend/importSettlements';
 import {listImportObligations,submitImportObligation,reviewImportObligation} from './backend/importObligations';
@@ -6368,6 +6368,15 @@ app.post('/api/ledger/supplier-refunds',requireRole(['Super Admin']),async(req,r
  catch(error){const message=error instanceof Error?error.message:'';
  if(['Valid supplier refund details required.','Valid positive refund amount required.','Refund identifier already used.','Active accounting required for supplier refunds.','Posted purchase return required before refund.','Refund date precedes later supplier transactions.','Refund exceeds available supplier return credit.','Active cash or bank account required.','Distinct active refund accounting mapping required.','Supplier order not found.','Historical supplier payments require reconciliation.','Supplier balances require reconciliation.','Accounting period is closed'].includes(message)||message.startsWith('Missing supplier accounting mapping:'))return res.status(409).json({error:message});
  console.error('Supplier refund failed',error);return res.status(500).json({error:'Unable to confirm supplier refund. Retry the same request.'});}
+});
+app.get('/api/ledger/supplier-refunds/:returnId/availability',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Supplier refund access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await supplierRefundAvailability(pool,scope.shopId,req.params.returnId));}
+ catch(error){const message=error instanceof Error?error.message:'';
+ if(message==='Posted purchase return required before refund.')return res.status(404).json({error:message});
+ if(['Active accounting required for supplier refunds.','Supplier order not found.','Historical supplier payments require reconciliation.','Supplier balances require reconciliation.'].includes(message)||message.startsWith('Missing supplier accounting mapping:'))return res.status(409).json({error:message});
+ console.error('Supplier refund availability failed',error);return res.status(500).json({error:'Unable to calculate refundable credit.'});}
 });
 app.get('/api/ledger/supplier-refunds/:returnId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Supplier refund access denied.'});
