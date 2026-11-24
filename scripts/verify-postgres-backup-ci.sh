@@ -126,4 +126,5 @@ for database in hardware_pos_ci hardware_pos_restore_ci; do
     ) THEN 'accounting-fixtures-present' ELSE 'missing' END" | grep -qx 'accounting-fixtures-present'
   echo "Accounting and supplier terms restoration fixtures verified: $database"
 done
+node --import tsx scripts/verify-restored-valuation.mjs
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
