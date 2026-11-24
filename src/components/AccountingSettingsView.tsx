@@ -47,7 +47,7 @@ export default function AccountingSettingsView({
 }: AccountingSettingsViewProps) {
   const defaultInvoiceCompanyMeta = {
     companyLegalName: '',
-    companyTagline: 'Hardware Import & Wholesale Distribution',
+    companyTagline: 'Imports & Wholesale Distribution',
     businessRegistrationNo: '',
     vatRegistrationNo: '',
     tinNo: '',
@@ -79,7 +79,7 @@ export default function AccountingSettingsView({
     return [
       {
         id: 'shop-main',
-        name: config.storeName || 'ARS Hardware',
+        name: config.storeName || 'ARS Distribution',
         logoUrl: config.logoUrl || '',
         address: config.address || '',
         phone: config.phone || '',
@@ -214,7 +214,7 @@ export default function AccountingSettingsView({
       return;
     }
     setActiveShopId(shopId);
-    setStoreName(activeShop.name || 'ARS Hardware');
+    setStoreName(activeShop.name || 'ARS Distribution');
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
     setTaxRate(Number(activeShop.taxRate || 18));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
