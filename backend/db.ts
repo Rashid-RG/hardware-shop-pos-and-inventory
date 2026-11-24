@@ -333,6 +333,8 @@ export const initDbTables = async () => {
       ALTER TABLE purchase_orders ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE stock_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
       ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS shop_id TEXT;
+      ALTER TABLE manual_expenses ADD COLUMN IF NOT EXISTS shop_id TEXT;
+      CREATE INDEX IF NOT EXISTS manual_expenses_shop_date ON manual_expenses(shop_id,date);
       ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS logo_url TEXT;
       ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS store_address TEXT;
       ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS store_phone TEXT;
@@ -728,6 +730,7 @@ export const loadStateFromNormalized = async (): Promise<any> => {
     },
     manualExpenses: expensesRes.rows.map((row) => ({
       id: row.id,
+      shopId: row.shop_id || undefined,
       desc: row.description,
       amount: Number(row.amount),
       date: row.date,
@@ -1443,9 +1446,9 @@ export const updateEmployee = async (id: string, e: Partial<Employee>) => {
 
 export const insertManualExpense = async (e: ManualExpense) => {
   await pool.query(
-    `INSERT INTO manual_expenses (id, description, amount, date, category)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [e.id, e.desc, e.amount, e.date, e.category]
+    `INSERT INTO manual_expenses (id, description, amount, date, category, shop_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [e.id, e.desc, e.amount, e.date, e.category, e.shopId || null]
   );
 };
 
