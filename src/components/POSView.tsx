@@ -998,7 +998,6 @@ export default function POSView({
               ${tx.discountAmount > 0 ? `<div class="sum-row"><span>Discount</span><strong>-${escapeHtml(formatMoney(tx.discountAmount))}</strong></div>` : ''}
               <div class="sum-row"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
               <div class="sum-row grand"><span>Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-              ${tx.paymentMethod === 'Cash' ? `<div class="sum-row"><span>Cash Received</span><strong>${escapeHtml(formatMoney(tx.cashReceived ?? tx.total))}</strong></div><div class="sum-row"><span>Change Due</span><strong>${escapeHtml(formatMoney(tx.changeDue ?? 0))}</strong></div>` : ''}
 
               <div class="sign-wrap">
                 <div class="sig-box">
@@ -2201,18 +2200,7 @@ export default function POSView({
                     <span className="font-mono text-indigo-600">{currencySymbol}{receiptModel.total.toFixed(2)}</span>
                   </div>
 
-                  {receiptModel.paymentMethod === 'Cash' && (
-                    <>
-                      <div className="flex justify-between text-[11px] text-slate-600 pt-1">
-                        <span>Customer Gave</span>
-                        <span className="font-mono font-semibold">{currencySymbol}{Number(receiptModel.cashReceived ?? receiptModel.total).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
-                        <span>Balance Amount (Change)</span>
-                        <span className="font-mono">{currencySymbol}{Number(receiptModel.changeDue ?? 0).toFixed(2)}</span>
-                      </div>
-                    </>
-                  )}
+
                 </div>
 
                 {/* Goods receipt proof is shown in preview and on the printed A4 invoice. */}
