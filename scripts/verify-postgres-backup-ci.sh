@@ -60,6 +60,7 @@ done
 ars_tables=(
   ars_import_shipments ars_business_partners ars_partner_capital_entries
   ars_receipt_batches ars_receipt_batch_items
+  ars_packaging_drafts
   ars_partner_profit_allocations ars_partner_profit_shares
 )
 for table in "${ars_tables[@]}"; do
@@ -73,5 +74,16 @@ for table in "${ars_tables[@]}"; do
     exit 1
   fi
   echo "ARS restore verified: $table"
+done
+# Shared-stock fixtures must be present; otherwise full-row comparison could pass vacuously.
+for database in hardware_pos_ci hardware_pos_restore_ci; do
+  pg psql -h 127.0.0.1 -U postgres -d "$database" -v ON_ERROR_STOP=1 -Atc "
+    SELECT CASE WHEN
+      EXISTS(SELECT 1 FROM products WHERE shared_stock_units IS NOT NULL)
+      AND EXISTS(SELECT 1 FROM ars_packaging_drafts)
+      AND EXISTS(SELECT 1 FROM sales_transaction_items WHERE selling_unit_id IS NOT NULL AND base_units_per_sale_unit > 1)
+      AND EXISTS(SELECT 1 FROM purchase_order_items WHERE selling_unit_id IS NOT NULL AND base_units_per_purchase_unit > 1)
+      THEN 'shared-stock-fixtures-present' ELSE 'missing' END" | grep -qx 'shared-stock-fixtures-present'
+  echo "Shared-stock restoration fixtures verified: $database"
 done
 echo 'Backup archive restored successfully into hardware_pos_restore_ci; business records match.'
