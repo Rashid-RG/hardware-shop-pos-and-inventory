@@ -248,13 +248,16 @@ export default function ProductManagementView({
   const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
   const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
   const [legacyUnitId,setLegacyUnitId]=useState('');
+  const [historyLines,setHistoryLines]=useState<Array<{saleItemId:string;invoiceNumber:string;date:string;status:string;quantity:number;sellingPrice:number;originalUnit:string|null;variantId:string|null;hasSharedSnapshot:boolean}>|null>(null);
+  const [historyUnits,setHistoryUnits]=useState<Record<string,string>>({});
+  const historyComplete=historyLines!==null && historyLines.every(line=>!line.variantId&&!line.hasSharedSnapshot&&packaging.units.some(u=>u.id===historyUnits[line.saleItemId]));
   const [packagingBusy, setPackagingBusy] = useState(false);
   const [packagingEligibility,setPackagingEligibility]=useState<{eligible:boolean;reasons:string[];pilotEnabled:boolean}|null>(null);
   const [savedPackaging,setSavedPackaging]=useState('');
   const canActivatePackaging=['Super Admin','Store Manager'].includes(currentRole);
   const openPackaging = async (product: Product) => {
     setPackagingBusy(true);
-    setPackagingEligibility(null);setSavedPackaging('');setLegacyUnitId('');
+    setPackagingEligibility(null);setSavedPackaging('');setLegacyUnitId('');setHistoryLines(null);setHistoryUnits({});
     try {
       const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
       const body = await response.json();
@@ -283,8 +286,13 @@ export default function ProductManagementView({
 
   const checkPackaging = async () => {
     if(!packagingProduct || packagingBusy || !canActivatePackaging)return;
-    setPackagingBusy(true);setPackagingEligibility(null);
-    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-eligibility');const body=await response.json();if(!response.ok)throw Error(body.error);setPackagingEligibility(body);}
+    setPackagingBusy(true);setPackagingEligibility(null);setHistoryLines(null);setHistoryUnits({});
+    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-eligibility');const body=await response.json();if(!response.ok)throw Error(body.error);setPackagingEligibility(body);
+      const historyResponse=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-history');
+      const history=await historyResponse.json();
+      if(!historyResponse.ok||!Array.isArray(history.lines))throw Error(history.error||'Unable to load historical invoices.');
+      setHistoryLines(history.lines);
+    }
     catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
   };
   const activateSavedPackaging = async () => {
@@ -312,12 +320,12 @@ export default function ProductManagementView({
   },[packagingProduct,legacyUnitId,packaging]);
   const convertExistingPackaging=async()=>{
     const preview=conversionPreview?.result;
-    if(!packagingProduct || packagingProduct.sharedStockUnits || packagingBusy || !canActivatePackaging || !packagingEligibility?.pilotEnabled || !preview?.eligible || savedPackaging!==JSON.stringify(packaging))return;
+    if(!packagingProduct || packagingProduct.sharedStockUnits || packagingBusy || !canActivatePackaging || !packagingEligibility?.pilotEnabled || !preview?.eligible || !historyComplete || savedPackaging!==JSON.stringify(packaging))return;
     if(!window.confirm('Convert '+preview.oldQuantity+' '+preview.legacyUnit+' to '+preview.newQuantity+' '+preview.baseUnit+'? Confirm the current stock unit and inventory value are correct. This changes the inventory unit permanently.'))return;
     setPackagingBusy(true);
     try{
       const expected={quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice};
-      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,legacyUnitId,expected,configuration:packaging})});
+      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,legacyUnitId,expected,configuration:packaging,historicalUnits:historyLines?.map(line=>({saleItemId:line.saleItemId,unitId:historyUnits[line.saleItemId]}))})});
       const body=await response.json();
       if(!response.ok)throw Error(body.error||'Conversion failed.');
       notify.success('Inventory converted successfully. Reloading product data.');
@@ -1509,9 +1517,9 @@ export default function ProductManagementView({
             </div>
             <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
             </fieldset>
-            {!packagingProduct.sharedStockUnits && packagingProduct.quantity>0 && <section className="rounded-lg border border-slate-300 p-3 space-y-2">
+            {!packagingProduct.sharedStockUnits && (packagingProduct.quantity>0 || (historyLines?.length || 0)>0) && <section className="rounded-lg border border-slate-300 p-3 space-y-2">
               <h4 className="font-semibold text-sm">Existing stock conversion preview</h4>
-              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. Review the calculation before confirming conversion. Products with transaction history or independent variants remain protected.</p>
+              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. Review the calculation before confirming conversion. Historical sales require individual verification. Purchases, quotations and independent variants remain protected.</p>
               <label className="block text-xs">Current stock unit<select className="w-full border rounded p-2" value={legacyUnitId} onChange={e=>setLegacyUnitId(e.target.value)}><option value="">Select current unit explicitly</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}</select></label>
               {conversionPreview?.error && <p role="alert" className="text-xs text-rose-700">{conversionPreview.error}</p>}
               {conversionPreview?.result && <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1523,7 +1531,20 @@ export default function ProductManagementView({
                 <div>Converted reorder level<strong className="block">{conversionPreview.result.newReorderLevel}</strong></div>
                 <p className="col-span-2 text-amber-800">{conversionPreview.result.eligible?'Arithmetic checks passed. Save the draft and check eligibility before conversion. The server will recheck stock and transaction history.':conversionPreview.result.reasons.join(' ')}</p>
               </div>}
-              {canActivatePackaging && <button type="button" disabled={packagingBusy || !packagingEligibility?.pilotEnabled || !conversionPreview?.result?.eligible || savedPackaging!==JSON.stringify(packaging)} className="rounded border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-40" onClick={convertExistingPackaging}>Confirm &amp; convert stock</button>}
+              {historyLines && historyLines.length>0 && <div className="space-y-2 border-t pt-3">
+                <h4 className="font-semibold text-sm">Verify historical invoice units</h4>
+                <p className="text-xs text-slate-600">Check the original invoice. Select each actual selling unit. No historical quantities are deducted again.</p>
+                <div className="max-h-64 overflow-auto space-y-2">{historyLines.map(line=><div key={line.saleItemId} className="rounded border p-2 text-xs">
+                  <strong>{line.invoiceNumber}</strong> · {line.status} · {String(line.date).slice(0,10)}
+                  <p>Quantity: {line.quantity} · Rate: Rs. {line.sellingPrice.toFixed(2)} · Recorded U/M: {line.originalUnit||'Not recorded'}</p>
+                  <select aria-label={'Verify unit for invoice '+line.invoiceNumber+' item '+line.saleItemId} className="mt-1 w-full rounded border p-2" disabled={packagingBusy||!!line.variantId||line.hasSharedSnapshot} value={historyUnits[line.saleItemId]||''} onChange={e=>setHistoryUnits(old=>({...old,[line.saleItemId]:e.target.value}))}>
+                    <option value="">Select verified historical unit</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}
+                  </select>
+                  {(line.variantId||line.hasSharedSnapshot)&&<p className="text-rose-700">Separate reconciliation required.</p>}
+                </div>)}</div>
+                <p role="status">{historyLines.filter(line=>packaging.units.some(u=>u.id===historyUnits[line.saleItemId])).length} / {historyLines.length} lines reviewed</p>
+              </div>}
+              {canActivatePackaging && <button type="button" disabled={packagingBusy || !historyComplete || !packagingEligibility?.pilotEnabled || !conversionPreview?.result?.eligible || savedPackaging!==JSON.stringify(packaging)} className="rounded border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-40" onClick={convertExistingPackaging}>Confirm &amp; convert stock</button>}
             </section>}
             {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
             <div className="flex flex-wrap justify-end gap-2">
