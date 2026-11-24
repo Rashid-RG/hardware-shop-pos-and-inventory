@@ -51,13 +51,16 @@ export default function ReportsView({ transactions, products, manualExpenses, au
 
   // Product performance
   const productSales = useMemo(() => {
-    const map = new Map<string, { name: string; qty: number; revenue: number; profit: number }>();
+    const map = new Map<string, { name: string; unit: string; factor: number | null; qty: number; revenue: number; profit: number }>();
     filteredTx.filter((t) => t.status !== 'Refunded').forEach((t) => {
       t.items.forEach((item) => {
-        const existing = map.get(item.productId) || { name: item.productName, qty: 0, revenue: 0, profit: 0 };
+        const unit = item.sellingUnitLabel || item.variantUnit || 'Not recorded';
+        const factor = item.sellingUnitId && Number.isSafeInteger(item.baseUnitsPerSaleUnit) && Number(item.baseUnitsPerSaleUnit)>0 ? Number(item.baseUnitsPerSaleUnit) : null;
+        const key = JSON.stringify([item.productId,item.variantId ?? null,item.sellingUnitId ?? null,unit,factor]);
+        const existing = map.get(key) || { name: item.productName, unit, factor, qty: 0, revenue: 0, profit: 0 };
         const rev = lineRevenue(item);
-        map.set(item.productId, {
-          name: item.productName,
+        map.set(key, {
+          name: item.productName, unit, factor,
           qty: existing.qty + item.quantity,
           revenue: existing.revenue + rev,
           profit: existing.profit + lineProfit(item, productCostMap),
@@ -78,7 +81,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
   const buildReport = (): BusinessReport => {
     const base = {filename:'ars-'+activeTab+'-'+fromDate+'-to-'+toDate,period:fromDate+' to '+toDate};
     if(activeTab==='sales') return {...base,title:'Sales performance report',headers:['Invoice','Date','Customer','Sales Representative','Items','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Profit (LKR)','Payment','Status'],rows:filteredTx.map(t=>[t.invoiceNumber,reportDay(t.date),t.customerName,t.salesRepName||'Not recorded',t.items.length,t.subtotal,t.tax,t.discountAmount,t.total,calcProfit(t),t.paymentMethod,t.status||'Completed']),moneyColumns:[5,6,7,8,9],summary:[{label:'Revenue (LKR, excluding refunds)',value:totalRevenue},{label:'Gross profit (LKR)',value:totalProfit},{label:'Refunded invoices',value:refundCount},{label:'Invoices in report',value:filteredTx.length}]};
-    if(activeTab==='products')return {...base,title:'Product performance report',headers:['Product','Units Sold','Revenue (LKR)','Profit (LKR)'],rows:productSales.map(p=>[p.name,p.qty,p.revenue,p.profit]),moneyColumns:[2,3],summary:[{label:'Products sold',value:productSales.length},{label:'Units sold',value:productSales.reduce((s,p)=>s+p.qty,0)},{label:'Product revenue before invoice discounts (LKR)',value:productSales.reduce((s,p)=>s+p.revenue,0)}]};
+    if(activeTab==='products')return {...base,title:'Product performance report',headers:['Product','U/M','Qty Sold','Base Qty','Revenue (LKR)','Profit (LKR)'],rows:productSales.map(p=>[p.name,p.unit,p.qty,p.factor===null?'Not recorded':p.qty*p.factor,p.revenue,p.profit]),moneyColumns:[4,5],summary:[{label:'Product / unit groups',value:productSales.length},{label:'Product revenue before invoice discounts (LKR)',value:productSales.reduce((s,p)=>s+p.revenue,0)}]};
     return {...base,title:'Expense report',headers:['Date','Description','Category','Amount (LKR)'],rows:filteredExpenses.map(e=>[reportDay(e.date),e.desc,e.category,e.amount]),moneyColumns:[3],summary:[{label:'Total expenses (LKR)',value:totalExpenses},{label:'Expense records',value:filteredExpenses.length}]};
   };
 
@@ -199,7 +202,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
               <thead className="bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3 text-right">Units Sold</th>
+                  <th className="px-4 py-3 text-right">U/M</th><th className="px-4 py-3 text-right">Qty Sold</th><th className="px-4 py-3 text-right">Base Qty</th>
                   <th className="px-4 py-3 text-right">Revenue</th>
                   <th className="px-4 py-3 text-right">Profit</th>
                   <th className="px-4 py-3 text-right">Margin %</th>
@@ -214,7 +217,7 @@ export default function ReportsView({ transactions, products, manualExpenses, au
                   return (
                     <tr key={i} className="hover:bg-slate-50/50">
                       <td className="px-4 py-2.5 font-medium text-slate-800">{p.name}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-slate-700">{p.qty}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-700">{p.unit}</td><td className="px-4 py-2.5 text-right font-mono text-slate-700">{p.qty}</td><td className="px-4 py-2.5 text-right font-mono text-slate-700">{p.factor===null?"—":p.qty*p.factor}</td>
                       <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">Rs.{p.revenue.toFixed(2)}</td>
                       <td className={`px-4 py-2.5 text-right font-mono font-bold ${p.profit >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
                         {p.profit >= 0 ? '+' : ''}Rs.{p.profit.toFixed(2)}
