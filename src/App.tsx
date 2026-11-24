@@ -100,7 +100,7 @@ export default function App() {
   // Local Tax and Brand configuration parameters
   const [taxConfig, setTaxConfig] = useState<StoreSettings>({
     taxRate: 0,
-    storeName: 'ARS Hardware',
+    storeName: 'ARS Distribution',
     currency: 'LKR',
     invoicePrefix: 'SL-INV',
     logoUrl: '',
@@ -116,7 +116,7 @@ export default function App() {
     shopProfiles: [
       {
         id: 'shop-main',
-        name: 'ARS Hardware',
+        name: 'ARS Distribution',
         logoUrl: '',
         address: '',
         phone: '',
@@ -792,12 +792,12 @@ export default function App() {
                 <p className="mt-4 max-w-md text-sm leading-6 text-slate-300">Manage international purchasing, warehouse inventory, wholesale distribution and financial reporting in one secure workspace.</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 border-t border-white/15 pt-3 text-sm text-slate-300"><ShieldCheck className="h-5 w-5 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/15 pt-3 text-sm text-slate-300"><div className="flex items-center gap-3"><ShieldCheck className="h-5 w-5 shrink-0 text-amber-300" /><span>Secure staff access · PostgreSQL-backed</span></div><div className="text-right"><span className="block text-sm font-bold italic text-white">RS Nextward</span><span className="block text-[10px] text-slate-300">Technology for a better tomorrow.</span></div></div>
           </section>
           <div className="bg-white p-5 text-slate-900 sm:p-6 xl:p-8 flex flex-col justify-center">
             <div className="mb-4">
               <div className="mb-4 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
-              <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Hardware</h2>
+              <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Distribution</h2>
               <p className="mt-2 text-sm text-slate-500">Sign in to your branch workspace.</p>
             </div>
             <form onSubmit={handleLogin} className="space-y-3">
@@ -1054,7 +1054,7 @@ export default function App() {
                 {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
               </button>
               <div className="min-w-0">
-              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Hardware · Business workspace</p>
+              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Distribution · Business workspace</p>
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
                 dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs', shipments: 'Import Shipments', 'warehouse-receiving': 'Warehouse Receiving', partners: 'Partner Capital',
