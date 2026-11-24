@@ -5804,7 +5804,21 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const { activeShopId } = getActiveShopContext(db, req);
   const authUser = (req as AppRequest).authUser;
-  const { amount, paymentMethod, note, invoiceId, date, requestId } = req.body || {};
+  const { amount, paymentMethod, note, invoiceId, date, requestId, destinationAccountId } = req.body || {};
+  if(destinationAccountId!==undefined){
+    const requested=getRequestedShopId(req);
+    if(!authUser||!['Super Admin','Store Manager'].includes(authUser.role)||
+      !db.settings.shopProfiles?.some(s=>s.id===activeShopId)||
+      (requested&&requested!==activeShopId)||
+      (authUser.scopedShopId&&authUser.scopedShopId!==activeShopId)||
+      (authUser.fixedShopId&&authUser.fixedShopId!==activeShopId)||
+      (Array.isArray(authUser.allowedShopIds)&&!authUser.allowedShopIds.includes(activeShopId))){
+      return res.status(403).json({error:'Financial destination access denied.'});
+    }
+    if(typeof destinationAccountId!=='string'||!destinationAccountId.trim()||destinationAccountId.length>200||!requestId){
+      return res.status(400).json({error:'Select a financial destination and provide a payment request identifier.'});
+    }
+  }
   const customer = db.customers.find((c) => c.id === req.params.id && c.shopId === activeShopId);
   if (!customer) return res.status(404).json({ error: 'Customer not found in this shop' });
   const normalizedAmount = Number(amount);
@@ -5832,7 +5846,7 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
     createdBy: authUser?.name,
   };
   try {
-    payment.receiptSnapshot = await addCustomerCreditPayment(payment,Boolean(requestId));
+    payment.receiptSnapshot = await addCustomerCreditPayment(payment,Boolean(requestId),destinationAccountId);
   } catch (error) {
     return res.status(409).json({ error: (error as Error).message });
   }
