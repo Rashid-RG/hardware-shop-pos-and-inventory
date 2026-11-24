@@ -70,8 +70,25 @@ export default function App() {
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [recoveryDone, setRecoveryDone] = useState(false);
+  const [recoveryRetryAt, setRecoveryRetryAt] = useState(0);
+  const [recoveryNow, setRecoveryNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isForgotModalOpen || !recoveryRequested || recoveryDone) return;
+    const timer = window.setInterval(() => setRecoveryNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isForgotModalOpen, recoveryRequested, recoveryDone]);
+  const resendRecovery = async () => {
+    if (recoveryBusy || Date.now() < recoveryRetryAt) return;
+    setRecoveryBusy(true); setRecoveryMessage('');
+    try {
+      const response = await fetch('/api/auth/recovery/request', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:recoveryEmail})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to request another code.');
+      setRecoveryCode(''); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryMessage(data.message); setRecoveryNow(Date.now()); setRecoveryRetryAt(Date.now()+301000);
+    } catch (error) { setRecoveryMessage(error instanceof Error ? error.message : 'Recovery unavailable.'); } finally { setRecoveryBusy(false); }
+  };
   const openForgotPassword = async () => {
-    setRecoveryEmailEnabled(false); setRecoveryEmail(''); setRecoveryCode(''); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryRequested(false); setRecoveryMessage(''); setRecoveryDone(false); setIsForgotModalOpen(true);
+    setRecoveryEmailEnabled(false); setRecoveryEmail(''); setRecoveryCode(''); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryRequested(false); setRecoveryMessage(''); setRecoveryDone(false); setRecoveryRetryAt(0); setRecoveryNow(Date.now()); setIsForgotModalOpen(true);
     try { const response = await fetch('/api/auth/recovery-status'); if (response.ok) setRecoveryEmailEnabled((await response.json()).emailEnabled === true); } catch {}
   };
   const submitRecovery = async (event: React.FormEvent) => {
@@ -82,7 +99,7 @@ export default function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Recovery could not be completed.');
       setRecoveryMessage(data.message);
-      if (recoveryRequested) { setRecoveryDone(true); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryCode(''); } else setRecoveryRequested(true);
+      if (recoveryRequested) { setRecoveryDone(true); setRecoveryPassword(''); setRecoveryConfirm(''); setRecoveryCode(''); } else { setRecoveryRequested(true); setRecoveryNow(Date.now()); setRecoveryRetryAt(Date.now()+301000); }
     } catch (error) { setRecoveryMessage(error instanceof Error ? error.message : 'Recovery unavailable.'); } finally { setRecoveryBusy(false); }
   };
   const [resetEmail, setResetEmail] = useState('');
@@ -921,6 +938,7 @@ export default function App() {
                       </>}
                       <button disabled={recoveryBusy} type="submit" className="w-full rounded-lg bg-slate-800 p-2 font-semibold text-white disabled:opacity-50">{recoveryBusy?'Processing…':recoveryRequested?'Reset Password':'Send Verification Code'}</button>
                     </>}
+                    {recoveryRequested && !recoveryDone && <button type="button" disabled={recoveryBusy || recoveryNow < recoveryRetryAt} onClick={resendRecovery} className="w-full rounded-lg border p-2 text-xs font-semibold disabled:opacity-50">{recoveryNow < recoveryRetryAt ? 'Resend in '+Math.ceil((recoveryRetryAt-recoveryNow)/1000)+'s' : 'Resend Verification Code'}</button>}
                     {recoveryMessage && <p role="status" className="text-sm">{recoveryMessage}</p>}
                   </form>
                 ) : <p className="text-xs text-slate-500">Email verification is not configured. Never share your password or database credentials.</p>}
