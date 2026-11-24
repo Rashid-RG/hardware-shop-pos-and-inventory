@@ -83,7 +83,7 @@ export default function POSView({
   cashierName,
   draftOwner,
   currentRole,
-  taxConfig = { taxRate: 18, storeName: 'Lanka Smart Hardware', currency: 'LKR', invoicePrefix: 'SL-INV' },
+  taxConfig = { taxRate: 18, storeName: 'ARS Distribution', currency: 'LKR', invoicePrefix: 'SL-INV' },
   onRefreshDb,
   authToken,
 }: POSViewProps) {
@@ -108,12 +108,12 @@ export default function POSView({
   const currencySymbol = 'Rs.';
   const formatMoney = (amount: number) => `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const activeShopProfile = (taxConfig.shopProfiles || []).find((shop) => shop.id === taxConfig.activeShopId) || taxConfig.shopProfiles?.[0];
-  const activeShopName = activeShopProfile?.name || taxConfig.storeName;
+  const activeShopName = (activeShopProfile?.name || taxConfig.storeName).replace(/^ARS Hardware$/i, 'ARS Distribution');
   const shopAddress = (activeShopProfile ? activeShopProfile.address : taxConfig.address) || '';
   const shopPhone = (activeShopProfile ? activeShopProfile.phone : taxConfig.phone) || '';
   const invoiceCompanyMeta = {
     companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName,
-    companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail',
+    companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution',
     businessRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.businessRegistrationNo || '',
     vatRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.vatRegistrationNo || '',
     tinNo: activeShopProfile?.invoiceCompanyMeta?.tinNo || '',
@@ -2089,7 +2089,7 @@ export default function POSView({
                           <p className="flex justify-between"><span>Remaining Balance</span><strong>{formatMoney(receiptRemainingBalance)}</strong></p>
                         </div>
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px]">
-                          <p className="font-semibold uppercase tracking-wide text-slate-700 mb-1">Hardware Business Information</p>
+                          <p className="font-semibold uppercase tracking-wide text-slate-700 mb-1">Business Information</p>
                           <p className="flex justify-between"><span>Transport Charges</span><strong>{formatMoney(Number(receiptModel.wholesaleMeta?.transportCharges || 0))}</strong></p>
                           <p className="flex justify-between"><span>Delivery Charges</span><strong>{formatMoney(Number(receiptModel.wholesaleMeta?.deliveryCharges || 0))}</strong></p>
                           <p className="flex justify-between"><span>Warranty Information</span><strong>{receiptModel.wholesaleMeta?.warrantyInformation || '-'}</strong></p>
