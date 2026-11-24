@@ -13,7 +13,10 @@ test('ARS creates draft invoice before revealing payment controls',()=>{
   assert.match(pos,/setIsReviewOpen\(true\)/);
   assert.match(pos,/role="dialog" aria-modal="true"/);
   assert.match(pos,/Back to invoice/);
-  assert.match(pos,/max-h-\[min\(92dvh,850px\)\]/);
+  assert.match(pos,/isReviewOpen && createPortal\(/);
+  assert.match(pos,/id="pos-review-backdrop" className="fixed inset-0/);
+  assert.match(pos,/max-h-full w-full max-w-6xl flex-col overflow-hidden/);
+  assert.match(pos,/root\.inert = true/);
 });
 test('review requires same registered customer and representative as server-side checkout',()=>{
   assert.match(pos,/customers\.some\(c => c.id === selectedCustomer.id && c.shopId === taxConfig.activeShopId\)/);
