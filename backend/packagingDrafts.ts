@@ -36,7 +36,7 @@ export function parsePackagingDraft(raw: unknown): SharedStockUnits {
 }
 
 export async function getPackagingDraft(pool: Pool, shopId: string, productId: string) {
-  const result = await pool.query(`SELECT d.configuration FROM products p
+  const result = await pool.query(`SELECT COALESCE(p.shared_stock_units,d.configuration) AS configuration FROM products p
     LEFT JOIN ars_packaging_drafts d ON d.product_id=p.id AND d.shop_id=p.shop_id
     WHERE p.id=$1 AND p.shop_id=$2`, [productId, shopId]);
   if (!result.rowCount) throw new Error('Product not found in this shop.');
@@ -45,13 +45,22 @@ export async function getPackagingDraft(pool: Pool, shopId: string, productId: s
 
 export async function savePackagingDraft(pool: Pool, shopId: string, productId: string, actor: string, raw: unknown) {
   const config = parsePackagingDraft(raw);
-  const result = await pool.query(`INSERT INTO ars_packaging_drafts(shop_id,product_id,configuration,updated_by)
-    SELECT shop_id,id,$3::jsonb,$4 FROM products WHERE id=$1 AND shop_id=$2
-    ON CONFLICT(shop_id,product_id) DO UPDATE SET configuration=EXCLUDED.configuration,
-    updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING configuration`,
-    [productId,shopId,JSON.stringify(config),actor]);
-  if (!result.rowCount) throw new Error('Product not found in this shop.');
-  return result.rows[0].configuration;
+  const client=await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const product=await client.query('SELECT shared_stock_units,status FROM products WHERE id=$1 AND shop_id=$2 FOR UPDATE',[productId,shopId]);
+    if(!product.rowCount)throw new Error('Product not found in this shop.');
+    if(product.rows[0].shared_stock_units)throw new Error('Active packaging cannot be changed through drafts. Use price management.');
+    if(product.rows[0].status==='Inactive')throw new Error('Product is inactive.');
+    const result=await client.query(`INSERT INTO ars_packaging_drafts(shop_id,product_id,configuration,updated_by)
+      VALUES($1,$2,$3::jsonb,$4)
+      ON CONFLICT(shop_id,product_id) DO UPDATE SET configuration=EXCLUDED.configuration,
+      updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING configuration`,
+      [shopId,productId,JSON.stringify(config),actor]);
+    await client.query('COMMIT');
+    return result.rows[0].configuration;
+  } catch(error) { await client.query('ROLLBACK');throw error; }
+  finally {client.release();}
 }
 
 /** Conservative first-release eligibility. No inventory or history is modified. */
