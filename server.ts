@@ -2,7 +2,7 @@ import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/r
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
-import { initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft } from './backend/packagingDrafts';
+import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft } from './backend/packagingDrafts';
 import { initSharedStockSchema } from './backend/sharedStock';
 import { baseQuantity } from './src/utils/unitConversion';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
@@ -3521,7 +3521,37 @@ app.post('/api/backup/recovery-test', requireRole(['Super Admin']), async (req, 
     const testPool = new Pool({connectionString:url.toString(), max:1, connectionTimeoutMillis:5000});
     try {
       const counts = await testPool.query('SELECT (SELECT count(*)::text FROM public.products) AS products, (SELECT count(*)::text FROM public.customers) AS customers, (SELECT count(*)::text FROM public.sales_transactions) AS sales');
-      res.json({success:true, target, counts:counts.rows[0], verifiedAt:new Date().toISOString()});
+      // Older archives remain recoverable, but must not be represented as packaging-verified.
+      const schema=await testPool.query(`
+        SELECT to_regclass('public.ars_packaging_drafts') IS NOT NULL AS drafts,
+          EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='products' AND column_name='shared_stock_units') AS products,
+          (SELECT count(*)=3 FROM information_schema.columns WHERE table_schema='public' AND table_name='sales_transaction_items' AND column_name IN ('selling_unit_id','selling_unit_label','base_units_per_sale_unit')) AS sales,
+          (SELECT count(*)=3 FROM information_schema.columns WHERE table_schema='public' AND table_name='purchase_order_items' AND column_name IN ('selling_unit_id','selling_unit_label','base_units_per_purchase_unit')) AS purchases`);
+      const shape=schema.rows[0];
+      const complete=shape.drafts && shape.products && shape.sales && shape.purchases;
+      let packaging;
+      if(complete){
+        const checks=await testPool.query(`
+          SELECT
+            (SELECT count(*)::text FROM products WHERE shared_stock_units IS NOT NULL) AS "activeProducts",
+            (SELECT count(*)::text FROM ars_packaging_drafts) AS drafts,
+            (SELECT count(*)::text FROM sales_transaction_items WHERE selling_unit_id IS NOT NULL) AS "saleLines",
+            (SELECT count(*)::text FROM purchase_order_items WHERE selling_unit_id IS NOT NULL) AS "purchaseLines",
+            (SELECT count(*)::text FROM sales_transaction_items WHERE
+              (selling_unit_id IS NOT NULL OR selling_unit_label IS NOT NULL OR base_units_per_sale_unit IS NOT NULL)
+              AND (selling_unit_id IS NULL OR selling_unit_label IS NULL OR base_units_per_sale_unit IS NULL OR base_units_per_sale_unit<=0)) AS "invalidSaleSnapshots",
+            (SELECT count(*)::text FROM purchase_order_items WHERE
+              (selling_unit_id IS NOT NULL OR selling_unit_label IS NOT NULL OR base_units_per_purchase_unit IS NOT NULL)
+              AND (selling_unit_id IS NULL OR selling_unit_label IS NULL OR base_units_per_purchase_unit IS NULL OR base_units_per_purchase_unit<=0)) AS "invalidPurchaseSnapshots"`);
+        const configurations=await testPool.query('SELECT shared_stock_units AS configuration FROM products WHERE shared_stock_units IS NOT NULL UNION ALL SELECT configuration FROM ars_packaging_drafts');
+        let invalidConfigurations=0;
+        for(const row of configurations.rows){try{parsePackagingDraft(row.configuration);}catch{invalidConfigurations++;}}
+        const metrics=checks.rows[0];
+        packaging={status:invalidConfigurations===0 && Number(metrics.invalidSaleSnapshots)===0 && Number(metrics.invalidPurchaseSnapshots)===0?'structural-check-passed':'invalid',...metrics,invalidConfigurations};
+      }else{
+        packaging={status:'schema-incomplete',schema:shape};
+      }
+      res.json({success:true, target, counts:counts.rows[0], packaging, verifiedAt:new Date().toISOString()});
     } finally { await testPool.end(); }
   } catch { res.status(500).json({error:'Recovery test did not complete. An isolated test database may remain; the operational database connection was not switched.'}); }
   finally { manualBackupRunning = false; }
