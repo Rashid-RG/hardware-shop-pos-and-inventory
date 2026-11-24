@@ -477,6 +477,22 @@ export default function POSView({
     setDescriptionDraft('');
   };
 
+  // Switch between existing independently stocked variants. Shared packaging conversion is a separate inventory migration.
+  const changeCartVariant = (itemKey: string, variantId: string) => {
+    const item = cart.find(entry => getCartKey(entry) === itemKey);
+    const product = products.find(entry => entry.id === item?.product.id);
+    const variant = product?.variants?.find(entry => entry.id === variantId);
+    if (!item || !product || !variant || item.variantId === variant.id) return;
+    const existing = cart.find(entry => entry.product.id === product.id && entry.variantId === variant.id);
+    if (existing) { notify.warning('This selling unit is already on the invoice. Adjust its quantity separately.'); return; }
+    if (Number(variant.quantity) < item.quantity) { notify.warning('Insufficient stock for the selected selling unit.'); return; }
+    setCart(current => current.map(entry => getCartKey(entry) === itemKey ? {
+      ...entry, product, variantId: variant.id, variantName: variant.name, variantUnit: variant.unit,
+      variantSku: variant.sku, variantBarcode: variant.barcode, unitPrice: variant.sellingPrice,
+      unitCostPrice: variant.costPrice, discount: 0, discountAmount: 0,
+    } : entry));
+  };
+
   // Modify cart item quantity
   const updateCartQty = (itemKey: string, numericNewQty: number) => {
     const nextQty = Math.floor(Number(numericNewQty) || 0);
@@ -1461,9 +1477,9 @@ export default function POSView({
             </div>
           </div>}
           {/* Cart Header */}
-          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
+          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_110px_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
             <span>Invoice items · {cart.length} lines</span>
-            {expandedInvoice && <><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-center">Disc %</span><span className="hidden lg:block text-center">Disc Rs.</span><span className="hidden lg:block text-right">Line total</span></>}
+            {expandedInvoice && <><span className="hidden lg:block text-center">U/M</span><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-center">Disc %</span><span className="hidden lg:block text-center">Disc Rs.</span><span className="hidden lg:block text-right">Line total</span></>}
           </div>
 
           {/* Cart Scroll list */}
@@ -1474,7 +1490,7 @@ export default function POSView({
               const pricing = getLinePricing(item);
 
               return (
-                <div key={lineKey} className={`grid gap-2 items-center border-b border-slate-100 py-1 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
+                <div key={lineKey} className={`grid gap-2 items-center border-b border-slate-100 py-1 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_110px_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
                   {/* description */}
                   <div className="min-w-0">
                     <p className="font-semibold text-slate-800 break-words" title={item.product.name}>
@@ -1499,6 +1515,7 @@ export default function POSView({
 
                   </div>
 
+                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit || inferUnitLabel(item.product.name) || '—'}</span>}</div>
                   {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
                   {/* selectors and quantities */}
                   <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
