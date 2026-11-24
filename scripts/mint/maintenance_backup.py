@@ -47,7 +47,7 @@ def prepare(version,confirmation):
     with (STATE/"maintenance.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         with hold.open("x") as stream:
-            json.dump({"purpose":"pre-update backup","version":version,"createdAt":datetime.datetime.now(datetime.timezone.utc).isoformat()},stream)
+            json.dump({"purpose":"pre-update backup","previousProject":str(project),"version":version,"createdAt":datetime.datetime.now(datetime.timezone.utc).isoformat()},stream)
             stream.flush()
             os.fsync(stream.fileno())
         sync_dir(STATE)
