@@ -6478,7 +6478,9 @@ async function startServer() {
 
   const listenHost = process.env.ARS_LISTEN_HOST || '0.0.0.0';
   const server = app.listen(PORT, listenHost, () => {
-    console.log(`Server fully functional on http://${listenHost}:${PORT}`);
+    const address = server.address();
+    const actualPort = address && typeof address === 'object' ? address.port : PORT;
+    console.log(`Server fully functional on http://${listenHost}:${actualPort}`);
   });
 
   const shutdown = (signal: string) => {
