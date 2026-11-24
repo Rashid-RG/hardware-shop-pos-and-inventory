@@ -74,8 +74,8 @@ export const buildInvoicePdfBuffer = async (
     doc.on('error', (error) => reject(error));
 
     const customerName = tx.customerName || 'Walk-in Customer';
-    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName);
-    const companyTagline = String(invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail');
+    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName).replace(/^ARS Hardware$/i, 'ARS Distribution');
+    const companyTagline = String(invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution');
     const paymentStatus = String(tx.paymentStatus || (tx.paymentMethod === 'Credit Account' ? 'CREDIT SALE' : 'PAID'));
     const wmOpacity = 0.12;
 
@@ -161,7 +161,7 @@ export const buildInvoicePdfBuffer = async (
 
     const wholesaleMeta = tx.wholesaleMeta || {};
     doc.moveDown(0.8);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#0f172a').text('Hardware Business Information', 40, doc.y);
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#0f172a').text('Business Information', 40, doc.y);
     doc.font('Helvetica').fontSize(9).fillColor('#334155');
     doc.text(`Transport Charges: Rs.${Number(wholesaleMeta.transportCharges || 0).toFixed(2)}`);
     doc.text(`Delivery Charges: Rs.${Number(wholesaleMeta.deliveryCharges || 0).toFixed(2)}`);
