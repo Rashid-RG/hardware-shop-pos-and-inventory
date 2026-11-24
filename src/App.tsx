@@ -1167,6 +1167,7 @@ export default function App() {
               {(activeTab === 'shipments' || activeTab === 'warehouse-receiving') &&
                 ['Super Admin','Store Manager','Inventory Staff'].includes(currentRole) && (
                   <ImportShipmentView
+                  taxConfig={taxConfig}
                     mode={activeTab === 'shipments' ? 'shipments' : 'receiving'}
                     authToken={sessionToken}
                     shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'}
@@ -1177,7 +1178,7 @@ export default function App() {
               )}
 
               {activeTab === 'partners' && currentRole === 'Super Admin' && (
-                <PartnerCapitalView authToken={sessionToken}
+                <PartnerCapitalView taxConfig={taxConfig} authToken={sessionToken}
                   shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} />
               )}
 
@@ -1226,6 +1227,7 @@ export default function App() {
 
               {activeTab === 'shifts' && (
                 <CashDrawerView
+                  taxConfig={taxConfig}
                   cashShifts={cashShifts}
                   transactions={transactions}
                   authToken={sessionToken}
