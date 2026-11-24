@@ -65,6 +65,23 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
       FOREIGN KEY(shop_id,cheque_id) REFERENCES ars_customer_cheques(shop_id,id)
     );
     CREATE INDEX IF NOT EXISTS ars_customer_cheque_history ON ars_customer_cheque_events(shop_id,cheque_id,recorded_at);
+
+    CREATE TABLE IF NOT EXISTS ars_financial_reconciliations (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      effective_date DATE NOT NULL,
+      expected_amount NUMERIC(20,2) NOT NULL,
+      observed_amount NUMERIC(20,2) NOT NULL,
+      variance NUMERIC(20,2) GENERATED ALWAYS AS (observed_amount-expected_amount) STORED,
+      reference TEXT NOT NULL CHECK(length(trim(reference)) BETWEEN 1 AND 200),
+      note TEXT,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY(shop_id,account_id) REFERENCES ars_financial_accounts(shop_id,id),
+      CHECK(observed_amount=expected_amount OR length(trim(COALESCE(note,'')))>0)
+    );
+    CREATE INDEX IF NOT EXISTS ars_financial_reconciliation_history ON ars_financial_reconciliations(shop_id,account_id,effective_date);
     CREATE INDEX IF NOT EXISTS ars_financial_movement_account ON ars_financial_movements(shop_id,account_id,effective_date);
     CREATE UNIQUE INDEX IF NOT EXISTS ars_financial_collection_once ON ars_financial_movements(shop_id,source_id) WHERE movement_kind='Customer Collection';
   `);
@@ -231,4 +248,42 @@ export async function transitionCustomerCheque(db:Pool,input:{shopId:string;cheq
     await client.query('INSERT INTO ars_customer_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[eventId,shopId,chequeId,cheque.status,nextStatus,effectiveDate,recordedBy,note]);
     await client.query('COMMIT');return {id:chequeId,status:nextStatus,replayed:false};
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+/** Record an immutable comparison, never an adjustment to the ledger. */
+export async function recordFinancialReconciliation(db:Pool,input:{
+  id:string;shopId:string;accountId:string;effectiveDate:string;observedAmount:number;reference:string;note?:string;recordedBy:string;currentBusinessDate:string;
+}){
+  const {id,shopId,accountId,effectiveDate,observedAmount,recordedBy}=input;
+  const reference=input.reference.trim(),note=input.note?.trim()||null;
+  if(!id||!shopId||!accountId||!recordedBy||!validChequeDay(effectiveDate)||
+    !Number.isFinite(observedAmount)||Math.abs(observedAmount)>999999999999.99||
+    Math.abs(observedAmount*100-Math.round(observedAmount*100))>0.001||
+    !reference||reference.length>200||(note&&note.length>500))throw Error('Invalid reconciliation details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[id]);
+    const prior=await client.query('SELECT *,effective_date::text AS day FROM ars_financial_reconciliations WHERE id=$1',[id]);
+    if(prior.rowCount){
+      const p=prior.rows[0];
+      if(p.shop_id!==shopId||p.account_id!==accountId||p.day!==effectiveDate||Number(p.observed_amount)!==observedAmount||p.reference!==reference||(p.note||null)!==note||p.recorded_by!==recordedBy)throw Error('Reconciliation request identifier already used for different details.');
+      await client.query('COMMIT');return {id,expectedAmount:Number(p.expected_amount),observedAmount,variance:Number(p.variance),replayed:true};
+    }
+    if(effectiveDate!==input.currentBusinessDate)throw Error('New reconciliations must use the current business date.');
+    const account=await client.query("SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE",[shopId,accountId]);
+    if(!account.rowCount||!['Office Cash','Bank','Representative Cash'].includes(account.rows[0].kind))throw Error('Select an active cash or bank account in this shop.');
+    if(account.rows[0].kind!=='Bank'&&observedAmount<0)throw Error('Counted cash cannot be negative.');
+    const balance=await client.query('SELECT COALESCE(SUM(amount),0) AS amount,COALESCE(SUM(amount),0)=$3::numeric AS matched FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2 AND effective_date<=$4',[shopId,accountId,observedAmount,effectiveDate]);
+    if(!balance.rows[0].matched&&!note)throw Error('Explain the discrepancy before saving.');
+    const result=await client.query(`INSERT INTO ars_financial_reconciliations(id,shop_id,account_id,effective_date,expected_amount,observed_amount,reference,note,recorded_by)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING variance`,[id,shopId,accountId,effectiveDate,balance.rows[0].amount,observedAmount,reference,note,recordedBy]);
+    await client.query('COMMIT');
+    return {id,expectedAmount:Number(balance.rows[0].amount),observedAmount,variance:Number(result.rows[0].variance),replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function listFinancialReconciliations(db:Pool|PoolClient,shopId:string){
+  const result=await db.query(`SELECT r.id,r.account_id AS "accountId",a.name AS "accountName",r.effective_date::text AS "effectiveDate",r.expected_amount AS "expectedAmount",r.observed_amount AS "observedAmount",r.variance,r.reference,r.note,r.recorded_by AS "recordedBy",r.recorded_at AS "recordedAt"
+    FROM ars_financial_reconciliations r JOIN ars_financial_accounts a ON a.shop_id=r.shop_id AND a.id=r.account_id WHERE r.shop_id=$1 ORDER BY r.recorded_at DESC,r.id DESC LIMIT 500`,[shopId]);
+  return result.rows.map(r=>({...r,expectedAmount:Number(r.expectedAmount),observedAmount:Number(r.observedAmount),variance:Number(r.variance)}));
 }
