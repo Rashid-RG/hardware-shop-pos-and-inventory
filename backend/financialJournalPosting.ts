@@ -1,3 +1,4 @@
+import {allocateSupplierPayment,supplierOrderBalances} from './supplierAdvance';
 import type {PoolClient} from 'pg';
 import {moneyCents,type JournalLine} from './generalLedger';
 import {postJournal} from './ledgerPosting';
@@ -31,8 +32,13 @@ export async function postFinancialJournal(client:PoolClient,shopId:string,sourc
    counter=await mapping('receivables','control','Asset');
   }else if(event==='SupplierPayment'){
    const p=(await client.query('SELECT p.amount::text,p.purchase_order_id,o.status FROM supplier_payments p LEFT JOIN purchase_orders o ON o.shop_id=p.shop_id AND o.id=p.purchase_order_id AND o.supplier_id=p.supplier_id WHERE p.shop_id=$1 AND p.id=$2',[shopId,sourceId])).rows[0];
-   if(!p||moneyCents(p.amount)!==-amount||p.status!=='Received')throw Error('Supplier advances or unmatched payments require separate accounting classification.');
-   counter=await mapping('supplierPayables','control','Liability');
+   if(!p||moneyCents(p.amount)!==-amount||!p.purchase_order_id||!['Pending','Ordered','Partially Received','Received'].includes(p.status))throw Error('Verified linked supplier order required.');
+   const b=await supplierOrderBalances(client,shopId,p.purchase_order_id,sourceId);
+   const allocation=allocateSupplierPayment(-amount,b.payable);
+   if(p.status==='Received'&&allocation.advance>0n)throw Error('Payment exceeds verified received-order payable.');
+   lines=[line(await mapping('financialAccount',m.account_id,'Asset'),amount),...(allocation.applied>0n?[line(b.payableAccount,allocation.applied)]:[]),...(allocation.advance>0n?[line(b.advanceAccount,allocation.advance)]:[])];
+   if(new Set(lines.map(l=>l.accountCode)).size!==lines.length)throw Error('Financial event requires distinct ledger accounts.');
+   return {posted:true,...await postJournal(client,{id:event+':'+sourceId,shopId,postingDate:m.day,sourceKind:event,sourceId,description:event+' '+sourceId,actor:m.recorded_by,lines})};
   }else{
    const p=(await client.query('SELECT amount::text,category FROM manual_expenses WHERE shop_id=$1 AND id=$2',[shopId,sourceId])).rows[0];
    if(!p||moneyCents(p.amount)!==-amount)throw Error('Verified paid expense required.');
