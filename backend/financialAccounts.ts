@@ -287,3 +287,32 @@ export async function listFinancialReconciliations(db:Pool|PoolClient,shopId:str
     FROM ars_financial_reconciliations r JOIN ars_financial_accounts a ON a.shop_id=r.shop_id AND a.id=r.account_id WHERE r.shop_id=$1 ORDER BY r.recorded_at DESC,r.id DESC LIMIT 500`,[shopId]);
   return result.rows.map(r=>({...r,expectedAmount:Number(r.expectedAmount),observedAmount:Number(r.observedAmount),variance:Number(r.variance)}));
 }
+
+/** Read a single account statement, with opening balance and chronological running balance.
+ * Use one SQL statement so totals and rows share the same PostgreSQL snapshot. */
+export async function listFinancialMovements(db:Pool|PoolClient,input:{shopId:string;accountId:string;fromDate:string;toDate:string;offset:number;limit:number}){
+  const {shopId,accountId,fromDate,toDate,offset,limit}=input;
+  if(!shopId||!accountId||!validChequeDay(fromDate)||!validChequeDay(toDate)||fromDate>toDate||
+    !Number.isSafeInteger(offset)||offset<0||offset>1000000||!Number.isSafeInteger(limit)||limit<1||limit>200)throw Error('Invalid financial statement filters.');
+  const result=await db.query(`
+    WITH account AS (
+      SELECT id,name,kind,active FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2
+    ), opening AS (
+      SELECT COALESCE(SUM(m.amount),0) AS balance FROM ars_financial_movements m JOIN account a ON a.id=m.account_id WHERE m.shop_id=$1 AND m.effective_date<$3::date
+    ), period AS (
+      SELECT m.id,m.amount,m.movement_kind AS kind,m.source_id AS "sourceId",m.recorded_by AS "recordedBy",m.recorded_at AS "recordedAt",m.effective_date::text AS "effectiveDate",m.note,
+        (SELECT balance FROM opening)+SUM(m.amount) OVER(ORDER BY m.effective_date,m.recorded_at,m.id ROWS UNBOUNDED PRECEDING) AS "runningBalance"
+      FROM ars_financial_movements m JOIN account a ON a.id=m.account_id WHERE m.shop_id=$1 AND m.effective_date BETWEEN $3::date AND $4::date
+    ), totals AS (
+      SELECT COUNT(*) AS count,COALESCE(SUM(amount) FILTER(WHERE amount>0),0) AS inflows,COALESCE(-SUM(amount) FILTER(WHERE amount<0),0) AS outflows FROM period
+    ), page AS (
+      SELECT * FROM period ORDER BY "effectiveDate","recordedAt",id LIMIT $5 OFFSET $6
+    )
+    SELECT a.*,o.balance AS opening,t.count,t.inflows,t.outflows,o.balance+t.inflows-t.outflows AS closing,
+      COALESCE((SELECT jsonb_agg(p ORDER BY p."effectiveDate",p."recordedAt",p.id) FROM page p),'[]'::jsonb) AS rows
+    FROM account a CROSS JOIN opening o CROSS JOIN totals t
+  `,[shopId,accountId,fromDate,toDate,limit,offset]);
+  const r=result.rows[0];
+  if(!r)throw Error('Financial account not found in this shop.');
+  return {account:{id:r.id,name:r.name,kind:r.kind,active:r.active},fromDate,toDate,offset,limit,total:Number(r.count),opening:Number(r.opening),inflows:Number(r.inflows),outflows:Number(r.outflows),closing:Number(r.closing),rows:r.rows.map((m:any)=>({...m,amount:Number(m.amount),runningBalance:Number(m.runningBalance)}))};
+}
