@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
+import shutil
 from release_fingerprint import fingerprint
 
 STATE=Path.home()/".local/share/ars-hardware"
@@ -44,12 +46,23 @@ def plan(folder):
         raise ValueError("Manifest mismatch.")
     if receipt.get('buildFingerprint')!=fingerprint(staged):
         raise ValueError('Exact staged build differs from compatibility-tested files. Repeat compatibility test.')
+    if receipt.get("backwardStartupPassed") is not True:
+        raise ValueError("Successful previous-version startup test required.")
+    with tempfile.TemporaryDirectory(prefix="ars-preflight-old-") as temp:
+        old=Path(temp)
+        for part in ("dist","node_modules"):
+            shutil.copytree(current/part,old/part,symlinks=True)
+        if receipt.get("previousBuildFingerprint")!=fingerprint(old):
+            raise ValueError("Previous application changed since backward compatibility test.")
+    runtime=STATE/"runtime"
+    stable=not runtime.is_symlink() and all((current/name).is_symlink() and (current/name).resolve()==(runtime/name).resolve() and (runtime/name).exists() and not (runtime/name).is_symlink() for name in (".env.local","uploads","backups"))
     blockers=[
-        "Move runtime configuration, uploads and backups to stable storage independent of release folders.",
-        "Verify old application compatibility with the migrated schema.",
         "Suspend writes and take a fresh verified recovery snapshot.",
         "Obtain explicit installation approval and verify recovery on physical Mint."
     ]
+    if not stable:
+        blockers.insert(0,"Permanent runtime storage migration required.")
+    blockers.insert(0,"Verify authenticated billing and financial operations with both versions; startup alone is insufficient.")
     return {"currentProject":str(current),"candidateProject":str(staged),
             "candidateVersion":version,"recoveryFolder":str(folder),
             "activationAllowed":False,"rollbackAllowed":False,"blockers":blockers}
