@@ -34,7 +34,8 @@ test('inventory shelf and stock ledger show progressive results',()=>{
 test('sales report and CSV show the saved sales representative, not the operator',()=>{
   assert.match(reports,/<th className="px-4 py-3">Sales Representative<\/th>/);
   assert.match(reports,/t\.salesRepName \|\| 'Not recorded'/);
-  assert.match(reports,/Sales Representative,Items,Subtotal/);
+  assert.match(reports,/'Sales Representative','Items','Subtotal \(LKR\)'/);
+  assert.match(reports,/t\.salesRepName\s*\|\|\s*'Not recorded'/);
   assert.doesNotMatch(reports,/<th className="px-4 py-3">Cashier<\/th>/);
   assert.doesNotMatch(reports,/t\.cashierName/);
 });
@@ -43,5 +44,8 @@ test('report tables progressively render but CSV still exports the full date ran
   assert.match(reports,/productSales\.slice\(0,visibleRows\)/);
   assert.match(reports,/filteredExpenses\.slice\(0,visibleRows\)/);
   assert.match(reports,/Show 20 more records/);
-  assert.match(reports,/filteredTx\.forEach/);
+  assert.match(reports,/rows:filteredTx\.map/);
+  assert.match(reports,/rows:productSales\.map/);
+  assert.match(reports,/rows:filteredExpenses\.map/);
+  assert.match(reports,/<ReportExportMenu report=\{buildReport\}/);
 });
