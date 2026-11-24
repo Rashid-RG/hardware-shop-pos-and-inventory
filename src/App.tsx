@@ -1177,6 +1177,7 @@ export default function App() {
             >
               {activeTab === 'dashboard' && (
                 <DashboardView
+                  customerCreditPayments={customerCreditPayments}
                   products={products}
                   transactions={transactions}
                   customers={customers}
@@ -1286,6 +1287,7 @@ export default function App() {
 
               {activeTab === 'reports' && (
                 <ReportsView
+                  customerCreditPayments={customerCreditPayments}
                   taxConfig={taxConfig}
                   transactions={transactions}
                   products={products}
