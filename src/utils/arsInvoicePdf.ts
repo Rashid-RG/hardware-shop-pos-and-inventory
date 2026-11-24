@@ -1,5 +1,5 @@
 import PDFDocument from 'pdfkit';
-import { invoiceFooter } from './invoiceFooter';
+import { invoiceFooter } from './invoiceFooter.ts';
 import type { SalesTransaction, InvoiceCompanyMeta } from '../types';
 
 type InvoiceMeta = {
@@ -70,35 +70,31 @@ export const renderArsInvoicePdf = async (
   };
   const header = (continuation: boolean) => {
     if (logo) {
-      try { doc.image(logo, LEFT, 28, { fit: [99, 69] }); }
-      catch { label('ARS', LEFT, 43, 100, 25, 'left', true); }
-    } else {
-      label('ARS', LEFT, 43, 100, 27, 'left', true);
-    }
-    doc.moveTo(143, 33).lineTo(143, 100).lineWidth(1).strokeColor(LINE).stroke();
-    label(safe(company?.companyLegalName, shopName), 155, 30, 285, 14, 'left', true);
-    label(safe(contact?.address, ''), 155, 51, 286, 8.5);
-    label(safe(contact?.phone, ''), 155, 65, 286, 8.5);
-    if (company?.supportEmail) label(company.supportEmail, 155, 79, 286, 8.5);
-    doc.save().roundedRect(448, 52, 112, 27, 3).fill(NAVY).restore();
-    doc.font('Helvetica-Bold').fontSize(12).fillColor('#ffffff')
-      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'INVOICE',
-        452, 59, { width: 105, align: 'center', lineBreak: false });
-    doc.moveTo(LEFT, 111).lineTo(RIGHT, 111).lineWidth(1.7).strokeColor('#2878bc').stroke();
-
-    section(LEFT, 124, 248, 85, 'Customer');
-    section(295, 124, 265, 85, 'Invoice Details');
-    row('Name', safe(tx.customerName, 'Walk-in Customer'), 46, 152, 225, 49);
-    row('Address', safe(tx.customerAddress), 46, 169, 225, 49);
-    row('Phone', safe(tx.customerPhone), 46, 186, 225, 49);
-    row('Invoice No', tx.invoiceNumber, 306, 151, 239, 61);
-    row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 166, 239, 61);
-    row('Sales Representative', safe(tx.salesRepName, 'Not recorded'), 306, 181, 239, 108);
+      try { doc.image(logo, LEFT, 22, { fit: [68, 48] }); }
+      catch { label('ARS', LEFT, 32, 68, 23, 'left', true); }
+    } else { label('ARS', LEFT, 32, 68, 23, 'left', true); }
+    doc.moveTo(110, 22).lineTo(110, 70).lineWidth(.7).strokeColor(LINE).stroke();
+    label(safe(company?.companyLegalName, shopName), 118, 22, 320, 12, 'left', true);
+    label(safe(contact?.address, ''), 118, 38, 320, 8);
+    label(safe(contact?.phone, ''), 118, 49, 320, 8);
+    if(company?.supportEmail) label(company.supportEmail, 118, 60, 320, 8);
+    doc.roundedRect(448, 34, 112, 24, 3).fill(NAVY);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#ffffff')
+      .text((Number(contact?.taxRate || 0) > 0 && company?.vatRegistrationNo) ? 'TAX INVOICE' : 'INVOICE',452,41,{width:104,align:'center',lineBreak:false});
+    doc.moveTo(LEFT, 78).lineTo(RIGHT, 78).lineWidth(1.5).strokeColor('#2878bc').stroke();
+    section(LEFT, 88, 248, 76, 'Customer');
+    section(295, 88, 265, 76, 'Invoice Details');
+    row('Name', safe(tx.customerName, 'Walk-in Customer'), 46, 113, 225, 49);
+    row('Address', safe(tx.customerAddress), 46, 127, 225, 49);
+    row('Phone', safe(tx.customerPhone), 46, 141, 225, 49);
+    row('Invoice No', tx.invoiceNumber, 306, 112, 239, 61);
+    row('Date', new Date(tx.date).toLocaleDateString('en-GB'), 306, 124, 239, 61);
+    row('Sales Representative', safe(tx.salesRepName, 'Not recorded'), 306, 136, 239, 108);
     // Print metadata and payment type remain visible but compact.
-    if (continuation) label('CONTINUED', 306, 197, 96, 7.5, 'left', true);
-    label('Payment', 410, 197, 59, 7.5, 'left', true);
-    label(safe(tx.paymentMethod), 469, 197, 79, 7.5, 'right');
-    return 226;
+    if (continuation) label('CONTINUED', 306, 150, 96, 7.5, 'left', true);
+    label('Payment', 410, 150, 59, 7.5, 'left', true);
+    label(safe(tx.paymentMethod), 469, 150, 79, 7.5, 'right');
+    return 175;
   };
   const showDiscount = tx.items.some(i=>Number(i.discount||0)>0||Number(i.discountAmount||0)>0);
   const columns = showDiscount ? [35,98,200,316,357,386,440,494,560] : [35,100,218,350,393,425,488,560];
@@ -161,7 +157,7 @@ export const renderArsInvoicePdf = async (
     const gross = Number(item.quantity) * Number(item.sellingPrice);
     const lineDisc = Math.min(gross, Math.max(0,gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
     const amount = Math.max(0, gross - lineDisc);
-    const values = [safe(item.variantSku,item.productId),safe(item.productName),String(item.invoiceDescription||''),safe(item.variantUnit,'-'),String(item.quantity),Number(item.sellingPrice).toFixed(2),...(showDiscount?[lineDisc.toFixed(2)]:[]),amount.toFixed(2)];
+    const values = [safe(item.variantSku,item.productId),safe(item.productName),String(item.invoiceDescription||'').trim(),safe(item.variantUnit,'-'),String(item.quantity),Number(item.sellingPrice).toFixed(2),...(showDiscount?[lineDisc.toFixed(2)]:[]),amount.toFixed(2)];
     const heights=values.map((v,index)=>{
       doc.font(index===1?'Helvetica-Bold':'Helvetica').fontSize(7.5);
       return Math.ceil(doc.heightOfString(v,{width:columns[index+1]-columns[index]-6,lineGap:0}));
