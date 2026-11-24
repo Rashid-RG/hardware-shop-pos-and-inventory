@@ -4497,7 +4497,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   const { destinationAccountId, cartItems, customerId, customerName, customerPhone, customerAddress, cashierName, salesRepId, paymentMethod, paymentStatus, wholesaleMeta, discountAmount, cashReceived } = req.body;
   const requestId=req.body.requestId;
   if(requestId!==undefined&&!validChequeRequestId(requestId))return res.status(400).json({error:'Invalid invoice request identifier.'});
-  const txId = `tx-${requestId||randomUUID()}`;
+  const txId = requestId ? `tx-${requestId}` : `tx-${randomUUID()}`;
   let financialPayment:{destinationAccountId:string;recordedBy:string;effectiveDate:string}|undefined;
   if(destinationAccountId!==undefined){
     const scope=chequeShopAccess(req);
