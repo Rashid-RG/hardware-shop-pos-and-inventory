@@ -64,6 +64,7 @@ def test(folder, compatibility=False):
         backward_result=False
         previous_build=None
         authenticated_reads=False
+        authenticated_writes=False
         def db(*args,**kwargs):
             return run(["docker","exec","-i",container,*args],**kwargs)
         try:
@@ -145,6 +146,15 @@ def test(folder, compatibility=False):
                     # Remove only sessions belonging to the synthetic user before comparison.
                     db("psql","-X","-U","restore_admin","-d","ars_update_test","-v","ON_ERROR_STOP=1","-c",
                        "DELETE FROM auth_sessions WHERE user_id='"+user_id+"'")
+                def write_probe():
+                    probe_file=Path(__file__).resolve().with_name("compatibility-write-probe.mjs")
+                    with probe_file.open("rb") as script:
+                        run(["docker","exec","-i","-e","ARS_TEST_EMAIL="+email,
+                             "-e","ARS_TEST_PASSWORD="+test_password,"-e","ARS_TEST_SHOP=shop-main",
+                             "-e","ARS_TEST_ALLOW_WRITES=isolated-disposable",
+                             app_name,"node","--input-type=module","-"],stdin=script)
+                    db("psql","-X","-U","restore_admin","-d","ars_update_test","-v","ON_ERROR_STOP=1","-c",
+                       "DELETE FROM auth_sessions WHERE user_id='"+user_id+"'")
                 schema=snapshot()
                 before=fingerprints(schema)
                 # Share only the isolated PostgreSQL container's network namespace.
@@ -172,6 +182,20 @@ def test(folder, compatibility=False):
                 if fingerprint(staged)!=build_fingerprint:
                     raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
+                # Exercise writes only after the read-only preservation check. Restart the same test application.
+                run(["docker","start",app_name],stdout=subprocess.DEVNULL)
+                def wait_ready():
+                    for _ in range(90):
+                        probe=subprocess.run(["docker","exec",app_name,"node","-e","fetch('http://127.0.0.1:3000/api/ready').then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+                        if probe.returncode==0:return
+                        time.sleep(2)
+                    raise RuntimeError('Compatibility test application did not become ready.')
+                wait_ready()
+                write_probe()
+                run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                # Preserve all rows, including the newly issued synthetic invoices, across rollback startup.
+                schema=snapshot()
+                before=fingerprints(schema)
                 # Test previous version on the same migrated database, not a fresh restore.
                 # Copy only its executable build and dependencies, never runtime files.
                 import tempfile
@@ -206,6 +230,11 @@ def test(folder, compatibility=False):
                             raise RuntimeError("Previous release changed historical records on migrated database.")
                         backward_result=True
                         authenticated_reads=True
+                        run(["docker","start",app_name],stdout=subprocess.DEVNULL)
+                        wait_ready()
+                        write_probe()
+                        run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                        authenticated_writes=True
                     finally:
                         run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
                         app_created=False
@@ -219,7 +248,7 @@ def test(folder, compatibility=False):
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
-                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"authenticatedReadsPassed":authenticated_reads,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
+                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"authenticatedReadsPassed":authenticated_reads,"authenticatedWritesPassed":authenticated_writes,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
         temporary=folder/(".restore-"+uuid.uuid4().hex)
         temporary.write_text(json.dumps(result,indent=2)+"\n")
         temporary.replace(receipt)
