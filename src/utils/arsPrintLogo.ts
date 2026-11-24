@@ -3,3 +3,6 @@ export const arsPrintLogoPath = "M569,505 L569,728 L638,775 L638,695 L672,694 L7
 export const arsPrintLogoSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="245 320 760 615"><path fill="#000" fill-rule="evenodd" d="'+arsPrintLogoPath+'"/></svg>';
 export const arsPrintLogoUrl = 'data:image/svg+xml,'+encodeURIComponent(arsPrintLogoSvg);
 export function isArsPrintBrand(name:string){return /^ARS(?:\s|$)/i.test(name.trim());}
+
+/** Normalize only the exact retired ARS display names, never third-party names. */
+export function arsDisplayName(name:string):string { return /^ARS (?:Hardware|Distribution)$/i.test(name.trim()) ? 'ARS Distributor' : name; }
