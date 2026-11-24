@@ -20,6 +20,35 @@ TABLES=("products","customers","sales_transactions","sales_transaction_items","p
 def run(*args,**kwargs):
     return subprocess.run(args,check=True,timeout=900,**kwargs)
 
+FINANCIAL_TABLES=("ars_financial_accounts","ars_financial_movements","ars_customer_cheques",
+                  "ars_customer_cheque_events","ars_financial_reconciliations","ars_cash_handovers",
+                  "ars_partner_capital_entries","ars_partner_profit_allocations","ars_partner_profit_shares",
+                  "ars_position_register","ars_supplier_due_dates","ars_invoice_due_dates",
+                  "stock_logs","purchase_order_items","ars_receipt_cost_entries")
+
+def financial_checks(container):
+    def query(sql):
+        return run("docker","exec",container,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",sql,capture_output=True,text=True).stdout.strip()
+    counts={}
+    missing=[]
+    for table in FINANCIAL_TABLES:
+        if query("SELECT to_regclass('public."+table+"') IS NOT NULL")!="t":
+            missing.append(table)
+        else:
+            counts[table]=int(query('SELECT count(*) FROM public."'+table+'"'))
+    checks={
+        "customerReceivables": "SELECT COALESCE(SUM(credit_balance) FILTER (WHERE credit_balance>0),0)::text FROM customers",
+        "customerCredits": "SELECT COALESCE(-SUM(credit_balance) FILTER (WHERE credit_balance<0),0)::text FROM customers",
+        "supplierPayments": "SELECT COALESCE(SUM(amount),0)::text FROM supplier_payments",
+    }
+    if "ars_financial_movements" in counts:
+        checks["netFinancialMovements"]="SELECT COALESCE(SUM(amount),0)::text FROM ars_financial_movements"
+    if "ars_partner_capital_entries" in counts:
+        checks["capitalContributions"]="SELECT COALESCE(SUM(amount_lkr) FILTER (WHERE entry_type='Contribution'),0)::text FROM ars_partner_capital_entries"
+        checks["capitalDrawings"]="SELECT COALESCE(SUM(amount_lkr) FILTER (WHERE entry_type='Drawing'),0)::text FROM ars_partner_capital_entries"
+    return {"ledgerCounts":counts,"missingTables":missing,"restoredTotals":{key:query(sql) for key,sql in checks.items()},
+            "sourceReconciled":False,"note":"Restored totals only; no original snapshot comparison or certified accounting reconciliation."}
+
 def rehearse(source):
     if os.geteuid()==0:
         raise ValueError("Run as the desktop user.")
@@ -57,6 +86,7 @@ def rehearse(source):
         for table in TABLES:
             result=run("docker","exec",name,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",'SELECT count(*) FROM public."'+table+'"',capture_output=True,text=True)
             counts[table]=int(result.stdout.strip())
+        finance=financial_checks(name)
         run(str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(source))
         with source.open("rb") as stream:
             if hashlib.file_digest(stream,"sha256").hexdigest()!=digest:
@@ -67,7 +97,7 @@ def rehearse(source):
     reports=STATE/"recovery-reports"
     reports.mkdir(mode=0o700,exist_ok=True)
     if reports.is_symlink(): raise ValueError("Unexpected report directory.")
-    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"liveRestoreApproved":False}
+    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"financialChecks":finance,"liveRestoreApproved":False}
     with tempfile.NamedTemporaryFile(mode="w",prefix="rehearsal-",suffix=".json",dir=reports,delete=False) as stream:
         json.dump(report,stream,indent=2)
         print("Recovery rehearsal report:",stream.name)
