@@ -1,4 +1,5 @@
 import type {Pool} from 'pg';
+import {createHash} from 'node:crypto';
 import {moneyCents,validateJournal,type JournalLine} from './generalLedger';
 import {inventoryValuation} from './inventoryValuation';
 import {supplierPayableAging} from './payableAging';
@@ -53,6 +54,7 @@ export async function openingReconciliation(db:Pool,shopId:string,proposalId:str
   compare('capital','control','Partner capital',-signedCents(totals.capital),'Equity','Contribution/drawing ledger only; opening equity completeness requires review.',true);
   for(const l of lines)if(!used.has(l.accountCode))rows.push({kind:'unverified',source:l.accountCode,label:'Other proposed opening balance',accountCode:l.accountCode,expected:null,proposed:decimal(proposed.get(l.accountCode)!),difference:null,status:'Review',note:'Independent evidence required; no automatic operational comparison.'});
   await client.query('COMMIT');
-  return {proposalId,cutoverDate:proposal.day,asOf:totals.day,rows,matched:rows.filter(r=>r.status==='Matched').length,needsReview:rows.filter(r=>r.status!=='Matched').length,supplierIssues:suppliers.needsReview,inventoryIssues:inventory.flagged,operationallyReconciled:false,activationAllowed:false,note:'Current snapshot comparison only. Cannot establish balances at historical or future cutover dates. Documentary reconciliation and explicit activation approval remain required.'};
+  const snapshot={proposalId,cutoverDate:proposal.day,asOf:totals.day,rows:rows.sort((a,b)=>a.kind.localeCompare(b.kind)||a.source.localeCompare(b.source)),matched:rows.filter(r=>r.status==='Matched').length,needsReview:rows.filter(r=>r.status!=='Matched').length,supplierIssues:suppliers.needsReview,inventoryIssues:inventory.flagged,operationallyReconciled:false,activationAllowed:false,note:'Current snapshot comparison only. Cannot establish balances at historical or future cutover dates. Documentary reconciliation and explicit activation approval remain required.'};
+  return {...snapshot,snapshotHash:createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')};
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
