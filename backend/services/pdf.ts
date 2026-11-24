@@ -74,7 +74,7 @@ export const buildInvoicePdfBuffer = async (
     doc.on('error', (error) => reject(error));
 
     const customerName = tx.customerName || 'Walk-in Customer';
-    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName).replace(/^ARS Hardware$/i, 'ARS Distribution');
+    const companyLegalName = String(invoiceCompanyMeta?.companyLegalName || activeShopName).replace(/^ARS (?:Hardware|Distribution)$/i, 'ARS Distributor');
     const companyTagline = String(invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution');
     const paymentStatus = String(tx.paymentStatus || (tx.paymentMethod === 'Credit Account' ? 'CREDIT SALE' : 'PAID'));
     const wmOpacity = 0.12;
