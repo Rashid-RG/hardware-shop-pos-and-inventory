@@ -2,6 +2,7 @@ import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/r
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
 import { purchaseVariant } from './backend/purchaseVariant';
+import { initPackagingDrafts, getPackagingDraft, savePackagingDraft } from './backend/packagingDrafts';
 import { initPartialReceivingTables, receivePartialOrder } from './backend/partialReceiving';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
@@ -4242,6 +4243,27 @@ app.post('/api/admin/sample-records', requireRole(['Super Admin']), async (req, 
   return res.json({ added });
 });
 
+// Packaging definitions are drafts until shared-stock transaction support is enabled.
+app.get('/api/products/:id/packaging-draft', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
+  const { activeShopId } = getActiveShopContext(db, req);
+  try {
+    const configuration = await getPackagingDraft(pool, activeShopId, req.params.id);
+    res.json({ configuration, active: false });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
+app.put('/api/products/:id/packaging-draft', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
+  const { activeShopId } = getActiveShopContext(db, req);
+  const authUser = (req as AppRequest).authUser;
+  try {
+    const configuration = await savePackagingDraft(pool, activeShopId, req.params.id, authUser?.name || 'Inventory Staff', req.body?.configuration);
+    res.json({ configuration, active: false });
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+  }
+});
+
 app.post('/api/products', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
   const { activeShopId, activeShopName } = getActiveShopContext(db, req);
@@ -6337,6 +6359,7 @@ async function startServer() {
   await acquireSingleWriterLease();
   await initPostgres();
   await initPartialReceivingTables(pool);
+  await initPackagingDrafts(pool);
   await initArsProfitLedger(pool);
   await loadDb();
 
