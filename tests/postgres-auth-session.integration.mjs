@@ -12,8 +12,7 @@ if (!['localhost', '127.0.0.1'].includes(url.hostname) || url.pathname !== '/har
 }
 const { Pool } = pg;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const port = 39387;
-const origin = 'http://127.0.0.1:' + port;
+let origin = '';
 
 test('real login, logout and password rotation revoke previous session tokens', { timeout: 120000 }, async () => {
   const suffix = randomUUID();
@@ -38,7 +37,7 @@ test('real login, logout and password rotation revoke previous session tokens', 
     child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
       cwd: process.cwd(),
       env: {
-        ...process.env, NODE_ENV: 'production', PORT: String(port),
+        ...process.env, NODE_ENV: 'production', PORT: '0', ARS_LISTEN_HOST: '127.0.0.1',
         PASSWORD_RECOVERY_ENABLED: 'false',
         JWT_SECRET: 'auth_ci_hex_721e5bfc1d3a6e094b9c503e88cc2247',
         ADMIN_PASSWORD: 'admin-CI-28-value-long',
@@ -55,6 +54,9 @@ test('real login, logout and password rotation revoke previous session tokens', 
     let ready = false;
     for (let n = 0; n < 90; n++) {
       if (child.exitCode != null) break;
+      const bound = output.match(/Server fully functional on http:\/\/127\.0\.0\.1:(\d+)/);
+      if (!bound) { await pause(300); continue; }
+      origin = 'http://127.0.0.1:' + bound[1];
       try {
         const res = await fetch(origin + '/api/health', { signal: AbortSignal.timeout(600) });
         if (res.ok) { ready = true; break; }
