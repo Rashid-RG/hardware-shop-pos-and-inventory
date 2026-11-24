@@ -4534,6 +4534,14 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
 
   const actor=(req as AppRequest).authUser?.email;
   const request=requestId&&actor?{actor,fingerprint:createHash('sha256').update(JSON.stringify(req.body)).digest('hex')}:undefined;
+  let creditTerms:{dueDate:string;evidence:string;recordedBy:string}|undefined;
+  if(req.body.creditTerms!==undefined){
+    const terms=req.body.creditTerms;
+    const auth=(req as AppRequest).authUser;
+    if(!request||!auth||!['Super Admin','Store Manager'].includes(auth.role))return res.status(403).json({error:'Credit payment terms require manager authorization and a protected invoice request.'});
+    if(paymentMethod!=='Credit Account'||!terms||typeof terms.dueDate!=='string'||typeof terms.evidence!=='string'||!terms.evidence.trim()||terms.evidence.trim().length>500||!/^\d{4}-\d{2}-\d{2}$/.test(terms.dueDate)||!Number.isFinite(Date.parse(terms.dueDate))||new Date(terms.dueDate).toISOString().slice(0,10)!==terms.dueDate)return res.status(400).json({error:'Invalid agreed credit payment terms.'});
+    creditTerms={dueDate:terms.dueDate,evidence:terms.evidence.trim(),recordedBy:request.actor};
+  }
   if(request){
     const scope=chequeShopAccess(req);
     if(!scope||scope.shopId!==activeShopId)return res.status(403).json({error:'Invoice shop access denied.'});
@@ -4547,6 +4555,8 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
       return res.json(existing);
     }
   }
+
+  if(creditTerms&&creditTerms.dueDate<reportDay(new Date()))return res.status(400).json({error:'Due date cannot precede the invoice date.'});
 
   // Sales Representative is explicitly selected from registered ARS staff.
   // The signed-in operator stays separate for internal audit purposes only.
@@ -4786,7 +4796,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
   // the affected rows and commits everything together, or rolls back all of it.
   // Do not call saveDb() here: it rewrites all normalized tables.
   try {
-    const result=await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName, undefined, financialPayment,request);
+    const result=await checkoutTransaction(tx, (req as AppRequest).authUser?.role || 'Cashier', activeShopName, undefined, financialPayment,request,creditTerms);
     if(result.replayed){
       const saved=await loadStateFromNormalized();
       const existing=saved?.transactions.find(t=>t.id===txId&&t.shopId===activeShopId);
