@@ -164,12 +164,12 @@ export const renderArsInvoicePdf = async (
   const summary = [
     ['Subtotal', formatMoney(tx.subtotal)], [discountLabel, formatMoney(tx.discountAmount || 0)],
     ['Tax (' + taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%)', formatMoney(tx.tax || 0)], ['Total', formatMoney(tx.total)],
-    ...(tx.paymentMethod === 'Cash' && tx.cashReceived != null
-      ? [['Cash Received', formatMoney(tx.cashReceived)], ['Change Due', formatMoney(tx.changeDue ?? Math.max(0, tx.cashReceived - tx.total))]]
+    ...(tx.paymentMethod === 'Cash'
+      ? []
       : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)], ['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, tx.total - knownPaid))]]),
   ];
   doc.roundedRect(304, top, 265, 70, 4).lineWidth(0.6).strokeColor(rule).stroke();
-  outline(304, top+73, 265, 31);
+  if (tx.paymentMethod !== 'Cash') outline(304, top+73, 265, 31);
   summary.forEach(([name, amount], i) => {
     const yy = top + [4, 20, 36, 52, 76, 91][i];
     if (i === 3) outline(304, yy-2, 265, 20);
