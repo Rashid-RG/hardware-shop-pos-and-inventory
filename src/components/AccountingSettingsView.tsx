@@ -1,5 +1,6 @@
 import ReceivableAgingPanel from './ReceivableAgingPanel';
 import SupplierPayablePanel from './SupplierPayablePanel';
+import ChartOfAccountsPanel from './ChartOfAccountsPanel';
 import PositionRegisterPanel from './PositionRegisterPanel';
 import FinancialPositionPanel from './FinancialPositionPanel';
 import ImportExpenseReviewPanel from './ImportExpenseReviewPanel';
@@ -431,6 +432,7 @@ export default function AccountingSettingsView({
           {currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
           {isManager && <ReceivableAgingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {isManager && <ChartOfAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
           {isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
           {isManager && <FinancialPositionPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
           {isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
