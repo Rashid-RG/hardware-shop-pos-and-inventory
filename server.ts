@@ -14,6 +14,7 @@ import { inventoryValuation, inventoryCostHistory } from './backend/inventoryVal
 import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './backend/receivableAging';
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
+import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
@@ -6256,6 +6257,21 @@ app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async
  try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
 });
+app.get('/api/position-registers',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting register access denied.'});
+ try{const rows=await listPositionRegisters(pool,scope.shopId);res.setHeader('Cache-Control','no-store');return res.json(rows);}
+ catch(error){console.error('Position registers failed',error);return res.status(500).json({error:'Unable to load accounting registers.'});}
+});
+app.post('/api/position-registers',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting register access denied.'});
+ const {requestId,reference,kind,label,amount,effectiveDate,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof reference!=='string'||typeof kind!=='string'||!positionKinds.includes(kind as PositionKind)||typeof label!=='string'||typeof amount!=='number'||typeof effectiveDate!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid evidenced carrying balance required.'});
+ try{const result=await recordPositionBalance(pool,{id:requestId,shopId:scope.shopId,reference,kind:kind as PositionKind,label,amount,effectiveDate,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(['Valid evidenced carrying balance required.','Position request identifier already used.','Future carrying balances are not allowed.','A balance already exists for this reference and date. Audited correction required.'].includes(message))return res.status(409).json({error:message});console.error('Position balance registration failed',error);return res.status(500).json({error:'Unable to confirm balance. Retry the same details.'});}
+});
 app.get('/api/financial-position',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Financial position access denied.'});
@@ -7222,6 +7238,7 @@ async function startServer() {
   await initFinancialAccounts(pool);
   await initReceivableAging(pool);
   await initPayableAging(pool);
+  await initPositionRegisters(pool);
   await initSharedStockSchema(pool);
   await initArsProfitLedger(pool);
   await loadDb();
