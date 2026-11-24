@@ -167,5 +167,48 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   const historic=(await pool.query('SELECT selling_price FROM sales_transaction_items WHERE transaction_id=$1 AND selling_unit_id=$2',[invoiceId,'box'])).rows[0];
   assert.equal(Number(historic.selling_price),5400);
   assert.equal(Number((await pool.query('SELECT selling_price FROM products WHERE id=$1',[product])).rows[0].selling_price),550);
+  // Dedicated import fixture: use the same schema as production, but only in isolated CI.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ars_import_shipments (
+    id TEXT PRIMARY KEY,shop_id TEXT NOT NULL,purchase_order_id TEXT NOT NULL,shipment_reference TEXT NOT NULL,
+    origin_country TEXT NOT NULL DEFAULT 'China',container_number TEXT NOT NULL DEFAULT '',eta_date DATE,
+    invoice_currency TEXT NOT NULL DEFAULT 'CNY',exchange_rate_lkr NUMERIC(16,6),
+    freight_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,customs_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,clearance_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(shop_id,purchase_order_id),UNIQUE(shop_id,shipment_reference))`);
+  const {previewLandedCost,approveLandedCost}=await import('../backend/landedCost.ts');
+  const importPo='import-po-'+suffix,shipment='shipment-'+suffix;
+  await createPurchaseOrder({id:importPo,shopId:shop,poNumber:importPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:3,costPrice:3600}],total:10800,status:'Pending'});
+  await pool.query("INSERT INTO ars_import_shipments(id,shop_id,purchase_order_id,shipment_reference,invoice_currency,exchange_rate_lkr,freight_lkr,customs_lkr,clearance_lkr,created_by) VALUES($1,$2,$3,$1,'CNY',42,1200,600,360,'CI Admin')",[shipment,shop,importPo]);
+  const preview=await previewLandedCost(pool,shop,shipment);
+  assert.equal(preview.snapshot.goodsTotal,10800);assert.equal(preview.snapshot.landedTotal,12960);
+  assert.equal(preview.snapshot.items[0].landedBaseUnitCost,360);
+  const approval={id:randomUUID(),shopId:shop,shipmentId:shipment,evidence:'CI customs record',approvedBy:'CI Admin',expectedSnapshot:preview.snapshot};
+  await assert.rejects(()=>approveLandedCost(pool,{...approval,shopId:'other-shop'}),/not found/);
+  await assert.rejects(()=>approveLandedCost(pool,{...approval,expectedSnapshot:{...preview.snapshot,landedTotal:1}}),/changed/);
+  const approved=await Promise.all([approveLandedCost(pool,approval),approveLandedCost(pool,approval)]);
+  assert.deepEqual(approved.map(r=>r.replayed).sort(),[false,true]);
+  await assert.rejects(()=>receivePurchaseOrder(importPo,shop,'CI Manager'),/Warehouse Receiving/);
+  const importLine=Number(preview.snapshot.items[0].itemId);
+  const receiveImport=(requestKey,quantity)=>receivePartialOrder(pool,{shopId:shop,poId:importPo,requestKey,user:'CI Manager',items:[{purchaseOrderItemId:importLine,quantity}]});
+  const currentInventory=async()=>{const r=(await pool.query('SELECT quantity,cost_price FROM products WHERE id=$1',[product])).rows[0];return [Number(r.quantity),Number(r.cost_price)];};
+  assert.deepEqual(await currentInventory(),[164,300]);
+  await pool.query('UPDATE purchase_order_items SET cost_price=3601 WHERE id=$1',[importLine]);
+  await assert.rejects(()=>receiveImport('changed',1),/differs from approved/);
+  assert.deepEqual(await currentInventory(),[164,300]);
+  await pool.query('UPDATE purchase_order_items SET cost_price=3600 WHERE id=$1',[importLine]);
+  const one=await receiveImport('import-first',1);
+  assert.equal(one.status,'Partially Received');assert.deepEqual(await currentInventory(),[176,304.09]);
+  assert.equal((await receiveImport('import-first',1)).repeated,true);
+  assert.deepEqual(await currentInventory(),[176,304.09]);
+  await assert.rejects(()=>receiveImport('import-too-many',3),/exceeds ordered/);
+  const two=await receiveImport('import-last',2);
+  assert.equal(two.status,'Received');assert.deepEqual(await currentInventory(),[200,310.8]);
+  const costing=(await pool.query('SELECT received_base_quantity,received_cost,rounding_difference FROM ars_receipt_cost_entries WHERE approval_id=$1 ORDER BY received_base_quantity',[approval.id])).rows;
+  assert.deepEqual(costing.map(r=>[Number(r.received_base_quantity),Number(r.received_cost)]),[[12,4320],[24,8640]]);
+  assert.equal(costing.reduce((sum,r)=>sum+Number(r.received_cost),0),12960);
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM ars_receipt_batches WHERE purchase_order_id=$1',[importPo])).rows[0].count,2);
+  const originalCosts=(await pool.query('SELECT cost_price FROM sales_transaction_items WHERE transaction_id=$1 ORDER BY selling_unit_id',[invoiceId])).rows;
+  assert.deepEqual(originalCosts.map(r=>Number(r.cost_price)),[3600,300]);
+
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
