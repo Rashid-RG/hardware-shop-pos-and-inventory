@@ -55,6 +55,22 @@ export default function SupplierPurchaseView({
   onAddSupplierPayment,
   financialAuthToken,financialShopId,financialOwner,
 }: SupplierPurchaseViewProps) {
+  const [returnHistoryOrder,setReturnHistoryOrder]=useState<PurchaseOrder|null>(null);
+  const [returnHistory,setReturnHistory]=useState<Array<{id:string;return_date:string;reason:string;evidence:string;recorded_by:string;items:Array<{itemId:number;baseQuantity:number;inventoryCost:string;supplierCredit:string}>}>>([]);
+  const [returnHistoryError,setReturnHistoryError]=useState('');
+  const [returnHistoryLoading,setReturnHistoryLoading]=useState(false);
+  const canViewReturns=!!financialAuthToken&&!!financialShopId&&['Super Admin','Store Manager'].includes(currentRole);
+  useEffect(()=>{setReturnHistoryOrder(null);setReturnHistory([]);setReturnHistoryError('');},[financialShopId,financialAuthToken,currentRole]);
+  useEffect(()=>{
+    if(!returnHistoryOrder||!canViewReturns)return;
+    const controller=new AbortController();
+    setReturnHistory([]);setReturnHistoryError('');setReturnHistoryLoading(true);
+    fetch('/api/ledger/purchase-returns/'+encodeURIComponent(returnHistoryOrder.id),{headers:{Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId||''},cache:'no-store',signal:controller.signal})
+      .then(async response=>{const data=await response.json();if(!response.ok||!Array.isArray(data))throw Error(data.error||'Unable to load purchase returns.');if(!controller.signal.aborted)setReturnHistory(data);})
+      .catch(error=>{if(!controller.signal.aborted)setReturnHistoryError(error instanceof Error?error.message:'Unable to load purchase returns.');})
+      .finally(()=>{if(!controller.signal.aborted)setReturnHistoryLoading(false);});
+    return ()=>controller.abort();
+  },[returnHistoryOrder,canViewReturns,financialAuthToken,financialShopId]);
   const currencySymbol = 'Rs.';
   const [activeTab, setActiveTab] = useState<'purchases' | 'suppliers'>('purchases');
 
@@ -344,6 +360,13 @@ export default function SupplierPurchaseView({
         </div>
       </div>
 
+      {canViewReturns&&returnHistoryOrder&&<section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" aria-label="Purchase return history">
+        <div className="flex justify-between gap-3"><div><h3 className="font-semibold">Purchase return history</h3><p className="text-xs text-slate-600">{returnHistoryOrder.poNumber} · {returnHistoryOrder.supplierName}</p></div><button type="button" className="text-sm underline" onClick={()=>setReturnHistoryOrder(null)}>Close history</button></div>
+        {returnHistoryLoading?<p role="status">Loading returns…</p>:returnHistoryError?<p role="alert" className="text-red-700">{returnHistoryError}</p>:returnHistory.length===0?<p className="text-sm text-slate-500">No recorded purchase returns.</p>:returnHistory.map(entry=><article key={entry.id} className="rounded-lg border p-3 text-sm space-y-1">
+          <p className="font-semibold">{entry.return_date} · {entry.id}</p><p>{entry.reason}</p><p>Evidence: {entry.evidence}</p><p>Recorded by: {entry.recorded_by}</p>
+          <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th>PO line ID</th><th>Base units returned</th><th>Inventory cost (LKR)</th><th>Supplier credit (LKR)</th></tr></thead><tbody>{entry.items.map(line=><tr key={line.itemId}><td>{line.itemId}</td><td>{line.baseQuantity}</td><td>{line.inventoryCost}</td><td>{line.supplierCredit}</td></tr>)}</tbody></table></div>
+        </article>)}
+      </section>}
       {taxConfig && <ReportExportMenu report={procurementReport} settings={taxConfig}/>}
       {/* RENDER TAB 1: PURCHASE ORDER RECORDS */}
       {activeTab === 'purchases' && (
@@ -427,6 +450,8 @@ export default function SupplierPurchaseView({
                       </div>
                     ))}
                   </details>
+
+                  {canViewReturns&&['Received','Partially Received'].includes(po.status)&&<button type="button" className="self-start rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" onClick={()=>{setReturnHistory([]);setReturnHistoryError('');setReturnHistoryLoading(true);setReturnHistoryOrder(po);}}>Purchase return history</button>}
 
                   {/* receipt trigger */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
