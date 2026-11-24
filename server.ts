@@ -1,6 +1,7 @@
 import { inReportPeriod, reportDay, reportTime, saleProfit } from './src/utils/reporting';
 import { renderBusinessReportPdf } from './src/utils/businessReportPdf';
 import { renderArsInvoicePdf } from './src/utils/arsInvoicePdf';
+import { renderArsPaymentReceiptPdf } from './src/utils/arsPaymentReceiptPdf';
 import { purchaseVariant } from './backend/purchaseVariant';
 import { parsePackagingDraft, initPackagingDrafts, activatePackaging, checkPackagingActivation, getPackagingDraft, savePackagingDraft, updatePackagingPrices, convertLegacyPackaging, listLegacyInvoiceLines, sharedStockActivationEnabled } from './backend/packagingDrafts';
 import { initSharedStockSchema } from './backend/sharedStock';
@@ -5846,6 +5847,20 @@ app.post('/api/customers/:id/credit-payment', requireRole(['Super Admin', 'Store
 app.get('/api/customer-credit-payments', (_req, res) => {
   const { activeShopId } = getActiveShopContext(db, _req);
   res.json(db.customerCreditPayments.filter((p) => p.shopId === activeShopId));
+});
+
+app.get('/api/customer-credit-payments/:id/pdf', requireRole(['Super Admin','Store Manager','Cashier']), async(req,res)=>{
+  const {activeShopId,activeShopName}=getActiveShopContext(db,req);
+  const payment=db.customerCreditPayments.find(p=>p.id===req.params.id&&p.shopId===activeShopId);
+  if(!payment)return res.status(404).json({error:'Payment not found in this shop.'});
+  const profile=(db.settings.shopProfiles||[]).find(s=>s.id===activeShopId);
+  try{
+    const pdf=await renderArsPaymentReceiptPdf(payment,activeShopName,resolvePrintableLogoBuffer(profile?.logoUrl||db.settings.logoUrl||''),profile||db.settings);
+    res.setHeader('Cache-Control','no-store');
+    res.setHeader('Content-Type','application/pdf');
+    res.setHeader('Content-Disposition','attachment; filename="payment-'+payment.id.replace(/[^a-zA-Z0-9_-]/g,'-')+'.pdf"');
+    res.send(pdf);
+  }catch(error){console.error('Payment receipt PDF generation failed',error);res.status(500).json({error:'Failed to generate payment receipt.'});}
 });
 
 // ── Quotation Routes ─────────────────────────────────────────────────────────
