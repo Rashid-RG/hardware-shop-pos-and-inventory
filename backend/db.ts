@@ -1613,7 +1613,7 @@ export const updateStoreSettings = async (s: StoreSettings) => {
  * 5) Update Customer credit/loyalty balances.
  * 6) Write ActivityLogs.
  */
-export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string) => {
+export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: string, activeShopName: string, quotationId?: string, financialPayment?:{destinationAccountId:string;recordedBy:string;effectiveDate:string}) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1805,6 +1805,15 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       [activityId, tx.shopId, tx.cashierName, cashierRole, `Billed sales transaction ${tx.invoiceNumber} for ${activeShopName}, total Rs.${tx.total.toFixed(2)}.`]
     );
 
+    if(financialPayment){
+      const {destinationAccountId,recordedBy,effectiveDate}=financialPayment;
+      if(!tx.shopId||!recordedBy||!Number.isFinite(tx.total)||tx.total<=0||!['Cash','Bank Transfer'].includes(tx.paymentMethod)||tx.paymentStatus!=='PAID')throw Error('Only fully paid cash or bank invoices can post immediate funds.');
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[tx.shopId,destinationAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!((tx.paymentMethod==='Cash'&&kind==='Office Cash')||(tx.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active invoice payment account matching the payment method.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+        VALUES($1,$2,$3,$4,'Invoice Payment',$5,$6,$7,$8)`,['invoice-in-'+tx.id,tx.shopId,destinationAccountId,tx.total,tx.id,recordedBy,effectiveDate,tx.invoiceNumber]);
+    }
     if (quotationId) {
       const converted=await client.query(
         `UPDATE quotations SET status='Converted',converted_to_tx_id=$1
@@ -1949,6 +1958,21 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
       ['refund-' + txId, shopId, cashierName, cashierRole,
         `Refunded invoice ${tx.invoice_number}. Total: Rs.${Number(tx.total).toFixed(2)}. Reason: ${reason || 'Not supplied'}`]
     );
+    // Historical invoices without a linked movement remain historical; never invent a cash refund.
+    const financialTable=await client.query("SELECT to_regclass('public.ars_financial_movements') IS NOT NULL AS present");
+    if(financialTable.rows[0].present){
+      const original=await client.query("SELECT account_id,amount FROM ars_financial_movements WHERE shop_id=$1 AND source_id=$2 AND movement_kind='Invoice Payment'",[shopId,txId]);
+      if(original.rowCount){
+        const entry=original.rows[0];
+        if(original.rowCount!==1||Number(entry.amount)!==Number(tx.total)||!['Cash','Bank Transfer'].includes(tx.payment_method))throw Error('Invoice financial movement requires reconciliation before refund.');
+        const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,entry.account_id]);
+        if(!account.rowCount)throw Error('Original invoice payment account is inactive; reconcile before refund.');
+        const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,entry.account_id,entry.amount]);
+        if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in the original invoice payment account.');
+        await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+          VALUES($1,$2,$3,-$4::numeric,'Invoice Refund',$5,$6,(NOW() AT TIME ZONE 'Asia/Colombo')::date,$7)`,['invoice-out-'+txId,shopId,entry.account_id,entry.amount,txId,cashierName,reason||'Invoice refund']);
+      }
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
