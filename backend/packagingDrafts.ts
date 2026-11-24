@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
+import { previewLegacyPackaging } from '../src/utils/legacyPackagingConversion';
 import { validateSharedStock, type SharedStockUnits } from '../src/utils/unitConversion';
 
 // Draft only: never changes inventory mode or enables selling-unit transactions.
@@ -133,5 +134,43 @@ export async function updatePackagingPrices(pool: Pool, shopId: string, productI
     await client.query('UPDATE products SET shared_stock_units=$1::jsonb, selling_price=$2,updated_at=NOW() WHERE id=$3 AND shop_id=$4',[JSON.stringify(after),after.units.find(u=>u.baseUnits===1)!.sellingPrice,productId,shopId]);
     await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Updated Packaging Prices',$5)`,['packaging-price-'+randomUUID(),shopId,actor,role,JSON.stringify({productId,before:current.units.map(u=>({id:u.id,price:u.sellingPrice})),after:after.units.map(u=>({id:u.id,price:u.sellingPrice}))})]);
     await client.query('COMMIT');return after;
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
+/** Conservative conversion of stocked SKUs with no invoice, PO or quotation history.
+ * Existing stock logs are preserved; the unit boundary is recorded in the audit.
+ * No conversion of independently stocked variants or historical financial records.
+ */
+export async function convertLegacyPackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, request: {confirmed?:unknown;legacyUnitId?:unknown;expected?:unknown;configuration?:unknown}) {
+  if(process.env.ARS_SHARED_STOCK_PILOT!=='true')throw Error('Shared-stock conversion is disabled.');
+  if(!['Super Admin','Store Manager'].includes(role)||request.confirmed!==true)throw Error('Manager confirmation required.');
+  if(typeof request.legacyUnitId!=='string')throw Error('Select the current stock unit.');
+  const config=parsePackagingDraft(request.configuration);
+  const expected=request.expected as Record<string,unknown>|null;
+  if(!expected || typeof expected!=='object')throw Error('Current inventory snapshot required.');
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const result=await client.query(`SELECT p.*,
+      EXISTS(SELECT 1 FROM sales_transaction_items s WHERE s.product_id=p.id) AS has_sales,
+      EXISTS(SELECT 1 FROM purchase_order_items i WHERE i.product_id=p.id) AS has_purchases,
+      EXISTS(SELECT 1 FROM quotations q WHERE q.shop_id=p.shop_id AND q.items @> jsonb_build_array(jsonb_build_object('productId',p.id))) AS has_quotes
+      FROM products p WHERE p.id=$1 AND p.shop_id=$2 FOR UPDATE OF p`,[productId,shopId]);
+    const p=result.rows[0];
+    if(!p || p.status==='Inactive'||p.shared_stock_units||p.variants_json?.length)throw Error('Product is not eligible for legacy conversion.');
+    if(p.has_sales||p.has_purchases||p.has_quotes)throw Error('Historical transactions require a separate reconciliation workflow.');
+    if(Number(p.wholesale_price||0)!==0||Number(p.dealer_price||0)!==0)throw Error('Reconcile existing wholesale and dealer price tiers before conversion.');
+    const snapshot={quantity:Number(p.quantity),reorderLevel:Number(p.reorder_level),costPrice:Number(p.cost_price),sellingPrice:Number(p.selling_price)};
+    if(Object.entries(snapshot).some(([key,value])=>expected[key]!==value))throw Error('Product stock or prices changed. Reload before conversion.');
+    const draft=await client.query('SELECT configuration FROM ars_packaging_drafts WHERE product_id=$1 AND shop_id=$2 FOR UPDATE',[productId,shopId]);
+    if(!draft.rowCount||JSON.stringify(parsePackagingDraft(draft.rows[0].configuration))!==JSON.stringify(config))throw Error('Save the current packaging draft before conversion.');
+    const preview=previewLegacyPackaging({...snapshot,legacyUnitId:request.legacyUnitId,configuration:config});
+    if(!preview.eligible)throw Error(preview.reasons.join(' '));
+    const base=config.units.find(u=>u.baseUnits===1)!;
+    if(base.sellingPrice>9999999999.99 || Math.abs(base.sellingPrice*100-Math.round(base.sellingPrice*100))>0.00001)throw Error('Base selling price exceeds currency precision.');
+    await client.query('UPDATE products SET quantity=$1,reorder_level=$2,cost_price=$3,selling_price=$4,shared_stock_units=$5::jsonb,updated_at=NOW() WHERE id=$6 AND shop_id=$7',[preview.newQuantity,preview.newReorderLevel,preview.newCostPrice,base.sellingPrice,JSON.stringify(config),productId,shopId]);
+    await client.query(`INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Converted Legacy Packaging',$5)`,['packaging-convert-'+randomUUID(),shopId,actor,role,JSON.stringify({productId,...preview,configuration:config})]);
+    await client.query('COMMIT');
+    return preview;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
