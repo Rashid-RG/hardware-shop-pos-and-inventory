@@ -1500,7 +1500,7 @@ export default function ProductManagementView({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
             <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
-            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — packaging factors protected. Managers may edit prices." : "Save a draft, then check eligibility. Activation is restricted to the verified pilot."}</p>
+            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — packaging factors protected. Managers may edit prices." : "Save a draft, then check eligibility. A manager must confirm activation."}</p>
             <fieldset disabled={packagingBusy || (!!packagingProduct.sharedStockUnits && !canActivatePackaging)} className="space-y-4">
             <label className="block text-sm">Base stock unit
               <input className="block w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
@@ -1546,7 +1546,7 @@ export default function ProductManagementView({
               </div>}
               {canActivatePackaging && <button type="button" disabled={packagingBusy || !historyComplete || !packagingEligibility?.pilotEnabled || !conversionPreview?.result?.eligible || savedPackaging!==JSON.stringify(packaging)} className="rounded border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-40" onClick={convertExistingPackaging}>Confirm &amp; convert stock</button>}
             </section>}
-            {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Pilot activation is disabled."}</div>}
+            {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Selling-unit activation is disabled by system configuration."}</div>}
             <div className="flex flex-wrap justify-end gap-2">
               <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Close</button>
               {!packagingProduct.sharedStockUnits && canActivatePackaging && <><button type="button" disabled={packagingBusy || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2" onClick={checkPackaging}>Check eligibility</button><button type="button" disabled={packagingBusy || !packagingEligibility?.eligible || !packagingEligibility?.pilotEnabled || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2 disabled:opacity-40" onClick={activateSavedPackaging}>Activate shared stock</button></>}
