@@ -2144,9 +2144,9 @@ export default function POSView({
       )}
 
       {isReviewOpen && (
-        <div id="pos-review-backdrop" className="fixed inset-0 z-[65] flex items-center justify-center bg-slate-950/60 p-2 sm:p-5">
+        <div id="pos-review-backdrop" className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-2 sm:p-5">
           <section role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
-            className="flex max-h-[min(92dvh,850px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            className="flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-5">
               <div><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Final review · no invoice saved yet</p>
                 <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & complete invoice</h2>
@@ -2154,154 +2154,25 @@ export default function POSView({
               <button type="button" aria-label="Close payment review" disabled={isSubmitting} onClick={() => setIsReviewOpen(false)}
                 className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
             </header>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
-              {paymentMethod === 'Credit Account' && (
-                <div role="status" className={`mb-3 rounded-lg border px-3 py-2 text-xs ${creditAccountAllowed?'border-amber-200 bg-amber-50 text-amber-900':'border-rose-200 bg-rose-50 text-rose-800'}`}>
-                  {creditLimit <= 0 ? 'This customer has no credit limit configured.'
-                    : creditExceeded ? `Credit limit exceeded: ${formatMoney(projectedCreditBalance)} above allowed ${formatMoney(creditLimit)}.`
-                    : `Invoice will be posted to customer credit. New balance: ${formatMoney(projectedCreditBalance)} / ${formatMoney(creditLimit)}.`}
-                </div>
-              )}
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:overflow-hidden">
+              <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto lg:border-r lg:border-slate-200">
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
-                <div className="space-y-1">
+                <div className="grid grid-cols-[minmax(0,1fr)_40px_95px_100px] gap-2 border-b border-slate-200 pb-2 text-[10px] font-semibold text-slate-500"><span>Product / description</span><span className="text-right">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span></div>
+                <div className="divide-y divide-slate-100">
                   {cart.map(item => {
                     const line = getLinePricing(item);
-                    return <div key={getCartKey(item)} className="flex justify-between gap-3 text-xs text-slate-700">
+                    return <div key={getCartKey(item)} className="grid grid-cols-[minmax(0,1fr)_40px_95px_100px] items-start gap-2 py-2 text-xs text-slate-700">
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{item.product.name} × {item.quantity}</span>
+                        <span className="block break-words font-semibold">{item.product.name}</span>
                         {item.invoiceDescription && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{item.invoiceDescription}</span>}
                       </span>
-                      <strong className="shrink-0 font-mono">{formatMoney(line.lineTotal)}</strong>
+                      <span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
                     </div>;
                   })}
                 </div>
               </div>
-        {/* 3 · Payment and invoice totals */}
-        <div className="mt-3 space-y-3">
-          <div className="space-y-1.5 text-xs text-slate-600 font-sans">
-            <div className="flex justify-between">
-              <span>Items Total</span>
-              <span className="font-mono">{formatMoney(grossSubtotal)}</span>
-            </div>
-
-            {itemDiscountTotal > 0 && (
-              <div className="flex justify-between text-emerald-600">
-                <span>Item Discounts</span>
-                <span className="font-mono">-{formatMoney(itemDiscountTotal)}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span className="font-mono">{formatMoney(subtotal)}</span>
-            </div>
-
-            {/* One invoice-level discount: switch between fixed rupees and percentage. */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2" id="pos-invoice-discount">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label htmlFor="pos-cart-discount-input" className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                  <Ticket className="h-4 w-4 text-indigo-600" /> Invoice discount
-                </label>
-                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Invoice discount type">
-                  <button type="button" id="pos-discount-amount"
-                    aria-pressed={discountMode === 'amount'} onClick={() => {setDiscountMode('amount');setDiscountInput('0');}}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'amount' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                    {currencySymbol} Fixed
-                  </button>
-                  <button type="button" id="pos-discount-percent"
-                    aria-pressed={discountMode === 'percent'} onClick={() => {setDiscountMode('percent');setDiscountInput('0');}}
-                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'percent' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                    % Percent
-                  </button>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <input id="pos-cart-discount-input" type="number" min="0" step="0.01"
-                  max={discountMode === 'percent' ? 100 : subtotal}
-                  value={discountInput}
-                  onChange={e => setDiscountInput(e.target.value)}
-                  className="min-w-0 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-indigo-500"
-                  aria-label={discountMode === 'percent' ? 'Invoice discount percentage' : 'Invoice discount amount in rupees'}/>
-                <span className="text-xs text-slate-600">
-                  {discountMode === 'percent' ? `${Math.min(100,normalizedDiscountInput)}% = ` : 'Discount = '}
-                  <strong className="font-mono text-emerald-700">{formatMoney(cashDiscount)}</strong>
-                </span>
-              </div>
-              {normalizedDiscountInput > (discountMode === 'percent' ? 100 : subtotal) && (
-                <p role="status" className="text-xs text-amber-800">
-                  Discount is limited to {discountMode === 'percent' ? '100%' : 'the item subtotal'}.
-                </p>
-              )}
-            </div>
-
-            <div className="flex justify-between text-[11px] text-slate-500">
-              <span>Sales Tax ({taxConfig.taxRate.toFixed(1)}% standard)</span>
-              <span className="font-mono">{currencySymbol}{tax.toFixed(2)}</span>
-            </div>
-
-            <div className="flex justify-between text-base font-bold text-slate-950 border-t border-slate-100 pt-2 font-sans">
-              <span>Total Bill</span>
-              <span className="font-mono text-indigo-600">{currencySymbol}{total.toFixed(2)}</span>
-            </div>
-
-            {paymentMethod === 'Cash' && (
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                  <span>Cash Received ({currencySymbol})</span>
-                  <span className="font-mono">Change Due: {formatMoney(changeDue)}</span>
-                </div>
-                <input
-                  id="pos-cash-received-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashReceived}
-                  onChange={(e) => setCashReceived(e.target.value)}
-                  placeholder={total.toFixed(2)}
-                  className={`w-full border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
-                />
-                {cashShortage && (
-                  <p className="text-[11px] text-rose-600 font-medium">Cash received is less than the bill total.</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Payment Method Selector Grid */}
-          <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
-            {[
-              { id: 'Cash', label: 'Cash', icon: DollarSign },
-              { id: 'Credit Card', label: 'Card', icon: CreditCard },
-              { id: 'QR Code', label: 'QR Pay', icon: QrCode },
-              { id: 'Credit Account', label: 'On Credit', icon: BookUser },
-            ].map((pm) => {
-              const Icon = pm.icon;
-              const isSel = paymentMethod === pm.id;
-              return (
-                <button
-                  key={pm.id}
-                  id={`paymethod-${pm.id.replace(/\s+/g, '-').toLowerCase()}`}
-                  onClick={() => {
-                    setPaymentMethod(pm.id as any);
-                    if (pm.id === 'Cash' && (!cashReceived || Number(cashReceived) === 0)) {
-                      setCashReceived(total.toFixed(2));
-                    }
-                  }}
-                  className={`py-1.5 rounded-lg text-xs font-sans font-medium flex items-center justify-center gap-1 border transition-all ${
-                    isSel
-                      ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs'
-                      : 'bg-white text-slate-600 border-slate-250 hover:bg-slate-50'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {pm.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {isWholesaleShop && (
+              <div className="mt-3">          {isWholesaleShop && (
             <details className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
               <summary className="cursor-pointer text-[11px] font-semibold text-amber-800">
                 Delivery, transport and warranty details (optional)
@@ -2380,15 +2251,156 @@ export default function POSView({
             </details>
           )}
 
-          {/* Checkout Submit Trigger */}
+</div>
+              </div>
+        {/* Payment and invoice totals */}
+        <div className="min-w-0 space-y-2 bg-slate-50/60 p-3 sm:p-4 lg:overflow-y-auto">
+          <h3 className="text-sm font-bold text-slate-900">Payment summary</h3>
+                    {/* Payment Method Selector Grid */}
+          <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
+            {[
+              { id: 'Cash', label: 'Cash', icon: DollarSign },
+              { id: 'Credit Card', label: 'Card', icon: CreditCard },
+              { id: 'QR Code', label: 'QR Pay', icon: QrCode },
+              { id: 'Credit Account', label: 'On Credit', icon: BookUser },
+            ].map((pm) => {
+              const Icon = pm.icon;
+              const isSel = paymentMethod === pm.id;
+              return (
+                <button
+                  key={pm.id}
+                  id={`paymethod-${pm.id.replace(/\s+/g, '-').toLowerCase()}`}
+                  onClick={() => {
+                    setPaymentMethod(pm.id as any);
+                    if (pm.id === 'Cash' && (!cashReceived || Number(cashReceived) === 0)) {
+                      setCashReceived(total.toFixed(2));
+                    }
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-sans font-medium flex items-center justify-center gap-1 border transition-all ${
+                    isSel
+                      ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs'
+                      : 'bg-white text-slate-600 border-slate-250 hover:bg-slate-50'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {pm.label}
+                </button>
+              );
+            })}
+          </div>
+
+
+                        {paymentMethod === 'Credit Account' && (
+                <div role="status" className={`mb-3 rounded-lg border px-3 py-2 text-xs ${creditAccountAllowed?'border-amber-200 bg-amber-50 text-amber-900':'border-rose-200 bg-rose-50 text-rose-800'}`}>
+                  {creditLimit <= 0 ? 'This customer has no credit limit configured.'
+                    : creditExceeded ? `Credit limit exceeded: ${formatMoney(projectedCreditBalance)} above allowed ${formatMoney(creditLimit)}.`
+                    : `Invoice will be posted to customer credit. New balance: ${formatMoney(projectedCreditBalance)} / ${formatMoney(creditLimit)}.`}
+                </div>
+              )}
+
+          <div className="space-y-1.5 text-xs text-slate-600 font-sans">
+            <div className="flex justify-between">
+              <span>Items Total</span>
+              <span className="font-mono">{formatMoney(grossSubtotal)}</span>
+            </div>
+
+            {itemDiscountTotal > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Item Discounts</span>
+                <span className="font-mono">-{formatMoney(itemDiscountTotal)}</span>
+              </div>
+            )}
+
+            <div className="flex justify-between">
+              <span>Subtotal</span>
+              <span className="font-mono">{formatMoney(subtotal)}</span>
+            </div>
+
+            {/* One invoice-level discount: switch between fixed rupees and percentage. */}
+            <div className="rounded-xl border border-slate-200 bg-white p-2 space-y-1.5" id="pos-invoice-discount">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="pos-cart-discount-input" className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <Ticket className="h-4 w-4 text-indigo-600" /> Invoice discount
+                </label>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Invoice discount type">
+                  <button type="button" id="pos-discount-amount"
+                    aria-pressed={discountMode === 'amount'} onClick={() => {setDiscountMode('amount');setDiscountInput('0');}}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'amount' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    {currencySymbol} Fixed
+                  </button>
+                  <button type="button" id="pos-discount-percent"
+                    aria-pressed={discountMode === 'percent'} onClick={() => {setDiscountMode('percent');setDiscountInput('0');}}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'percent' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    % Percent
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <input id="pos-cart-discount-input" type="number" min="0" step="0.01"
+                  max={discountMode === 'percent' ? 100 : subtotal}
+                  value={discountInput}
+                  onChange={e => setDiscountInput(e.target.value)}
+                  className="min-w-0 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-indigo-500"
+                  aria-label={discountMode === 'percent' ? 'Invoice discount percentage' : 'Invoice discount amount in rupees'}/>
+                <span className="text-xs text-slate-600">
+                  {discountMode === 'percent' ? `${Math.min(100,normalizedDiscountInput)}% = ` : 'Discount = '}
+                  <strong className="font-mono text-emerald-700">{formatMoney(cashDiscount)}</strong>
+                </span>
+              </div>
+              {normalizedDiscountInput > (discountMode === 'percent' ? 100 : subtotal) && (
+                <p role="status" className="text-xs text-amber-800">
+                  Discount is limited to {discountMode === 'percent' ? '100%' : 'the item subtotal'}.
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-between text-[11px] text-slate-500">
+              <span>Sales Tax ({taxConfig.taxRate.toFixed(1)}% standard)</span>
+              <span className="font-mono">{currencySymbol}{tax.toFixed(2)}</span>
+            </div>
+
+            <div className="flex justify-between items-center rounded-lg bg-slate-900 px-3 py-2 text-lg font-bold text-white">
+              <span>Total Bill</span>
+              <span className="tabular-nums text-amber-300">{formatMoney(total)}</span>
+            </div>
+
+            {paymentMethod === 'Cash' && (
+              <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                  <span>Cash Received ({currencySymbol})</span>
+                  <span className="font-semibold text-emerald-700 tabular-nums">Change Due: {formatMoney(changeDue)}</span>
+                </div>
+                <input
+                  id="pos-cash-received-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cashReceived}
+                  onChange={(e) => setCashReceived(e.target.value)}
+                  placeholder={total.toFixed(2)}
+                  className={`w-full border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
+                />
+                {cashShortage && (
+                  <p className="text-[11px] text-rose-600 font-medium">Cash received is less than the bill total.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+              </div>
+            </div>
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 sm:px-5">
+              <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Back to invoice</button>
+                        {/* Checkout Submit Trigger */}
           <button
             id="pos-pay-trigger" type="button"
-            disabled={cart.length === 0 || isSubmitting || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
             onClick={handleCheckout}
-            className={`w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+            className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
-                : 'bg-slate-900 border border-slate-900 text-slate-100 hover:bg-slate-950'
+                : 'bg-amber-400 border border-amber-400 text-slate-900 hover:bg-amber-500'
             }`}
           >
             {isSubmitting ? (
@@ -2398,16 +2410,11 @@ export default function POSView({
               </>
             ) : (
               <>
-                Save Invoice & Print A4 ({currencySymbol}{total.toFixed(2)})
+                Save Invoice & Print A4 ({formatMoney(total)})
               </>
             )}
           </button>
-              </div>
-            </div>
-            <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
-              <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting}
-                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Back to invoice</button>
-              <span className="text-xs text-slate-500">Check payment before saving</span>
+
             </footer>
           </section>
         </div>
