@@ -48,8 +48,10 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
    await assert.rejects(()=>deductSharedSale(client,'other-shop',product,'piece',1),/unavailable/);
    await client.query('ROLLBACK');
   }finally{await client.query('ROLLBACK').catch(()=>{});client.release();}
+  const customerId='shared-customer-'+suffix;
+  await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'CI Trade Customer',0,0,0,0)",[customerId,shop]);
   const invoiceId='shared-invoice-'+suffix;
-  const tx={id:invoiceId,shopId:shop,invoiceNumber:invoiceId,date:new Date().toISOString(),customerName:'Walk-in Customer',cashierName:'CI Cashier',items:[
+  const tx={id:invoiceId,shopId:shop,invoiceNumber:invoiceId,date:new Date().toISOString(),customerId,customerName:'CI Trade Customer',cashierName:'CI Cashier',items:[
     {productId:product,productName:'Door lock',sellingUnitId:'box',quantity:2,sellingPrice:5400,costPrice:3600,discount:0},
     {productId:product,productName:'Door lock',sellingUnitId:'piece',quantity:4,sellingPrice:500,costPrice:300,discount:0}
   ],subtotal:12800,tax:0,discountAmount:0,total:12800,paymentMethod:'Cash',paymentStatus:'PAID',status:'Completed',cashReceived:12800,changeDue:0};
@@ -82,6 +84,18 @@ test('shared packaging activation, purchase, mixed sale and rollback against Pos
   const logs=(await pool.query('SELECT quantity FROM stock_logs WHERE reference_id IN ($1,$2) ORDER BY quantity',[first.batchId,last.batchId])).rows;
   assert.deepEqual(logs.map(row=>Number(row.quantity)),[24,36]);
   await assert.rejects(()=>receivePartialOrder(pool,receipt('extra',1)),/not open/);
+  assert.equal(await stock(),164);
+  // Two independent checkout transactions compete for stock; only one can commit.
+  const competingInvoice=(tag)=>({...tx,id:'race-'+tag+'-'+suffix,invoiceNumber:'race-'+tag+'-'+suffix,items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:10,sellingPrice:5400,costPrice:3600,discount:0}],subtotal:54000,total:54000,cashReceived:54000});
+  const candidates=[competingInvoice('a'),competingInvoice('b')];
+  const outcomes=await Promise.allSettled(candidates.map(candidate=>checkoutTransaction(candidate,'Cashier','CI Shop')));
+  assert.equal(outcomes.filter(result=>result.status==='fulfilled').length,1);
+  const rejected=outcomes.find(result=>result.status==='rejected');
+  assert.match(String(rejected.reason),/insufficient/i);
+  assert.equal(await stock(),44);
+  const committed=(await pool.query('SELECT id FROM sales_transactions WHERE id=ANY($1::text[])',[candidates.map(candidate=>candidate.id)])).rows;
+  assert.equal(committed.length,1);
+  await refundTransaction(committed[0].id,shop,'CI concurrent checkout cleanup','CI Manager','Store Manager');
   assert.equal(await stock(),164);
  }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
 });
