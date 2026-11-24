@@ -66,6 +66,41 @@ def status(project):
     signed=(STATE/"release-signing-public.pem").is_file()
     return "ARS Distributor — installed version "+version+"\nMaintenance: "+("Active" if held else "Not active")+"\nTrusted release key: "+("Present" if signed else "Not configured")+"\nLive installation and rollback: Disabled pending verification."
 
+def view_history(folder,kind):
+    records=[]
+    if folder.is_dir() and not folder.is_symlink():
+        for path in folder.glob("*.json"):
+            try:
+                if path.is_symlink() or not path.is_file() or path.stat().st_size>65536: continue
+                data=json.loads(path.read_text())
+                if not isinstance(data,dict): continue
+                if kind=="cloud":
+                    records.append((str(data.get("attemptedAt","Unknown")),str(data.get("phase","Unknown")),str(data.get("archive","Not created")),data))
+                else:
+                    records.append((str(data.get("testedAt","Unknown")),"Restored in isolation" if data.get("restoreTestPassed") is True else "Unverified",str(data.get("backup","Unknown")),data))
+            except (OSError,ValueError,TypeError): continue
+    records.sort(key=lambda row:row[0],reverse=True)
+    records=records[:100]
+    if not records:
+        notice("No readable history records available.")
+        return
+    rows=[]
+    for index,(date,status,archive,data) in enumerate(records):
+        rows.extend([str(index),date,status,archive])
+    selected=dialog("--list","--width=1000","--height=500","--column=ID","--column=Date (UTC)","--column=Status","--column=Archive","--hide-column=1","--print-column=1",*rows)
+    index=selected.stdout.strip()
+    if selected.returncode!=0 or not index.isdigit() or int(index)>=len(records): return
+    date,status,archive,data=records[int(index)]
+    details=[date,status,archive]
+    if kind=="recovery":
+        counts=data.get("counts",{})
+        if isinstance(counts,dict):
+            details.extend(str(key)+": "+str(value) for key,value in counts.items())
+        details.append("Live database replacement is not approved.")
+    else:
+        details.append("Last verified cloud backup at this attempt: "+str(data.get("verifiedAt") or "None"))
+    notice("\n".join(details))
+
 def main():
     if os.geteuid()==0:
         raise ValueError("Run as the desktop user.")
@@ -74,7 +109,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -134,6 +169,10 @@ def main():
                     command={"Enable daily backup at 8 PM":"enable","Disable daily backup":"disable","Back up now":"backup"}[selected]
                     if dialog("--question","--no-markup","--text=Confirm: "+selected+"? Enabling or running backups sends encrypted business backup files to your configured Google Drive account.").returncode==0:
                         execute(project,"cloud-backup-control.py",command)
+            elif action=="View backup history":
+                view_history(project/"backups/drive-history","cloud")
+            elif action=="View recovery reports":
+                view_history(STATE/"recovery-reports","recovery")
             elif action=="View cloud backup status":
                 try:
                     data=json.loads((project/"backups/drive-status.json").read_text())
