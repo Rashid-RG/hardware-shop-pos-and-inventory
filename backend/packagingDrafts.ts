@@ -102,9 +102,9 @@ export async function checkPackagingActivation(pool: Pool | PoolClient, shopId: 
   return {eligible:reasons.length===0,reasons,active:Boolean(row.shared_stock_units)};
 }
 
-/** Pilot-only activation: no stock is changed and configuration becomes immutable. */
+/** Manager-confirmed activation: no stock is changed and configuration becomes immutable. */
 export async function activatePackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, confirmed: unknown) {
-  if (process.env.ARS_SHARED_STOCK_PILOT !== 'true') throw new Error('Shared-stock activation is disabled pending integration verification.');
+  if (!sharedStockActivationEnabled()) throw new Error('Shared-stock activation is disabled by system configuration.');
   if (!['Super Admin','Store Manager'].includes(role) || confirmed !== true) throw new Error('Manager confirmation required.');
   const client=await pool.connect();
   try {
@@ -152,7 +152,7 @@ export async function updatePackagingPrices(pool: Pool, shopId: string, productI
  * No conversion of independently stocked variants or historical financial records.
  */
 export async function convertLegacyPackaging(pool: Pool, shopId: string, productId: string, actor: string, role: string, request: {confirmed?:unknown;legacyUnitId?:unknown;expected?:unknown;configuration?:unknown;historicalUnits?:unknown}) {
-  if(process.env.ARS_SHARED_STOCK_PILOT!=='true')throw Error('Shared-stock conversion is disabled.');
+  if(!sharedStockActivationEnabled())throw Error('Shared-stock conversion is disabled.');
   if(!['Super Admin','Store Manager'].includes(role)||request.confirmed!==true)throw Error('Manager confirmation required.');
   if(typeof request.legacyUnitId!=='string')throw Error('Select the current stock unit.');
   const config=parsePackagingDraft(request.configuration);
@@ -226,4 +226,9 @@ export async function listLegacyInvoiceLines(pool: Pool | PoolClient, shopId:str
     JOIN products p ON p.id=s.product_id AND p.shop_id=t.shop_id
     WHERE p.id=$1 AND p.shop_id=$2 ORDER BY t.date,s.id`,[productId,shopId]);
   return result.rows.map(row=>({saleItemId:row.id,invoiceNumber:row.invoice_number,date:row.date,status:row.status,quantity:Number(row.quantity),sellingPrice:Number(row.selling_price),originalUnit:row.variant_unit||null,variantId:row.variant_id||null,hasSharedSnapshot:row.selling_unit_id!=null||row.selling_unit_label!=null||row.base_units_per_sale_unit!=null}));
+}
+
+/** Enabled on ordinary installations; explicit false remains an emergency opt-out. */
+export function sharedStockActivationEnabled() {
+  return process.env.ARS_SHARED_STOCK_PILOT !== 'false';
 }
