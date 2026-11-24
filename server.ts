@@ -14,6 +14,7 @@ import { inventoryValuation, inventoryCostHistory } from './backend/inventoryVal
 import { initReceivableAging, receivableAging, registerInvoiceDueDate } from './backend/receivableAging';
 import { initPayableAging, supplierPayableAging, registerSupplierDueDate } from './backend/payableAging';
 import { financialPosition } from './backend/financialPosition';
+import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
@@ -6256,6 +6257,44 @@ app.post('/api/import-expense-reconciliation',requireRole(['Super Admin']),async
  if(!validChequeRequestId(requestId)||typeof approvalId!=='string'||!approvalId||typeof expenseId!=='string'||!expenseId||!['Freight','Customs','Clearance'].includes(chargeKind)||typeof expectedAmount!=='number'||!Number.isFinite(expectedAmount)||expectedAmount<=0||typeof evidence!=='string'||!evidence.trim()||evidence.length>500)return res.status(400).json({error:'Select a verified payment, approved charge and evidence.'});
  try{const result=await linkImportExpense(pool,{id:requestId,shopId:scope.shopId,approvalId,expenseId,chargeKind,expectedAmount,evidence,recordedBy:scope.recordedBy});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';if(['Valid verified payment and evidence required.','Reconciliation request identifier already used.','Approved shipment not found in this shop.','Expense missing or amount changed. Refresh before linking.','Expense must have one matching verified financial payment.','Expense already reconciled.','Invalid approved charge amount.','Payment exceeds remaining approved shipment charge.'].includes(message))return res.status(409).json({error:message});console.error('Import expense reconciliation failed',error);return res.status(500).json({error:'Unable to confirm reconciliation. Retry the same request.'});}
+});
+function ledgerApiError(res:Response,error:unknown){
+ const message=error instanceof Error?error.message:'';
+ if(['Valid account code, name, classification and status required.','Account code already exists.','Account not found in this shop.','Account classification is immutable; create a new account.','Shop and account code required.'].includes(message))return res.status(409).json({error:message});
+ console.error('Chart of accounts operation failed',error);return res.status(500).json({error:'Unable to complete accounting account operation.'});
+}
+app.get('/api/ledger/accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await listLedgerAccounts(pool,scope.shopId));}catch(error){return ledgerApiError(res,error);}
+});
+app.get('/api/ledger/accounts/:code/audit',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json(await ledgerAccountAudit(pool,scope.shopId,req.params.code));}catch(error){return ledgerApiError(res,error);}
+});
+app.post('/api/ledger/accounts/defaults',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit default account setup confirmation required.'});
+ try{return res.json(await seedWholesaleAccounts(pool,scope.shopId,scope.recordedBy));}catch(error){return ledgerApiError(res,error);}
+});
+app.post('/api/ledger/accounts',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {code,name,kind,active}=req.body||{};
+ try{return res.status(201).json(await createLedgerAccount(pool,scope.shopId,scope.recordedBy,{code,name,kind,active}));}catch(error){return ledgerApiError(res,error);}
+});
+app.put('/api/ledger/accounts/:code',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {name,kind,active}=req.body||{};
+ try{return res.json(await updateLedgerAccount(pool,scope.shopId,scope.recordedBy,{code:req.params.code,name,kind,active}));}catch(error){return ledgerApiError(res,error);}
 });
 app.get('/api/position-registers',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
  const scope=chequeShopAccess(req);
