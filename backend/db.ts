@@ -1751,13 +1751,24 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       );
     }
 
-    // Allocate only for new server-issued invoices, inside the same transaction.
-    // A single company-wide counter matches the globally unique invoice_number constraint.
+    // Allocate permanent company-wide numbers inside the checkout transaction.
+    // Recognize both the previous numeric suffix and the new year-prefixed format.
     if (!tx.invoiceNumber) {
       const allocated = await client.query(`
         INSERT INTO ars_invoice_counter (id, last_number)
         SELECT 'sales', GREATEST(10009, COALESCE(MAX(
-          CASE WHEN invoice_number ~ '^ARS-INV-[0-9]{5,15}
+          CASE WHEN invoice_number ~ '^ARS-INV-([0-9]{2}-)?[0-9]{5,15}$'
+          THEN substring(invoice_number FROM '[0-9]+$')::bigint END), 10009)) + 1
+        FROM sales_transactions
+        ON CONFLICT (id) DO UPDATE SET last_number =
+          GREATEST(ars_invoice_counter.last_number + 1, EXCLUDED.last_number)
+        RETURNING last_number
+      `);
+      const year = new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Colombo',year:'2-digit'}).format(new Date(tx.date));
+      tx.invoiceNumber = 'ARS-INV-' + year + '-' + allocated.rows[0].last_number;
+    }
+
+    // 2) Save main Transaction row
     await client.query(
       `INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status, sales_rep_id, sales_rep_name)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, 'Completed', $19, $20)`,
