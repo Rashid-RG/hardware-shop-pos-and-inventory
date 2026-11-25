@@ -3,6 +3,7 @@ import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState} from 'react';
+import {createPortal} from 'react-dom';
 import {Ship,PackageCheck,Plus,RefreshCcw,ShieldCheck} from 'lucide-react';
 import PartialReceiptPanel from './PartialReceiptPanel';
 import type {PurchaseOrder,Role,StoreSettings} from '../types';
@@ -20,6 +21,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  const [costReview,setCostReview]=useState<{id:string;reference:string;shopId:string}|null>(null);
  const [receivingPo,setReceivingPo]=useState<{id:string;number:string}|null>(null);
  const [saving,setSaving]=useState(false);
+ const [registerOpen,setRegisterOpen]=useState(false);
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
  const [search,setSearch]=useState('');
@@ -45,6 +47,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
    try{const response=await fetchWithAuth('/api/ars/import-shipments',{method:'POST',body:JSON.stringify(form)});
      const data=await response.json();if(!response.ok)throw Error(data.error||'Could not register shipment');
      setNotice('Shipment registered. Stock has NOT been changed.');
+     setRegisterOpen(false);
      setForm({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',currency:'CNY',exchangeRateLkr:'1',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
      await refresh();
    }catch(e:any){setError(e.message||'Unable to register shipment');}finally{setSaving(false);}
@@ -64,19 +67,20 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  });
  const shipmentReport=():BusinessReport=>{const financial=['Super Admin','Store Manager'].includes(currentRole);return {title:mode==='shipments'?'Import shipment register':'Warehouse receiving status',filename:'ars-'+mode,period:'Matching shipments | ETA '+(etaFrom||'Any')+' to '+(etaTo||'Any'),headers:['Shipment','Purchase order','Supplier','Container','Origin','ETA','Status',...(financial?['Invoice currency','Exchange rate (LKR)','Freight (LKR)','Customs (LKR)','Clearance (LKR)']:[])],moneyColumns:financial?[8,9,10,11]:[],rows:visibleRows.map(r=>[r.shipment_reference,r.po_number,r.supplier_name,r.container_number,r.origin_country,reportDay(r.eta_date||''),r.status,...(financial?[r.invoice_currency,Number(r.exchange_rate_lkr),Number(r.freight_lkr),Number(r.customs_lkr),Number(r.clearance_lkr)]:[])]),summary:[{label:'Matching shipments',value:visibleRows.length},{label:'Partially received',value:visibleRows.filter(r=>r.status==='Partially Received').length}]};};
  const displayedRows=hasActiveFilters||showAll?visibleRows:visibleRows.slice(0,12);
- return <div className="space-y-5">
-   {taxConfig&&<ReportExportMenu report={shipmentReport} settings={taxConfig}/>}
-   <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5">
-     <p className="text-xs font-bold uppercase tracking-wider text-amber-300">ARS Import Operations</p>
-     <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold">{mode==='shipments'?<Ship className="h-6 w-6"/>:<PackageCheck className="h-6 w-6"/>}{mode==='shipments'?'Import Shipment Register':'Warehouse Receiving'}</h2>
-     <p className="mt-1 text-xs text-slate-300">{mode==='shipments'?'Link incoming China shipments to purchase orders and record freight, customs and expected arrival.':'Receive confirmed purchase orders with atomic stock posting and duplicate-receipt protection.'}</p>
-   </header>
+ return <div className="space-y-3">
+   <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+     <span className="flex-1 px-2 text-xs font-semibold text-slate-600">{mode==='shipments'?'Import shipment register':'Warehouse receiving queue'}</span>
+     {taxConfig&&<ReportExportMenu report={shipmentReport} settings={taxConfig}/>}
+     {mode==='shipments'&&['Super Admin','Store Manager'].includes(currentRole)&&<button type="button" onClick={()=>{setError('');setRegisterOpen(true);}} className="rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white">+ Register shipment</button>}
+   </div>
    {error&&<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
    {notice&&<p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
-   {mode==='shipments'&&['Super Admin','Store Manager'].includes(currentRole)&&
-    <details className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <summary className="cursor-pointer text-sm font-bold text-slate-900">+ Register incoming shipment</summary>
-      <form onSubmit={add} className="mt-3 border-t border-slate-100 pt-3">
+   {mode==='shipments'&&registerOpen&&['Super Admin','Store Manager'].includes(currentRole)&&createPortal(
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-3">
+      <section role="dialog" aria-modal="true" aria-label="Register incoming shipment" className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+      <header className="flex items-center justify-between bg-[#182a45] px-4 py-3 text-white"><strong>Register incoming shipment</strong><button type="button" disabled={saving} onClick={()=>setRegisterOpen(false)} aria-label="Close shipment registration" className="px-2 text-xl">×</button></header>
+      <form id="shipment-register-form" onSubmit={add} className="min-h-0 flex-1 overflow-y-auto p-4">
+      {error&&<p role="alert" className="mb-2 rounded bg-rose-50 p-2 text-sm text-rose-700">{error}</p>}
       <h3 className="mb-2 text-xs font-semibold text-slate-600">Link an existing purchase order and enter shipment details</h3>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="text-xs font-semibold">Purchase order *
@@ -98,7 +102,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
       </div>
       {form.purchaseOrderId && <div className="mt-3 rounded-xl border border-slate-200 p-3">
         <h4 className="mb-2 text-xs font-bold text-slate-700">Linked purchase order · packaging quantities</h4>
-        <div className="overflow-x-auto"><table className="w-full text-left text-xs">
+        <div className="max-h-40 overflow-auto"><table className="w-full text-left text-xs">
           <thead className="bg-slate-50"><tr><th className="p-2">Product</th><th className="p-2">U/M</th><th className="p-2">Ordered</th><th className="p-2">Base quantity</th></tr></thead>
           <tbody>{purchaseOrders.find(po=>po.id===form.purchaseOrderId && po.shopId===shopId)?.items.map((item,index)=><tr key={index} className="border-t border-slate-100"><td className="p-2">{item.productName}</td><td className="p-2">{item.sellingUnitLabel || '—'}</td><td className="p-2">{item.quantity}</td><td className="p-2">{item.baseUnitsPerPurchaseUnit ? item.quantity*item.baseUnitsPerPurchaseUnit : '—'}</td></tr>)}</tbody>
         </table></div>
@@ -107,11 +111,11 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
       <label className="mt-3 block text-xs font-semibold">Notes / shipping documents
         <textarea value={form.notes} onChange={e=>setForm(v=>({...v,notes:e.target.value}))} rows={2} maxLength={2000} className="mt-1 w-full rounded-xl border border-slate-200 p-3 text-sm" />
       </label>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>Registering a shipment does not add stock or pay suppliers.</p>
-        <button type="submit" disabled={saving||!openOrders.length} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-3 text-xs font-bold text-slate-900 disabled:opacity-50"><Plus className="h-4 w-4"/>Register shipment</button>
-      </div>
-    </form></details>}
+      <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>Registering a shipment does not add stock or pay suppliers.</p>
+      </form>
+      <footer className="flex justify-end gap-2 border-t p-3"><button type="button" disabled={saving} onClick={()=>setRegisterOpen(false)} className="rounded-lg border px-4 py-2 text-xs font-semibold">Cancel</button><button type="submit" form="shipment-register-form" disabled={saving||!openOrders.length} className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold disabled:opacity-50">{saving?'Saving…':'Register shipment'}</button></footer>
+      </section>
+    </div>,document.body)}
    <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
      <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">{mode==='shipments'?'Shipment history':'Shipments awaiting warehouse receipt'}</h3>
        <div className="flex flex-wrap items-center gap-2">
@@ -138,8 +142,8 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
          <button type="button" disabled={loading} onClick={()=>void refresh()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold"><RefreshCcw className="h-4 w-4"/>Refresh</button>
        </div></div>
      <p className="mb-3 text-xs font-semibold text-slate-600">{visibleRows.length} matching shipments{hasActiveFilters?' · all results displayed':''}</p>
-     <div className="space-y-3">
-       {displayedRows.map(row=><article key={row.id} className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center">
+     <div className="max-h-[60dvh] space-y-2 overflow-y-auto overscroll-contain">
+       {displayedRows.map(row=><article key={row.id} className="flex flex-col justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 lg:flex-row lg:items-center">
          <div className="min-w-0"><p className="font-bold text-slate-900">{row.shipment_reference} · {row.po_number}</p>
            <p className="mt-1 text-xs text-slate-600">{row.supplier_name} · {row.origin_country} · {row.invoice_currency} · {row.container_number||'Container not entered'}</p>
            <p className="mt-1 text-xs text-slate-500">ETA: {row.eta_date?reportDay(row.eta_date):'Not set'} · Freight Rs.{format(row.freight_lkr)} · Customs Rs.{format(row.customs_lkr)} · Clearance Rs.{format(row.clearance_lkr)}</p></div>
