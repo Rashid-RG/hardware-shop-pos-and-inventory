@@ -40,6 +40,7 @@ export default function InventoryView({
   const [logTypeFilter, setLogTypeFilter] = useState('All');
   const [productSearch, setProductSearch] = useState('');
   const [productLimit, setProductLimit] = useState(12);
+  const [stockFilter, setStockFilter] = useState<'All' | 'Low' | 'Out' | 'Available'>('All');
   const [logLimit, setLogLimit] = useState(25);
   const [logDateFrom, setLogDateFrom] = useState('');
   const [logDateTo, setLogDateTo] = useState('');
@@ -134,7 +135,7 @@ export default function InventoryView({
     return matchesSearch && matchesType && matchesDate;
   });
   const isLedgerFiltered = Boolean(searchTerm.trim() || logTypeFilter !== 'All' || logDateFrom || logDateTo);
-  const isProductFiltered = Boolean(productSearch.trim());
+
 
   const ledgerReport = ():BusinessReport => ({
     title:'Stock movement ledger',filename:'ars-stock-movements',period:(logDateFrom||'All dates')+' to '+(logDateTo||'Latest')+' | '+logTypeFilter,
@@ -143,7 +144,8 @@ export default function InventoryView({
     summary:[{label:'Matching movements',value:filteredLogs.length},{label:'Distinct products',value:new Set(filteredLogs.map(log=>log.productId)).size}]
   });
 
-  const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())));
+  const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())) && (stockFilter==='All' || (stockFilter==='Out' ? p.quantity<=0 : stockFilter==='Low' ? p.quantity>0 && p.quantity<=p.reorderLevel : p.quantity>0 && p.quantity>p.reorderLevel)));
+  const stockCounts = { All: products.length, Low: products.filter(p=>p.quantity>0 && p.quantity<=p.reorderLevel).length, Out: products.filter(p=>p.quantity<=0).length, Available: products.filter(p=>p.quantity>0 && p.quantity>p.reorderLevel).length };
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2"><button type="button" aria-pressed={!isLedgerFocused} onClick={()=>setIsLedgerFocused(false)} className={!isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Stock overview</button><button type="button" aria-pressed={isLedgerFocused} onClick={()=>setIsLedgerFocused(true)} className={isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Movement history</button><span className="ml-auto px-2 text-xs text-slate-500">{products.length} products · {products.filter(p=>p.quantity<=p.reorderLevel).length} low or out of stock</span></div>
@@ -157,11 +159,14 @@ export default function InventoryView({
             Search products, check available stock and record authorized adjustments.
           </p>
 
+          <div className="mb-2 flex flex-wrap gap-2" aria-label="Filter by stock status">
+            {(["All","Available","Low","Out"] as const).map(status=><button key={status} type="button" aria-pressed={stockFilter===status} onClick={()=>{setStockFilter(status);setProductLimit(12);}} className={"rounded-lg border px-3 py-2 text-xs font-semibold "+(stockFilter===status?"border-indigo-600 bg-indigo-50 text-indigo-800":"border-slate-200 text-slate-600")}>{status==="Low"?"Low stock":status==="Out"?"Out of stock":status==="Available"?"Healthy stock":"All products"} ({stockCounts[status]})</button>)}
+          </div>
           <input type="search" aria-label="Find shelf stock product" value={productSearch}
             onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
             placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 max-h-[65dvh] overflow-y-auto overscroll-contain">
-            {(isProductFiltered ? matchingProducts : matchingProducts.slice(0,productLimit)).map((p) => {
+            {matchingProducts.slice(0,productLimit).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
 
@@ -176,7 +181,7 @@ export default function InventoryView({
                       {p.name}
                     </p>
                     <p className="text-[10px] font-mono text-slate-400 mt-1">
-                      SKU: {p.sku} | Loc: {p.location || 'Aisle 1'}
+                      SKU: {p.sku} | Loc: {p.location || 'Not assigned'}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -206,7 +211,8 @@ export default function InventoryView({
                 </div>
               );
             })}
-            {!isProductFiltered&&matchingProducts.length>productLimit&&<button type="button"
+            {matchingProducts.length===0 && <div className="col-span-full rounded-lg border border-dashed border-slate-200 p-6 text-center text-xs text-slate-600">No products match these filters. <button type="button" className="font-semibold text-indigo-700 underline" onClick={()=>{setProductSearch('');setStockFilter('All');setProductLimit(12);}}>Clear filters</button></div>}
+            {matchingProducts.length>productLimit&&<button type="button"
               onClick={()=>setProductLimit(v=>v+12)}
               className="col-span-full w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
               Show more shelf products ({matchingProducts.length-productLimit} remaining)
