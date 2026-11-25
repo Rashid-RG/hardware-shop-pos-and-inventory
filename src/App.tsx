@@ -1155,8 +1155,8 @@ export default function App() {
 
       {/* Primary Inner Main Area Scroll view wrapper */}
       <main className="flex-1 min-w-0 overflow-y-auto bg-[#f3f6fb]">
-        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur px-4 py-3 sm:px-6 lg:px-8">
-          <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4">
+        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur px-3 py-1.5 sm:px-4 lg:px-5">
+          <div className="mx-auto flex max-w-[1800px] items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-3">
               <button type="button" aria-label={isSidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                 aria-expanded={!isSidebarCollapsed}
@@ -1167,12 +1167,12 @@ export default function App() {
                     return !value;
                   });
                 }}
-                className="hidden md:flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-amber-50 hover:border-amber-300 focus-visible:outline-2 focus-visible:outline-amber-400">
+                className="hidden md:flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700 hover:bg-amber-50 hover:border-amber-300 focus-visible:outline-2 focus-visible:outline-amber-400">
                 {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
               </button>
               <div className="min-w-0">
-              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Distributors · Business workspace</p>
-              <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
+              <p className="hidden sm:block text-[9px] font-bold uppercase tracking-[0.12em] text-amber-700">ARS Distributors · Business workspace</p>
+              <p className="truncate font-heading text-base font-bold leading-tight text-slate-900 sm:text-lg">{({
                 dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs', shipments: 'Import Shipments', 'warehouse-receiving': 'Warehouse Receiving', partners: 'Partner Capital',
                 'my-collections': 'My Collections', customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
@@ -1182,16 +1182,16 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="hidden sm:flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
+              <span className="hidden sm:flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs font-semibold text-slate-600"><Store className="h-4 w-4 text-amber-600" /> <span className="max-w-[170px] truncate">{taxConfig.storeName}</span></span>
               {(['Super Admin', 'Store Manager', 'Cashier'] as Role[]).includes(currentRole) && (
-                <button type="button" onClick={() => { if(activeTab==='pos')window.dispatchEvent(new Event('ars:new-invoice'));else setActiveTab('pos'); }} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-3 py-2.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
+                <button type="button" onClick={() => { if(activeTab==='pos')window.dispatchEvent(new Event('ars:new-invoice'));else setActiveTab('pos'); }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-3 py-1.5 text-xs font-bold text-slate-900 hover:bg-amber-300 transition shadow-sm">
                   <Bolt className="h-4 w-4" /> <span className="hidden sm:inline">{activeTab==='pos'?'New Invoice':'Open Billing'}</span><span className="sm:hidden">Invoice</span>
                 </button>
               )}
             </div>
           </div>
         </header>
-        <div className="p-4 sm:p-6 lg:p-8">
+        <div className="p-2 sm:p-3 lg:p-4">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center h-full space-y-4">
             <div className="h-9 w-9 border-4 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
@@ -1200,7 +1200,7 @@ export default function App() {
             </p>
           </div>
         ) : (
-          <div className="max-w-[1500px] mx-auto">
+          <div className="max-w-[1800px] mx-auto">
             <Suspense
               fallback={
                 <div className="flex min-h-[24rem] flex-col items-center justify-center space-y-4 rounded-3xl border border-slate-200 bg-white/70">
