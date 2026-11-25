@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 if(!['localhost','127.0.0.1'].includes(url.hostname)||url.port!=='5432'||url.pathname!=='/hardware_pos_ci')throw Error('Refusing financial test outside isolated CI database');
 const {pool,initDbTables,addCustomerCreditPayment,insertSupplierPayment,insertSupplier}=await import('../backend/db.ts');
-const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements,recordPaidExpense,assignRepresentativeAccount,linkRepresentativeLogin,resolveRepresentativeFinancialIdentity,requestCashHandover,decideCashHandover}=await import('../backend/financialAccounts.ts');
+const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,listFinancialAccounts,recordFinancialTransfer,registerCustomerCheque,transitionCustomerCheque,listCustomerCheques,registerSupplierCheque,listSupplierCheques,transitionSupplierCheque,recordFinancialReconciliation,listFinancialReconciliations,listFinancialMovements,recordPaidExpense,assignRepresentativeAccount,linkRepresentativeLogin,resolveRepresentativeFinancialIdentity,requestCashHandover,decideCashHandover}=await import('../backend/financialAccounts.ts');
 
 test('financial accounts, collections, handovers, cheque clearance, reconciliation and statements on real PostgreSQL',async()=>{
   const shopId='finance-ci-'+randomUUID(),otherShop='finance-other-'+randomUUID();
@@ -71,6 +71,39 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     await insertSupplierPayment(supplierPayment,bank);
     await assert.rejects(insertSupplierPayment({...supplierPayment,amount:101},bank),/identifier already used/);
     assert.equal((await balances())[bank],200);
+    // Outgoing cheque commitments must not create a payment or change posted funds.
+    const outgoing={id:'supplier-cheque-'+id(),shopId,supplierId,bankAccountId:bank,chequeNumber:'OUT-001',amount:150,issuedDate:day,dueDate:'2026-11-25',recordedBy};
+    const issues=await Promise.all([registerSupplierCheque(pool,outgoing),registerSupplierCheque(pool,outgoing)]);
+    assert.deepEqual(issues.map(x=>x.replayed).sort(),[false,true]);
+    await assert.rejects(registerSupplierCheque(pool,{...outgoing,amount:151}),/identifier already used/);
+    await assert.rejects(registerSupplierCheque(pool,{...outgoing,id:id()}),/already registered/);
+    await assert.rejects(registerSupplierCheque(pool,{...outgoing,id:id(),bankAccountId:foreign}),/active bank account/);
+    await assert.rejects(registerSupplierCheque(pool,{...outgoing,id:id(),bankAccountId:cash}),/active bank account/);
+    await assert.rejects(registerSupplierCheque(pool,{...outgoing,id:id(),dueDate:'2026-11-23'}),/Invalid supplier cheque/);
+    assert.equal((await listSupplierCheques(pool,otherShop)).length,0);
+    const bankDetails=async()=>(await listFinancialAccounts(pool,shopId)).find(a=>a.id===bank);
+    assert.equal((await bankDetails()).balance,200);
+    assert.equal((await bankDetails()).supplierChequeCommitments,150);
+    assert.equal((await bankDetails()).balanceAfterChequeCommitments,50);
+    const blocked={...supplierPayment,id:'spay-'+id(),amount:51};
+    await assert.rejects(insertSupplierPayment(blocked,bank),/Insufficient/);
+    assert.equal((await pool.query('SELECT id FROM supplier_payments WHERE id=$1',[blocked.id])).rowCount,0);
+    await assert.rejects(recordFinancialTransfer(pool,{...transfer,requestId:id(),fromAccountId:bank,toAccountId:cash,handover:false,amount:51}),/Insufficient/);
+    await assert.rejects(recordPaidExpense(pool,{id:'exp-'+id(),shopId,desc:'Blocked withdrawal',category:'Vehicle fuel',amount:51,date:day,recordedBy,role:'Store Manager',sourceAccountId:bank,paymentMethod:'Bank Transfer'}),/Insufficient/);
+    const cancellation={shopId,chequeId:outgoing.id,eventId:id(),nextStatus:'Cancelled',effectiveDate:day,recordedBy,note:'Cheque voided'};
+    await assert.rejects(transitionSupplierCheque(pool,{...cancellation,shopId:otherShop}),/not found/);
+    await assert.rejects(transitionSupplierCheque(pool,{...cancellation,note:''}),/Invalid supplier cheque/);
+    const cancellations=await Promise.all([transitionSupplierCheque(pool,cancellation),transitionSupplierCheque(pool,cancellation)]);
+    assert.deepEqual(cancellations.map(x=>x.replayed).sort(),[false,true]);
+    await assert.rejects(transitionSupplierCheque(pool,{...cancellation,eventId:id(),nextStatus:'Dishonoured'}),/Only issued/);
+    assert.equal((await bankDetails()).supplierChequeCommitments,0);
+    assert.equal((await bankDetails()).balanceAfterChequeCommitments,200);
+    const dishonoured={...outgoing,id:'supplier-cheque-'+id(),chequeNumber:'OUT-002'};
+    await registerSupplierCheque(pool,dishonoured);
+    await transitionSupplierCheque(pool,{...cancellation,chequeId:dishonoured.id,eventId:id(),nextStatus:'Dishonoured',effectiveDate:'2026-11-25',note:'Bank returned unpaid'});
+    assert.equal((await bankDetails()).supplierChequeCommitments,0);
+    assert.equal((await bankDetails()).balance,200);
+    assert.equal((await pool.query('SELECT id FROM ars_supplier_cheque_events WHERE shop_id=$1',[shopId])).rowCount,4);
     const expense={id:'exp-'+id(),shopId,desc:'CI delivery fuel',category:'Vehicle fuel',amount:40,date:day,recordedBy,role:'Store Manager',sourceAccountId:cash,paymentMethod:'Cash'};
     await assert.rejects(recordPaidExpense(pool,{...expense,sourceAccountId:foreign}),/matching the payment method/);
     await assert.rejects(recordPaidExpense(pool,{...expense,amount:301}),/Insufficient/);
