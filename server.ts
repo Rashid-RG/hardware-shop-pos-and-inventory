@@ -4675,7 +4675,18 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     requestedQtyByStockKey.set(stockKey, requestedQty);
 
     const discountPct = Math.min(100, Math.max(0, Number(item.discount) || 0));
-    const unitSellingPrice = sellingUnit ? sellingUnit.sellingPrice : targetVariant ? Number(targetVariant.sellingPrice || 0) : Number(dbProduct.sellingPrice || 0);
+    const standardUnitPrice = sellingUnit ? sellingUnit.sellingPrice : targetVariant ? Number(targetVariant.sellingPrice || 0) : Number(dbProduct.sellingPrice || 0);
+    let unitSellingPrice = standardUnitPrice;
+    let priceOverride: { standardPrice: number; reason: string } | undefined;
+    if (item.customUnitPrice !== undefined || item.priceOverrideReason !== undefined) {
+      const role = (req as AppRequest).authUser?.role;
+      if (!request || !['Super Admin','Store Manager'].includes(role || '')) return res.status(403).json({error:'Custom pricing requires manager authorization.'});
+      const price = item.customUnitPrice;
+      const reason = typeof item.priceOverrideReason === 'string' ? item.priceOverrideReason.trim() : '';
+      if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0 || price > 1_000_000_000 || roundMoney(price) !== price || !reason || reason.length > 250) return res.status(400).json({error:'Enter a valid custom unit price and reason.'});
+      unitSellingPrice = price;
+      priceOverride = { standardPrice: standardUnitPrice, reason };
+    }
     const unitCostPrice = sellingUnit ? roundMoney(Number(dbProduct.costPrice) * sellingUnit.baseUnits) : targetVariant ? Number(targetVariant.costPrice || 0) : Number(dbProduct.costPrice || 0);
     const baseItemCost = unitSellingPrice * quantity;
     const percentAdjustedLineTotal = baseItemCost * (1 - discountPct / 100);
@@ -4711,6 +4722,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
       variantBarcode: targetVariant?.barcode,
       quantity,
       sellingPrice: unitSellingPrice,
+      priceOverride,
       costPrice: unitCostPrice,
       discount: discountPct,
       discountAmount: Math.round(lineDiscountAmount * 100) / 100,
