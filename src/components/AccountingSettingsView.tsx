@@ -93,6 +93,7 @@ export default function AccountingSettingsView({
   const currencySymbol = 'Rs.';
   const [costCorrectionRevision,setCostCorrectionRevision]=useState(0);
   const [activeTab, setActiveTab] = useState<'accounting' | 'settings'>(initialView);
+  const [financeWorkspace,setFinanceWorkspace] = useState('overview');
 
   // Expense Logger form states
   const [isExpOpen, setIsExpOpen] = useState(false);
@@ -384,18 +385,9 @@ export default function AccountingSettingsView({
   const isWholesaleSettingsShop = true; // ARS uses A4 wholesale invoices.
 
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
-      {/* Tab Switching Navigation Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            ARS Finance & Company Profile
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Manage wholesale finances and edit ARS company details used in A4 invoices.
-          </p>
-        </div>
-
+    <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        <span className="px-2 text-xs font-semibold text-slate-600">Finance &amp; company profile</span>
         <div className="flex bg-slate-100 p-1.5 rounded-lg border border-slate-200 shrink-0">
           <button
             onClick={() => setActiveTab('accounting')}
@@ -425,31 +417,35 @@ export default function AccountingSettingsView({
 
       {/* RENDER TAB 1: FINANCIAL LEDGER */}
       {activeTab === 'accounting' && (
-        <div className="space-y-6">
-          {currentRole==='Super Admin' && <RepresentativeLoginsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
-          {isManager && financialOwner && <CashHandoversPanel manager authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
-          {isManager && <RepresentativeAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
-          {isManager && <FinancialAccountsPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
-          {isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
-          {isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
-          {currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
-          {isManager && <ReceivableAgingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
-          {isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
-          {isManager && <ChartOfAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
-          {isManager && <OpeningBalancePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
-          {isManager && <LedgerReportsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
-          {isManager && <LedgerMappingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
-          {isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
-          {isManager && <FinancialPositionPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
-          {isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
-          {isManager && <ImportExpenseReviewPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
-          {isManager && <FinancialProfitPanel correctionRevision={costCorrectionRevision} authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
-          {isManager && <FinancialCashFlowPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
-          {isManager && <FinancialStatementPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+        <div className="space-y-3">
+          <nav aria-label="Financial workspaces" className="flex flex-wrap gap-1.5 rounded-xl border border-slate-200 bg-white p-2">
+            {[{id:'overview',label:'Overview',allowed:true},{id:'logins',label:'Representative logins',allowed:Boolean(currentRole==='Super Admin')},{id:'handover',label:'Cash handovers',allowed:Boolean(isManager && financialOwner)},{id:'repaccounts',label:'Representative accounts',allowed:Boolean(isManager)},{id:'accounts',label:'Financial accounts',allowed:Boolean(isManager)},{id:'cheques',label:'Cheques',allowed:Boolean(isManager)},{id:'reconcile',label:'Reconciliation',allowed:Boolean(isManager)},{id:'historical',label:'Historical costs',allowed:Boolean(currentRole==='Super Admin' && financialOwner)},{id:'receivables',label:'Receivables',allowed:Boolean(isManager)},{id:'payables',label:'Supplier payables',allowed:Boolean(isManager)},{id:'coa',label:'Chart of accounts',allowed:Boolean(isManager)},{id:'opening',label:'Opening balances',allowed:Boolean(isManager)},{id:'ledger',label:'Ledger reports',allowed:Boolean(isManager)},{id:'mapping',label:'Ledger mapping',allowed:Boolean(isManager)},{id:'register',label:'Position register',allowed:Boolean(isManager)},{id:'position',label:'Financial position',allowed:Boolean(isManager)},{id:'valuation',label:'Inventory valuation',allowed:Boolean(isManager)},{id:'importexpense',label:'Import expenses',allowed:Boolean(isManager)},{id:'profit',label:'Profit',allowed:Boolean(isManager)},{id:'cashflow',label:'Cash flow',allowed:Boolean(isManager)},{id:'statements',label:'Financial statements',allowed:Boolean(isManager)}].filter(item=>item.allowed).map(item=><button key={item.id} type="button" aria-pressed={financeWorkspace===item.id} onClick={()=>setFinanceWorkspace(item.id)} className={financeWorkspace===item.id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg border border-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50'}>{item.label}</button>)}
+          </nav>
+          {financeWorkspace==='logins' && currentRole==='Super Admin' && <RepresentativeLoginsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='handover' && isManager && financialOwner && <CashHandoversPanel manager authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='repaccounts' && isManager && <RepresentativeAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='accounts' && isManager && <FinancialAccountsPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='cheques' && isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
+          {financeWorkspace==='reconcile' && isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='historical' && currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
+          {financeWorkspace==='receivables' && isManager && <ReceivableAgingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='payables' && isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='coa' && isManager && <ChartOfAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='opening' && isManager && <OpeningBalancePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='ledger' && isManager && <LedgerReportsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='mapping' && isManager && <LedgerMappingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='register' && isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='position' && isManager && <FinancialPositionPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='valuation' && isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='importexpense' && isManager && <ImportExpenseReviewPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
+          {financeWorkspace==='profit' && isManager && <FinancialProfitPanel correctionRevision={costCorrectionRevision} authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='cashflow' && isManager && <FinancialCashFlowPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='statements' && isManager && <FinancialStatementPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='overview' && <div className="space-y-3">
           {isManager&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Financial ledger overview',filename:'ars-financial-ledger',period:'All available records | operational figures, not audited accounts',headers:['Type','Date','Reference / description','Status','Amount (LKR)'],moneyColumns:[4],rows:[...transactions.map(t=>['Sale',reportDay(t.date),t.invoiceNumber,t.status||'Completed',t.total]),...purchaseOrders.map(p=>['Purchase order',reportDay(p.date),p.poNumber,p.status,p.total]),...manualExpenses.map(e=>['Manual expense',reportDay(e.date),e.desc,e.category,e.amount])],summary:[{label:'Non-refunded invoice totals (LKR)',value:transactions.filter(t=>t.status!=='Refunded').reduce((a,t)=>a+t.total,0)},{label:'Received purchase orders (LKR)',value:purchaseOrders.filter(p=>p.status==='Received').reduce((a,p)=>a+p.total,0)},{label:'Manual expenses (LKR)',value:manualExpenses.reduce((a,e)=>a+e.amount,0)}]})}/>}
           {/* KPI Analytics Block */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Completed invoice value (incl. tax)</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
@@ -462,7 +458,7 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Recorded manual expenses</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalExpensesAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
@@ -475,7 +471,7 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Credit invoice value</span>
                 <strong className={`text-2xl font-mono block mt-1 text-slate-900`}>
@@ -489,7 +485,7 @@ export default function AccountingSettingsView({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             {/* Cash Flow Timeline logs (8 cols) */}
             <div className="lg:col-span-8 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-100 flex items-center justify-between">
@@ -509,9 +505,9 @@ export default function AccountingSettingsView({
                 )}
               </div>
 
-              <div className="overflow-x-auto text-[11px] font-sans">
+              <div className="max-h-[55dvh] overflow-auto text-[11px] font-sans">
                 <table className="w-full text-left">
-                  <thead>
+                  <thead className="sticky top-0 bg-slate-50">
                     <tr className="bg-slate-50/75 text-slate-500 font-medium font-sans border-b border-slate-100">
                       <th className="p-4">Record date</th>
                       <th className="p-4">Reference/Description</th>
@@ -561,7 +557,7 @@ export default function AccountingSettingsView({
             </div>
 
             {/* Income Streams POS Quick Ledger (4 cols) */}
-            <div className="lg:col-span-4 bg-white p-5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
+            <div className="lg:col-span-4 bg-white p-3 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
               <div>
                 <h4 className="font-heading font-medium text-slate-900 text-sm">Completed invoice register</h4>
                 <p className="text-[11px] text-slate-400 mb-4">Invoice values, including credit sales; not cash collections.</p>
@@ -587,6 +583,7 @@ export default function AccountingSettingsView({
               </div>
             </div>
           </div>
+          </div>}
         </div>
       )}
 
