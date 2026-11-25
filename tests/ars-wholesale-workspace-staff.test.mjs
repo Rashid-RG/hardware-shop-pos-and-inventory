@@ -35,7 +35,9 @@ test('filtered stock searches show all matching products and movements', () => {
 
 test('stock history can open in its own full-height workspace without losing filters', () => {
   assert.match(inventory, /id="ars-stock-ledger-workspace"/);
-  assert.match(inventory, /role=\{isLedgerFocused \? 'dialog'/);
+  assert.match(inventory, /aria-label="Full stock movement history"/);
+  assert.match(inventory, /setIsLedgerFocused\(true\)/);
+  assert.match(inventory, /max-h-\[58dvh\] overflow-auto/);
   assert.match(inventory, /id="ars-stock-ledger-focus-toggle"/);
   assert.match(inventory, /Open full stock history/);
   assert.match(inventory, /Back to stock overview/);
