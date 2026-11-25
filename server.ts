@@ -6818,6 +6818,21 @@ app.get('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),asy
   try{return res.json(await listSupplierCheques(pool,scope.shopId));}
   catch(error){console.error('Supplier cheque register read failed',error);return res.status(500).json({error:'Unable to load supplier cheque register.'});}
 });
+app.get('/api/supplier-cheques/requests/:requestId',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const requestId=req.params.requestId;
+  if(!validChequeRequestId(requestId))return res.status(400).json({error:'Invalid request identifier.'});
+  res.setHeader('Cache-Control','no-store');
+  try{
+    const result=await pool.query(`SELECT e.id AS "eventId",e.cheque_id AS "chequeId",e.next_status AS "operation",e.effective_date::text AS "effectiveDate",e.note,c.status,c.payment_id AS "paymentId",c.supplier_id AS "supplierId",c.purchase_order_id AS "purchaseOrderId",c.bank_account_id AS "bankAccountId",c.cheque_number AS "chequeNumber",c.amount::text AS amount,c.issued_date::text AS "issuedDate",c.due_date::text AS "dueDate"
+      FROM ars_supplier_cheque_events e JOIN ars_supplier_cheques c ON c.shop_id=e.shop_id AND c.id=e.cheque_id
+      WHERE e.shop_id=$1 AND e.recorded_by=$2 AND e.id=ANY($3::text[])`,[scope.shopId,scope.recordedBy,['supplier-cheque-'+requestId+'-issued','supplier-cheque-event-'+requestId]]);
+    if(result.rowCount===0)return res.json({found:false});
+    if(result.rowCount!==1)return res.status(409).json({error:'Request identifier matches multiple events. Manager review required.'});
+    return res.json({found:true,...result.rows[0]});
+  }catch(error){console.error('Supplier cheque request lookup failed',error);return res.status(500).json({error:'Unable to verify supplier cheque request.'});}
+});
 app.get('/api/supplier-cheques/:id/history',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
