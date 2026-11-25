@@ -18,9 +18,25 @@ async function api(path,method='GET',body){
  const data=await response.json();if(!response.ok)throw Error(data.error||'HTTP '+response.status);return data;
 }
 try{
- // Obtain a short-lived token via the normal UI, not a password on the command line.
- token=(await rl.question('Paste the authenticated Super Admin or Store Manager session token (local test only): ')).trim();
- if(!token)throw Error('Session token required.');
+ console.log('ARS Distributors - Sample Product Setup | RS Nextward');
+ const email=(await rl.question('Administrator email: ')).trim();
+ if(!email||!stdin.isTTY||!stdout.isTTY)throw Error('Use an interactive local terminal.');
+ // Keep the password out of terminal output, command history and files.
+ const originalWrite=stdout.write;
+ let password;
+ stdout.write('Password (hidden): ');
+ try {
+   stdout.write=function(chunk,...args){return true;};
+   password=await rl.question('');
+ } finally {
+   stdout.write=originalWrite;
+   stdout.write('\n');
+ }
+ let session;
+ try {session=await api('/api/auth/login','POST',{email,password});}
+ finally {password=undefined;}
+ if(!session.token||!['Super Admin','Store Manager'].includes(session.user?.role))throw Error('Administrator or Store Manager login required.');
+ token=session.token;
  const state=await api('/api/db');shop=state._meta?.activeShopId;
  if(!shop||state._meta?.sourceOfTruth!=='normalized')throw Error('Local normalized database required.');
  console.log('Target branch:',shop,'Company:',state.settings?.storeName);
@@ -40,5 +56,8 @@ try{
  await api(path,'PUT',{...saved,quantity:factor*10,reason:'Acceptance test opening stock'});
  console.log('Created',sku,name,'with',factor*10,'pieces');
  }
- console.log('Completed. Review the TEST-ARS products in Products before testing.');
+ const final=await api('/api/db');
+ const ready=rows.filter((_,i)=>final.products.some(p=>p.sku==='TEST-ARS-'+String(i+1).padStart(3,'0')&&p.sharedStockUnits&&p.quantity>0)).length;
+ console.log('Ready sample products: '+ready+'/20. Review Products before testing.');
+ if(ready!==20)process.exitCode=1;
 }catch(error){console.error('Stopped:',error.message,'Previously committed items remain. Review them before retrying.');process.exitCode=1;}finally{rl.close();}
