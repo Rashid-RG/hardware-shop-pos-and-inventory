@@ -7,7 +7,7 @@ const ledger = readFileSync(new URL('../src/components/CustomerLedgerPanel.tsx',
 const reports = readFileSync(new URL('../src/components/CustomerReportsView.tsx', import.meta.url), 'utf8');
 
 test('customer workspace opens dedicated ledger and report screens', () => {
-  assert.match(app, /<div key=\{selectedCustomer\.id\}>/);
+  assert.match(app, /<div hidden=\{customerFileTab!=="ledger"\} key=\{selectedCustomer\.id\}>/);
   assert.match(app, /<CustomerLedgerPanel customer=\{selectedCustomer\}/);
   assert.match(app, /id="ars-open-customer-reports"/);
   assert.match(app, /<CustomerReportsView customers=\{customers\}/);
