@@ -503,6 +503,7 @@ export default function POSView({
       }
     }
   };
+  const currentStockIssue = stockIssue(cart);
   const maxLineQuantity = (line: CartItem) => {
     const product = products.find(p => p.id === line.product.id);
     if (!product) return 0;
@@ -1805,13 +1806,14 @@ export default function POSView({
             )}
           </div>
 
+        {currentStockIssue && <div role="alert" className="shrink-0 mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"><strong>Stock correction required:</strong> {currentStockIssue}</div>}
         <div className="shrink-0 border-t border-slate-200 bg-white pt-2 lg:flex lg:items-center lg:gap-4">
           <div className="flex flex-1 items-center justify-between gap-3 pb-2 lg:pb-0">
-            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.reduce((sum, item) => sum + item.quantity, 0)} units</p>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.length} {cart.length === 1 ? "line" : "lines"}</p>
               <strong id="pos-total-price" className="text-xl font-bold text-slate-900">{formatMoney(total)}</strong></div>
             <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">{draftSaved && cart.length > 0 ? 'Draft saved locally' : 'Not saved'}</span>
           </div>
-          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting || checkoutUncertain}
+          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting || checkoutUncertain || !!currentStockIssue}
             onClick={() => {
               if (!selectedCustomer.id || selectedCustomer.id === 'cust-walkin' ||
                   !customers.some(c => c.id === selectedCustomer.id && c.shopId === taxConfig.activeShopId)) {
@@ -2234,7 +2236,7 @@ export default function POSView({
                         {/* Checkout Submit Trigger */}
           <button
             id="pos-pay-trigger" type="button"
-            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || invalidCreditTerms || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || !!currentStockIssue || invalidCreditTerms || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
             onClick={handleCheckout}
             className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
               cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)
