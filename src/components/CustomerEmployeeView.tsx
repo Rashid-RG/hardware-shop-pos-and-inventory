@@ -67,6 +67,8 @@ export default function CustomerEmployeeView({
   const activeTab = viewMode;
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
+  const [staffFileId,setStaffFileId]=useState<string|null>(null);
+  const staffFile=employees.find(emp=>emp.id===staffFileId);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [customerFileTab, setCustomerFileTab] = useState<'overview'|'ledger'|'activity'>('overview');
   useEffect(()=>setCustomerFileTab('overview'),[selectedCustomerId]);
@@ -865,7 +867,7 @@ export default function CustomerEmployeeView({
 
       {/* TAB 2 CONTENT: EMPLOYEE ROSTER */}
       {activeTab === 'employees' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[70dvh] overflow-y-auto overscroll-contain auto-rows-min">
           {filteredEmployees.slice(0, visibleCount).map((emp) => {
             const isPresent = emp.attendanceStatus === 'Present';
             const isOnLeave = emp.attendanceStatus === 'On Leave';
@@ -898,37 +900,9 @@ export default function CustomerEmployeeView({
                     </span>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-50 space-y-2 text-xs text-slate-600 font-mono">
-                    <p className="flex items-center gap-2">
-                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>{emp.phone}</span>
-                    </p>
-                    <p className="flex items-center gap-2">
-                      <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="truncate">{emp.email}</span>
-                    </p>
-
-                    {/* Salary Block under security flags */}
-                    <p className="flex items-center gap-2 text-slate-700">
-                      <DollarSign className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span>
-                        Base wage:{' '}
-                        <strong>
-                          {hidesSalaries ? '••••' : `${formatSalary(emp.salary)}/mo`}
-                        </strong>
-                      </span>
-                    </p>
-                  </div>
+                  <p className="mt-2 text-xs text-slate-600 truncate">{emp.phone || 'No phone registered'}</p>
                 </div>
-
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-mono text-slate-500">
-                  <span className="flex items-center gap-1">
-                    <Gauge className="w-3.5 h-3.5 text-slate-450" /> Score: <strong className="text-slate-800">{emp.performanceScore}%</strong>
-                  </span>
-                  <div className="w-24 bg-slate-100 h-1 rounded overflow-hidden">
-                    <div className="bg-amber-500 h-1 shadow-xs" style={{ width: `${emp.performanceScore}%` }}></div>
-                  </div>
-                </div>
+                <button type="button" onClick={()=>setStaffFileId(emp.id)} className="mt-2 w-full rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700">Open representative profile</button>
               </div>
             );
           })}
@@ -941,6 +915,18 @@ export default function CustomerEmployeeView({
         </div>
       )}
 
+      {activeTab==='employees'&&staffFile&&createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-3">
+          <section role="dialog" aria-modal="true" aria-label="Sales representative profile" className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+            <header className="flex items-center justify-between bg-[#182a45] px-4 py-3 text-white"><div><p className="text-xs text-amber-300">SALES REPRESENTATIVE</p><h2 className="font-bold">{staffFile.name}</h2></div><button type="button" aria-label="Close representative profile" onClick={()=>setStaffFileId(null)}><X className="h-5 w-5"/></button></header>
+            <div className="grid grid-cols-2 gap-3 overflow-y-auto p-4 text-sm">
+              <div><p className="text-xs text-slate-500">Role</p><strong>{staffFile.role}</strong></div><div><p className="text-xs text-slate-500">Attendance status</p><strong>{staffFile.attendanceStatus}</strong></div>
+              <div><p className="text-xs text-slate-500">Phone</p><p className="break-words">{staffFile.phone||'—'}</p></div><div><p className="text-xs text-slate-500">Email</p><p className="break-words">{staffFile.email||'—'}</p></div>
+              <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Monthly base wage</p><strong>{hidesSalaries?'••••':formatSalary(staffFile.salary)}</strong></div><div className="rounded-lg border p-3"><p className="text-xs text-slate-500">Performance score</p><strong>{staffFile.performanceScore}%</strong></div>
+            </div>
+            <footer className="border-t p-3"><button type="button" onClick={()=>setStaffFileId(null)} className="w-full rounded-lg bg-slate-100 py-2 text-xs font-bold">Back to staff directory</button></footer>
+          </section>
+        </div>,document.body)}
       {/* DIALOG 1: ADD CUSTOMER MODAL */}
       {isCustOpen && createPortal(
         <div id="customer-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[120]">
