@@ -4946,7 +4946,7 @@ app.get('/api/transactions/:id/pdf', requireRole(['Super Admin', 'Store Manager'
     printedBy,
     printedAt,
   }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings,
-    req.query.paper === 'A4' ? 'A4' : process.env.ARS_INVOICE_PAPER === 'ARS-240x270' ? 'ARS-240x270' : 'A4').then((pdfBuffer) => {
+    req.query.paper === 'A4' ? 'A4' : 'ARS-240x270').then((pdfBuffer) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.send(pdfBuffer);
