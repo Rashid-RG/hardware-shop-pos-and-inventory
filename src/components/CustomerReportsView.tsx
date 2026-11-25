@@ -1,6 +1,6 @@
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import { inReportPeriod } from '../utils/reporting';
+import { inReportPeriod, reportDay } from '../utils/reporting';
 import React, { useMemo, useState } from 'react';
 import { Customer, CustomerCreditPayment, SalesTransaction, StoreSettings } from '../types';
 
@@ -51,6 +51,39 @@ export function CustomerReportsView({ settings, customers, invoices, payments, o
 
   const outstandingRows = [...rows].filter(row=>row.outstanding>0).sort((a,b)=>b.outstanding-a.outstanding||a.customer.name.localeCompare(b.customer.name));
   const positiveOutstanding = outstandingRows.reduce((sum,row)=>sum+cents(row.outstanding),0)/100;
+  // Age only reconciled current credit balances, using agreed due dates.
+  const today = reportDay(new Date());
+  const ageLabels = ['Not due','1–30 days','31–60 days','61–90 days','91+ days','No valid due date','Reconciliation required'];
+  const agedRows = outstandingRows.map(row=>{
+    const buckets = Array<number>(7).fill(0);
+    const ownInvoices = invoices.filter(tx=>tx.customerId===row.customer.id&&tx.shopId===row.customer.shopId);
+    const ownPayments = payments.filter(p=>p.customerId===row.customer.id&&p.shopId===row.customer.shopId);
+    const credit = ownInvoices.filter(tx=>tx.paymentMethod==='Credit Account'&&tx.status==='Completed');
+    const balances = credit.map(tx=>({tx,balance:cents(Number(tx.total))-ownPayments.filter(p=>p.invoiceId===tx.id).reduce((sum,p)=>sum+cents(Number(p.amount)),0)}));
+    const account = cents(row.outstanding);
+    const uncertain = ownPayments.some(p=>!p.invoiceId||!ownInvoices.some(tx=>tx.id===p.invoiceId)||!Number.isFinite(Number(p.amount))||Number(p.amount)<=0)
+      || balances.some(b=>b.balance<0||!Number.isFinite(Number(b.tx.total)))
+      || balances.reduce((sum,b)=>sum+b.balance,0)!==account;
+    if(uncertain) buckets[6]=account;
+    else for(const {tx,balance} of balances){
+      if(balance<=0)continue;
+      const due=tx.creditDueDate||'';
+      const parsed=Date.parse(due+'T00:00:00Z');
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(due)||!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==due){buckets[5]+=balance;continue;}
+      const days=Math.round((Date.parse(today+'T00:00:00Z')-parsed)/86400000);
+      buckets[days<=0?0:days<=30?1:days<=60?2:days<=90?3:4]+=balance;
+    }
+    return {customer:row.customer,buckets};
+  });
+  const ageTotals=ageLabels.map((_,i)=>agedRows.reduce((sum,row)=>sum+row.buckets[i],0)/100);
+  const ageingReport=():BusinessReport=>({
+    title:'Customer receivables ageing',filename:'ars-customer-ageing',
+    period:'Current balances as of '+today+' | Agreed due dates; matching customer filters',
+    headers:['Customer ID','Customer shop',...ageLabels,'Total (LKR)'],
+    rows:agedRows.map(row=>[row.customer.id,row.customer.name,...row.buckets.map(v=>v/100),row.buckets.reduce((sum,v)=>sum+v,0)/100]),
+    moneyColumns:[2,3,4,5,6,7,8,9],
+    summary:ageLabels.map((label,i)=>({label:label+' (LKR)',value:ageTotals[i]}))
+  });
   const outstandingReport = (): BusinessReport => ({
     title: 'Customer outstanding balances', filename: 'ars-customer-outstanding',
     period: 'Current recorded balances | Matching customer filters',
@@ -129,11 +162,13 @@ export function CustomerReportsView({ settings, customers, invoices, payments, o
               className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold">Clear filters</button>
             <div id="ars-report-export"><ReportExportMenu report={report} settings={settings}/></div>
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-2 py-1"><span className="text-xs font-semibold">Outstanding-only report</span><ReportExportMenu report={outstandingReport} settings={settings}/></div>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-2 py-1"><span className="text-xs font-semibold">Receivables ageing</span><ReportExportMenu report={ageingReport} settings={settings}/></div>
             <span className="self-center text-xs text-slate-600">{rows.length} matching shops</span>
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><span><strong>{outstandingRows.length}</strong> matching accounts owing · <strong className="text-rose-700">{currency(positiveOutstanding)}</strong> positive outstanding</span><button type="button" onClick={()=>{setBalanceFilter('outstanding');setActivityFilter('all');setFrom('');setTo('');setSearch('');}} className="rounded-lg border border-slate-300 px-3 py-2 font-semibold">View all outstanding accounts</button></div>
         <p className="text-xs text-amber-800">Date filters apply to invoices and repayments. Outstanding balances are today's recorded balances, not historical as-of-date balances. Refunded invoices are excluded from net sales.</p>
+        <details className="rounded-xl border border-slate-200 bg-white p-3"><summary className="cursor-pointer text-sm font-semibold">Receivables ageing · {today}</summary><p className="mt-2 text-xs text-slate-600">Based on agreed due dates and current balances, not historical date-filter snapshots. Accounts with unmatched payments or balances require reconciliation.</p><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{ageLabels.map((label,i)=><div key={label} className="rounded-lg border border-slate-200 p-2"><span className="block text-xs text-slate-500">{label}</span><strong className="text-sm">{currency(ageTotals[i])}</strong></div>)}</div></details>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ['Net sales in period', totals.sales],
