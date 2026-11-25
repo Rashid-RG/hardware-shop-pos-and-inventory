@@ -563,7 +563,9 @@ export default function POSView({
     const latest = products.find(p => p.id === product.id);
     if (!latest) { notify.warning(product.name + ': product unavailable.'); return; }
     product = latest;
-    variant = variant ? product.variants?.find(v => v.id === variant?.id) : getSelectedVariant(product);
+    const requestedVariantId = variant?.id;
+    variant = requestedVariantId ? product.variants?.find(v => v.id === requestedVariantId) : getSelectedVariant(product);
+    if (requestedVariantId && !variant) { notify.warning(product.name + ': selected variant is no longer available.'); return false; }
     const available = availableToAdd(product, variant, cart, sellingUnitId);
     if (!Number.isSafeInteger(requestedQty) || requestedQty < 1 || requestedQty > available) { notify.warning(product.name + ': only ' + available + ' available to add.'); return false; }
     if (product.sharedStockUnits) {
@@ -588,6 +590,10 @@ export default function POSView({
     const existing = cart.find((item) => item.product.id === product.id && (item.variantId || '') === (resolvedVariant?.id || ''));
     const key = `${product.id}::${resolvedVariant?.id || 'base'}`;
     if (existing) {
+      const standardRate = resolvedVariant?.sellingPrice ?? product.sellingPrice;
+      if ((existing.customUnitPrice ?? existing.unitPrice ?? existing.product.sellingPrice) !== (customPrice ?? standardRate)) {
+        notify.warning('This item is already on the invoice at another price. Use the same rate or edit its existing line price and quantity.'); return false;
+      }
       updateCartQty(key, existing.quantity + requestedQty);
       return true;
     }
@@ -604,7 +610,9 @@ export default function POSView({
         variantUnit: resolvedVariant?.unit,
         variantSku: resolvedVariant?.sku,
         variantBarcode: resolvedVariant?.barcode,
-        unitPrice: resolvedVariant?.sellingPrice,
+        unitPrice: resolvedVariant?.sellingPrice ?? product.sellingPrice,
+        customUnitPrice: customPrice,
+        priceOverrideReason: customPrice !== undefined ? reason?.trim() : undefined,
         unitCostPrice: resolvedVariant?.costPrice,
       },
     ]);
