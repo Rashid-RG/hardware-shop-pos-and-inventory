@@ -1,5 +1,6 @@
 import { reportDay, reportTime } from '../utils/reporting';
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { notify } from '../utils/notifications';
 import {
   History,
@@ -144,21 +145,22 @@ export default function InventoryView({
 
   const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())));
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 motion-safe:animate-fade-in">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2"><button type="button" aria-pressed={!isLedgerFocused} onClick={()=>setIsLedgerFocused(false)} className={!isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Stock overview</button><button type="button" aria-pressed={isLedgerFocused} onClick={()=>setIsLedgerFocused(true)} className={isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Movement history</button><span className="ml-auto px-2 text-xs text-slate-500">{products.length} products · {products.filter(p=>p.quantity<=p.reorderLevel).length} low or out of stock</span></div>
       {/* LEFT: Products Quick Stock overview inline adjustments (5 cols) */}
-      <div className="lg:col-span-5 space-y-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs">
+      <div className={isLedgerFocused ? "hidden" : "space-y-2"}>
+        <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-xs">
           <h3 className="font-heading font-medium text-slate-900 text-sm mb-1">
-            Shelf Audit Controls
+            Stock overview
           </h3>
           <p className="text-[11px] text-slate-500 mb-4">
-            Select catalog products to perform manual inventory overrides.
+            Search products, check available stock and record authorized adjustments.
           </p>
 
           <input type="search" aria-label="Find shelf stock product" value={productSearch}
             onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
             placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 max-h-[65dvh] overflow-y-auto overscroll-contain">
             {(isProductFiltered ? matchingProducts : matchingProducts.slice(0,productLimit)).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
@@ -167,7 +169,7 @@ export default function InventoryView({
                 <div
                   key={p.id}
                   id={`shelf-audit-item-${p.id}`}
-                  className="p-3 bg-slate-50 rounded-xl border border-slate-200/50 flex items-center justify-between hover:bg-slate-100/50 transition"
+                  className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/50 flex items-center justify-between hover:bg-slate-100/50 transition"
                 >
                   <div className="min-w-0 pr-2">
                     <p className="font-semibold text-slate-800 text-xs truncate" title={p.name}>
@@ -206,7 +208,7 @@ export default function InventoryView({
             })}
             {!isProductFiltered&&matchingProducts.length>productLimit&&<button type="button"
               onClick={()=>setProductLimit(v=>v+12)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
+              className="col-span-full w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
               Show more shelf products ({matchingProducts.length-productLimit} remaining)
             </button>}
           </div>
@@ -214,15 +216,15 @@ export default function InventoryView({
       </div>
 
       {/* RIGHT: Detailed Logs Ledger Chronology (7 cols) */}
-      <div id="ars-stock-ledger-workspace" role={isLedgerFocused ? 'dialog' : undefined} aria-label={isLedgerFocused ? 'Full stock movement history' : undefined}
+      <div id="ars-stock-ledger-workspace" aria-label="Full stock movement history"
         className={isLedgerFocused
-          ? 'fixed inset-0 z-40 flex min-h-0 flex-col gap-3 overflow-y-auto bg-slate-50 p-3 sm:p-6'
-          : 'lg:col-span-7 flex min-h-0 flex-col space-y-4'}>
+          ? 'flex min-h-0 flex-col gap-2'
+          : 'hidden'}>
         {/* Logs Timeline Search Controls */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-xs space-y-2">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
+              <h2 className="text-base font-heading font-medium tracking-tight text-slate-900">
                 Stock Ledger & Movement History
               </h2>
               <button type="button" id="ars-stock-ledger-focus-toggle" onClick={() => setIsLedgerFocused(value => !value)}
@@ -285,16 +287,16 @@ export default function InventoryView({
 
         {/* Chronological log feed */}
         <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
-          <div className={isLedgerFocused ? 'h-full overflow-auto' : 'overflow-x-auto'}>
+          <div className={isLedgerFocused ? 'max-h-[58dvh] overflow-auto overscroll-contain' : 'overflow-x-auto'}>
             <table className="w-full text-left text-xs">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 font-medium font-sans">
-                  <th className="p-4">Timestamp</th>
-                  <th className="p-4">Target Product</th>
-                  <th className="p-4">Action Type</th>
-                  <th className="p-4 text-right">Adjustment Quantity</th>
-                  <th className="p-4">Operator</th>
-                  <th className="p-4">Reason Details</th>
+                  <th className="px-3 py-2">Timestamp</th>
+                  <th className="px-3 py-2">Target Product</th>
+                  <th className="px-3 py-2">Action Type</th>
+                  <th className="px-3 py-2 text-right">Adjustment Quantity</th>
+                  <th className="px-3 py-2">Operator</th>
+                  <th className="px-3 py-2">Reason Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-sans">
@@ -304,16 +306,16 @@ export default function InventoryView({
 
                   return (
                     <tr key={log.id} className="hover:bg-slate-50/50 transition duration-150 text-[11px]">
-                      <td className="p-4 text-slate-400 font-mono">
+                      <td className="px-3 py-2 text-slate-400 font-mono">
                         {reportDay(log.date)} <br />
                         {new Date(log.date).toLocaleTimeString('en-GB',{timeZone:'Asia/Colombo'})}
                       </td>
-                      <td className="p-4">
+                      <td className="px-3 py-2">
                         <div className="font-semibold text-slate-900 max-w-xs truncate" title={log.productName}>
                           {log.productName}
                         </div>
                       </td>
-                      <td className="p-4">
+                      <td className="px-3 py-2">
                         <span
                           className={`inline-block px-2 py-0.5 rounded text-[9px] font-mono font-bold ${
                             log.type === 'Stock In'
@@ -328,14 +330,14 @@ export default function InventoryView({
                           {log.type}
                         </span>
                       </td>
-                      <td className="p-4 text-right font-mono font-bold">
+                      <td className="px-3 py-2 text-right font-mono font-bold">
                         <span className={isPos ? 'text-emerald-600' : 'text-rose-600'}>
                           {isPos ? '+' : ''}
                           {log.quantity}
                         </span>
                       </td>
-                      <td className="p-4 text-slate-600 font-medium">{log.user}</td>
-                      <td className="p-4 text-slate-500 font-mono leading-snug max-w-xs">{log.reason}</td>
+                      <td className="px-3 py-2 text-slate-600 font-medium">{log.user}</td>
+                      <td className="px-3 py-2 text-slate-500 font-mono leading-snug max-w-xs">{log.reason}</td>
                     </tr>
                   );
                 })}
@@ -362,9 +364,9 @@ export default function InventoryView({
       </div>
 
       {/* ADJUST QUANTITY OVERLAY MODAL */}
-      {isAdjustOpen && (
-        <div id="adjust-dialog-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-sm border border-slate-200 font-sans relative max-h-[90dvh] overflow-y-auto">
+      {isAdjustOpen && createPortal(
+        <div id="adjust-dialog-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[120]">
+          <div role="dialog" aria-modal="true" aria-label="Stock adjustment" className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-lg border border-slate-200 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button
               onClick={() => setIsAdjustOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -373,7 +375,7 @@ export default function InventoryView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4 flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-amber-500" /> Manual Stock Audit Override
+              <Sliders className="w-4 h-4 text-amber-500" /> Stock adjustment
             </h3>
 
             <form onSubmit={handleSubmitAdjustment} className="space-y-4 text-xs font-sans">
@@ -477,7 +479,7 @@ export default function InventoryView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
