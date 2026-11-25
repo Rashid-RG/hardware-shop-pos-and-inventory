@@ -135,6 +135,7 @@ export default function InventoryView({
     return matchesSearch && matchesType && matchesDate;
   });
   const isLedgerFiltered = Boolean(searchTerm.trim() || logTypeFilter !== 'All' || logDateFrom || logDateTo);
+  const isProductFiltered = Boolean(productSearch.trim());
 
 
   const ledgerReport = ():BusinessReport => ({
@@ -166,7 +167,7 @@ export default function InventoryView({
             onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
             placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 max-h-[65dvh] overflow-y-auto overscroll-contain">
-            {matchingProducts.slice(0,productLimit).map((p) => {
+            {(isProductFiltered ? matchingProducts : matchingProducts.slice(0,productLimit)).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
 
@@ -212,7 +213,7 @@ export default function InventoryView({
               );
             })}
             {matchingProducts.length===0 && <div className="col-span-full rounded-lg border border-dashed border-slate-200 p-6 text-center text-xs text-slate-600">No products match these filters. <button type="button" className="font-semibold text-indigo-700 underline" onClick={()=>{setProductSearch('');setStockFilter('All');setProductLimit(12);}}>Clear filters</button></div>}
-            {matchingProducts.length>productLimit&&<button type="button"
+            {!isProductFiltered&&matchingProducts.length>productLimit&&<button type="button"
               onClick={()=>setProductLimit(v=>v+12)}
               className="col-span-full w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
               Show more shelf products ({matchingProducts.length-productLimit} remaining)
