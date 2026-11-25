@@ -7,7 +7,7 @@ type CapitalRequest={requestId:string;partnerId:string;accountId:string;entryTyp
 type CapitalAccount={id:string;name:string;kind:string;active:boolean;balance:number;balanceAfterChequeCommitments?:number};
 type Partner={id:string;name:string;ownership_percent:string|null;is_active:boolean;};
 type OwnershipAudit={id:string;partner_id:string;partner_name:string;old_percent:string|null;new_percent:string|null;change_type:string;reference:string;changed_by:string;changed_at:string;};
-type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';amount_lkr:string;entry_date:string;reference:string;note:string;created_by:string;};
+type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';amount_lkr:string;entry_date:string;reference:string;note:string;created_by:string;posting_status?:'Posted'|'Historical'|'Review required';financial_account_name?:string|null;financial_account_id?:string|null;movement_id?:string|null;journal_id?:string|null;};
 type ProfitAllocation={id:string;period_key:string;approved_profit_lkr:string;approval_reference:string;allocated_at:string;approved_by:string;shares:Array<{partnerId:string;name:string;ownershipPercent:number;allocatedLkr:string}>};
 type Agreement={id:string;effective_period:string;approval_reference:string;approved_by:string;approved_at:string;shares:Array<{partnerId:string;name:string;ownershipBasisPoints:number}>;};
 import type {StoreSettings} from '../types';
@@ -18,6 +18,7 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
  const [partners,setPartners]=useState<Partner[]>([]);
  const [workspace,setWorkspace]=useState<PartnerWorkspace>('overview');
  const [entries,setEntries]=useState<Capital[]>([]);
+ const [capitalSearch,setCapitalSearch]=useState(''),[capitalStatus,setCapitalStatus]=useState('all'),[capitalPartner,setCapitalPartner]=useState('all'),[capitalDetail,setCapitalDetail]=useState<Capital|null>(null);
  const [profits,setProfits]=useState<ProfitAllocation[]>([]);
  const [audits,setAudits]=useState<OwnershipAudit[]>([]);
  const [agreements,setAgreements]=useState<Agreement[]>([]);
@@ -159,10 +160,14 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
  const activePartners=partners.filter(p=>p.is_active);
  const ownershipTotal=activePartners.reduce((sum,p)=>sum+Number(p.ownership_percent||0),0);
  const allocationReady=activePartners.length>0&&activePartners.every(p=>p.ownership_percent!==null)&&Math.abs(ownershipTotal-100)<0.00001;
+ const statusOf=(e:Capital)=>e.posting_status||'Review required';
+ const partnerName=(e:Capital)=>partners.find(p=>p.id===e.partner_id)?.name||e.partner_id;
+ const capitalFiltered=entries.filter(e=>(capitalStatus==='all'||statusOf(e)===capitalStatus)&&(capitalPartner==='all'||e.partner_id===capitalPartner)&&[partnerName(e),e.reference,e.financial_account_name,e.journal_id,e.movement_id].some(v=>String(v||'').toLowerCase().includes(capitalSearch.trim().toLowerCase())));
+ const sumCapital=(rows:Capital[],kind:'Contribution'|'Drawing')=>rows.filter(e=>e.entry_type===kind).reduce((total,e)=>total+Math.round(Number(e.amount_lkr)*100),0)/100;
  const partnerReport=():BusinessReport=>{
  const base={period:'All available records | Confidential'};
  if(workspace==='profits')return {...base,title:'Approved partner profit allocations',filename:'ars-partner-profits',headers:['Period','Approval reference','Partner','Ownership (%)','Allocated (LKR)','Approved by','Allocated at'],moneyColumns:[4],rows:profits.flatMap(p=>p.shares.map(s=>[p.period_key,p.approval_reference,s.name,s.ownershipPercent,Number(s.allocatedLkr),p.approved_by,reportTime(p.allocated_at)])),summary:[{label:'Approved allocations',value:profits.length},{label:'Approved profit (LKR)',value:profits.reduce((a,p)=>a+Number(p.approved_profit_lkr),0)}]};
- if(workspace==='capital')return {...base,title:'Partner capital ledger',filename:'ars-partner-capital',headers:['Date','Partner','Type','Amount (LKR)','Reference','Note','Created by'],moneyColumns:[3],rows:entries.map(e=>[reportDay(e.entry_date),partners.find(p=>p.id===e.partner_id)?.name||e.partner_id,e.entry_type,Number(e.amount_lkr),e.reference,e.note,e.created_by]),summary:[{label:'Contributions (LKR)',value:entries.filter(e=>e.entry_type==='Contribution').reduce((a,e)=>a+Number(e.amount_lkr),0)},{label:'Drawings (LKR)',value:entries.filter(e=>e.entry_type==='Drawing').reduce((a,e)=>a+Number(e.amount_lkr),0)}]};
+ if(workspace==='capital')return {...base,period:'Filtered records · latest 500 maximum · not a full account statement',title:'Partner capital ledger',filename:'ars-partner-capital',headers:['Date','Partner','Type','Amount (LKR)','Posting status','Financial account','Movement reference','Journal reference','Reference','Note','Created by'],moneyColumns:[3],rows:capitalFiltered.map(e=>[reportDay(e.entry_date),partnerName(e),e.entry_type,Number(e.amount_lkr),statusOf(e),e.financial_account_name||'—',e.movement_id||'—',e.journal_id||'—',e.reference,e.note,e.created_by]),summary:[{label:'Filtered contributions (LKR)',value:sumCapital(capitalFiltered,'Contribution')},{label:'Filtered drawings (LKR)',value:sumCapital(capitalFiltered,'Drawing')},{label:'Posted records',value:capitalFiltered.filter(e=>statusOf(e)==='Posted').length},{label:'Historical / review records',value:capitalFiltered.filter(e=>statusOf(e)!=='Posted').length}]};
  return {...base,title:'Partner ownership register',filename:'ars-partner-ownership',headers:['Partner','Ownership (%)','Status'],rows:partners.map(p=>[p.name,p.ownership_percent===null?'Not assigned':Number(p.ownership_percent),p.is_active?'Active':'Inactive']),summary:[{label:'Active partners',value:activePartners.length},{label:'Assigned active ownership (%)',value:ownershipTotal}]};
  };
  const formField='mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 focus:border-amber-400 focus:outline-none';
@@ -296,11 +301,22 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
       </form>
     </section>}
   {workspace==='capital'&&<section aria-label="Partner capital entries" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-    <h3 className="font-bold">Partner capital activity ({entries.length} records)</h3>
-    <div className="mt-3 max-h-[55dvh] overflow-auto"><table className="w-full min-w-[580px] text-left text-xs">
-      <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">Date</th><th>Partner</th><th>Type</th><th>Amount · LKR</th><th>Reference</th></tr></thead>
-      <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{reportDay(e.entry_date)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
-    </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">Partner capital activity</h3><span className="text-xs text-slate-500">{capitalFiltered.length} of {entries.length} loaded records · latest 500 maximum</span></div>
+    <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">{[
+      ['Filtered contributions','Rs. '+n(sumCapital(capitalFiltered,'Contribution'))],['Filtered drawings','Rs. '+n(sumCapital(capitalFiltered,'Drawing'))],['Posted',String(capitalFiltered.filter(e=>statusOf(e)==='Posted').length)],['Historical / review',String(capitalFiltered.filter(e=>statusOf(e)!=='Posted').length)]
+    ].map(([label,value])=><div key={label} className="rounded-lg border border-slate-200 bg-slate-50 p-2"><p className="text-xs text-slate-500">{label}</p><p className="font-bold text-sm text-slate-900">{value}</p></div>)}</div>
+    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+      <input aria-label="Search capital records" placeholder="Search partner, account or reference" className={formField} value={capitalSearch} onChange={e=>setCapitalSearch(e.target.value)}/>
+      <select aria-label="Filter partner" className={formField} value={capitalPartner} onChange={e=>setCapitalPartner(e.target.value)}><option value="all">All partners</option>{partners.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      <select aria-label="Filter posting status" className={formField} value={capitalStatus} onChange={e=>setCapitalStatus(e.target.value)}><option value="all">All posting statuses</option>{['Posted','Historical','Review required'].map(v=><option key={v}>{v}</option>)}</select>
+    </div>
+    <div className="mt-3 max-h-[48dvh] overflow-auto"><table className="w-full min-w-[760px] text-left text-xs">
+      <thead className="sticky top-0 bg-slate-50 text-slate-600"><tr>{['Date','Partner','Type','Amount · LKR','Status','Financial account','Reference','Details'].map(h=><th className="p-2" key={h}>{h}</th>)}</tr></thead>
+      <tbody>{capitalFiltered.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="p-2 whitespace-nowrap">{reportDay(e.entry_date)}</td><td>{partnerName(e)}</td><td>{e.entry_type}</td><td className="font-semibold whitespace-nowrap">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td><span className={statusOf(e)==='Posted'?'text-emerald-700':statusOf(e)==='Historical'?'text-amber-800':'text-rose-700'}>{statusOf(e)}</span></td><td>{e.financial_account_name||'—'}</td><td>{e.reference}</td><td><button type="button" className="rounded border px-2 py-1" onClick={()=>setCapitalDetail(e)}>View</button></td></tr>)}</tbody>
+    </table>{!capitalFiltered.length&&<p className="py-6 text-center text-xs text-slate-500">No matching capital records.</p>}</div>
+    {capitalDetail&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3"><section role="dialog" aria-modal="true" aria-label="Capital transaction details" className="w-full max-w-lg max-h-[85vh] overflow-auto rounded-xl bg-white p-4"><div className="flex items-center justify-between"><h3 className="font-bold">Capital transaction details</h3><button type="button" className="rounded border px-3 py-1" onClick={()=>setCapitalDetail(null)}>Close</button></div><dl className="mt-3 grid gap-2 text-sm">{[
+    ['Partner',partnerName(capitalDetail)],['Status',statusOf(capitalDetail)],['Type',capitalDetail.entry_type],['Amount','Rs. '+n(capitalDetail.amount_lkr)],['Date',reportDay(capitalDetail.entry_date)],['Financial account',capitalDetail.financial_account_name||'—'],['Movement reference',capitalDetail.movement_id||'—'],['Journal reference',capitalDetail.journal_id||'—'],['Reference',capitalDetail.reference],['Note',capitalDetail.note||'—'],['Recorded by',capitalDetail.created_by]
+    ].map(([label,value])=><div key={label} className="border-b pb-2 break-all"><dt className="text-xs text-slate-500">{label}</dt><dd>{value}</dd></div>)}</dl></section></div>}
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>New posted capital entries include cash or bank movements. Historical entries require separate reconciliation. Profit allocations remain separate.</p>
   </section>}
   {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
