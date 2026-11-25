@@ -252,6 +252,37 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.equal(foreignPosition.receivedOrderOutstandingEstimate,foreignAging.estimatedPayable);
     assert.equal(foreignPosition.knownAssetSubtotal,0);
     assert.equal(foreignPosition.knownLiabilitySubtotal,0);
+    // Use a separate accounting-enabled shop so legacy operational assertions stay unchanged.
+    const chequeShop='cheque-gl-'+id(),chequeSupplier=id(),chequeBank=id(),orderId=id();
+    await insertSupplier({id:chequeSupplier,shopId:chequeShop,name:'Cheque CI supplier',companyName:'Cheque CI supplier',phone:'',email:'',address:'',taxNumber:''});
+    await createFinancialAccount(pool,{id:chequeBank,shopId:chequeShop,name:'Cheque bank',kind:'Bank',recordedBy});
+    await registerFinancialOpeningBalance(pool,{id:id(),shopId:chequeShop,accountId:chequeBank,amount:500,effectiveDate:day,recordedBy});
+    await pool.query("INSERT INTO purchase_orders(id,shop_id,po_number,date,supplier_id,supplier_name,total,status) VALUES($1,$2,$3,$4,$5,'Cheque CI supplier',500,'Ordered')",[orderId,chequeShop,'CI-PO-'+orderId,day,chequeSupplier]);
+    await pool.query("INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES($1,'1000','Bank','Asset'),($1,'1250','Advance','Asset'),($1,'2000','Payable','Liability')",[chequeShop]);
+    await pool.query("INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES($1,'supplierAdvances','control','1250','CI','CI'),($1,'supplierPayables','control','2000','CI','CI')",[chequeShop]);
+    const issuedCheque={id:'supplier-cheque-'+id(),shopId:chequeShop,supplierId:chequeSupplier,purchaseOrderId:orderId,bankAccountId:chequeBank,chequeNumber:'GL-001',amount:300,issuedDate:day,dueDate:'2026-11-25',recordedBy};
+    await registerSupplierCheque(pool,issuedCheque);
+    const clearPayment={id:'spay-cheque-'+issuedCheque.id,shopId:chequeShop,supplierId:chequeSupplier,supplierName:'Cheque CI supplier',purchaseOrderId:orderId,amount:300,date:'2026-11-25',paymentMethod:'Cheque',createdBy:recordedBy,note:'Supplier cheque GL-001'};
+    const clearance={chequeId:issuedCheque.id,eventId:id(),evidence:'CI bank statement'};
+    await assert.rejects(insertSupplierPayment(clearPayment,chequeBank,clearance),/Enable verified accounting/);
+    await pool.query("INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES($1,$2,'CI','CI',true)",[chequeShop,day]);
+    await assert.rejects(insertSupplierPayment({...clearPayment,date:day},chequeBank,clearance),/do not match/);
+    await assert.rejects(insertSupplierPayment(clearPayment,chequeBank,clearance),/Missing active accounting mapping/);
+    assert.equal((await pool.query('SELECT id FROM supplier_payments WHERE id=$1',[clearPayment.id])).rowCount,0);
+    assert.equal((await listSupplierCheques(pool,chequeShop))[0].status,'Issued');
+    assert.equal((await listFinancialAccounts(pool,chequeShop))[0].balance,500);
+    await pool.query("INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES($1,'financialAccount',$2,'1000','CI','CI')",[chequeShop,chequeBank]);
+    await Promise.all([insertSupplierPayment(clearPayment,chequeBank,clearance),insertSupplierPayment(clearPayment,chequeBank,clearance)]);
+    assert.equal((await listSupplierCheques(pool,chequeShop))[0].status,'Cleared');
+    assert.equal((await listSupplierCheques(pool,chequeShop))[0].paymentId,clearPayment.id);
+    const clearedBank=(await listFinancialAccounts(pool,chequeShop))[0];
+    assert.equal(clearedBank.balance,200);
+    assert.equal(clearedBank.supplierChequeCommitments,0);
+    assert.equal((await pool.query('SELECT id FROM supplier_payments WHERE id=$1',[clearPayment.id])).rowCount,1);
+    const posted=(await pool.query("SELECT l.account_code,l.debit::text,l.credit::text FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id WHERE j.shop_id=$1 AND j.source_kind='SupplierPayment' AND j.source_id=$2 ORDER BY l.account_code",[chequeShop,clearPayment.id])).rows;
+    assert.deepEqual(posted,[{account_code:'1000',debit:'0.00',credit:'300.00'},{account_code:'1250',debit:'300.00',credit:'0.00'}]);
+    await assert.rejects(insertSupplierPayment(clearPayment,chequeBank,{...clearance,eventId:id()}),/already cleared/);
+    assert.equal((await pool.query('SELECT id FROM ars_supplier_cheque_events WHERE shop_id=$1',[chequeShop])).rowCount,2);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
