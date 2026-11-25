@@ -145,7 +145,7 @@ export default function App() {
   // Local Tax and Brand configuration parameters
   const [taxConfig, setTaxConfig] = useState<StoreSettings>({
     taxRate: 0,
-    storeName: 'ARS Distributor',
+    storeName: 'ARS Distributors',
     currency: 'LKR',
     invoicePrefix: 'SL-INV',
     logoUrl: '',
@@ -161,7 +161,7 @@ export default function App() {
     shopProfiles: [
       {
         id: 'shop-main',
-        name: 'ARS Distributor',
+        name: 'ARS Distributors',
         logoUrl: '',
         address: '',
         phone: '',
@@ -852,7 +852,7 @@ export default function App() {
           <div className="bg-white p-5 text-slate-900 sm:p-6 xl:p-8 flex flex-col justify-center">
             <div className="mb-4">
               <div className="mb-4 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
-              <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Distributor</h2>
+              <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Distributors</h2>
               <p className="mt-2 text-sm text-slate-500">Sign in to your branch workspace.</p>
             </div>
             <form onSubmit={handleLogin} className="space-y-3">
@@ -1139,7 +1139,7 @@ export default function App() {
                 {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
               </button>
               <div className="min-w-0">
-              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Distributor · Business workspace</p>
+              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">ARS Distributors · Business workspace</p>
               <p className="truncate font-heading text-lg font-bold text-slate-900 sm:text-xl">{({
                 dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs', shipments: 'Import Shipments', 'warehouse-receiving': 'Warehouse Receiving', partners: 'Partner Capital',
