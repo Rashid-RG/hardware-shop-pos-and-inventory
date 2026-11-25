@@ -7583,6 +7583,9 @@ async function startServer() {
   // Acquire before any schema creation, seeding, or in-memory hydration.
   await acquireSingleWriterLease();
   await initPostgres();
+  await pool.query(`CREATE TABLE IF NOT EXISTS ars_invoice_counter (
+    id TEXT PRIMARY KEY, last_number BIGINT NOT NULL CHECK (last_number >= 10009)
+  )`);
   await initPartialReceivingTables(pool);
   await initLandedCostTables(pool);
   await initPackagingDrafts(pool);
