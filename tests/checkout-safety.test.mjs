@@ -25,10 +25,17 @@ test('checkout keeps customer records within their shop', () => {
   assert.match(checkout, /paymentMethod === 'Credit Account' && !checkoutCustomer/);
 });
 
-test('invoice identifiers avoid time-only collisions', () => {
+test('invoice identifiers are allocated atomically by PostgreSQL, not the browser or clock', () => {
   assert.match(checkout, /tx-\$\{randomUUID\(\)\}/);
-  assert.match(checkout, /randomUUID\(\)\.slice\(0, 8\)/);
-  assert.match(checkout, /shopProfile\?\.invoicePrefix/);
+  assert.match(checkout, /invoiceNumber:\s*''/);
+  assert.match(atomicCheckout, /INSERT INTO ars_invoice_counter/);
+  assert.match(atomicCheckout, /GREATEST\(10009/);
+  assert.match(atomicCheckout, /ON CONFLICT \(id\) DO UPDATE SET last_number/);
+  assert.match(atomicCheckout, /ars_invoice_counter\.last_number \+ 1/);
+  assert.match(atomicCheckout, /timeZone:'Asia\/Colombo',year:'2-digit'/);
+  assert.match(atomicCheckout, /tx\.invoiceNumber = 'ARS-INV-' \+ year/);
+  assert.ok(atomicCheckout.indexOf('INSERT INTO ars_invoice_counter') < atomicCheckout.indexOf('INSERT INTO sales_transactions'));
+  assert.match(dbHelper, /invoice_number TEXT UNIQUE NOT NULL/);
 });
 
 test('credit limit check runs before any stock mutation and rejects invalid amounts', () => {
