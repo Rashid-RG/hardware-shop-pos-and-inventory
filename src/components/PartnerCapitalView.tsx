@@ -11,9 +11,10 @@ type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';am
 type ProfitAllocation={id:string;period_key:string;approved_profit_lkr:string;approval_reference:string;allocated_at:string;approved_by:string;shares:Array<{partnerId:string;name:string;ownershipPercent:number;allocatedLkr:string}>};
 type Agreement={id:string;effective_period:string;approval_reference:string;approved_by:string;approved_at:string;shares:Array<{partnerId:string;name:string;ownershipBasisPoints:number}>;};
 import type {StoreSettings} from '../types';
-type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;};
+type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;owner?:string;key?:string;};
 type PartnerWorkspace='overview'|'partners'|'agreements'|'capital'|'profits'|'history';
-export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
+export default function PartnerCapitalView(props:Props){return <PartnerCapitalWorkspace key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;}
+function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
  const [partners,setPartners]=useState<Partner[]>([]);
  const [workspace,setWorkspace]=useState<PartnerWorkspace>('overview');
  const [entries,setEntries]=useState<Capital[]>([]);
@@ -37,7 +38,8 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const [date,setDate]=useState(()=>reportDay(new Date()));
  const [accounts,setAccounts]=useState<CapitalAccount[]>([]),[accountId,setAccountId]=useState(''),[pending,setPending]=useState<CapitalRequest|null>(null),[storageReady,setStorageReady]=useState(false);
  const capitalLock=useRef(false);
- const storageKey='ars:pending-partner-capital:'+shopId;
+ const legacyStorageKey='ars:pending-partner-capital:'+shopId;
+ const storageKey='ars:pending-partner-capital:v2:'+JSON.stringify([shopId,owner||'']);
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
  const [busy,setBusy]=useState(false);
@@ -93,7 +95,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
      await refresh();
    }catch(e:any){setError(e.message)}finally{setBusy(false);}
  };
- useEffect(()=>{setAccounts([]);setAccountId('');setPending(null);setStorageReady(false);try{const raw=localStorage.getItem(storageKey);if(raw){const p=JSON.parse(raw);if(!p||typeof p.requestId!=='string'||typeof p.accountId!=='string'||typeof p.amountLkr!=='string')throw Error('Invalid saved capital request');setPending(p);}setStorageReady(true);}catch{setError('Saved capital request cannot be read. Administrator review required.');}void refresh()},[authToken,shopId]);
+ useEffect(()=>{setAccounts([]);setAccountId('');setPending(null);setStorageReady(false);try{if(!owner||localStorage.getItem(legacyStorageKey)!==null)throw Error('Unscoped saved request requires administrator review');const raw=localStorage.getItem(storageKey);if(raw){const p=JSON.parse(raw);if(!p||typeof p.requestId!=='string'||typeof p.accountId!=='string'||typeof p.amountLkr!=='string')throw Error('Invalid saved capital request');setPending(p);}setStorageReady(true);}catch{setError('Saved capital request cannot be read. Administrator review required.');}void refresh()},[authToken,shopId,owner]);
  const register=async(e:React.FormEvent)=>{
    e.preventDefault();setBusy(true);setError('');setNotice('');
    try{await call('/api/ars/partners',{method:'POST',body:JSON.stringify({name,ownershipPercent:ownership===''?null:Number(ownership)})});
@@ -128,7 +130,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const selectedAccount=accounts.find(a=>a.id===accountId);
  const capitalIssue=!partners.some(p=>p.id===partnerId&&p.is_active)?'Select an active partner.':!selectedAccount?'Select a financial account.':!/^\d{1,12}(?:\.\d{1,2})?$/.test(amount)||Number(amount)<=0?'Enter a positive amount with up to two decimals.':!date||date>reportDay(new Date())?'Select a valid effective date.':!reference.trim()?'Enter a payment reference.':type==='Drawing'&&(selectedAccount.balanceAfterChequeCommitments===undefined||Number(amount)>selectedAccount.balanceAfterChequeCommitments)?'Insufficient or unverified uncommitted funds.':'';
  const sendCapital=async(p:CapitalRequest)=>{
-   if(capitalLock.current)return;capitalLock.current=true;setBusy(true);setError('');setNotice('');
+   if(capitalLock.current||!owner||!storageReady)return;capitalLock.current=true;setBusy(true);setError('');setNotice('');
    try{const result=await call('/api/ars/partner-capital/post',{method:'POST',body:JSON.stringify(p)});
      if(result.id!=='capital-'+p.requestId||typeof result.replayed!=='boolean')throw Error('Capital transaction not confirmed.');
      localStorage.removeItem(storageKey);setPending(null);setAmount('');setReference('');setNote('');setNotice('Capital transaction and financial journal confirmed.');await refresh();
