@@ -851,11 +851,12 @@ export default function ProductManagementView({
                     </td>
                     <td className="px-2.5 py-2">
                       <div className="flex items-center gap-2">
-                        <div className="h-9 w-9 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
+                        <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-white border border-slate-200 shrink-0">
+                          <div className="absolute inset-0 flex items-center justify-center text-slate-400"><Package className="h-5 w-5" aria-hidden="true"/></div>
                           {sanitizeImageSrc(p.imageUrl) ? (
-                            <img src={sanitizeImageSrc(p.imageUrl) || undefined} alt={p.name} className="h-full w-full object-cover" />
+                            <img src={sanitizeImageSrc(p.imageUrl) || undefined} alt={p.name} loading="lazy" decoding="async" className="relative h-full w-full object-contain bg-white" onError={event=>{event.currentTarget.style.visibility="hidden";}} />
                           ) : (
-                            <div className="h-full w-full flex items-center justify-center text-[9px] text-slate-400">NO IMG</div>
+                            <div className="h-full w-full flex items-center justify-center text-slate-400" title="No product photo"><Package className="h-5 w-5" aria-hidden="true"/></div>
                           )}
                         </div>
                         <div>
@@ -877,7 +878,7 @@ export default function ProductManagementView({
                       {currencySymbol}{p.costPrice.toFixed(2)}
                     </td>
                     <td className="px-2.5 py-2 text-right font-mono font-semibold text-slate-900">
-                      {currencySymbol}{p.sellingPrice.toFixed(2)}
+                      {p.sharedStockUnits ? <div className="space-y-0.5">{p.sharedStockUnits.units.map(unit=><div key={unit.id} className="flex justify-end gap-2"><span className="font-sans font-normal text-slate-500">{unit.label}</span><span>{currencySymbol}{unit.sellingPrice.toFixed(2)}</span></div>)}</div> : <>{currencySymbol}{p.sellingPrice.toFixed(2)}</>}
                     </td>
                     {showCatalogMetrics && <td className={`px-2.5 py-2 text-right font-mono font-bold ${unitProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {unitProfit >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(unitProfit).toFixed(2)}
@@ -898,8 +899,9 @@ export default function ProductManagementView({
                             : 'bg-emerald-50 text-emerald-700'
                         }`}
                       >
-                        {p.quantity} {isOut ? 'OUT' : isLow ? 'LOW' : 'OK'}
+                        {p.quantity} {p.sharedStockUnits?.baseUnit || ""} {isOut ? 'OUT' : isLow ? 'LOW' : 'OK'}
                       </span>
+                      {p.sharedStockUnits?.units.filter(unit=>Number.isSafeInteger(unit.baseUnits)&&unit.baseUnits>1).map(unit=><span key={unit.id} className="block text-[10px] text-slate-600">{Math.floor(p.quantity/unit.baseUnits)} {unit.label} equivalents + {p.quantity%unit.baseUnits} {p.sharedStockUnits?.baseUnit}</span>)}
                       {expandedProduct===p.id && <span className="block text-[9px] text-slate-500">Reorder: {p.reorderLevel}</span>}
                     </td>
                     {showCatalogMetrics && <td className="px-2.5 py-2 text-center text-slate-500 font-mono text-[10px]">
