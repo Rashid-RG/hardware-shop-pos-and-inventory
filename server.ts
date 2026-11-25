@@ -374,7 +374,12 @@ const buildInvoicePdfBuffer = async (
   },
   contact?: { address?: string; phone?: string; email?: string; taxRate?: number }
 ): Promise<Buffer> => renderArsInvoicePdf(
-  tx, activeShopName, meta,
+  {...tx, items: tx.items.map(item => {
+    if(item.variantSku) return item;
+    const product = db.products.find(p => p.id === item.productId && p.shopId === tx.shopId);
+    const sku = item.variantId ? product?.variants?.find(v=>v.id===item.variantId)?.sku : product?.sku;
+    return {...item, variantSku:sku || undefined};
+  })}, activeShopName, meta,
   resolvePrintableLogoBuffer(logoUrl),
   invoiceCompanyMeta, contact,
 );
@@ -4702,7 +4707,7 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
       sellingUnitId: sellingUnit?.id,
       sellingUnitLabel: sellingUnit?.label,
       baseUnitsPerSaleUnit: sellingUnit?.baseUnits,
-      variantSku: targetVariant?.sku,
+      variantSku: targetVariant?.sku || dbProduct.sku,
       variantBarcode: targetVariant?.barcode,
       quantity,
       sellingPrice: unitSellingPrice,
@@ -7061,7 +7066,7 @@ app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager
       return res.status(409).json({error:'Quotation contains invalid line quantities or prices.'});
     const unit=product.sharedStockUnits?.units.find(u=>u.id===line.sellingUnitId);
     if ((product.sharedStockUnits || line.sellingUnitId) && (!unit || unit.baseUnits!==line.baseUnitsPerSaleUnit || unit.label!==line.sellingUnitLabel || unit.sellingPrice!==line.sellingPrice)) return res.status(409).json({error:'Quotation packaging or price changed. Issue a new quotation.'});
-    items.push({...line,variantUnit:unit?.label,costPrice:roundMoney((product.costPrice||0)*(unit?.baseUnits ?? 1))});
+    items.push({...line,variantSku:product.sku,variantUnit:unit?.label,costPrice:roundMoney((product.costPrice||0)*(unit?.baseUnits ?? 1))});
   }
   const tx:SalesTransaction={
     id:'tx-'+randomUUID(),shopId:activeShopId,
