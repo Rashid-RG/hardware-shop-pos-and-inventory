@@ -27,7 +27,11 @@ test('warehouse shipment listings remain searchable and progressively render wit
   assert.match(shipments,/PartialReceiptPanel/);
 });
 test('shipment creation is collapsed until selected to avoid dominating the whole page',()=>{
-  assert.match(shipments,/Register incoming shipment<\/summary>/);
-  assert.match(shipments,/<form onSubmit=\{add\}/);
+  assert.match(shipments,/\[registerOpen,setRegisterOpen\]=useState\(false\)/);
+  assert.match(shipments,/registerOpen&&\['Super Admin','Store Manager'\]\.includes\(currentRole\)&&createPortal/);
+  assert.match(shipments,/aria-label="Register incoming shipment"/);
+  assert.match(shipments,/max-h-\[92dvh\]/);
+  assert.match(shipments,/<form id="shipment-register-form" onSubmit=\{add\}/);
+  assert.match(shipments,/type="submit" form="shipment-register-form"/);
   assert.match(shipments,/Registering a shipment does not add stock or pay suppliers/);
 });
