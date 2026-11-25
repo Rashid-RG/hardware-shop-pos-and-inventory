@@ -4781,13 +4781,12 @@ app.post('/api/transactions', requireRole(['Super Admin', 'Store Manager', 'Cash
     }
   }
 
-  const invoicePrefix = String(shopProfile?.invoicePrefix || db.settings.invoicePrefix || 'INV').trim();
-  const invoiceNum = `${invoicePrefix}-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
+  // The PostgreSQL checkout transaction allocates the permanent invoice number.
 
   const tx: SalesTransaction = {
     id: txId,
     shopId: activeShopId,
-    invoiceNumber: invoiceNum,
+    invoiceNumber: '',
     date: new Date().toISOString(),
     customerName: buyerName,
     customerPhone: checkoutCustomer?.phone || undefined,
@@ -7061,7 +7060,7 @@ app.post('/api/quotations/:id/convert',requireRole(['Super Admin','Store Manager
   }
   const tx:SalesTransaction={
     id:'tx-'+randomUUID(),shopId:activeShopId,
-    invoiceNumber:`${db.settings.invoicePrefix}-${Date.now()}-${randomUUID().slice(0,6).toUpperCase()}`,
+    invoiceNumber:'',
     date:new Date().toISOString(),customerId:customer.id,customerName:customer.name,
     customerPhone:customer.phone||undefined,customerAddress:customer.address||undefined,
     cashierName:auth?.name||'System',salesRepId:salesRep.id,salesRepName:salesRep.name,items,subtotal:q.subtotal,tax:q.tax,
