@@ -366,9 +366,7 @@ export default function SupplierPurchaseView({
   // Filter supplier listings
   const filteredSuppliers = suppliers.filter(
     (s) =>
-      s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      s.email.toLowerCase().includes(searchTerm.toLowerCase())
+      [s.name,s.companyName,s.email,s.phone,s.address,s.taxNumber,s.id].some(value=>String(value||'').toLowerCase().includes(searchTerm.trim().toLowerCase()))
   );
 
   const getSupplierPayments = (supplierId: string) =>
@@ -377,7 +375,7 @@ export default function SupplierPurchaseView({
       .sort((a, b) => b.date.localeCompare(a.date));
 
   const getSupplierStats = (supplierId: string) => {
-    const relatedPOs = purchaseOrders.filter((po) => po.supplierId === supplierId);
+    const relatedPOs = purchaseOrders.filter((po) => po.supplierId === supplierId && po.status !== 'Cancelled');
     const orderedTotal = relatedPOs.reduce((sum, po) => sum + po.total, 0);
     const paidTotal = supplierPayments
       .filter((payment) => payment.supplierId === supplierId)
@@ -553,7 +551,7 @@ export default function SupplierPurchaseView({
               const paidForPo = supplierPayments
                 .filter((payment) => payment.purchaseOrderId === po.id)
                 .reduce((sum, payment) => sum + payment.amount, 0);
-              const outstandingForPo = Math.max(0, po.total - paidForPo);
+              const outstandingForPo = po.status === 'Cancelled' ? 0 : Math.max(0, po.total - paidForPo);
 
               return (
                 <div
@@ -611,7 +609,7 @@ export default function SupplierPurchaseView({
                       <span className="text-slate-400 block text-[9px]">Grand Estimate</span>
                       <span className="font-bold text-slate-950 text-sm">{currencySymbol}{po.total.toFixed(2)}</span>
                       <span className="text-[10px] text-slate-500 block mt-1">
-                        Paid: {currencySymbol}{paidForPo.toFixed(2)} | Due: <strong className={outstandingForPo > 0 ? 'text-rose-600' : 'text-emerald-600'}>{currencySymbol}{outstandingForPo.toFixed(2)}</strong>
+                        Paid: {currencySymbol}{paidForPo.toFixed(2)} | Order gap: <strong className={outstandingForPo > 0 ? 'text-rose-600' : 'text-emerald-600'}>{currencySymbol}{outstandingForPo.toFixed(2)}</strong>
                       </span>
                     </div>
 
@@ -659,13 +657,14 @@ export default function SupplierPurchaseView({
       {/* RENDER TAB 2: SUPPLIERS DIRECTORY */}
       {activeTab === 'suppliers' && (
         <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Supplier overview">{[['Matching suppliers',String(filteredSuppliers.length)],['Non-cancelled orders',currencySymbol+filteredSuppliers.reduce((sum,s)=>sum+getSupplierStats(s.id).orderedTotal,0).toFixed(2)],['Recorded payments',currencySymbol+filteredSuppliers.reduce((sum,s)=>sum+getSupplierStats(s.id).paidTotal,0).toFixed(2)]].map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs text-slate-500">{label}</p><strong className="block text-lg text-slate-900 break-words">{value}</strong></div>)}</div>
           <div className="bg-white p-2.5 rounded-xl border border-slate-100 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="relative w-full sm:w-80">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
                 id="supplier-search-input"
                 type="text"
-                placeholder="Search Wholesale Suppliers brand or tax ID..."
+                placeholder="Search supplier, company, phone or tax ID..."
                 value={searchTerm}
                 onChange={(e) => {setSearchTerm(e.target.value);setVisibleSupplierCount(12);}}
                 className="w-full pl-9 pr-4 py-1.5 bg-slate-50 text-slate-800 text-xs rounded-lg border border-slate-250 focus:outline-none focus:border-amber-500 font-sans"
@@ -715,18 +714,19 @@ export default function SupplierPurchaseView({
                   <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
                     <div className="rounded-lg bg-slate-50 border border-slate-100 p-2">
                       <p className="text-slate-400 uppercase font-semibold">Ordered</p>
-                      <p className="font-mono font-bold text-slate-900 mt-1">{currencySymbol}{stats.orderedTotal.toFixed(0)}</p>
+                      <p className="font-mono font-bold text-slate-900 mt-1">{currencySymbol}{stats.orderedTotal.toFixed(2)}</p>
                     </div>
                     <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-2">
                       <p className="text-emerald-600 uppercase font-semibold">Paid</p>
-                      <p className="font-mono font-bold text-emerald-700 mt-1">{currencySymbol}{stats.paidTotal.toFixed(0)}</p>
+                      <p className="font-mono font-bold text-emerald-700 mt-1">{currencySymbol}{stats.paidTotal.toFixed(2)}</p>
                     </div>
                     <div className="rounded-lg bg-rose-50 border border-rose-100 p-2">
-                      <p className="text-rose-500 uppercase font-semibold">Due</p>
-                      <p className="font-mono font-bold text-rose-600 mt-1">{currencySymbol}{stats.outstanding.toFixed(0)}</p>
+                      <p className="text-rose-500 font-semibold">Order gap (estimate)</p>
+                      <p className="font-mono font-bold text-rose-600 mt-1">{currencySymbol}{stats.outstanding.toFixed(2)}</p>
                     </div>
                   </div>
 
+                  <p className="mt-1 text-[10px] text-slate-500">Order gap compares non-cancelled orders with recorded payments; it is not a reconciled payable balance.</p>
                   {recentPayments.length > 0 && (
                     <details className="mt-2 rounded-lg border border-slate-100 bg-slate-50/70 p-2">
                       <summary className="cursor-pointer text-[10px] uppercase font-semibold text-slate-500 mb-2">Recent Payments</summary>
