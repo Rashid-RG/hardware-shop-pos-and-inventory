@@ -163,6 +163,9 @@ export default function POSView({
   const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('cart');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
+  const [unitPickerProductId, setUnitPickerProductId] = useState<string | null>(null);
+  const [unitPickerUnitId, setUnitPickerUnitId] = useState('');
+  const [unitPickerQty, setUnitPickerQty] = useState('1');
 
   // Drafts are tab-local and scoped to the authenticated operator and shop.
   const draftKey = taxConfig.activeShopId && draftOwner ? `ars:invoice-draft:v1:${encodeURIComponent(draftOwner)}:${encodeURIComponent(taxConfig.activeShopId)}` : '';
@@ -412,7 +415,7 @@ export default function POSView({
           setBarcodeBuffer(scannedCode);
           const match = resolveScanMatch(scannedCode);
           if (match) {
-            addToCart(match.product, match.variant);
+            openUnitPicker(match.product, match.variant);
             const label = match.variant ? `${match.product.name} (${match.variant.name})` : match.product.name;
             resetNotification(`Scanned: ${label}`, 'ok');
             setLastScannedItem({ label, code: scannedCode });
@@ -452,9 +455,9 @@ export default function POSView({
   };
 
   // All quantities are checked against the latest catalog, including stock already in the draft.
-  const availableToAdd = (product: Product, variant?: ProductVariant, lines: CartItem[] = cart) => {
+  const availableToAdd = (product: Product, variant?: ProductVariant, lines: CartItem[] = cart, sellingUnitId?: string) => {
     if (product.sharedStockUnits) {
-      const unit = getDefaultSellingUnit(product);
+      const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
       if (!unit || product.variants?.length) return 0;
       let used = 0;
       for (const line of lines.filter(entry => entry.product.id === product.id)) {
@@ -540,24 +543,25 @@ export default function POSView({
   };
 
   // Handle adding a product (or variant) to register cart
-  const addToCart = (product: Product, variant?: ProductVariant) => {
+  const addToCart = (product: Product, variant?: ProductVariant, sellingUnitId?: string, requestedQty = 1) => {
     const latest = products.find(p => p.id === product.id);
     if (!latest) { notify.warning(product.name + ': product unavailable.'); return; }
     product = latest;
     variant = variant ? product.variants?.find(v => v.id === variant?.id) : getSelectedVariant(product);
-    if (availableToAdd(product, variant) < 1) { notify.warning(product.name + ': no more stock available to add.'); return; }
+    const available = availableToAdd(product, variant, cart, sellingUnitId);
+    if (!Number.isSafeInteger(requestedQty) || requestedQty < 1 || requestedQty > available) { notify.warning(product.name + ': only ' + available + ' available to add.'); return false; }
     if (product.sharedStockUnits) {
-      const unit = getDefaultSellingUnit(product);
-      if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return; }
+      const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
+      if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return false; }
       const existing = cart.find(entry=>entry.product.id===product.id && entry.sellingUnitId===unit.id);
-      const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+1}:entry) : [...cart,{
-        product, quantity:1, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
+      const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+requestedQty}:entry) : [...cart,{
+        product, quantity:requestedQty, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
         unitPrice:unit.sellingPrice, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
         invoiceDescription:String(product.description || product.longDescription || '').trim().slice(0,250)
       }];
       if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock.'); return; }
       setCart(next);
-      return;
+      return true;
     }
     const resolvedVariant = variant || getSelectedVariant(product);
     const productStock = Number(product.quantity || 0);
@@ -567,8 +571,8 @@ export default function POSView({
     const existing = cart.find((item) => item.product.id === product.id && (item.variantId || '') === (resolvedVariant?.id || ''));
     const key = `${product.id}::${resolvedVariant?.id || 'base'}`;
     if (existing) {
-      updateCartQty(key, existing.quantity + 1);
-      return;
+      updateCartQty(key, existing.quantity + requestedQty);
+      return true;
     }
 
     setCart([
@@ -576,7 +580,7 @@ export default function POSView({
       {
         product,
         invoiceDescription: String(product.description || product.longDescription || '').trim().slice(0, 250),
-        quantity: 1,
+        quantity: requestedQty,
         discount: 0,
         variantId: resolvedVariant?.id,
         variantName: resolvedVariant?.name,
@@ -587,7 +591,22 @@ export default function POSView({
         unitCostPrice: resolvedVariant?.costPrice,
       },
     ]);
+    return true;
   };
+
+  const openUnitPicker = (product: Product, variant?: ProductVariant) => {
+    if (!product.sharedStockUnits) return addToCart(product, variant);
+    const units = product.sharedStockUnits.units;
+    const unit = units.find(u=>u.baseUnits===1 && availableToAdd(product, undefined, cart, u.id)>0) || units.find(u=>availableToAdd(product, undefined, cart, u.id)>0);
+    if (!unit) { notify.warning(product.name + ': no more stock available to add.'); return false; }
+    setUnitPickerProductId(product.id);
+    setUnitPickerUnitId(unit.id);
+    setUnitPickerQty('1');
+    return true;
+  };
+  const pickerProduct = products.find(p=>p.id===unitPickerProductId);
+  const pickerUnit = pickerProduct?.sharedStockUnits?.units.find(u=>u.id===unitPickerUnitId);
+  const pickerAvailable = pickerProduct && pickerUnit ? availableToAdd(pickerProduct, undefined, cart, pickerUnit.id) : 0;
 
   // A customer-specific description applies to this invoice line only.
   const saveInvoiceLineDescription = () => {
@@ -1463,7 +1482,7 @@ export default function POSView({
               <div
                 key={p.id}
                 id={`pos-product-${p.id}`}
-                onClick={() => addToCart(p, selectedVariant)}
+                onClick={() => openUnitPicker(p, selectedVariant)}
                 className={`bg-white rounded-xl border p-3 flex flex-col justify-between cursor-pointer group transition-all duration-150 relative ${
                   isOut
                     ? 'border-slate-200 bg-slate-50 opacity-55 cursor-not-allowed'
@@ -1612,7 +1631,7 @@ export default function POSView({
                       <span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? 'Available to add: '+stock : 'No stock left to add'}</span></span>
                       {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
                       <span>{formatMoney(Number(variant?.sellingPrice ?? product.sellingPrice))}</span>
-                      <button type="button" disabled={stock <= 0} onClick={() => { addToCart(product, variant); setSearchTerm(''); setShowInvoiceProducts(false); }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
+                      <button type="button" disabled={stock <= 0} onClick={() => { if(openUnitPicker(product, variant)) { setSearchTerm(''); setShowInvoiceProducts(false); } }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
                     </div>;
                   })}
                   {filteredProducts.length === 0 && <p className="p-3 text-xs text-slate-500">No matching products.</p>}
@@ -1771,6 +1790,23 @@ export default function POSView({
           </button>
         </div>
       </div>
+
+      {pickerProduct && pickerUnit && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Choose selling unit" className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl">
+            <header className="flex items-start justify-between bg-[#182a45] p-4 text-white rounded-t-2xl"><div><p className="text-xs font-semibold text-amber-300">ARS DISTRIBUTORS · SELLING UNITS</p><h3 className="mt-1 text-lg font-bold">{pickerProduct.name}</h3><p className="text-xs text-slate-300">Choose Box, Piece or another configured unit.</p></div><button type="button" aria-label="Close selling unit selection" onClick={()=>setUnitPickerProductId(null)}><X className="h-5 w-5"/></button></header>
+            <div className="space-y-4 p-4">
+              <div className="grid grid-cols-2 gap-2">{pickerProduct.sharedStockUnits?.units.map(u=>{const remaining=availableToAdd(pickerProduct,undefined,cart,u.id);return <button key={u.id} type="button" aria-pressed={u.id===pickerUnit.id} disabled={remaining<1} onClick={()=>{setUnitPickerUnitId(u.id);setUnitPickerQty('1');}} className={'rounded-xl border p-3 text-left disabled:opacity-40 '+(u.id===pickerUnit.id?'border-indigo-600 bg-indigo-50':'border-slate-200')}><strong className="block">{u.label}</strong><span className="block text-xs text-slate-500">{u.baseUnits} base units · {remaining} available</span><span className="block font-semibold">{formatMoney(u.sellingPrice)}</span></button>;})}</div>
+              <label className="block text-sm font-semibold">Quantity ({pickerUnit.label})<input autoFocus type="number" min="1" max={pickerAvailable} step="1" value={unitPickerQty} onChange={e=>setUnitPickerQty(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-3"/></label>
+              <p className="text-xs text-slate-600">Available to add: {pickerAvailable} {pickerUnit.label}. Stock is shared across all selling units.</p>
+              {(!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable) && <p role="alert" className="text-sm text-rose-700">Enter a whole quantity between 1 and {pickerAvailable}.</p>}
+              <div className="flex justify-between border-t pt-3"><span>Total</span><strong>{formatMoney(Math.max(0,Number(unitPickerQty)||0)*pickerUnit.sellingPrice)}</strong></div>
+              <button type="button" disabled={!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable} onClick={()=>{if(addToCart(pickerProduct,undefined,pickerUnit.id,Number(unitPickerQty)))setUnitPickerProductId(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Add to invoice</button>
+              <p className="text-xs text-slate-500">To sell another unit of the same item, select the product again. Each unit appears on a separate invoice line.</p>
+            </div>
+          </section>
+        </div>, document.body
+      )}
 
       {editingDescriptionKey && (
         <div id="pos-description-backdrop" className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
@@ -2688,7 +2724,7 @@ export default function POSView({
         {showQRFeature && (
           <QRFeatureView
             onClose={() => setShowQRFeature(false)}
-            onProductFound={(product) => addToCart(product, getSelectedVariant(product))}
+            onProductFound={(product) => openUnitPicker(product, getSelectedVariant(product))}
             products={products}
             userRole={currentRole}
             authToken={authToken}
