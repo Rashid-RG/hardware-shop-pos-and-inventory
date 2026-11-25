@@ -12,6 +12,7 @@ const rows=[
  ['PVC Ball Valve',24,200,300,'Plumbing'],['Water Tap',12,450,650,'Plumbing'],['Hose Clamp',100,35,60,'Plumbing'],
  ['Silicone Sealant',24,350,500,'Consumables'],['PTFE Thread Seal Tape',100,25,45,'Consumables']
 ];
+const codes=["DL-1001","PL-0040","PL-0060","DH-0300","DH-0400","HD-1001","TB-0600","DRL-1001","CH-1001","MT-0500","SD-1001","CP-1001","AS-1001","CD-1001","DB-1001","BV-1001","WT-1001","HC-1001","SS-1001","PT-1001"];
 let token='',shop='';
 async function api(path,method='GET',body){
  const response=await fetch(base+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...(shop?{'X-Shop-Id':shop}:{})},...(body?{body:JSON.stringify(body)}:{})});
@@ -42,10 +43,16 @@ try{
  console.log('Target branch:',shop,'Company:',state.settings?.storeName);
  if(await rl.question('Only sample/test data allowed. Type ADD 20 TEST PRODUCTS to continue: ')!=='ADD 20 TEST PRODUCTS')throw Error('Cancelled.');
  for(let j=0;j<rows.length;j++){
- const [name,factor,cost,price,category]=rows[j],sku='TEST-ARS-'+String(j+1).padStart(3,'0');
+ const [name,factor,cost,price,category]=rows[j],sku=codes[j],legacySku='TEST-ARS-'+String(j+1).padStart(3,'0');
  const current=await api('/api/db');
  if(current._meta?.activeShopId!==shop)throw Error('Branch changed.');
- if(current.products.some(p=>p.sku===sku)){console.log('Skipped existing',sku);continue;}
+ const legacy=current.products.find(p=>p.sku===legacySku&&p.name==='[TEST] '+name&&p.brand==='Test sample');
+ const existing=current.products.find(p=>p.sku===sku);
+ if(existing){if(existing.name!=='[TEST] '+name||existing.brand!=='Test sample')throw Error('Code already used by another product: '+sku);console.log('Skipped existing',sku);continue;}
+ if(legacy){
+   await api('/api/products/'+encodeURIComponent(legacy.id),'PUT',{...legacy,sku,reason:'Acceptance sample SKU correction'});
+   console.log('Updated sample code',legacySku,'to',sku);continue;
+ }
  const product=await api('/api/products','POST',{name:'[TEST] '+name,sku,barcode:'99090000'+String(j+1).padStart(4,'0'),brand:'Test sample',category,description:'Acceptance test only',costPrice:cost,sellingPrice:price,quantity:0,reorderLevel:factor,variants:[]});
  const configuration={baseUnit:'Piece',units:[{id:'piece',label:'Piece',baseUnits:1,sellingPrice:price},{id:'box',label:'Box',baseUnits:factor,sellingPrice:Math.round(price*factor*0.95)}]};
  const path='/api/products/'+encodeURIComponent(product.id);
@@ -57,7 +64,7 @@ try{
  console.log('Created',sku,name,'with',factor*10,'pieces');
  }
  const final=await api('/api/db');
- const ready=rows.filter((_,i)=>final.products.some(p=>p.sku==='TEST-ARS-'+String(i+1).padStart(3,'0')&&p.sharedStockUnits&&p.quantity>0)).length;
+ const ready=rows.filter((_,i)=>final.products.some(p=>p.sku===codes[i]&&p.name==='[TEST] '+rows[i][0]&&p.brand==='Test sample'&&p.sharedStockUnits&&p.quantity>0)).length;
  console.log('Ready sample products: '+ready+'/20. Review Products before testing.');
  if(ready!==20)process.exitCode=1;
 }catch(error){console.error('Stopped:',error.message,'Previously committed items remain. Review them before retrying.');process.exitCode=1;}finally{rl.close();}
