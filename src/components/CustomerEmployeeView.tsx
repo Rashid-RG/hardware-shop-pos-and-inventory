@@ -348,6 +348,11 @@ export default function CustomerEmployeeView({
   const selectedCollectionInvoice=collectibleInvoices.find(tx=>tx.id===paymentInvoiceId);
   const collectionMaximum=Math.min(Number(paymentDraft?.creditBalance||0),hasUnallocatedCollections?Number(paymentDraft?.creditBalance||0):selectedCollectionInvoice?.balance||0);
 
+  const collectionAmount=Number(paymentAmount);
+  const validCollectionAmount=Number.isFinite(collectionAmount)&&collectionAmount>0&&collectionAmount<=collectionMaximum&&Math.abs(collectionAmount*100-Math.round(collectionAmount*100))<1e-6;
+  const collectionDestinationReady=representativeCollection ? paymentMethod==='Cash'&&!destinationLoading&&compatibleDestinations.some(a=>a.id===destinationAccountId) : !(destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod))||(!destinationLoading&&compatibleDestinations.some(a=>a.id===destinationAccountId));
+  const collectionReady=validCollectionAmount&&collectionDestinationReady&&(hasUnallocatedCollections||!!selectedCollectionInvoice)&&!!paymentDate&&paymentDate<=reportDay(new Date());
+
   const openPaymentReceipt=async(paymentId:string,mode:'print'|'download',preview?:Window|null)=>{
     let target=preview;
     if(mode==='print'&&target===undefined)target=window.open('','_blank');
@@ -372,12 +377,13 @@ export default function CustomerEmployeeView({
     const amount = Number(paymentAmount);
     if(!hasUnallocatedCollections&&!selectedCollectionInvoice){notify.warning('Select an unpaid invoice.');return;}
     if(!Number.isFinite(amount)||amount>collectionMaximum){notify.warning('Payment exceeds the outstanding balance.');return;}
-    if (!amount || amount <= 0) {
+    if (!validCollectionAmount) {
       notify.warning('Enter a valid payment amount.');
       return;
     }
     if(representativeCollection&&(paymentMethod!=='Cash'||destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId))){notify.warning('Your assigned representative cash account must be available before collection.');return;}
     if(destinationEnabled&&['Cash','Bank Transfer'].includes(paymentMethod)&&!compatibleDestinations.some(a=>a.id===destinationAccountId)){notify.warning('Select a valid financial destination.');return;}
+    if(!collectionReady){notify.warning('Check the payment amount, date and receiving account.');return;}
     const printRequested=(e.nativeEvent as SubmitEvent).submitter?.getAttribute('data-receipt')==='print';
     const preview=printRequested?window.open('','_blank'):undefined;
     if(preview)preview.document.body.textContent='Saving payment…';
@@ -825,12 +831,16 @@ export default function CustomerEmployeeView({
                   <label htmlFor="collection-invoice" className="block font-semibold mb-1">Outstanding invoice *</label>
                   <select id="collection-invoice" required value={paymentInvoiceId} onChange={e=>{setPaymentInvoiceId(e.target.value);setPaymentAmount('');}} className="mb-2 w-full rounded border p-2">
                     <option value="">Select an invoice</option>
-                    {collectibleInvoices.map(tx=><option key={tx.id} value={tx.id}>{tx.number} · {formatMoney(tx.balance)}</option>)}
+                    {[...collectibleInvoices].sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(tx=><option key={tx.id} value={tx.id}>{tx.number} · {reportDay(tx.date)} · {formatMoney(tx.balance)}</option>)}
                   </select>
                   {selectedCollectionInvoice&&<p className="mb-2 font-semibold">Invoice outstanding: {formatMoney(selectedCollectionInvoice.balance)}</p>}
                 </>}
+                {!hasUnallocatedCollections&&!collectibleInvoices.length&&<p role="status" className="mb-2 rounded bg-amber-50 p-2 text-amber-900">No collectible invoice found. Reconcile the account before recording a payment.</p>}
                 <label className="block text-slate-500 font-semibold mb-1">Amount *</label>
                 <input type="number" min="0.01" max={collectionMaximum} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" required />
+                <div className="mt-2 flex flex-wrap gap-2">{collectionMaximum>0&&<button type="button" onClick={()=>setPaymentAmount(collectionMaximum.toFixed(2))} className="rounded border border-indigo-200 px-3 py-1.5 font-semibold text-indigo-700">Pay maximum · {formatMoney(collectionMaximum)}</button>}</div>
+                {paymentAmount!==''&&!validCollectionAmount&&<p role="alert" className="mt-2 text-rose-700">Enter a valid amount up to {formatMoney(Math.max(0,collectionMaximum))}, with at most two decimal places.</p>}
+                {validCollectionAmount&&<div className="mt-2 grid grid-cols-2 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2"><div><span className="block text-slate-500">Account remaining (estimate)</span><strong>{formatMoney(Number(paymentDraft.creditBalance||0)-collectionAmount)}</strong></div>{!hasUnallocatedCollections&&selectedCollectionInvoice&&<div><span className="block text-slate-500">Invoice remaining</span><strong>{formatMoney(selectedCollectionInvoice.balance-collectionAmount)}</strong></div>}</div>}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -863,10 +873,10 @@ export default function CustomerEmployeeView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum || (representativeCollection&&(destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId)))} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
+                <button type="submit" disabled={!!pendingCollection || isPaymentSubmitting || !collectionReady} className="flex-1 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
-                <button type="submit" data-receipt="print" disabled={!!pendingCollection || isPaymentSubmitting || collectionMaximum<=0 || Number(paymentAmount)<=0 || Number(paymentAmount)>collectionMaximum || (representativeCollection&&(destinationLoading||!compatibleDestinations.some(a=>a.id===destinationAccountId)))} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
+                <button type="submit" data-receipt="print" disabled={!!pendingCollection || isPaymentSubmitting || !collectionReady} className="flex-1 rounded bg-amber-400 px-2 py-2 text-xs font-bold text-slate-900 disabled:opacity-40">Save &amp; Print Receipt</button>
               </div>
             </form>
           </div>
