@@ -7,7 +7,7 @@ const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
 
 test('ARS Add Product shows required fields immediately and keeps Save visible', () => {
   assert.match(product, /id="ars-product-editor"/);
-  assert.match(product, /max-h-\[94dvh\] flex flex-col overflow-hidden/);
+  assert.match(product, /max-h-\[92dvh\] flex flex-col overflow-hidden/);
   assert.match(product, /min-h-0 flex-1 overflow-y-auto/);
   assert.match(product, /id="input-prod-category"/);
   assert.match(product, /id="input-prod-name"/);
@@ -35,8 +35,19 @@ test('basic form uses internal generated scan codes without inventing manufactur
 test('advanced product fields remain available but optional for simple goods', () => {
   assert.match(product, /showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3"/);
   assert.match(product, /Product Variants \(Unit-Based Pricing\)/);
-  assert.match(product, /Product Image Upload/);
+  assert.match(product, /id="input-prod-image"/);
+  assert.match(product, /Add product photo/);
+  assert.match(product, /alt="Product photo preview"/);
+  assert.ok(product.indexOf('id="input-prod-image"') < product.indexOf('showAdvancedProduct && <div'));
+  assert.match(product, /disabled=\{isSubmitting \|\| isUploadingImage\}/);
   assert.match(product, /setShowAdvancedProduct\(false\)/);
   assert.match(product, /setShowAdvancedProduct\(value => !value\)/);
   assert.match(product, /notify\.success\(editingProduct/);
+});
+
+test('catalog dialogs use viewport portals and table supports bounded scrolling', () => {
+  assert.match(product, /isFormOpen && createPortal\(/);
+  assert.match(product, /max-h-\[62dvh\] overflow-auto/);
+  assert.match(product, /visibleProducts\.map/);
+  assert.match(product, /showCatalogMetrics/);
 });
