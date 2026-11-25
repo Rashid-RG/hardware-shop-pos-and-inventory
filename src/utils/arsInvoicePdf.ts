@@ -51,25 +51,26 @@ export const renderArsInvoicePdf = async (
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
-  // Keep the proven A4-width content centered inside the wider tractor-feed form.
-  // Translation is applied once to each page's content stream, including continuations.
-  const horizontalOffset = (pageWidth - 595.28) / 2;
-  if (continuous) {
-    doc.translate(horizontalOffset, 0);
-    doc.on('pageAdded', () => doc.translate(horizontalOffset, 0));
-  }
+  // Map the reference layout into the measured continuous form, without stretching glyphs.
+  // 15 mm on each side reserves the tractor holes and some feed tolerance.
   const left = 26, right = 569, width = right - left;
+  const physicalLeft = continuous ? mm(15) : left;
+  const physicalWidth = continuous ? pageWidth - mm(30) : width;
+  const xScale = physicalWidth / width;
+  const px = (x: number) => physicalLeft + (x - left) * xScale;
+  const pw = (w: number) => w * xScale;
+  const rowFont = continuous ? 9.2 : 8.6;
   const ink = '#000000', rule = '#000000';
   type Align = 'left' | 'center' | 'right';
   const text = (value: string, x: number, y: number, w: number, size = 10,
     bold = false, align: Align = 'left', color = ink) => {
     doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color)
-      .text(value, x, y, { width: w, align, lineBreak: false });
+      .text(value, px(x), y, { width: pw(w), align, lineBreak: false });
   };
   const line = (x: number, y: number, x2: number, y2: number) =>
-    doc.moveTo(x, y).lineTo(x2, y2).lineWidth(0.6).strokeColor(rule).stroke();
+    doc.moveTo(px(x), y).lineTo(px(x2), y2).lineWidth(0.6).strokeColor(rule).stroke();
   const outline = (x: number, y: number, w: number, h: number) =>
-    doc.roundedRect(x, y, w, h, 4).lineWidth(0.8).strokeColor(rule).stroke();
+    doc.roundedRect(px(x), y, pw(w), h, 4).lineWidth(0.8).strokeColor(rule).stroke();
   const field = (name: string, value: string, x: number, y: number, key: number, w: number) => {
     text(name, x, y, key, 9);
     text(':', x + key, y, 8, 9);
@@ -90,7 +91,7 @@ export const renderArsInvoicePdf = async (
     doc.restore();
   };
   const taxRate = Number(contact?.taxRate || 0);
-  const footerY = continuous ? pageHeight - mm(34) : 768;
+  const footerY = continuous ? pageHeight - mm(31) : 768;
   const showDiscount = Number(tx.discountAmount || 0) !== 0;
   const showTax = Number(tx.tax || 0) !== 0;
   const summaryBoxHeight = Math.max(70, 8 + 22 + 16 * (1 + Number(showDiscount) + Number(showTax) + (tx.paymentMethod === 'Cash' ? 0 : 2)));
@@ -101,8 +102,8 @@ export const renderArsInvoicePdf = async (
   const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
   const wrap = (value:string,x:number,y:number,w:number,size=9,bold=false) => {
     doc.font(bold?'Helvetica-Bold':'Helvetica').fontSize(size).fillColor(ink);
-    const h=doc.heightOfString(value,{width:w});
-    doc.text(value,x,y,{width:w});
+    const h=doc.heightOfString(value,{width:pw(w)});
+    doc.text(value,px(x),y,{width:pw(w)});
     return y+h;
   };
   const header = (continued:boolean) => {
@@ -118,9 +119,9 @@ export const renderArsInvoicePdf = async (
       return 76;
     }
     if(isArsPrintBrand(shopName)){
-      doc.save().translate(left,18).scale(39/615).translate(-245,-320)
+      doc.save().translate(px(left),18).scale(39/615).translate(-245,-320)
         .path(arsPrintLogoPath).fill(ink,'even-odd').restore();
-    }else if(logo){try{doc.image(logo,left,16,{fit:[48,48]});}catch{/* name remains */}}
+    }else if(logo){try{doc.image(logo,px(left),16,{fit:[48,48]});}catch{/* name remains */}}
     let leftY=wrap(arsDisplayName(safe(company?.companyLegalName,shopName)),83,16,225,15,true)+3;
     leftY=wrap(contact?.address||'',83,leftY,225,9)+3;
     leftY=wrap(contact?.phone?'Tel: '+contact.phone.replace(/,\s*/g,' / '):'',83,leftY,225,10,true)+2;
@@ -153,12 +154,12 @@ export const renderArsInvoicePdf = async (
     line(left,bodyStart,right,bodyStart);
     return bodyStart;
   };
-  const closeTable=(bottom:number)=>doc.rect(left,tableTop,width,bottom-tableTop).lineWidth(.7).strokeColor(rule).stroke();
+  const closeTable=(bottom:number)=>doc.rect(px(left),tableTop,pw(width),bottom-tableTop).lineWidth(.7).strokeColor(rule).stroke();
   const rows=tx.items.map((item,index)=>{
     const gross=Number(item.quantity)*Number(item.sellingPrice);
     const discount=Math.min(gross,Math.max(0,gross*Number(item.discount||0)/100+Number(item.discountAmount||0)));
     const values=[String(index+1),safe(item.variantSku),safe(item.productName),String(item.invoiceDescription||'').trim(),invoiceUnit(item),String(item.quantity),formatMoney(Number(item.sellingPrice)),...(hasDiscount?[discount?formatMoney(discount):'-']:[]),formatMoney(gross-discount)];
-    const height=Math.max(13,Math.ceil(Math.max(...values.map((v,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(8.6).heightOfString(v,{width:cols[i+1]-cols[i]-6}))))+3);
+    const height=Math.max(13,Math.ceil(Math.max(...values.map((v,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(rowFont).heightOfString(v,{width:pw(cols[i+1]-cols[i]-6)}))))+3);
     return {values,height};
   });
   let y=tableStart(false);
@@ -167,8 +168,8 @@ export const renderArsInvoicePdf = async (
     const limit=index===rows.length-1?footerY-summaryHeight:footerY-6;
     if(y+height>limit&&y>bodyStart){closeTable(y);doc.addPage();y=tableStart(true);}
     if(y+height>footerY-6)throw Error('Invoice item text is too long for a single page.');
-    values.forEach((value,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(8.6).fillColor(ink)
-      .text(value,cols[i]+3,y+1.5,{width:cols[i+1]-cols[i]-6,align:alignments[i]}));
+    values.forEach((value,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(rowFont).fillColor(ink)
+      .text(value,px(cols[i]+3),y+1.5,{width:pw(cols[i+1]-cols[i]-6),align:alignments[i]}));
     y+=height;
   });
   closeTable(y);
@@ -211,7 +212,7 @@ export const renderArsInvoicePdf = async (
   });
   ['Prepared By', 'Received By', 'Authorized By'].forEach((title, i) => {
     const x = left + i * width / 3;
-    doc.moveTo(x+18, signatureY).lineTo(x+width/3-18, signatureY).lineWidth(0.9).strokeColor(ink).stroke();
+    doc.moveTo(px(x+18), signatureY).lineTo(px(x+width/3-18), signatureY).lineWidth(0.9).strokeColor(ink).stroke();
     text(title, x, signatureY+5, width/3, 10, true, 'center');
     text(i === 1 ? 'Customer' : shopName, x, signatureY+19, width/3, 9, false, 'center');
   });
@@ -221,14 +222,14 @@ export const renderArsInvoicePdf = async (
     line(left, footerY, right, footerY);
     text('Printed by ' + shopName + '.', left, footerY+6, 363, 10, true);
     doc.font('Helvetica').fontSize(8).fillColor(ink).text(invoiceFooter.goods + ' ' + invoiceFooter.thanks,
-      left, footerY+20, {width: 355});
+      px(left), footerY+20, {width: pw(355)});
     text(`Page ${page+1} of ${range.count}`, left, footerY+44, 110, 7);
     line(400, footerY+8, 400, footerY+50);
     text('Powered by', 411, footerY+6, 158, 8, false, 'right');
     doc.font('Helvetica-BoldOblique').fontSize(16).fillColor(ink)
-      .text(invoiceFooter.credit.replace(/^Powered by /, ''), 411, footerY+18, {width:158,align:'right',lineBreak:false});
-    doc.moveTo(right-67, footerY+38).quadraticCurveTo(right-37, footerY+30, right, footerY+34)
-      .quadraticCurveTo(right-35, footerY+32, right-67, footerY+39).fill(ink);
+      .text(invoiceFooter.credit.replace(/^Powered by /, ''), px(411), footerY+18, {width:pw(158),align:'right',lineBreak:false});
+    doc.moveTo(px(right-67), footerY+38).quadraticCurveTo(px(right-37), footerY+30, px(right), footerY+34)
+      .quadraticCurveTo(px(right-35), footerY+32, px(right-67), footerY+39).fill(ink);
     text('Smart systems for business.', 411, footerY+43, 158, 9, false, 'right');
   }
   doc.end();
