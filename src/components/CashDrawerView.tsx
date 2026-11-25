@@ -48,6 +48,7 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
     ? Math.round((openShift.openingFloat + liveCashSalesSinceOpen) * 100) / 100
     : 0;
 
+  const [workspace,setWorkspace] = useState<'current'|'close'|'history'>('current');
   const [floatAmount, setFloatAmount] = useState('');
   const [actualCash, setActualCash] = useState('');
   const [closingNote, setClosingNote] = useState('');
@@ -88,6 +89,7 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
         return;
       }
       notify.success('Cash shift closed and reconciliation saved.');
+      setWorkspace('history');
       setActualCash('');
       setClosingNote('');
       onRefreshDb();
@@ -101,19 +103,16 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
     : null;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs">
-        <h2 className="text-xl font-heading font-semibold text-slate-900 flex items-center gap-2">
-          <Timer className="w-5 h-5 text-indigo-500" /> Shift & Cash Drawer
-        </h2>
-        <p className="text-xs text-slate-500 mt-0.5">Manage opening/closing of cash drawer shifts and track cash variances.</p>
-      </div>
+    <div className="space-y-3">
+      <nav aria-label="Cash shift workspaces" className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {([['current','Current shift'],['close','Closing reconciliation'],['history','Shift history']] as const).filter(([id])=>id!=='close'||openShift).map(([id,label])=><button key={id} type="button" aria-pressed={workspace===id} onClick={()=>setWorkspace(id)} className={workspace===id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg px-3 py-2 text-xs font-semibold text-slate-600'}>{label}</button>)}
+        <span className="ml-auto text-xs font-medium text-slate-500">{openShift?'Shift open':'No active shift'}</span>
+      </nav>
 
-      {taxConfig&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Closed cash shift reconciliation',filename:'ars-cash-shifts',period:'All closed shifts available to this workspace',headers:['Cashier','Opened','Closed','Opening float (LKR)','Expected cash (LKR)','Closing cash (LKR)','Difference (LKR)','Notes'],moneyColumns:[3,4,5,6],rows:closedShifts.map(s=>[s.cashierName,reportTime(s.openedAt),reportTime(s.closedAt||''),s.openingFloat,s.expectedCash??'',s.closingCash??'',s.cashDifference??'',s.notes||'']),summary:[{label:'Closed shifts',value:closedShifts.length},{label:'Recorded net variance (LKR)',value:closedShifts.reduce((a,s)=>a+(s.cashDifference??0),0)}]})}/>}
+      {workspace==='history'&&taxConfig&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Closed cash shift reconciliation',filename:'ars-cash-shifts',period:'All closed shifts available to this workspace',headers:['Cashier','Opened','Closed','Opening float (LKR)','Expected cash (LKR)','Closing cash (LKR)','Difference (LKR)','Notes'],moneyColumns:[3,4,5,6],rows:closedShifts.map(s=>[s.cashierName,reportTime(s.openedAt),reportTime(s.closedAt||''),s.openingFloat,s.expectedCash??'',s.closingCash??'',s.cashDifference??'',s.notes||'']),summary:[{label:'Closed shifts',value:closedShifts.length},{label:'Recorded net variance (LKR)',value:closedShifts.reduce((a,s)=>a+(s.cashDifference??0),0)}]})}/>}
       {/* Current shift card */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div className={`rounded-xl border p-6 shadow-xs ${openShift ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100'}`}>
+      <div className={workspace==='history'?'hidden':'grid grid-cols-1 lg:grid-cols-2 gap-3'}>
+        <div className={`rounded-xl border p-3 shadow-xs ${openShift ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-100'}`}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               {openShift ? (
@@ -146,7 +145,8 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
               </div>
 
               {/* Close shift form */}
-              <div className="border-t border-emerald-200 pt-4 space-y-2">
+              {workspace==='current' && <button type="button" onClick={()=>setWorkspace('close')} className="w-full rounded-lg bg-[#182a45] py-2 text-xs font-bold text-white">Start closing reconciliation</button>}
+              <div hidden={workspace!=='close'} className="border-t border-emerald-200 pt-3 space-y-2">
                 <label className="block text-xs font-semibold text-slate-700">Actual Cash in Drawer</label>
                 <input
                   type="number" min="0" step="0.01"
@@ -230,8 +230,8 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
       </div>
 
       {/* Shift history */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+      <div hidden={workspace!=='history'} className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
+        <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-2">
           <History className="w-4 h-4 text-slate-400" />
           <span className="font-semibold text-sm text-slate-700">Shift History</span>
           <span className="ml-auto text-xs text-slate-400">{closedShifts.length} shifts</span>
@@ -239,19 +239,19 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
         {closedShifts.length === 0 ? (
           <div className="text-center py-10 text-slate-400 text-xs">No closed shifts yet.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider">
+          <div className="max-h-[68dvh] overflow-auto overscroll-contain">
+            <table className="w-full min-w-[980px] text-xs text-left">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 py-3">Shift ID</th>
-                  <th className="px-4 py-3">Opened</th>
-                  <th className="px-4 py-3">Closed</th>
-                  <th className="px-4 py-3">Cashier</th>
-                  <th className="px-4 py-3 text-right">Float</th>
-                  <th className="px-4 py-3 text-right">Cash Sales</th>
-                  <th className="px-4 py-3 text-right">Expected</th>
-                  <th className="px-4 py-3 text-right">Actual</th>
-                  <th className="px-4 py-3 text-right">Variance</th>
+                  <th className="px-3 py-2">Shift ID</th>
+                  <th className="px-3 py-2">Opened</th>
+                  <th className="px-3 py-2">Closed</th>
+                  <th className="px-3 py-2">Cashier</th>
+                  <th className="px-3 py-2 text-right">Float</th>
+                  <th className="px-3 py-2 text-right">Cash Sales</th>
+                  <th className="px-3 py-2 text-right">Expected</th>
+                  <th className="px-3 py-2 text-right">Actual</th>
+                  <th className="px-3 py-2 text-right">Variance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -260,15 +260,15 @@ export default function CashDrawerView({ taxConfig, cashShifts, transactions, au
                   const v = s.closingCash != null ? s.closingCash - (s.expectedCash ?? s.openingFloat) : null;
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/50">
-                      <td className="px-4 py-3 font-mono text-slate-500">{s.id.slice(-8).toUpperCase()}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{reportTime(s.openedAt)}</td>
-                      <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{s.closedAt ? reportTime(s.closedAt) : '—'}</td>
-                      <td className="px-4 py-3 text-slate-700">{s.cashierName || '—'}</td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-700">{fmt(s.openingFloat)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-indigo-600">{fmt(cashSales)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-slate-900">{fmt(s.expectedCash ?? s.openingFloat)}</td>
-                      <td className="px-4 py-3 text-right font-mono">{s.closingCash != null ? fmt(s.closingCash) : '—'}</td>
-                      <td className={`px-4 py-3 text-right font-mono font-bold ${v == null ? 'text-slate-400' : Math.abs(v) < 0.01 ? 'text-emerald-600' : v > 0 ? 'text-blue-600' : 'text-rose-600'}`}>
+                      <td className="px-3 py-2 font-mono text-slate-500">{s.id.slice(-8).toUpperCase()}</td>
+                      <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{reportTime(s.openedAt)}</td>
+                      <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{s.closedAt ? reportTime(s.closedAt) : '—'}</td>
+                      <td className="px-3 py-2 text-slate-700">{s.cashierName || '—'}</td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-700">{fmt(s.openingFloat)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-indigo-600">{fmt(cashSales)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-slate-900">{fmt(s.expectedCash ?? s.openingFloat)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{s.closingCash != null ? fmt(s.closingCash) : '—'}</td>
+                      <td className={`px-3 py-2 text-right font-mono font-bold ${v == null ? 'text-slate-400' : Math.abs(v) < 0.01 ? 'text-emerald-600' : v > 0 ? 'text-blue-600' : 'text-rose-600'}`}>
                         {v == null ? '—' : `${v >= 0 ? '+' : ''}${fmt(v)}`}
                       </td>
                     </tr>
