@@ -29,11 +29,12 @@ export async function supplierReconciliation(db:Pool,shopId:string,poId:string){
  COALESCE(sum(l.credit-l.debit) FILTER(WHERE l.account_code=$4),0)::numeric(24,2)::text AS payable
  FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id
  WHERE j.shop_id=$1 AND ((j.source_kind='SupplierPayment' AND EXISTS(SELECT 1 FROM supplier_payments s WHERE s.shop_id=$1 AND s.id=j.source_id AND s.purchase_order_id=$2))
+ OR (j.source_kind='SupplierReturnRefund' AND EXISTS(SELECT 1 FROM ars_gl_supplier_refunds f JOIN ars_gl_purchase_returns h ON h.shop_id=f.shop_id AND h.id=f.return_id WHERE f.shop_id=$1 AND f.id=j.source_id AND h.purchase_order_id=$2))
  OR (j.source_kind='PurchaseReturn' AND EXISTS(SELECT 1 FROM ars_gl_purchase_returns h WHERE h.shop_id=$1 AND h.id=j.source_id AND h.purchase_order_id=$2)) OR (j.source_kind='PurchaseReceipt' AND j.source_id=$2) OR (j.source_kind='ReceiptBatch' AND EXISTS(SELECT 1 FROM ars_receipt_batches b WHERE b.shop_id=$1 AND b.id=j.source_id AND b.purchase_order_id=$2)))`,[shopId,poId,a,p])).rows[0];
  advance=rows.advance;payable=rows.payable;
  if(Number(advance)<0||Number(payable)<0||(Number(advance)>0&&Number(payable)>0))warnings.push('Unexpected control balances require investigation.');
  }
  await client.query('COMMIT');
- return {order,coverage,advance,payable,postingEnabled:!!config?.posting_enabled,cutoverDate:config?.day??null,warnings,complete:false,operationallyReconciled:false,note:'Order-linked journal balances only. Opening balances, supplier statements, returns and landed charges are not independently reconciled.'};
+ return {order,coverage,advance,payable,postingEnabled:!!config?.posting_enabled,cutoverDate:config?.day??null,warnings,complete:false,operationallyReconciled:false,note:'Order-linked journal balances only. Linked purchase returns and supplier return refunds are included in journal balances; opening balances, supplier statements, returns and landed charges are not independently reconciled.'};
  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
 }
