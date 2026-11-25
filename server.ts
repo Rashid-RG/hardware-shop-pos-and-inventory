@@ -31,7 +31,7 @@ import { initPositionRegisters, listPositionRegisters, recordPositionBalance, po
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
 import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
-import { checkoutTransaction, refundTransaction, createPurchaseOrder, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
+import { checkoutTransaction, refundTransaction, createPurchaseOrder, allocateTradeDocumentNumber, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
@@ -5319,7 +5319,7 @@ app.post('/api/purchases', requireRole(['Super Admin', 'Store Manager', 'Invento
   const po: PurchaseOrder = {
     id: 'po-' + randomUUID(),
     shopId: activeShopId,
-    poNumber: 'PO-' + Date.now() + '-' + randomUUID().slice(0, 8).toUpperCase(),
+    poNumber: '',
     date: new Date().toISOString(),
     supplierId: supplier.id,
     supplierName: supplier.companyName || supplier.name,
@@ -6982,14 +6982,17 @@ app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']
   const {subtotal,tax,total}=invoiceTotals(lineSubtotal,profile?.taxRate??db.settings.taxRate,discountAmount);
   if(!Number.isFinite(total)||total<0)return res.status(400).json({error:'Invalid quotation totals.'});
   const quotation:Quotation={
-    id:'quo-'+randomUUID(),shopId:activeShopId,quoteNumber:'ARS-QUO-'+randomUUID().slice(0,12).toUpperCase(),
+    id:'quo-'+randomUUID(),shopId:activeShopId,quoteNumber:'',
     date:new Date().toISOString(),validUntil:dateRaw||undefined,
     customerId:customer.id,customerName:customer.name,customerPhone:customer.phone||undefined,
     items:normalizedItems,subtotal,tax,discountAmount,total,status:'Draft',
     notes:notes||undefined,createdBy:auth?.name||'System'
   };
+  const client=await pool.connect();
   try{
-    await pool.query(
+    await client.query('BEGIN');
+    quotation.quoteNumber=await allocateTradeDocumentNumber(client,'QTN',quotation.date);
+    await client.query(
       `INSERT INTO quotations(id,shop_id,quote_number,date,valid_until,customer_id,customer_name,customer_phone,
        items,subtotal,tax,discount_amount,total,status,notes,created_by)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,'Draft',$14,$15)`,
@@ -6997,7 +7000,8 @@ app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']
        quotation.customerId,quotation.customerName,quotation.customerPhone||null,
        JSON.stringify(quotation.items),quotation.subtotal,quotation.tax,quotation.discountAmount,
        quotation.total,quotation.notes||null,quotation.createdBy]);
-  }catch(error){return res.status(409).json({error:'Could not save quotation.'});}
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK');return res.status(409).json({error:'Could not save quotation.'});}finally{client.release();}
   if(!(await refreshCommittedQuoteState(res)))return;
   res.status(201).json(quotation);
 });
