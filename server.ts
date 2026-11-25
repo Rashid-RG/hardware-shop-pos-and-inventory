@@ -6818,6 +6818,21 @@ app.get('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),asy
   try{return res.json(await listSupplierCheques(pool,scope.shopId));}
   catch(error){console.error('Supplier cheque register read failed',error);return res.status(500).json({error:'Unable to load supplier cheque register.'});}
 });
+app.get('/api/supplier-cheques/:id/history',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const chequeId=String(req.params.id);
+  if(!chequeId.trim()||chequeId.length>200)return res.status(400).json({error:'Invalid cheque identifier.'});
+  res.setHeader('Cache-Control','no-store');
+  try{
+    const result=await pool.query(`SELECT c.id,c.status,c.payment_id AS "paymentId",
+      COALESCE(jsonb_agg(jsonb_build_object('id',e.id,'previousStatus',e.previous_status,'nextStatus',e.next_status,'effectiveDate',e.effective_date::text,'recordedBy',e.recorded_by,'recordedAt',e.recorded_at,'note',e.note) ORDER BY e.recorded_at,e.id) FILTER (WHERE e.id IS NOT NULL),'[]'::jsonb) AS events
+      FROM ars_supplier_cheques c LEFT JOIN ars_supplier_cheque_events e ON e.shop_id=c.shop_id AND e.cheque_id=c.id
+      WHERE c.shop_id=$1 AND c.id=$2 GROUP BY c.id,c.status,c.payment_id`,[scope.shopId,chequeId]);
+    if(!result.rowCount)return res.status(404).json({error:'Supplier cheque not found in this shop.'});
+    return res.json(result.rows[0]);
+  }catch(error){console.error('Supplier cheque history read failed',error);return res.status(500).json({error:'Unable to load supplier cheque history.'});}
+});
 app.post('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
   const scope=chequeShopAccess(req);
