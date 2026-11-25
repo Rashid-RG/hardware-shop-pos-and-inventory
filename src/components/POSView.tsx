@@ -83,7 +83,7 @@ export default function POSView({
   cashierName,
   draftOwner,
   currentRole,
-  taxConfig = { taxRate: 18, storeName: 'ARS Distributor', currency: 'LKR', invoicePrefix: 'SL-INV' },
+  taxConfig = { taxRate: 18, storeName: 'ARS Distributors', currency: 'LKR', invoicePrefix: 'SL-INV' },
   onRefreshDb,
   authToken,
 }: POSViewProps) {
@@ -108,7 +108,7 @@ export default function POSView({
   const currencySymbol = 'Rs.';
   const formatMoney = (amount: number) => `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const activeShopProfile = (taxConfig.shopProfiles || []).find((shop) => shop.id === taxConfig.activeShopId) || taxConfig.shopProfiles?.[0];
-  const activeShopName = (activeShopProfile?.name || taxConfig.storeName).replace(/^ARS (?:Hardware|Distribution)$/i, 'ARS Distributor');
+  const activeShopName = (activeShopProfile?.name || taxConfig.storeName).replace(/^ARS (?:Hardware|Distribution|Distributor)$/i, 'ARS Distributors');
   const shopAddress = (activeShopProfile ? activeShopProfile.address : taxConfig.address) || '';
   const shopPhone = (activeShopProfile ? activeShopProfile.phone : taxConfig.phone) || '';
   const invoiceCompanyMeta = {
