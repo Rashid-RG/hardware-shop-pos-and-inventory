@@ -6,7 +6,7 @@ export const controlMappings={
  capital:'Equity',retainedEarnings:'Equity',sales:'Revenue',costOfGoods:'Expense',
  purchaseReturnVariance:'Expense',inventoryRounding:'Expense',operatingExpense:'Expense',salary:'Expense'
 } as const;
-type Kind=keyof typeof controlMappings|'financialAccount';
+type Kind=keyof typeof controlMappings|'financialAccount'|'partnerCapital'|'partnerDrawings';
 type Mapping={kind:Kind;sourceId:string;accountCode:string;evidence:string};
 
 export async function listLedgerMappings(db:Pool|PoolClient,shopId:string){
@@ -17,9 +17,9 @@ export async function listLedgerMappings(db:Pool|PoolClient,shopId:string){
  WHERE m.shop_id=$1 ORDER BY m.mapping_kind,m.source_id`,[shopId])).rows;
 }
 export async function createLedgerMapping(db:Pool,shopId:string,actor:string,input:Mapping){
- if(!shopId?.trim()||!actor?.trim()||!input||typeof input.kind!=='string'||(input.kind!=='financialAccount'&&!Object.prototype.hasOwnProperty.call(controlMappings,input.kind))||typeof input.sourceId!=='string'||!input.sourceId.trim()||input.sourceId.length>160||typeof input.accountCode!=='string'||!/^\d{4,10}$/.test(input.accountCode)||typeof input.evidence!=='string'||!input.evidence.trim()||input.evidence.trim().length>500)throw Error('Valid account mapping and evidence required.');
+ if(!shopId?.trim()||!actor?.trim()||!input||typeof input.kind!=='string'||(!['financialAccount','partnerCapital','partnerDrawings'].includes(input.kind)&&!Object.prototype.hasOwnProperty.call(controlMappings,input.kind))||typeof input.sourceId!=='string'||!input.sourceId.trim()||input.sourceId.length>160||typeof input.accountCode!=='string'||!/^\d{4,10}$/.test(input.accountCode)||typeof input.evidence!=='string'||!input.evidence.trim()||input.evidence.trim().length>500)throw Error('Valid account mapping and evidence required.');
  const source=input.sourceId.trim(),evidence=input.evidence.trim();
- if(input.kind!=='financialAccount'&&source!=='control')throw Error('Control mappings require the control source identifier.');
+ if(!['financialAccount','partnerCapital','partnerDrawings'].includes(input.kind)&&source!=='control')throw Error('Control mappings require the control source identifier.');
  const client=await db.connect();
  try{
   await client.query('BEGIN');
@@ -35,6 +35,10 @@ export async function createLedgerMapping(db:Pool,shopId:string,actor:string,inp
    const a=(await client.query('SELECT kind,active FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 FOR SHARE',[shopId,source])).rows[0];
    if(!a||!a.active||!['Office Cash','Bank','Representative Cash'].includes(a.kind))throw Error('Active cash, bank or representative account required.');
    expected='Asset';
+  }else if(input.kind==='partnerCapital'||input.kind==='partnerDrawings'){
+   const p=(await client.query('SELECT id FROM ars_business_partners WHERE shop_id=$1 AND id=$2 AND is_active FOR SHARE',[shopId,source])).rows[0];
+   if(!p)throw Error('Active partner required in this shop.');
+   expected='Equity';
   }else expected=controlMappings[input.kind];
   const target=(await client.query('SELECT kind,active FROM ars_gl_accounts WHERE shop_id=$1 AND code=$2 FOR SHARE',[shopId,input.accountCode])).rows[0];
   if(!target||!target.active||target.kind!==expected)throw Error('Active ledger account with matching classification required.');
