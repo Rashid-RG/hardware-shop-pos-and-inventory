@@ -193,6 +193,7 @@ test('PostgreSQL import creditor funding, partial allocation and settlement life
  CREATE TABLE ars_receipt_batches(id text PRIMARY KEY,shop_id text,purchase_order_id text);
  CREATE TABLE ars_financial_accounts(id text PRIMARY KEY,shop_id text,kind text,active boolean);
  CREATE TABLE ars_financial_movements(id text PRIMARY KEY,shop_id text,account_id text,amount numeric(16,2),movement_kind text,source_id text,recorded_by text,effective_date date,note text);
+ CREATE TABLE ars_supplier_cheques(id text PRIMARY KEY,shop_id text,bank_account_id text,status text,amount numeric(14,2));
  INSERT INTO ars_landed_cost_approvals VALUES('approval','shop-a','po',300,'{"freightLkr":100,"customsLkr":200,"clearanceLkr":0}');
  INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES('shop-a','1000','Bank','Asset'),('shop-a','1300','Inventory','Asset'),('shop-a','2000','Supplier','Liability'),('shop-a','2050','Import creditor','Liability'),('shop-a','5100','Expense','Expense');
  INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES('shop-a','importPayables','control','2050','CI','CI'),('shop-a','financialAccount','bank','1000','CI','CI');
@@ -225,6 +226,10 @@ test('PostgreSQL import creditor funding, partial allocation and settlement life
  await receipt('r2',15000n);
  assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).approvedUnpaidRemaining,0n);
  assert.equal((await verifiedImportChargeFunding(db,shop,'po','5100')).fundedRemaining,0n);
+ await db.query("INSERT INTO ars_supplier_cheques VALUES('commitment','shop-a','bank','Issued',460)");
+ await assert.rejects(()=>settleImportCreditor(pool,settle),/Insufficient recorded funds/);
+ assert.equal((await db.query('SELECT count(*)::int AS n FROM ars_gl_import_settlements')).rows[0].n,0);
+ await db.query("UPDATE ars_supplier_cheques SET status='Cancelled' WHERE id='commitment'");
  assert.equal((await settleImportCreditor(pool,settle)).replayed,false);
  assert.equal((await settleImportCreditor(pool,settle)).replayed,true);
  await assert.rejects(()=>settleImportCreditor(pool,{...settle,amount:'51.00'}),/identifier already used/);
