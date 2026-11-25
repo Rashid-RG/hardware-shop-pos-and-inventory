@@ -61,37 +61,26 @@ export default function InventoryView({
   // Validate Operator Role for Adjustments
   const canAdjust = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
 
+  const adjustmentIssue = !canAdjust ? 'You do not have permission to adjust stock.'
+    : !adjustmentProduct ? 'Select a product.'
+    : adjustmentProduct.sharedStockUnits && !adjustmentUnit ? 'Select an adjustment U/M.'
+    : !Number.isSafeInteger(qtyDifference) || qtyDifference === 0 ? 'Enter a non-zero whole quantity.'
+    : adjustType === 'Stock Out' && qtyDifference > 0 ? 'Stock Out requires a negative quantity.'
+    : (adjustType === 'Stock In' || adjustType === 'Return') && qtyDifference < 0 ? 'Stock In and Return require a positive quantity.'
+    : !Number.isSafeInteger(baseDifference) || !Number.isSafeInteger(adjustmentProduct.quantity + baseDifference) || adjustmentProduct.quantity + baseDifference > 2147483647 ? 'Stock quantity exceeds the supported range.'
+    : adjustmentProduct.quantity + baseDifference < 0 ? 'Insufficient stock for this adjustment.'
+    : !reason.trim() ? 'Enter an audit reason.'
+    : '';
+
   const handleSubmitAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProductId) {
-      notify.warning('Please select a product to adjust.');
+    if (isSubmitting) return;
+    if (adjustmentIssue || !adjustmentProduct) {
+      notify.warning(adjustmentIssue || 'Select a product.');
       return;
     }
-    if (!Number.isSafeInteger(qtyDifference) || qtyDifference === 0) {
-      notify.warning('Adjustment amount cannot be zero.');
-      return;
-    }
-    if (!reason.trim()) {
-      notify.warning('Please provide an audit reason or ticket log reference.');
-      return;
-    }
+    const newQty = adjustmentProduct.quantity + baseDifference;
     setIsSubmitting(true);
-
-    const product = products.find((p) => p.id === selectedProductId);
-    if (!product) {
-      notify.warning('Product not found.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    // Compute new target quantity
-    if (product.sharedStockUnits && !adjustmentUnit) { notify.warning('Select an adjustment U/M.'); setIsSubmitting(false); return; }
-    const newQty = product.quantity + baseDifference;
-    if (!Number.isSafeInteger(newQty) || newQty > 2147483647 || newQty < 0) {
-      notify.error('Inventory error: Stock cannot be adjusted below zero.');
-      setIsSubmitting(false);
-      return;
-    }
 
     try {
       await onEditProduct(selectedProductId, {
@@ -120,7 +109,7 @@ export default function InventoryView({
     setAdjustUnitId('');
     setQtyDifference(0);
     setAdjustType('Stock Adjust');
-    setReason('Manual bin location recount audit');
+    setReason('');
     setIsAdjustOpen(true);
   };
 
@@ -391,7 +380,7 @@ export default function InventoryView({
                 <select
                   id="adjust-prod-select"
                   value={selectedProductId}
-                  onChange={(e) => {setSelectedProductId(e.target.value);setAdjustUnitId('');}}
+                  onChange={(e) => {setSelectedProductId(e.target.value);setAdjustUnitId('');setQtyDifference(0);setReason('');}}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs focus:outline-none focus:border-amber-500"
                 >
                   <option value="">-- Choose Hardware SKU --</option>
@@ -428,7 +417,7 @@ export default function InventoryView({
                   <select
                     id="adjust-type-select"
                     value={adjustType}
-                    onChange={(e) => setAdjustType(e.target.value as any)}
+                    onChange={(e) => {setAdjustType(e.target.value as typeof adjustType);setQtyDifference(0);}}
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 text-xs"
                   >
                     <option value="Stock Adjust">Stock Adjust (*)</option>
@@ -452,7 +441,8 @@ export default function InventoryView({
                 />
               </div>
 
-              {selectedProductId && (
+              {adjustmentIssue && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{adjustmentIssue}</p>}
+              {adjustmentProduct && !adjustmentIssue && (
                 <div className="bg-amber-50/50 border border-amber-200 p-2.5 rounded text-[10px] text-slate-600 font-sans leading-relaxed">
                   <strong>Outcome Forecast:</strong> <br />
                   Product original base stock will transition from{' '}
@@ -478,8 +468,8 @@ export default function InventoryView({
                 <button
                   id="btn-confirm-adjust"
                   type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm hover:shadow-md transition"
+                  disabled={isSubmitting || !!adjustmentIssue}
+                  className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm hover:shadow-md transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSubmitting ? 'Adjusting Ledger...' : 'Apply Adjustments'}
                 </button>
