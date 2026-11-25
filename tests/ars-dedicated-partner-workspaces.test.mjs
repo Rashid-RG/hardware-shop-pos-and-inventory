@@ -20,6 +20,8 @@ test('capital and ownership history remain accessible on dedicated screens',()=>
   assert.match(ui,/workspace==='profits'&&<section aria-label="Approved partner profit allocation"/);
   assert.match(ui,/workspace==='agreements'&&<section aria-label="Effective-dated ownership agreements"/);
   assert.match(ui,/Super Admin Only · Confidential/);
-  assert.match(ui,/Record permanent capital entry/);
+  assert.match(ui,/Post capital and accounting journal/);
+  assert.match(ui,/\/api\/ars\/partner-capital\/post/);
+  assert.match(ui,/Retry exact request/);
   assert.match(ui,/Record approved allocation \(no money transfer\)/);
 });
