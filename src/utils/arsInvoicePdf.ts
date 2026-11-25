@@ -94,8 +94,11 @@ export const renderArsInvoicePdf = async (
       text(title+' (CONTINUED)',300,19,269,10,true,'right');
       text(tx.invoiceNumber,left,37,260,10,true);
       text(safe(tx.customerName),300,37,269,9,false,'right');
-      line(left,53,right,53);
-      return 64;
+      text('Sales Rep.: '+safe(tx.salesRepName,'Not recorded'),left,51,270,9);
+      if(tx.paymentMethod==='Credit Account'&&tx.creditDueDate&&/^\d{4}-\d{2}-\d{2}$/.test(tx.creditDueDate))
+        text('Due Date: '+tx.creditDueDate.split('-').reverse().join('/'),300,51,269,9,false,'right');
+      line(left,65,right,65);
+      return 76;
     }
     if(isArsPrintBrand(shopName)){
       doc.save().translate(left,18).scale(39/615).translate(-245,-320)
@@ -118,7 +121,7 @@ export const renderArsInvoicePdf = async (
     cy=wrap('Phone: '+safe(tx.customerPhone),left,cy,270,9);
     let ry=wrap('Sales Rep.: '+safe(tx.salesRepName,'Not recorded'),310,boundary+7,259,9)+2;
     ry=wrap('Line items: '+tx.items.length+'   |   Tax: '+taxRate.toFixed(1)+'%',310,ry,259,9)+2;
-    if(tx.paymentMethod==='Credit Account'&&tx.creditDueDate)ry=wrap('Due date: '+tx.creditDueDate,310,ry,259,9);
+    if(tx.paymentMethod==='Credit Account'&&tx.creditDueDate&&/^\d{4}-\d{2}-\d{2}$/.test(tx.creditDueDate))ry=wrap('Due Date: '+tx.creditDueDate.split('-').reverse().join('/'),310,ry,259,9);
     return Math.max(cy,ry)+9;
   };
   const hasDiscount=tx.items.some(i=>Number(i.discount||0)>0||Number(i.discountAmount||0)>0);
