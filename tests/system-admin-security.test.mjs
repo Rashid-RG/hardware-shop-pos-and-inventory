@@ -22,8 +22,8 @@ test('raw database endpoints are protected from non-admin and production access'
 });
 
 test('system admin UI does not present destructive database buttons or raw table lists', () => {
-  const rendered = admin.split('  return (\n    <div className="space-y-6 motion-safe:animate-fade-in">').at(-1) || '';
-  assert.match(rendered, /System Administration/);
+  const rendered = admin.split('  return (\n    <div className="space-y-3 motion-safe:animate-fade-in">').at(-1) || '';
+  assert.match(rendered, /aria-label="Administration workspaces"/);
   assert.match(rendered, /User Accounts/);
   assert.doesNotMatch(rendered, /Clear Test Data/);
   assert.doesNotMatch(rendered, /Sync app_state to normalized/);
