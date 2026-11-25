@@ -142,6 +142,47 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
     );
     CREATE INDEX IF NOT EXISTS ars_customer_cheque_history ON ars_customer_cheque_events(shop_id,cheque_id,recorded_at);
 
+    -- Outgoing cheques are commitments, not posted supplier payments.
+    CREATE TABLE IF NOT EXISTS ars_supplier_cheques (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      supplier_id TEXT NOT NULL,
+      purchase_order_id TEXT,
+      bank_account_id TEXT NOT NULL,
+      cheque_number TEXT NOT NULL CHECK(length(trim(cheque_number)) BETWEEN 1 AND 80),
+      amount NUMERIC(14,2) NOT NULL CHECK(amount>0),
+      issued_date DATE NOT NULL,
+      due_date DATE NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Issued' CHECK(status IN ('Issued','Cleared','Dishonoured','Cancelled')),
+      payment_id TEXT UNIQUE,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      note TEXT,
+      UNIQUE(shop_id,id),
+      FOREIGN KEY(shop_id,bank_account_id) REFERENCES ars_financial_accounts(shop_id,id),
+      CHECK((status='Cleared')=(payment_id IS NOT NULL))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ars_supplier_cheque_number
+      ON ars_supplier_cheques(shop_id,bank_account_id,lower(trim(cheque_number)));
+    CREATE INDEX IF NOT EXISTS ars_supplier_cheque_due
+      ON ars_supplier_cheques(shop_id,status,due_date);
+    CREATE TABLE IF NOT EXISTS ars_supplier_cheque_events (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL,
+      cheque_id TEXT NOT NULL,
+      previous_status TEXT CHECK(previous_status IN ('Issued','Cleared','Dishonoured','Cancelled')),
+      next_status TEXT NOT NULL CHECK(next_status IN ('Issued','Cleared','Dishonoured','Cancelled')),
+      effective_date DATE NOT NULL,
+      recorded_by TEXT NOT NULL,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      note TEXT,
+      FOREIGN KEY(shop_id,cheque_id) REFERENCES ars_supplier_cheques(shop_id,id),
+      CHECK((previous_status IS NULL AND next_status='Issued') OR
+        (previous_status IS NOT NULL AND previous_status='Issued' AND next_status IN ('Cleared','Dishonoured','Cancelled')))
+    );
+    CREATE INDEX IF NOT EXISTS ars_supplier_cheque_history
+      ON ars_supplier_cheque_events(shop_id,cheque_id,recorded_at);
+
     CREATE TABLE IF NOT EXISTS ars_financial_reconciliations (
       id TEXT PRIMARY KEY,
       shop_id TEXT NOT NULL,
