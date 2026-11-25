@@ -30,7 +30,7 @@ import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } fr
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, registerSupplierCheque, listSupplierCheques, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, allocateTradeDocumentNumber, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6811,6 +6811,33 @@ const chequeShopAccess=(req:express.Request)=>{
   return {shopId:activeShopId,recordedBy:auth.email};
 };
 const validChequeRequestId=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+app.get('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  res.setHeader('Cache-Control','no-store');
+  try{return res.json(await listSupplierCheques(pool,scope.shopId));}
+  catch(error){console.error('Supplier cheque register read failed',error);return res.status(500).json({error:'Unable to load supplier cheque register.'});}
+});
+app.post('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,supplierId,purchaseOrderId,bankAccountId,chequeNumber,amount,issuedDate,dueDate,note}=req.body||{};
+  const validId=(v:unknown):v is string=>typeof v==='string'&&v.trim().length>0&&v.length<=200;
+  if(!validChequeRequestId(requestId)||!validId(supplierId)||!validId(bankAccountId)||
+    (purchaseOrderId!==undefined&&!validId(purchaseOrderId))||
+    typeof chequeNumber!=='string'||chequeNumber.length>80||typeof amount!=='number'||
+    typeof issuedDate!=='string'||issuedDate>reportDay(new Date())||typeof dueDate!=='string'||
+    (note!==undefined&&(typeof note!=='string'||note.length>500)))return res.status(400).json({error:'Enter valid supplier cheque details.'});
+  try{
+    const result=await registerSupplierCheque(pool,{...scope,id:'supplier-cheque-'+requestId,supplierId,purchaseOrderId,bankAccountId,chequeNumber,amount,issuedDate,dueDate,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid supplier cheque details.','Supplier cheque request identifier already used for different details.','Select a non-cancelled purchase order belonging to this supplier.','Supplier not found in this shop.','Select an active bank account in this shop.','Supplier cheque number already registered for this bank account.'].includes(message))return res.status(409).json({error:message});
+    console.error('Supplier cheque registration failed',error);return res.status(500).json({error:'Unable to confirm supplier cheque registration. Retry the same request identifier.'});
+  }
+});
 app.get('/api/customer-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
