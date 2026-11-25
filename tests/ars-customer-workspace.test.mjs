@@ -17,7 +17,10 @@ test('customers have dedicated full-height file separate from staff', () => {
 test('directory filters include customer name id contact and address and show all matches', () => {
   assert.match(customer, /\[c\.name, c\.id, c\.phone, c\.email, c\.address\]/);
   assert.match(customer, /balanceFilter === 'owing'/);
-  assert.match(customer, /searchTerm\.trim\(\) \|\| balanceFilter !== 'all'/);
+  assert.match(customer, /filteredCustomers\.slice\(0, visibleCount\)/);
+  assert.match(customer, /filteredCustomers\.length > visibleCount/);
+  assert.match(customer, /Show 12 more customer shops/);
+  assert.match(customer, /setSearchTerm\(e\.target\.value\); setVisibleCount\(12\)/);
 });
 
 test('customer detail renders all scoped invoice and credit repayment records', () => {
