@@ -570,7 +570,7 @@ export default function POSView({
       const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
       if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return false; }
       const existing = cart.find(entry=>entry.product.id===product.id && entry.sellingUnitId===unit.id);
-      if (existing && customPrice !== undefined && (existing.customUnitPrice ?? unit.sellingPrice)!==customPrice) { notify.warning('This unit is already on the invoice at another price. Edit its existing line price first.'); return false; }
+      if (existing && (existing.customUnitPrice ?? unit.sellingPrice)!==(customPrice ?? unit.sellingPrice)) { notify.warning('This unit is already on the invoice at another price. Use the same rate or edit its existing line price and quantity.'); return false; }
       const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+requestedQty}:entry) : [...cart,{
         product, quantity:requestedQty, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
         unitPrice:unit.sellingPrice, customUnitPrice:customPrice, priceOverrideReason:customPrice!==undefined?reason?.trim():undefined, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
@@ -611,6 +611,8 @@ export default function POSView({
     return true;
   };
 
+  // Display each unit independently; a full box can be unavailable while pieces remain.
+  const sellingUnitAvailability = (product: Product) => (product.sharedStockUnits?.units || []).map(unit=>({unit,remaining:availableToAdd(product,undefined,cart,unit.id)}));
   const openUnitPicker = (product: Product, variant?: ProductVariant) => {
     if (!product.sharedStockUnits) return addToCart(product, variant);
     const units = product.sharedStockUnits.units;
@@ -1493,10 +1495,12 @@ export default function POSView({
         <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 auto-rows-min overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
-            const activeStock = availableToAdd(p, selectedVariant);
+            const unitAvailability = sellingUnitAvailability(p);
+            const displayUnit = unitAvailability.find(row=>row.unit.id===getDefaultSellingUnit(p)?.id && row.remaining>0) || unitAvailability.find(row=>row.remaining>0) || unitAvailability[0];
+            const activeStock = displayUnit ? displayUnit.remaining : availableToAdd(p, selectedVariant);
             const activeReorderLevel = Number(selectedVariant?.reorderLevel ?? p.reorderLevel);
-            const activePrice = Number(getDefaultSellingUnit(p)?.sellingPrice ?? selectedVariant?.sellingPrice ?? p.sellingPrice);
-            const isLowStock = activeStock <= activeReorderLevel;
+            const activePrice = Number(displayUnit?.unit.sellingPrice ?? selectedVariant?.sellingPrice ?? p.sellingPrice);
+            const isLowStock = (p.sharedStockUnits ? unitAvailability.reduce((max,row)=>Math.max(max,row.remaining*row.unit.baseUnits),0) : activeStock) <= activeReorderLevel;
             const isOut = activeStock <= 0;
 
             return (
@@ -1563,7 +1567,7 @@ export default function POSView({
 
                 <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-1 items-center justify-between">
                   <span className="text-sm font-bold text-slate-950 font-mono">
-                    {formatMoney(activePrice)}
+                    {formatMoney(activePrice)}{displayUnit && <span className="ml-1 text-[10px] font-normal">/ {displayUnit.unit.label}</span>}
                   </span>
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
@@ -1574,7 +1578,7 @@ export default function POSView({
                         : 'bg-slate-100 text-slate-600'
                     }`}
                   >
-                    {isOut ? 'No stock left to add' : `Available: ${activeStock}`}
+                    {isOut ? 'No stock left to add' : unitAvailability.length ? unitAvailability.map(row=>`${row.unit.label}: ${row.remaining}`).join(' · ') : `Available: ${activeStock}`}
                   </span>
                 </div>
               </div>
@@ -1651,11 +1655,13 @@ export default function POSView({
                   <div className="flex justify-between items-center px-2 py-1 text-xs text-slate-500"><span>{filteredProducts.length} matching products</span><button type="button" onClick={() => setShowInvoiceProducts(false)} aria-label="Close product results"><X className="h-4 w-4" /></button></div>
                   {filteredProducts.slice(0, 30).map(product => {
                     const variant = getSelectedVariant(product);
-                    const stock = availableToAdd(product, variant);
+                    const unitAvailability = sellingUnitAvailability(product);
+                    const displayUnit = unitAvailability.find(row=>row.unit.id===getDefaultSellingUnit(product)?.id && row.remaining>0) || unitAvailability.find(row=>row.remaining>0) || unitAvailability[0];
+                    const stock = displayUnit ? displayUnit.remaining : availableToAdd(product, variant);
                     return <div key={product.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 p-2 text-xs">
-                      <BillingProductPhoto product={product} compact/><span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? 'Available to add: '+stock : 'No stock left to add'}</span></span>
+                      <BillingProductPhoto product={product} compact/><span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? (unitAvailability.length ? unitAvailability.map(row=>`${row.unit.label}: ${row.remaining}`).join(' · ') : 'Available to add: '+stock) : 'No stock left to add'}</span></span>
                       {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
-                      <span>{formatMoney(Number(getDefaultSellingUnit(product)?.sellingPrice ?? variant?.sellingPrice ?? product.sellingPrice))}</span>
+                      <span>{formatMoney(Number(displayUnit?.unit.sellingPrice ?? variant?.sellingPrice ?? product.sellingPrice))}{displayUnit && ` / ${displayUnit.unit.label}`}</span>
                       <button type="button" disabled={stock <= 0} onClick={() => { if(openUnitPicker(product, variant)) { setSearchTerm(''); setShowInvoiceProducts(false); } }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
                     </div>;
                   })}
