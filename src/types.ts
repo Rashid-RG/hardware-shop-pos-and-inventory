@@ -130,6 +130,8 @@ export interface CartItem {
   variantSku?: string;
   variantBarcode?: string;
   unitPrice?: number;
+  customUnitPrice?: number;
+  priceOverrideReason?: string;
   unitCostPrice?: number;
 }
 
@@ -161,6 +163,7 @@ export interface SalesTransaction {
     variantBarcode?: string;
     quantity: number;
     sellingPrice: number;
+    priceOverride?: { standardPrice: number; reason: string };
     costPrice?: number;
     discount: number;
     discountAmount?: number;
