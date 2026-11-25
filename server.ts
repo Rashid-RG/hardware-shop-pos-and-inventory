@@ -7662,6 +7662,26 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
+app.get('/api/ars/partner-capital/requests/:requestId',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ if(!validChequeRequestId(req.params.requestId))return res.status(400).json({error:'Invalid capital request identifier.'});
+ try{
+  const rows=(await pool.query(`SELECT e.id,e.partner_id AS "partnerId",e.entry_type AS "entryType",e.amount_lkr::text AS "amountLkr",e.entry_date::text AS "entryDate",e.reference,e.note,
+   m.account_id AS "accountId",m.id AS "movementId",j.id AS "journalId",
+   (m.amount=CASE WHEN e.entry_type='Contribution' THEN e.amount_lkr ELSE -e.amount_lkr END AND m.effective_date=e.entry_date AND m.recorded_by=e.created_by AND j.posting_date=e.entry_date AND j.recorded_by=e.created_by
+   AND (SELECT COUNT(*) FROM ars_gl_lines l WHERE l.shop_id=j.shop_id AND l.journal_id=j.id)=2
+   AND (SELECT COALESCE(SUM(l.debit),0)=e.amount_lkr AND COALESCE(SUM(l.credit),0)=e.amount_lkr FROM ars_gl_lines l WHERE l.shop_id=j.shop_id AND l.journal_id=j.id)) AS consistent
+   FROM ars_partner_capital_entries e LEFT JOIN ars_financial_movements m ON m.shop_id=e.shop_id AND m.source_id=e.id AND m.movement_kind='Partner Capital'
+   LEFT JOIN ars_gl_journals j ON j.shop_id=e.shop_id AND j.source_id=e.id AND j.source_kind='PartnerCapital'
+   WHERE e.shop_id=$1 AND e.id=$2 AND e.created_by=$3`,[scope.shopId,'capital-'+req.params.requestId,scope.recordedBy])).rows;
+  if(!rows.length)return res.json({status:'NotConfirmed'});
+  const p=rows[0];
+  if(rows.length!==1||p.consistent!==true||p.journalId!=='partner-capital:'+p.id||p.movementId!=='partner-capital:'+p.id)return res.status(409).json({error:'Capital transaction requires accounting reconciliation.'});
+  return res.json({status:'Committed',requestId:req.params.requestId,...p});
+ }catch(error){console.error('Capital request verification failed',error);return res.status(503).json({error:'Unable to verify capital request.'});}
+});
 app.post('/api/ars/partner-capital/post',requireRole(['Super Admin']),async(req,res)=>{
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
  const scope=chequeShopAccess(req);
