@@ -1299,7 +1299,7 @@ export default function App() {
               )}
 
               {activeTab === 'partners' && currentRole === 'Super Admin' && (
-                <PartnerCapitalView taxConfig={taxConfig} authToken={sessionToken}
+                <PartnerCapitalView taxConfig={taxConfig} authToken={sessionToken} owner={authUser.email}
                   shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} />
               )}
 
