@@ -30,7 +30,7 @@ import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } fr
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
 import { listImportExpenseReview, linkImportExpense } from './backend/importExpenseReconciliation';
-import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, registerSupplierCheque, listSupplierCheques, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
+import { initFinancialAccounts, listFinancialAccounts, createFinancialAccount, registerFinancialOpeningBalance, recordFinancialTransfer, registerCustomerCheque, listCustomerCheques, transitionCustomerCheque, registerSupplierCheque, listSupplierCheques, transitionSupplierCheque, recordFinancialReconciliation, listFinancialReconciliations, listFinancialMovements, recordPaidExpense, assignRepresentativeAccount, listRepresentativeAccounts, linkRepresentativeLogin, resolveRepresentativeFinancialIdentity, requestCashHandover, decideCashHandover, financialCashFlow, financialProfitReport, correctHistoricalInvoiceCost, type FinancialAccountKind } from './backend/financialAccounts';
 import { initArsProfitLedger, recordArsProfitAllocation, recordArsOwnershipAgreement } from './backend/partnerProfit';
 import { checkoutTransaction, refundTransaction, createPurchaseOrder, allocateTradeDocumentNumber, receivePurchaseOrder, updatePurchaseOrderStatus, updateCustomerCreditLimit, updateCustomerContact, addCustomerCreditPayment, insertSupplierPayment, insertSupplier, insertCustomer, createProductWithIntake, updateProductWithAudit, archiveProduct } from './backend/db';
 import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
@@ -6836,6 +6836,26 @@ app.post('/api/supplier-cheques',requireRole(['Super Admin','Store Manager']),as
     const message=error instanceof Error?error.message:'';
     if(['Invalid supplier cheque details.','Supplier cheque request identifier already used for different details.','Select a non-cancelled purchase order belonging to this supplier.','Supplier not found in this shop.','Select an active bank account in this shop.','Supplier cheque number already registered for this bank account.'].includes(message))return res.status(409).json({error:message});
     console.error('Supplier cheque registration failed',error);return res.status(500).json({error:'Unable to confirm supplier cheque registration. Retry the same request identifier.'});
+  }
+});
+app.post('/api/supplier-cheques/:id/status',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,nextStatus,effectiveDate,note}=req.body||{};
+  const chequeId=String(req.params.id);
+  if(!validChequeRequestId(requestId)||!chequeId.trim()||chequeId.length>200||
+    !['Cancelled','Dishonoured'].includes(nextStatus)||typeof effectiveDate!=='string'||
+    !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||effectiveDate>reportDay(new Date())||
+    typeof note!=='string'||!note.trim()||note.length>500)return res.status(400).json({error:'Enter a valid cancellation or dishonour date and reason. Clearance requires a separate payment workflow.'});
+  try{
+    const result=await transitionSupplierCheque(pool,{...scope,chequeId,eventId:'supplier-cheque-event-'+requestId,nextStatus,effectiveDate,note});
+    return res.status(result.replayed?200:201).json(result);
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(message==='Supplier cheque not found in this shop.')return res.status(404).json({error:message});
+    if(['Invalid supplier cheque transition details.','Supplier cheque event identifier already used for different details.','Only issued supplier cheques can be cancelled or dishonoured.','Supplier cheque event date precedes its history.'].includes(message))return res.status(409).json({error:message});
+    console.error('Supplier cheque status update failed',error);return res.status(500).json({error:'Unable to confirm supplier cheque status. Retry the same request identifier.'});
   }
 });
 app.get('/api/customer-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
