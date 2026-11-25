@@ -6843,7 +6843,7 @@ app.post('/api/customer-cheques/:id/status',requireRole(['Super Admin','Store Ma
   if(!validChequeRequestId(requestId)||!['Deposited','Bounced','Cancelled','Returned'].includes(nextStatus)||
     typeof effectiveDate!=='string'||effectiveDate>reportDay(new Date())||
     (depositAccountId!==undefined&&(typeof depositAccountId!=='string'||depositAccountId.length>200))||
-    (note!==undefined&&typeof note!=='string'))return res.status(400).json({error:'Enter valid cheque transition details. Clearance is not yet enabled.'});
+    (note!==undefined&&typeof note!=='string'))return res.status(400).json({error:'Enter valid cheque transition details. Use the separate bank clearance action to confirm payment.'});
   try{
     const result=await transitionCustomerCheque(pool,{...scope,chequeId:String(req.params.id),eventId:'cheque-event-'+requestId,nextStatus,effectiveDate,depositAccountId,note});
     return res.status(result.replayed?200:201).json(result);
