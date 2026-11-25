@@ -119,14 +119,14 @@ export default function DashboardView({
   const criticalLowStock = products.filter((p) => p.quantity <= p.reorderLevel).slice(0, 4);
 
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in">
+    <div className="space-y-3 motion-safe:animate-fade-in">
       {/* Title block */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gradient-to-r from-[#152945] to-[#294664] text-white p-6 sm:p-7 rounded-2xl border border-slate-800 shadow-lg shadow-slate-950/10">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gradient-to-r from-[#152945] to-[#294664] text-white p-3 sm:px-4 rounded-xl border border-slate-800 shadow-sm">
         <div>
-          <h2 className="text-2xl font-heading font-bold tracking-tight text-white">
+          <h2 className="text-lg font-heading font-bold tracking-tight text-white">
             Business Overview
           </h2>
-          <p className="text-sm text-slate-200 mt-1">
+          <p className="text-xs text-slate-200 mt-0.5">
             Sales activity, inventory health and the numbers that matter to your business.
           </p>
         </div>
@@ -136,17 +136,17 @@ export default function DashboardView({
         </div>
       </div>
 
-      <section className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Customer collections">
+      <section className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Customer collections">
         {[
           ['Today’s credit collections',customerCreditPayments.filter(p=>reportDay(p.date)===todayStr).reduce((s,p)=>s+Number(p.amount),0),'Recorded repayments only'],
           ['All recorded credit collections',customerCreditPayments.reduce((s,p)=>s+Number(p.amount),0),'Not additional sales revenue'],
           ['Current customer receivables',customers.reduce((s,c)=>s+Number(c.creditBalance||0),0),'Outstanding across customer accounts']
-        ].map(([label,value,description])=><div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs font-semibold text-slate-600">{label}</p><p className="mt-1 text-xl font-bold">Rs. {Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="mt-1 text-xs text-slate-500">{description}</p></div>)}
+        ].map(([label,value,description])=><div key={String(label)} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs font-semibold text-slate-600">{label}</p><p className="mt-1 text-xl font-bold">Rs. {Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</p><p className="mt-1 text-xs text-slate-500">{description}</p></div>)}
       </section>
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-2">
         {/* Total Revenue */}
-        <div id="kpi-total-revenue" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
+        <div id="kpi-total-revenue" className="min-w-0 bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Total Sales</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
@@ -156,13 +156,13 @@ export default function DashboardView({
               <span className="font-bold">Based on recorded sales</span>
             </p>
           </div>
-          <div className="shrink-0 p-3 bg-indigo-50 rounded-lg text-indigo-500">
+          <div className="shrink-0 p-2 bg-indigo-50 rounded-lg text-indigo-500">
             <DollarSign className="w-5 h-5" />
           </div>
         </div>
 
         {/* Today's Sales */}
-        <div id="kpi-today-revenue" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
+        <div id="kpi-today-revenue" className="min-w-0 bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Today's Billing</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
@@ -172,13 +172,13 @@ export default function DashboardView({
               {todayTransactions.length} receipts today
             </p>
           </div>
-          <div className="shrink-0 p-3 bg-blue-50 rounded-lg text-blue-500">
+          <div className="shrink-0 p-2 bg-blue-50 rounded-lg text-blue-500">
             <ShoppingCart className="w-5 h-5" />
           </div>
         </div>
 
         {/* Gross Profit (all sales) */}
-        <div id="kpi-gross-profit" className="min-w-0 bg-white p-5 rounded-xl border border-emerald-100 shadow-2xs flex items-start justify-between gap-3">
+        <div id="kpi-gross-profit" className="min-w-0 bg-white p-3 rounded-xl border border-emerald-100 shadow-2xs flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Gross Profit</p>
             <h3 className={`text-lg xl:text-xl font-bold font-sans mt-1 break-words leading-tight ${grossProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -188,13 +188,13 @@ export default function DashboardView({
               Today: {todayProfit >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(todayProfit).toFixed(2)}
             </p>
           </div>
-          <div className="shrink-0 p-3 bg-emerald-50 rounded-lg text-emerald-500">
+          <div className="shrink-0 p-2 bg-emerald-50 rounded-lg text-emerald-500">
             <TrendingUp className="w-5 h-5" />
           </div>
         </div>
 
         {/* Stock Potential Profit */}
-        <div id="kpi-stock-profit" className="min-w-0 bg-white p-5 rounded-xl border border-indigo-100 shadow-2xs flex items-start justify-between gap-3">
+        <div id="kpi-stock-profit" className="min-w-0 bg-white p-3 rounded-xl border border-indigo-100 shadow-2xs flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Stock Potential</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-indigo-600 mt-1 break-words leading-tight">
@@ -204,13 +204,13 @@ export default function DashboardView({
               If all stock is sold today
             </p>
           </div>
-          <div className="shrink-0 p-3 bg-indigo-50 rounded-lg text-indigo-500">
+          <div className="shrink-0 p-2 bg-indigo-50 rounded-lg text-indigo-500">
             <Layers className="w-5 h-5" />
           </div>
         </div>
 
         {/* Inventory capital value */}
-        <div id="kpi-inventory-value" className="min-w-0 bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
+        <div id="kpi-inventory-value" className="min-w-0 bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm hover:shadow-md transition-shadow flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Stock Capital</p>
             <h3 className="text-lg xl:text-xl font-bold font-sans text-slate-950 mt-1 break-words leading-tight">
@@ -220,7 +220,7 @@ export default function DashboardView({
               {products.length} items in catalog
             </p>
           </div>
-          <div className="shrink-0 p-3 bg-emerald-50 rounded-lg text-emerald-500">
+          <div className="shrink-0 p-2 bg-emerald-50 rounded-lg text-emerald-500">
             <Package className="w-5 h-5" />
           </div>
         </div>
@@ -229,7 +229,7 @@ export default function DashboardView({
         <div
           id="kpi-low-stock"
           onClick={() => onNavigateToTab('inventory')}
-          className={`min-w-0 p-5 rounded-xl border shadow-2xs flex items-start justify-between gap-3 cursor-pointer transition-all ${
+          className={`min-w-0 p-3 rounded-xl border shadow-2xs flex items-start justify-between gap-3 cursor-pointer transition-all ${
             lowStockCount > 0
               ? 'bg-rose-50/60 border-rose-100 text-rose-950 hover:bg-rose-50'
               : 'bg-white border-slate-100 text-slate-950'
@@ -244,7 +244,7 @@ export default function DashboardView({
               Needs purchase refills
             </p>
           </div>
-          <div className={`shrink-0 p-3 rounded-lg ${lowStockCount > 0 ? 'bg-rose-100 text-rose-500' : 'bg-slate-100 text-slate-400'}`}>
+          <div className={`shrink-0 p-2 rounded-lg ${lowStockCount > 0 ? 'bg-rose-100 text-rose-500' : 'bg-slate-100 text-slate-400'}`}>
             <AlertTriangle className="w-5 h-5" />
           </div>
         </div>
@@ -256,7 +256,7 @@ export default function DashboardView({
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" />
             <div>
-              <p className="font-semibold text-slate-900 text-sm">Critical Inventory Alert triggered</p>
+              <p className="font-semibold text-slate-900 text-sm">Stock requires attention</p>
               <p className="text-xs text-slate-600 mt-0.5">
                 There are {lowStockCount} hardware products that have fallen below their warning reorder safety limit. Refill suggestions have been generated by AI.
               </p>
@@ -272,20 +272,20 @@ export default function DashboardView({
       )}
 
       {/* Recharts visualizations */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Trend Area Chart */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm lg:col-span-2">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm lg:col-span-2">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h4 className="font-medium text-slate-900 text-sm">Revenue Sales Trend</h4>
-              <p className="text-[11px] text-slate-400">Total daily invoice values representing consumer demand.</p>
+              <h4 className="font-medium text-slate-900 text-sm">Sales trend</h4>
+              <p className="text-[11px] text-slate-400">Daily invoice values</p>
             </div>
             <div className="text-xs text-slate-500 flex items-center gap-1 font-sans">
               <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
               <span>Fortnightly Data</span>
             </div>
           </div>
-          <div className="h-68">
+          <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={salesTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
@@ -311,12 +311,12 @@ export default function DashboardView({
         </div>
 
         {/* Pie Chart Department Distribution */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Department Sales Breakdown</h4>
             <p className="text-[11px] text-slate-400">Sales volume percentage across hardware categories.</p>
           </div>
-          <div className="h-44 my-4 flex items-center justify-center">
+          <div className="h-40 my-2 flex items-center justify-center">
             {categoryData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -359,13 +359,13 @@ export default function DashboardView({
       </div>
 
       {/* Lower Details Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Recent Checkout Invoice Feed */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm lg:col-span-2 space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm lg:col-span-2 space-y-2">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="font-medium text-slate-900 text-sm">Recent Invoices</h4>
-              <p className="text-[11px] text-slate-400">Latest receipts printed on POS terminal.</p>
+              <p className="text-[11px] text-slate-400">Latest recorded invoices.</p>
             </div>
             <button
               onClick={() => onNavigateToTab('pos')}
@@ -393,19 +393,19 @@ export default function DashboardView({
                     : null;
                   return (
                   <tr key={tx.id} className="hover:bg-slate-50/50">
-                    <td className="py-2.5 font-mono text-indigo-600 font-semibold">{tx.invoiceNumber}</td>
-                    <td className="py-2.5 font-medium text-slate-800">{tx.customerName}</td>
-                    <td className="py-2.5 text-slate-500">
+                    <td className="py-1.5 font-mono text-indigo-600 font-semibold">{tx.invoiceNumber}</td>
+                    <td className="py-1.5 font-medium text-slate-800">{tx.customerName}</td>
+                    <td className="py-1.5 text-slate-500">
                       {new Date(tx.date).toLocaleDateString('en-US', { timeZone: 'Asia/Colombo', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </td>
-                    <td className="py-2.5 text-right font-mono font-bold text-slate-900">{currencySymbol}{tx.total}</td>
-                    <td className={`py-2.5 text-right font-mono font-bold ${txProfit != null && txProfit >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                    <td className="py-1.5 text-right font-mono font-bold text-slate-900">{currencySymbol}{tx.total}</td>
+                    <td className={`py-1.5 text-right font-mono font-bold ${txProfit != null && txProfit >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
                       {txProfit == null
                         ? <span className="text-slate-400">—</span>
                         : <>{txProfit >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(txProfit).toFixed(2)}</>
                       }
                     </td>
-                    <td className="py-2.5 text-right">
+                    <td className="py-1.5 text-right">
                       <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-mono bg-slate-100 text-slate-600 border border-slate-200">
                         {tx.paymentMethod}
                       </span>
@@ -419,7 +419,7 @@ export default function DashboardView({
         </div>
 
         {/* Low Stock Watchlist */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm space-y-2">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Critical Inventory Alerts</h4>
             <p className="text-[11px] text-slate-400">Items immediately requiring restock.</p>
@@ -440,7 +440,7 @@ export default function DashboardView({
                 </div>
               ))
             ) : (
-              <p className="text-slate-400 text-xs text-center border border-dashed border-slate-200 p-8 rounded">All core hardware stock metrics within green safety parameters</p>
+              <p className="text-slate-400 text-xs text-center border border-dashed border-slate-200 p-8 rounded">No products below the configured stock threshold.</p>
             )}
           </div>
           <button
@@ -453,9 +453,9 @@ export default function DashboardView({
       </div>
 
       {/* Business Employee Performance & Activity Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Activity Logs */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm space-y-2">
           <div>
             <h4 className="font-medium text-slate-900 text-sm">Active Audit Feed</h4>
             <p className="text-[11px] text-slate-400">Chronological system operations timeline.</p>
@@ -480,7 +480,7 @@ export default function DashboardView({
         </div>
 
         {/* Staff Shift tracker */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/70 shadow-sm space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-200/70 shadow-sm space-y-2">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="font-medium text-slate-900 text-sm">Staff Attendance & Scorecard</h4>
