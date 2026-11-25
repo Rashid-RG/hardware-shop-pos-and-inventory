@@ -56,7 +56,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   const submit = async () => {
     if (posting.current || loading || (!pendingReceipt && !valid)) return;
     if (!pendingReceipt && !window.confirm(`Post ${selected.length} purchase line(s) to warehouse stock for ${poNumber}? This receipt cannot be edited or deleted.`)) return;
-    const request = pendingReceipt || {requestKey, note, items:selected};
+    const request = pendingReceipt || { requestKey, note, items: selected };
     posting.current = true;
     setPendingReceipt(request);
     setSaving(true); setError(''); setSuccess('');
