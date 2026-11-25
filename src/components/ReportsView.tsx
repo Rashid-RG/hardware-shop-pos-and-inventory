@@ -30,6 +30,7 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
   const [fromDate, setFromDate] = useState(thirtyDaysAgo);
   const [toDate, setToDate] = useState(today);
   const [activeTab, setActiveTab] = useState<'sales' | 'products' | 'expenses' | 'collections'>('sales');
+  const [summaryOpen,setSummaryOpen]=useState(true);
   const [visibleRows, setVisibleRows] = useState(20);
 
   const productCostMap = useMemo(() => new Map(products.map((p) => [p.id, p.costPrice])), [products]);
@@ -99,13 +100,8 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="bg-white px-4 py-3 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-semibold text-slate-900 flex items-center gap-2">
-            <BarChart2 className="w-5 h-5 text-indigo-500" /> Business Reports
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">Sales analysis, product performance and expense tracking.</p>
-        </div>
+      <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <span className="text-xs font-semibold text-slate-600">Report period</span>
         <div className="flex flex-wrap items-center gap-2">
           {[7, 30, 90].map((d) => (
             <button key={d} onClick={() => setPreset(d)} className="text-xs px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition">
@@ -123,7 +119,8 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
       </div>
 
       {/* KPI summary row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+      <button type="button" aria-expanded={summaryOpen} onClick={()=>setSummaryOpen(v=>!v)} className="text-xs font-semibold text-indigo-700">{summaryOpen?"Hide financial summary":"Show financial summary"}</button>
+      <div className={summaryOpen?"grid grid-cols-2 md:grid-cols-5 gap-2":"hidden"}>
         {[
           { label: 'Total Revenue', value: `${currencySymbol}${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: 'text-indigo-600', bg: 'bg-indigo-50' },
           { label: 'Gross Profit', value: `${totalProfit >= 0 ? '+' : ''}${currencySymbol}${totalProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, color: totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600', bg: 'bg-emerald-50' },
@@ -133,14 +130,14 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
         ].map((kpi) => (
           <div key={kpi.label} className={`${kpi.bg} border border-slate-100 rounded-xl p-3`}>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{kpi.label}</p>
-            <p className={`text-lg font-bold ${kpi.color} mt-1 leading-tight`}>{kpi.value}</p>
+            <p className={`text-base font-bold ${kpi.color} mt-1 leading-tight`}>{kpi.value}</p>
           </div>
         ))}
       </div>
 
       {/* Tabs */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
-        <div className="flex border-b border-slate-100">
+        <div className="flex flex-wrap gap-1 border-b border-slate-100 p-2">
           {[
             { id: 'sales', label: 'Sales Transactions', icon: FileText },
             { id: 'products', label: 'Product Performance', icon: ShoppingBag },
@@ -150,26 +147,26 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
             <button
               key={id}
               onClick={() => {setActiveTab(id as any);setVisibleRows(20);}}
-              className={`flex items-center gap-1.5 px-5 py-3 text-xs font-semibold transition border-b-2 ${activeTab === id ? 'border-indigo-500 text-indigo-600 bg-indigo-50/40' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition border-b-2 ${activeTab === id ? 'border-indigo-500 text-indigo-600 bg-indigo-50/40' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
             >
               <Icon className="w-3.5 h-3.5" /> {label}
             </button>
           ))}
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="max-h-[58dvh] overflow-auto overscroll-contain">
           {activeTab === 'sales' && (
             <table className="w-full text-xs text-left">
-              <thead className="bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="px-4 py-3">Invoice</th>
-                  <th className="px-4 py-3">Date</th>
-                  <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Sales Representative</th>
-                  <th className="px-4 py-3 text-right">Revenue</th>
-                  <th className="px-4 py-3 text-right">Profit</th>
-                  <th className="px-4 py-3">Payment</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-3 py-2">Invoice</th>
+                  <th className="px-3 py-2">Date</th>
+                  <th className="px-3 py-2">Customer</th>
+                  <th className="px-3 py-2">Sales Representative</th>
+                  <th className="px-3 py-2 text-right">Revenue</th>
+                  <th className="px-3 py-2 text-right">Profit</th>
+                  <th className="px-3 py-2">Payment</th>
+                  <th className="px-3 py-2">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -205,13 +202,13 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
 
           {activeTab === 'products' && (
             <table className="w-full text-xs text-left">
-              <thead className="bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3 text-right">U/M</th><th className="px-4 py-3 text-right">Qty Sold</th><th className="px-4 py-3 text-right">Base Qty</th>
-                  <th className="px-4 py-3 text-right">Revenue</th>
-                  <th className="px-4 py-3 text-right">Profit</th>
-                  <th className="px-4 py-3 text-right">Margin %</th>
+                  <th className="px-3 py-2">Product</th>
+                  <th className="px-3 py-2 text-right">U/M</th><th className="px-3 py-2 text-right">Qty Sold</th><th className="px-3 py-2 text-right">Base Qty</th>
+                  <th className="px-3 py-2 text-right">Revenue</th>
+                  <th className="px-3 py-2 text-right">Profit</th>
+                  <th className="px-3 py-2 text-right">Margin %</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -240,7 +237,7 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
 
           {activeTab==='collections'&&<section className="p-4">
             <p className="text-xs text-slate-600">Credit repayments by payment date. These amounts are not additional sales or verified bank balances.</p>
-            <p className="my-3 text-lg font-bold">Total collected: Rs. {collectionTotal.toFixed(2)}</p>
+            <p className="my-3 text-base font-bold">Total collected: Rs. {collectionTotal.toFixed(2)}</p>
             <div className="flex flex-wrap gap-2 mb-3">{collectionMethods.map(([method,amount])=><span key={method} className="rounded border px-3 py-2 text-xs">{method}: Rs. {amount.toFixed(2)}</span>)}</div>
             <table className="w-full text-left text-xs"><thead><tr>{['Date','Receipt','Customer','Invoice','Method','Recorded by','Amount'].map(h=><th key={h} className="p-2">{h}</th>)}</tr></thead><tbody>{collections.slice(0,visibleRows).map(p=><tr key={p.id} className="border-t">{[reportDay(p.date),p.id,p.customerName,p.receiptSnapshot?.invoiceNumber||p.invoiceId||'Account payment',p.paymentMethod,p.createdBy||'Not recorded','Rs. '+Number(p.amount).toFixed(2)].map((v,i)=><td key={i} className="p-2">{v}</td>)}</tr>)}</tbody></table>
             {!collections.length&&<p className="p-4 text-center text-slate-500">No collections in selected period.</p>}
@@ -248,12 +245,12 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
           {activeTab === 'expenses' && (
             <div>
               <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
+                <thead className="sticky top-0 z-10 bg-slate-50 text-slate-400 uppercase tracking-wider text-[10px]">
                   <tr>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Description</th>
-                    <th className="px-4 py-3">Category</th>
-                    <th className="px-4 py-3 text-right">Amount</th>
+                    <th className="px-3 py-2">Date</th>
+                    <th className="px-3 py-2">Description</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -273,7 +270,7 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
                 </tbody>
               </table>
               {filteredExpenses.length > 0 && (
-                <div className="flex justify-end px-4 py-3 border-t border-slate-100 bg-amber-50/50">
+                <div className="flex justify-end px-3 py-2 border-t border-slate-100 bg-amber-50/50">
                   <span className="text-xs font-bold text-amber-700">Total: Rs.{totalExpenses.toFixed(2)}</span>
                 </div>
               )}
@@ -295,7 +292,7 @@ export default function ReportsView({ customerCreditPayments, transactions, prod
 
         {/* Payment method breakdown */}
         {activeTab === 'sales' && paymentMethodBreakdown.length > 0 && (
-          <div className="border-t border-slate-100 px-4 py-4 bg-slate-50/50">
+          <div className="border-t border-slate-100 px-3 py-2 bg-slate-50/50">
             <p className="text-[10px] font-semibold text-slate-500 uppercase mb-3">Invoice Payment Arrangement Breakdown</p>
             <div className="flex flex-wrap gap-3">
               {paymentMethodBreakdown.map(([method, total]) => (
