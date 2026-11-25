@@ -8,7 +8,7 @@ test('ARS product quick entry includes the essential staff fields', () => {
   for (const id of ['input-prod-category', 'input-prod-name', 'input-prod-cost', 'input-prod-sell', 'input-prod-qty']) {
     assert.match(editor, new RegExp('id="' + id + '"'));
   }
-  assert.match(editor, /What type of product is this\?/);
+  assert.match(editor, /Category \*/);
   assert.match(editor, /More product options \(optional\)/);
   assert.match(editor, /Save Product & Finish/);
 });
