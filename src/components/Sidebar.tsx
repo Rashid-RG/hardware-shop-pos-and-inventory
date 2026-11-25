@@ -94,7 +94,7 @@ export default function Sidebar({
     return (
       <button key={item.id} id={`nav-btn-${item.id}`} type="button" aria-current={selected ? 'page' : undefined}
         onClick={() => navigate(item.id)}
-        className={`group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-amber-400 ${selected ? 'bg-amber-400 text-slate-950 shadow-sm' : 'text-slate-300 hover:bg-white/[0.085] hover:text-white'}`}>
+        className={`group flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-amber-400 ${selected ? 'bg-amber-400 text-slate-950 shadow-sm' : 'text-slate-300 hover:bg-white/[0.085] hover:text-white'}`}>
         <Icon className={`h-[17px] w-[17px] shrink-0 ${selected ? 'text-slate-900' : 'text-slate-400 group-hover:text-amber-300'}`} />
         <span className="min-w-0 flex-1 truncate">{item.label}</span>
         {selected && <span className="h-1.5 w-1.5 rounded-full bg-slate-900" />}
@@ -103,8 +103,8 @@ export default function Sidebar({
   };
 
   return (
-    <aside id="sidebar-container" aria-label="Main navigation" className="flex h-full min-h-0 w-[272px] shrink-0 flex-col border-r border-white/10 bg-[#101d32] text-white shadow-xl shadow-slate-950/10">
-      <div className="shrink-0 border-b border-white/10 px-4 pb-3 pt-4">
+    <aside id="sidebar-container" aria-label="Main navigation" className="flex h-full min-h-0 w-[238px] shrink-0 flex-col border-r border-white/10 bg-[#101d32] text-white shadow-xl shadow-slate-950/10">
+      <div className="shrink-0 border-b border-white/10 px-3 py-2">
         <div className="flex items-center justify-between gap-1">
           <ARSBrand subtitle="Wholesale Distribution" />
           {onClose && (
@@ -115,11 +115,11 @@ export default function Sidebar({
         </div>
       </div>
 
-      <nav aria-label="Modules" className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [scrollbar-width:thin] [scrollbar-color:#536078_transparent]">
-        <div className="space-y-1 border-b border-white/10 pb-3">
+      <nav aria-label="Modules" className="min-h-0 flex-1 overflow-y-auto px-2 py-2 [scrollbar-width:thin] [scrollbar-color:#536078_transparent]">
+        <div className="space-y-0.5 border-b border-white/10 pb-2">
           {pinnedItems.filter((item) => item.roles.includes(currentRole)).map(renderItem)}
         </div>
-        <div className="space-y-1 pt-2">
+        <div className="space-y-0.5 pt-1">
           {groups.map((group) => {
             const items = group.items.filter((item) => item.roles.includes(currentRole));
             if (!items.length) return null;
@@ -129,7 +129,7 @@ export default function Sidebar({
               <section key={group.id} aria-label={group.title} className="rounded-xl">
                 <button type="button" aria-expanded={expanded} aria-controls={`ars-nav-group-${group.id}`}
                   onClick={() => setExpandedGroups((previous) => expanded ? previous.filter((id) => id !== group.id) : [group.id])}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.075em] transition-colors hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-amber-400 ${hasActive ? 'text-amber-300' : 'text-slate-400'}`}>
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-bold uppercase tracking-[0.075em] transition-colors hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-amber-400 ${hasActive ? 'text-amber-300' : 'text-slate-400'}`}>
                   <span className="min-w-0 flex-1 truncate">{group.title}</span>
                   <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                 </button>
@@ -144,11 +144,11 @@ export default function Sidebar({
         </div>
       </nav>
 
-      <div className="shrink-0 border-t border-white/10 bg-[#0c1729] px-3 pb-3 pt-3">
+      <div className="shrink-0 border-t border-white/10 bg-[#0c1729] px-2.5 py-2">
         <div className="relative mb-2 flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-2.5">
           <Store className="h-4 w-4 shrink-0 text-amber-300" />
           <select id="ars-shop-switcher" aria-label="Shop / Branch" value={activeShopId} onChange={(e) => onSwitchShop(e.target.value)} disabled={isShopLocked}
-            className="min-w-0 flex-1 appearance-none bg-transparent py-2.5 pr-5 text-xs font-semibold text-white outline-none disabled:opacity-70">
+            className="min-w-0 flex-1 appearance-none bg-transparent py-1.5 pr-5 text-xs font-semibold text-white outline-none disabled:opacity-70">
             {(shopProfiles || []).map((shop) => <option className="text-slate-900" key={shop.id} value={shop.id}>{shop.name}</option>)}
           </select>
           {isShopLocked ? <ShieldCheck className="pointer-events-none absolute right-2 h-4 w-4 text-slate-400" /> : <ChevronDown className="pointer-events-none absolute right-2 h-4 w-4 text-slate-400" />}
@@ -162,11 +162,11 @@ export default function Sidebar({
             </span>
             <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
           </button>
-          <button type="button" onClick={onLogout} title="Sign out" aria-label="Sign out" className="rounded-lg border border-white/10 p-2.5 text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-amber-400">
+          <button type="button" onClick={onLogout} title="Sign out" aria-label="Sign out" className="rounded-lg border border-white/10 p-2 text-slate-300 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-amber-400">
             <LogOut className="h-4 w-4" />
           </button>
         </div>
-        <p className="mt-2 text-center text-[10px] text-slate-500">Powered by RS Nextward</p>
+        <p className="mt-1 text-center text-[10px] text-slate-500">Powered by RS Nextward</p>
       </div>
     </aside>
   );
