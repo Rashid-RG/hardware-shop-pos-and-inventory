@@ -6580,6 +6580,13 @@ app.get('/api/ledger/mappings',requireRole(['Super Admin','Store Manager']),asyn
  try{return res.json(await listLedgerMappings(pool,scope.shopId));}
  catch(error){console.error('Ledger mappings failed',error);return res.status(500).json({error:'Unable to load mappings.'});}
 });
+app.get('/api/ledger/partner-mapping-sources',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ try{return res.json((await pool.query('SELECT id,name FROM ars_business_partners WHERE shop_id=$1 AND is_active ORDER BY name,id',[scope.shopId])).rows);}
+ catch(error){console.error('Partner mapping sources failed',error);return res.status(500).json({error:'Unable to load partner mapping sources.'});}
+});
 app.post('/api/ledger/mappings',requireRole(['Super Admin']),async(req,res)=>{
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
  const scope=chequeShopAccess(req);
@@ -6587,7 +6594,7 @@ app.post('/api/ledger/mappings',requireRole(['Super Admin']),async(req,res)=>{
  const {kind,sourceId,accountCode,evidence}=req.body||{};
  try{const result=await createLedgerMapping(pool,scope.shopId,scope.recordedBy,{kind,sourceId,accountCode,evidence});return res.status(result.replayed?200:201).json(result);}
  catch(error){const message=error instanceof Error?error.message:'';
- if(['Valid account mapping and evidence required.','Control mappings require the control source identifier.','Mapping already exists; audited correction required.','Active accounting requires an audited mapping amendment.','Active cash, bank or representative account required.','Active ledger account with matching classification required.','Use a distinct ledger account for each mapping.'].includes(message))return res.status(409).json({error:message});
+ if(['Valid account mapping and evidence required.','Control mappings require the control source identifier.','Mapping already exists; audited correction required.','Active accounting requires an audited mapping amendment.','Active cash, bank or representative account required.','Active ledger account with matching classification required.','Use a distinct ledger account for each mapping.','Active partner required in this shop.'].includes(message))return res.status(409).json({error:message});
  console.error('Ledger mapping failed',error);return res.status(500).json({error:'Unable to confirm mapping. Retry identical details.'});}
 });
 app.get('/api/ledger/accounts',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
