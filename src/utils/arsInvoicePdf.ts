@@ -78,87 +78,86 @@ export const renderArsInvoicePdf = async (
     doc.restore();
   };
   const taxRate = Number(contact?.taxRate || 0);
-  const header = (continued: boolean) => {
-    if (isArsPrintBrand(shopName)) {
-      doc.save().translate(left, 23).scale(41 / 615).translate(-245, -320)
-        .path(arsPrintLogoPath).fill('#000000', 'even-odd').restore();
-    } else if (logo) {
-      try { doc.image(logo, left, 14, { fit: [48, 48] }); }
-      catch { text(shopName, left, 24, 74, 12, true); }
-    }
-    text(arsDisplayName(safe(company?.companyLegalName, shopName)), 85, 18, 218, 16, true);
-    doc.font('Helvetica').fontSize(9).fillColor(ink)
-      .text(contact?.address || '', 85, 42, { width: 213, height: 28, ellipsis: true });
-    text([contact?.phone, company?.supportEmail || contact?.email].filter(Boolean).join('   |   '), 85, 72, 216, 7.8);
-    line(306, 16, 306, 106);
-    outline(318, 16, 251, 22);
-    const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
-    text(title + (continued ? '  (CONTINUED)' : ''), 318, 20, 251, 12, true, 'center', ink);
-    field('Invoice No', tx.invoiceNumber, 324, 46, 52, 245);
-    field('Issued At', new Date(tx.date).toLocaleString('en-GB', { timeZone: 'Asia/Colombo', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }), 324, 61, 52, 245);
-    field('Payment', safe(tx.paymentMethod), 324, 76, 52, 245);
-    field('Currency', 'LKR (Rs.)', 324, 91, 52, 245);
-    line(left, 116, right, 116);
-    outline(left, 131, 264, 21);
-    outline(304, 131, 265, 21);
-    sectionIcon('person', left + 8, 135);
-    text('Customer Details', left + 27, 135, 240, 12, true, 'left', ink);
-    sectionIcon('calendar', 313, 135);
-    text('Invoice Details', 331, 135, 245, 12, true, 'left', ink);
-    line(297, 131, 297, 223);
-    field('Customer', safe(tx.customerName, 'Walk-in Customer'), 36, 163, 48, 249);
-    field('Address', safe(tx.customerAddress), 36, 184, 48, 249);
-    field('Phone', safe(tx.customerPhone), 36, 207, 48, 249);
-    field('Sales Rep.', safe(tx.salesRepName, 'Not recorded'), 315, 162, 59, 245);
-    field('Line Items', String(tx.items.length), 315, 178, 59, 245);
-    field('Tax Rate', taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%', 315, 194, 59, 245);
-    if (tx.paymentMethod === 'Credit Account' && tx.creditDueDate && /^\d{4}-\d{2}-\d{2}$/.test(tx.creditDueDate)) {
-      field('Due Date', tx.creditDueDate.split('-').reverse().join('/'), 315, 210, 59, 245);
-    }
-  };
-  const cols = [left, 46, 110, 208, 292, 324, 348, 421, 493, right];
-  const headings = ['#', 'Product Code', 'Item Name', 'Description', 'U/M', 'Qty', 'Rate', 'Discount', 'Amount'];
-  const alignments: Align[] = ['center', 'left', 'left', 'left', 'center', 'center', 'right', 'right', 'right'];
-  const tableStart = (continued: boolean) => {
-    header(continued);
-    headings.forEach((name, i) => text(name, cols[i] + 4, 246, cols[i+1] - cols[i] - 8, 8.5, true, alignments[i], ink));
-    line(left, 261, right, 261);
-    return 261;
-  };
   const footerY = 768;
-  const summaryHeight = 212;
-  const closeTable = (bottom: number) => {
-    doc.rect(left, 239, width, bottom - 239).lineWidth(0.7).strokeColor(rule).stroke();
+  const summaryHeight = 170;
+  const issued = new Date(tx.date).toLocaleString('en-GB', {timeZone:'Asia/Colombo',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+  const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
+  const wrap = (value:string,x:number,y:number,w:number,size=9,bold=false) => {
+    doc.font(bold?'Helvetica-Bold':'Helvetica').fontSize(size).fillColor(ink);
+    const h=doc.heightOfString(value,{width:w});
+    doc.text(value,x,y,{width:w});
+    return y+h;
   };
-  let y = tableStart(false);
-  tx.items.forEach((item, index) => {
-    const gross = Number(item.quantity) * Number(item.sellingPrice);
-    const discount = Math.min(gross, Math.max(0, gross * Number(item.discount || 0) / 100 + Number(item.discountAmount || 0)));
-    const values = [String(index + 1), safe(item.variantSku, item.productId), safe(item.productName),
-      String(item.invoiceDescription || '').trim(), invoiceUnit(item), String(item.quantity),
-      formatMoney(Number(item.sellingPrice)), discount ? formatMoney(discount) : '-', formatMoney(gross - discount)];
-    const heights = values.map((value, i) => doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4)
-      .heightOfString(value, { width: cols[i+1] - cols[i] - 8 }));
-    const height = Math.max(15, Math.ceil(Math.max(...heights)) + 4);
-    const limit = index === tx.items.length - 1 ? footerY - summaryHeight : footerY - 8;
-    if (y + height > limit && y > 261) { closeTable(y); doc.addPage(); y = tableStart(true); }
-    values.forEach((value, i) => {
-      doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4).fillColor(ink)
-        .text(value, cols[i]+4, y+2, { width: cols[i+1]-cols[i]-8, align: alignments[i] });
-    });
-    y += height;
+  const header = (continued:boolean) => {
+    if(continued){
+      text(shopName,left,19,260,13,true);
+      text(title+' (CONTINUED)',300,19,269,10,true,'right');
+      text(tx.invoiceNumber,left,37,260,10,true);
+      text(safe(tx.customerName),300,37,269,9,false,'right');
+      line(left,53,right,53);
+      return 64;
+    }
+    if(isArsPrintBrand(shopName)){
+      doc.save().translate(left,18).scale(39/615).translate(-245,-320)
+        .path(arsPrintLogoPath).fill(ink,'even-odd').restore();
+    }else if(logo){try{doc.image(logo,left,16,{fit:[48,48]});}catch{/* name remains */}}
+    let leftY=wrap(arsDisplayName(safe(company?.companyLegalName,shopName)),83,16,225,15,true)+3;
+    leftY=wrap(contact?.address||'',83,leftY,225,9)+3;
+    leftY=wrap(contact?.phone?'Tel: '+contact.phone.replace(/,\s*/g,' / '):'',83,leftY,225,10,true)+2;
+    if(company?.supportEmail||contact?.email)leftY=wrap(company?.supportEmail||contact?.email||'',83,leftY,225,8)+2;
+    outline(322,16,247,19);
+    text(title,322,19,247,11,true,'center');
+    field('Invoice No',tx.invoiceNumber,326,41,57,243);
+    field('Issued At',issued,326,54,57,243);
+    field('Payment',safe(tx.paymentMethod),326,67,57,243);
+    field('Currency','LKR (Rs.)',326,80,57,243);
+    const boundary=Math.max(leftY,94)+5;
+    line(left,boundary,right,boundary);
+    let cy=wrap('Customer: '+safe(tx.customerName,'Walk-in Customer'),left,boundary+7,270,10,true)+2;
+    cy=wrap('Address: '+safe(tx.customerAddress),left,cy,270,9)+2;
+    cy=wrap('Phone: '+safe(tx.customerPhone),left,cy,270,9);
+    let ry=wrap('Sales Rep.: '+safe(tx.salesRepName,'Not recorded'),310,boundary+7,259,9)+2;
+    ry=wrap('Line items: '+tx.items.length+'   |   Tax: '+taxRate.toFixed(1)+'%',310,ry,259,9)+2;
+    if(tx.paymentMethod==='Credit Account'&&tx.creditDueDate)ry=wrap('Due date: '+tx.creditDueDate,310,ry,259,9);
+    return Math.max(cy,ry)+9;
+  };
+  const hasDiscount=tx.items.some(i=>Number(i.discount||0)>0||Number(i.discountAmount||0)>0);
+  const cols=hasDiscount?[left,46,114,225,310,341,367,438,498,right]:[left,46,128,256,361,393,421,494,right];
+  const headings=hasDiscount?['#','Product Code','Item Name','Description','U/M','Qty','Rate','Discount','Amount']:['#','Product Code','Item Name','Description','U/M','Qty','Rate','Amount'];
+  const alignments:Align[]=hasDiscount?['center','left','left','left','center','center','right','right','right']:['center','left','left','left','center','center','right','right'];
+  let tableTop=0,bodyStart=0;
+  const tableStart=(continued:boolean)=>{
+    tableTop=header(continued);
+    headings.forEach((name,i)=>text(name,cols[i]+3,tableTop+4,cols[i+1]-cols[i]-6,8.5,true,alignments[i]));
+    bodyStart=tableTop+17;
+    line(left,bodyStart,right,bodyStart);
+    return bodyStart;
+  };
+  const closeTable=(bottom:number)=>doc.rect(left,tableTop,width,bottom-tableTop).lineWidth(.7).strokeColor(rule).stroke();
+  const rows=tx.items.map((item,index)=>{
+    const gross=Number(item.quantity)*Number(item.sellingPrice);
+    const discount=Math.min(gross,Math.max(0,gross*Number(item.discount||0)/100+Number(item.discountAmount||0)));
+    const values=[String(index+1),safe(item.variantSku),safe(item.productName),String(item.invoiceDescription||'').trim(),invoiceUnit(item),String(item.quantity),formatMoney(Number(item.sellingPrice)),...(hasDiscount?[discount?formatMoney(discount):'-']:[]),formatMoney(gross-discount)];
+    const height=Math.max(13,Math.ceil(Math.max(...values.map((v,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(8.6).heightOfString(v,{width:cols[i+1]-cols[i]-6}))))+3);
+    return {values,height};
+  });
+  let y=tableStart(false);
+  rows.forEach(({values,height},index)=>{
+    // Keep room for totals on the last page; use a compact continuation header.
+    const limit=index===rows.length-1?footerY-summaryHeight:footerY-6;
+    if(y+height>limit&&y>bodyStart){closeTable(y);doc.addPage();y=tableStart(true);}
+    if(y+height>footerY-6)throw Error('Invoice item text is too long for a single A4 page.');
+    values.forEach((value,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(8.6).fillColor(ink)
+      .text(value,cols[i]+3,y+1.5,{width:cols[i+1]-cols[i]-6,align:alignments[i]}));
+    y+=height;
   });
   closeTable(y);
-  if (y + summaryHeight > footerY) { doc.addPage(); header(true); y = 239; }
-  const top = y + 16;
-  outline(left, top, 264, 102);
-  line(left, top + 24, left + 264, top + 24);
-  sectionIcon('note', 35, top+5);
-  text('Notes', 54, top + 6, 225, 12, true, 'left', ink);
-  doc.rect(36, top+37, 4, 4).fill(ink);
-  doc.rect(36, top+80, 4, 4).fill(ink);
-  doc.font('Helvetica').fontSize(10).fillColor(ink).text('Goods once sold will be exchanged only with original invoice and management approval.', 48, top+35, {width:232});
-  text('Thank you for your business.', 48, top+78, 232);
+  if(y+summaryHeight>footerY){doc.addPage();y=header(true);}
+  const top=y+9;
+  outline(left,top,264,70);
+  text('Notes',left+8,top+5,248,10,true);
+  wrap('Goods once sold will be exchanged only with original invoice and management approval.',left+8,top+20,248,9);
+  text('Thank you for your business.',left+8,top+52,248,9);
   const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
     : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
     : String(tx.paymentStatus || '').toUpperCase() === 'PAID' ? Number(tx.total) : null;
@@ -181,7 +180,7 @@ export const renderArsInvoicePdf = async (
     text(name, 314, yy, 124, size, i >= 3, 'left', ink);
     text(amount, 439, yy, 120, size, true, 'right', ink);
   });
-  const signatureY = footerY - 64;
+  const signatureY = top + 120;
   ['Prepared By', 'Received By', 'Authorized By'].forEach((title, i) => {
     const x = left + i * width / 3;
     if (i > 0) line(x, signatureY-14, x, signatureY+34);
