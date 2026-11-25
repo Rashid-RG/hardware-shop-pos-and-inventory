@@ -82,3 +82,23 @@ test('23 short hardware lines fit one A4 page with readable contact numbers and 
  for(const label of ['0777 373316','0777 721284','0770 271439','ARS-INV-26-10010','Balance Due','Prepared By','Received By','Authorized By'])assert.ok(body.includes(label),label);
  assert.doesNotMatch(body,/internal-/);
 });
+
+for(const count of [21,48]){
+ test('240 x 270 mm continuous form preserves all rows and complete footer for '+count+' items',async()=>{
+  const items=Array.from({length:count},(_,i)=>({productId:'internal-'+i,variantSku:'CF-'+(1000+i),productName:'Hardware item '+(i+1),invoiceDescription:'Standard hardware',sellingUnitLabel:i%2?'Box':'Piece',quantity:1,sellingPrice:100}));
+  const pdf=await renderArsInvoicePdf({items,invoiceNumber:'CF-TEST',date:'2026-11-25T08:00:00Z',customerName:'Trade customer',salesRepName:'Sales rep',paymentMethod:'Credit Account',subtotal:count*100,total:count*100},'ARS Distributors',{},null,undefined,{address:'Galgamuwa',phone:'0777 373316, 0777 721284, 0770 271439'},'ARS-240x270');
+  const media=Array.from(pdf.toString('latin1').matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g));
+  const pages=pageTexts(pdf);
+  assert.equal(media.length,pages.length);
+  for(const box of media){
+   assert.ok(Math.abs(Number(box[1])-240*72/25.4)<0.01);
+   assert.ok(Math.abs(Number(box[2])-270*72/25.4)<0.01);
+  }
+  if(count===21)assert.equal(pages.length,1);else assert.ok(pages.length>1);
+  assert.deepEqual(pages.join(' ').match(/CF-\d+/g),items.map(i=>i.variantSku));
+  pages.forEach((page,i)=>{
+   for(const label of ['RS Nextward','Smart systems for business.','Page '+(i+1)+' of '+pages.length])assert.ok(page.includes(label),label);
+   assert.equal(page.includes('Prepared By'),i===pages.length-1);
+  });
+ });
+}
