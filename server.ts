@@ -1284,7 +1284,7 @@ const getInitialDbState = () => {
     activityLogs: initialActivityLogs,
     settings: {
       taxRate: 0,
-      storeName: 'ARS Distributor',
+      storeName: 'ARS Distributors',
       currency: 'LKR',
       invoicePrefix: 'SL-INV',
       logoUrl: '',
@@ -1301,7 +1301,7 @@ const getInitialDbState = () => {
       shopProfiles: [
         {
           id: 'shop-main',
-          name: 'ARS Distributor',
+          name: 'ARS Distributors',
           logoUrl: '',
           address: '',
           phone: '',
@@ -1347,7 +1347,7 @@ const getCleanBusinessState = () => {
     invoicePrintLogs: [],
     settings: {
       ...demo.settings,
-      storeName: 'ARS Distributor',
+      storeName: 'ARS Distributors',
       logoUrl: '',
       address: '',
       phone: '',
@@ -1355,7 +1355,7 @@ const getCleanBusinessState = () => {
       invoicePrefix: 'ARS-INV',
       shopProfiles: [{
         id: 'shop-main',
-        name: 'ARS Distributor',
+        name: 'ARS Distributors',
         logoUrl: '',
         address: '',
         phone: '',
@@ -1376,7 +1376,7 @@ const normalizeState = (state: DBState): DBState => ({
     const rawProfiles = Array.isArray(state.settings?.shopProfiles) ? state.settings.shopProfiles : [];
     const fallbackProfile = {
       id: 'shop-main',
-      name: state.settings?.storeName || 'ARS Distributor',
+      name: state.settings?.storeName || 'ARS Distributors',
       logoUrl: state.settings?.logoUrl || '',
       address: state.settings?.address || '',
       phone: state.settings?.phone || '',
@@ -2290,7 +2290,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
 
   const settingsRow = settingsRes.rows[0] || {
     tax_rate: 18,
-    store_name: 'ARS Distributor',
+    store_name: 'ARS Distributors',
     currency: 'LKR',
     invoice_prefix: 'SL-INV',
     logo_url: '',
@@ -2301,7 +2301,7 @@ const loadStateFromNormalized = async (): Promise<DBState | null> => {
     shop_profiles: [
       {
         id: 'shop-main',
-        name: 'ARS Distributor',
+        name: 'ARS Distributors',
         logoUrl: '',
         address: '',
         phone: '',
@@ -2950,7 +2950,7 @@ app.post('/api/auth/recovery/request', recoveryLimiter, async (req, res) => {
       const transport = nodemailer.createTransport({host:config.host,port:config.port,secure:config.secure,
         requireTLS:!config.secure,auth:{user:config.user,pass:config.pass},connectionTimeout:10000,greetingTimeout:10000,socketTimeout:15000});
       // Delivery is intentionally outside the request response; failures fail closed.
-      void transport.sendMail({from:config.from,to:account.email,subject:'ARS Distributor password recovery',
+      void transport.sendMail({from:config.from,to:account.email,subject:'ARS Distributors password recovery',
         text:'Your verification code is '+code+'. It expires in 5 minutes. Ignore this email if you did not request it.'})
         .catch(() => { console.warn('Password recovery email delivery failed.'); });
     }
@@ -3014,7 +3014,7 @@ app.get('/api/support/diagnostics', requireRole(['Super Admin', 'Store Manager']
   }
   const ready = database === 'reachable' && databaseWriteHealthy && singleWriterLease !== null;
   res.status(ready ? 200 : 503).json({
-    service: 'ARS Distributor POS',
+    service: 'ARS Distributors POS',
     checkedAt: new Date().toISOString(),
     release: String(process.env.ARS_RELEASE_ID || 'not-configured').slice(0, 64),
     environment: NODE_ENV,
