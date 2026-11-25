@@ -26,7 +26,8 @@ test('invoices persist representative identity and name for future reprints',()=
   assert.match(server,/salesRepName: row\.sales_rep_name \|\| undefined/);
 });
 test('customer facing A4 PDF and POS previews display selected rep, not cashier',()=>{
-  assert.match(pdf,/field\('Sales Rep.', safe\(tx\.salesRepName/);
+  assert.match(pdf,/wrap\('Sales Rep\.: '\+safe\(tx\.salesRepName/);
+  assert.match(pdf,/text\('Sales Rep\.: '\+safe\(tx\.salesRepName/);
   assert.doesNotMatch(pdf,/row\('Salesperson', safe\(tx\.cashierName/);
   assert.match(pos,/Select Sales Representative/);
   assert.match(pos,/salesRepId: selectedSalesRepId/);
