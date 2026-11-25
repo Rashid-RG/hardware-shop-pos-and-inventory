@@ -332,6 +332,30 @@ export async function listSupplierCheques(db:Pool|PoolClient,shopId:string){
   return result.rows.map(r=>({...r,amount:Number(r.amount)}));
 }
 
+export async function transitionSupplierCheque(db:Pool,input:{shopId:string;chequeId:string;eventId:string;nextStatus:'Cancelled'|'Dishonoured';effectiveDate:string;recordedBy:string;note:string}){
+  const {shopId,chequeId,eventId,nextStatus,effectiveDate,recordedBy}=input;
+  const note=input.note.trim();
+  if(!shopId||!chequeId||!eventId||!recordedBy||!['Cancelled','Dishonoured'].includes(nextStatus)||!validChequeDay(effectiveDate)||!note||note.length>500)throw Error('Invalid supplier cheque transition details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[eventId]);
+    const cheque=(await client.query('SELECT *,issued_date::text AS issued_day FROM ars_supplier_cheques WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,chequeId])).rows[0];
+    if(!cheque)throw Error('Supplier cheque not found in this shop.');
+    const prior=(await client.query('SELECT *,effective_date::text AS event_day FROM ars_supplier_cheque_events WHERE id=$1',[eventId])).rows[0];
+    if(prior){
+      if(prior.shop_id!==shopId||prior.cheque_id!==chequeId||prior.next_status!==nextStatus||prior.event_day!==effectiveDate||prior.recorded_by!==recordedBy||prior.note!==note)throw Error('Supplier cheque event identifier already used for different details.');
+      await client.query('COMMIT');return {id:chequeId,status:cheque.status,replayed:true};
+    }
+    if(cheque.status!=='Issued')throw Error('Only issued supplier cheques can be cancelled or dishonoured.');
+    const latest=(await client.query('SELECT MAX(effective_date)::text AS day FROM ars_supplier_cheque_events WHERE shop_id=$1 AND cheque_id=$2',[shopId,chequeId])).rows[0]?.day;
+    if(effectiveDate<cheque.issued_day||(latest&&effectiveDate<latest))throw Error('Supplier cheque event date precedes its history.');
+    await client.query('UPDATE ars_supplier_cheques SET status=$1 WHERE shop_id=$2 AND id=$3',[nextStatus,shopId,chequeId]);
+    await client.query("INSERT INTO ars_supplier_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Issued',$4,$5,$6,$7)",[eventId,shopId,chequeId,nextStatus,effectiveDate,recordedBy,note]);
+    await client.query('COMMIT');return {id:chequeId,status:nextStatus,replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+
 export async function registerCustomerCheque(db:Pool,input:ChequeRegistration){
   const {id,shopId,customerId,invoiceId,amount,receivedDate,dueDate,recordedBy}=input;
   const chequeNumber=input.chequeNumber.trim(),issuingBank=input.issuingBank.trim(),drawerName=input.drawerName.trim(),note=input.note?.trim()||null;
