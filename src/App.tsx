@@ -372,7 +372,7 @@ export default function App() {
       setPurchaseOrders(data.purchaseOrders || []);
       setStockLogs(data.stockLogs || []);
       setActivityLogs(data.activityLogs || []);
-      setTaxConfig({ ...settings, activeShopId: effectiveShopId });
+      setTaxConfig({ ...settings, storeName: typeof settings.storeName === 'string' ? arsDisplayName(settings.storeName) : settings.storeName, shopProfiles: profiles.map((shop: { id: string; name: string }) => ({ ...shop, name: typeof shop.name === 'string' ? arsDisplayName(shop.name) : shop.name })), activeShopId: effectiveShopId });
       setManualExpenses(data.manualExpenses || []);
       setSupplierPayments(data.supplierPayments || []);
       setQuotations(data.quotations || []);
