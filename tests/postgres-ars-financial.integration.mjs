@@ -283,6 +283,31 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     assert.deepEqual(posted,[{account_code:'1000',debit:'0.00',credit:'300.00'},{account_code:'1250',debit:'300.00',credit:'0.00'}]);
     await assert.rejects(insertSupplierPayment(clearPayment,chequeBank,{...clearance,eventId:id()}),/already cleared/);
     assert.equal((await pool.query('SELECT id FROM ars_supplier_cheque_events WHERE shop_id=$1',[chequeShop])).rowCount,2);
+    // Recognize a received-order liability using a balanced test journal, then settle it by cheque.
+    const payableOrder=id();
+    await pool.query("INSERT INTO purchase_orders(id,shop_id,po_number,date,supplier_id,supplier_name,total,status) VALUES($1,$2,$3,$4,$5,'Cheque CI supplier',100,'Received')",[payableOrder,chequeShop,'CI-PO-'+payableOrder,day,chequeSupplier]);
+    await pool.query("INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES($1,'1300','Inventory','Asset')",[chequeShop]);
+    const {postJournal}=await import('../backend/ledgerPosting.ts');
+    const fixtureClient=await pool.connect();
+    try{
+      await fixtureClient.query('BEGIN');
+      await postJournal(fixtureClient,{id:'receipt:'+payableOrder,shopId:chequeShop,postingDate:day,sourceKind:'PurchaseReceipt',sourceId:payableOrder,description:'CI recognized supplier liability',actor:recordedBy,lines:[{accountCode:'1300',debit:'100.00',credit:'0.00'},{accountCode:'2000',debit:'0.00',credit:'100.00'}]});
+      await fixtureClient.query('COMMIT');
+    }catch(e){await fixtureClient.query('ROLLBACK');throw e;}finally{fixtureClient.release();}
+    const payableCheque={...issuedCheque,id:'supplier-cheque-'+id(),purchaseOrderId:payableOrder,chequeNumber:'GL-002',amount:100};
+    await registerSupplierCheque(pool,payableCheque);
+    const payablePayment={...clearPayment,id:'spay-cheque-'+payableCheque.id,purchaseOrderId:payableOrder,amount:100,note:'Supplier cheque GL-002'};
+    const payableClearance={chequeId:payableCheque.id,eventId:id(),evidence:'CI payable clearance'};
+    await insertSupplierPayment(payablePayment,chequeBank,payableClearance);
+    const payableLines=(await pool.query("SELECT l.account_code,l.debit::text,l.credit::text FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id WHERE j.shop_id=$1 AND j.source_kind='SupplierPayment' AND j.source_id=$2 ORDER BY l.account_code",[chequeShop,payablePayment.id])).rows;
+    assert.deepEqual(payableLines,[{account_code:'1000',debit:'0.00',credit:'100.00'},{account_code:'2000',debit:'100.00',credit:'0.00'}]);
+    const finalBank=(await listFinancialAccounts(pool,chequeShop))[0];
+    assert.equal(finalBank.balance,100);
+    assert.equal(finalBank.supplierChequeCommitments,0);
+    assert.equal((await listSupplierCheques(pool,chequeShop)).find(c=>c.id===payableCheque.id).status,'Cleared');
+    const {supplierReconciliation}=await import('../backend/supplierReconciliation.ts');
+    const reconciliation=await supplierReconciliation(pool,chequeShop,payableOrder);
+    assert.ok(reconciliation);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
