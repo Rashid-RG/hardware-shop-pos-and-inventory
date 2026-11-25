@@ -2,7 +2,7 @@ import LandedCostApprovalPanel from './LandedCostApprovalPanel';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useState,useRef} from 'react';
 import {createPortal} from 'react-dom';
 import {Ship,PackageCheck,Plus,RefreshCcw,ShieldCheck} from 'lucide-react';
 import PartialReceiptPanel from './PartialReceiptPanel';
@@ -21,6 +21,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  const [costReview,setCostReview]=useState<{id:string;reference:string;shopId:string}|null>(null);
  const [receivingPo,setReceivingPo]=useState<{id:string;number:string}|null>(null);
  const [saving,setSaving]=useState(false);
+ const registrationLock=useRef(false);
  const [registerOpen,setRegisterOpen]=useState(false);
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
@@ -30,7 +31,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  const [etaFrom,setEtaFrom]=useState('');
  const [etaTo,setEtaTo]=useState('');
  const [form,setForm]=useState({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',
-   currency:'CNY',exchangeRateLkr:'1',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
+   currency:'CNY',exchangeRateLkr:'',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
  const fetchWithAuth=(url:string,options:RequestInit={})=>fetch(url,{
    ...options,headers:{Authorization:`Bearer ${authToken}`,'X-Shop-Id':shopId,'Content-Type':'application/json',...options.headers}
  });
@@ -43,16 +44,22 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  };
  useEffect(()=>{void refresh();},[authToken,shopId]);
  const add=async(event:React.FormEvent)=>{
-   event.preventDefault();setSaving(true);setError('');setNotice('');
-   try{const response=await fetchWithAuth('/api/ars/import-shipments',{method:'POST',body:JSON.stringify(form)});
+   event.preventDefault();if(registrationLock.current||loading)return;if(registrationIssue){setError(registrationIssue);return;}registrationLock.current=true;setSaving(true);setError('');setNotice('');
+   try{const response=await fetchWithAuth('/api/ars/import-shipments',{method:'POST',body:JSON.stringify({...form,shipmentReference:form.shipmentReference.trim(),containerNumber:form.containerNumber.trim()})});
      const data=await response.json();if(!response.ok)throw Error(data.error||'Could not register shipment');
      setNotice('Shipment registered. Stock has NOT been changed.');
      setRegisterOpen(false);
-     setForm({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',currency:'CNY',exchangeRateLkr:'1',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
+     setForm({purchaseOrderId:'',shipmentReference:'',containerNumber:'',etaDate:'',currency:'CNY',exchangeRateLkr:'',freightLkr:'0',customsLkr:'0',clearanceLkr:'0',notes:''});
      await refresh();
-   }catch(e:any){setError(e.message||'Unable to register shipment');}finally{setSaving(false);}
+   }catch(e:any){setError(e.message||'Unable to register shipment');}finally{registrationLock.current=false;setSaving(false);}
  };
  const openOrders=purchaseOrders.filter(po=>po.shopId===shopId&&['Pending','Ordered'].includes(po.status)&&!rows.some(row=>row.purchase_order_id===po.id));
+ const selectedOrder=openOrders.find(po=>po.id===form.purchaseOrderId);
+ const charges=[form.freightLkr,form.customsLkr,form.clearanceLkr];
+ const validCharges=charges.every(v=>v.trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0&&Number.isSafeInteger(Math.round(Number(v)*100))&&Math.abs(Number(v)*100-Math.round(Number(v)*100))<1e-6);
+ const totalCharges=charges.reduce((sum,v)=>sum+Math.round(Number(v)*100),0)/100;
+ const rate=Number(form.exchangeRateLkr);
+ const registrationIssue=!selectedOrder?'Select an eligible purchase order.':!form.shipmentReference.trim()?'Enter a shipment reference.':!Number.isFinite(rate)||rate<0.000001?'Enter the recorded exchange rate.':form.currency==='LKR'&&rate!==1?'LKR exchange rate must be 1.':!validCharges||!Number.isSafeInteger(Math.round(totalCharges*100))?'Enter valid non-negative charges with at most two decimal places.':'';
  const format=(value:any)=>Number(value||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
  const hasActiveFilters=Boolean(search.trim()||statusFilter||etaFrom||etaTo);
  const visibleRows=rows.filter(row=>{
@@ -103,10 +110,13 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
               value={form[field]} onChange={e=>setForm(v=>({...v,[field]:e.target.value}))}
               className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" />
           </label>)}
-        <label className="text-xs font-semibold">Invoice currency<select value={form.currency} onChange={e=>setForm(v=>({...v,currency:e.target.value}))}
+        <label className="text-xs font-semibold">Invoice currency<select value={form.currency} onChange={e=>setForm(v=>({...v,currency:e.target.value,exchangeRateLkr:e.target.value==='LKR'?'1':''}))}
           className="mt-1 block w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm">
           <option value="CNY">CNY</option><option value="USD">USD</option><option value="LKR">LKR</option></select></label>
       </div>
+      <p className="mt-2 text-xs text-slate-600">Exchange rate is the documented LKR rate per foreign currency unit. Purchase order values are already in LKR; do not convert them again.</p>
+      {validCharges&&selectedOrder&&<div className="mt-3 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:grid-cols-3"><div><p className="text-xs text-slate-500">Purchase order value (LKR)</p><strong>Rs. {format(selectedOrder.total)}</strong></div><div><p className="text-xs text-slate-500">Import charges (LKR)</p><strong>Rs. {format(totalCharges)}</strong></div><div><p className="text-xs text-slate-500">Estimated landed total (LKR)</p><strong>Rs. {format(Number(selectedOrder.total)+totalCharges)}</strong></div></div>}
+      {registrationIssue&&<p role="status" className="mt-2 text-xs text-amber-800">{registrationIssue}</p>}
       {form.purchaseOrderId && <div className="mt-3 rounded-xl border border-slate-200 p-3">
         <h4 className="mb-2 text-xs font-bold text-slate-700">Linked purchase order · packaging quantities</h4>
         <div className="max-h-40 overflow-auto"><table className="w-full text-left text-xs">
@@ -120,7 +130,7 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
       </label>
       <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>Registering a shipment does not add stock or pay suppliers.</p>
       </form>
-      <footer className="flex justify-end gap-2 border-t p-3"><button type="button" disabled={saving} onClick={()=>setRegisterOpen(false)} className="rounded-lg border px-4 py-2 text-xs font-semibold">Cancel</button><button type="submit" form="shipment-register-form" disabled={saving||!openOrders.length} className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold disabled:opacity-50">{saving?'Saving…':'Register shipment'}</button></footer>
+      <footer className="flex justify-end gap-2 border-t p-3"><button type="button" disabled={saving} onClick={()=>setRegisterOpen(false)} className="rounded-lg border px-4 py-2 text-xs font-semibold">Cancel</button><button type="submit" form="shipment-register-form" disabled={saving||loading||!!registrationIssue} className="rounded-lg bg-amber-400 px-4 py-2 text-xs font-bold disabled:opacity-50">{saving?'Saving…':'Register shipment'}</button></footer>
       </section>
     </div>,document.body)}
    <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
