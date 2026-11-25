@@ -825,8 +825,9 @@ export default function SupplierPurchaseView({
                   <select value={paymentMethod} onChange={(e) => {setPaymentMethod(e.target.value);setSourceId('');}} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500">
                     <option>Bank Transfer</option>
                     <option>Cash</option>
-                    {!financialEnabled&&<><option>Cheque</option><option>Card</option></>}
+                    {!financialEnabled&&<option>Card</option>}
                   </select>
+                  <p className="mt-1 text-xs text-slate-500">Record completed payments only. Supplier-issued cheques cannot be posted through this screen; separate cheque clearance support is pending.</p>
                 </div>
                 <div>
                   <label className="block text-slate-500 font-semibold mb-1">Date</label>
