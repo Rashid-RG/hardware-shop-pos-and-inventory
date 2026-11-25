@@ -232,6 +232,12 @@ export default function SupplierPurchaseView({
   const financialEnabled=!!financialAuthToken&&!!financialShopId&&!!financialOwner&&['Super Admin','Store Manager'].includes(currentRole);
   const paymentStorageKey='ars:pending-supplier-payment:'+JSON.stringify([financialOwner||'',financialShopId||'']);
   const compatibleSources=sources.filter(a=>a.active&&(paymentMethod==='Cash'?a.kind==='Office Cash':paymentMethod==='Bank Transfer'?a.kind==='Bank':false));
+  const selectedSource=compatibleSources.find(a=>a.id===sourceId);
+  const supplierPaymentValue=Number(paymentAmount);
+  const supplierPaymentValid=Number.isFinite(supplierPaymentValue)&&supplierPaymentValue>0&&Math.abs(supplierPaymentValue*100-Math.round(supplierPaymentValue*100))<1e-6;
+  const paymentDateValid=!!paymentDate&&paymentDate<=reportDay(new Date());
+  const sourceReady=!financialEnabled||(!sourceLoading&&storageReady&&!!selectedSource&&selectedSource.balance>=supplierPaymentValue);
+  const supplierPaymentReady=supplierPaymentValid&&paymentDateValid&&sourceReady;
   useEffect(()=>{
     setPendingPayment(null);setStorageReady(false);setPaymentDraft(null);
     if(!financialEnabled)return;
@@ -409,13 +415,14 @@ export default function SupplierPurchaseView({
     e.preventDefault();
     if (!paymentDraft || paymentLock.current || pendingPayment) return;
     const amount = Number(paymentAmount);
-    if (!amount || amount <= 0) {
+    if (!supplierPaymentValid) {
       notify.warning('Enter a valid payment amount.');
       return;
     }
     if(financialEnabled&&(!storageReady||!compatibleSources.some(a=>a.id===sourceId&&a.balance>=amount))){
       notify.warning('Select a matching account with sufficient recorded funds.');return;
     }
+    if(!supplierPaymentReady){notify.warning('Check the payment date and available financial account funds.');return;}
     const request:SupplierPaymentRequest={
         supplierId: paymentDraft.supplierId,
         supplierName: paymentDraft.supplierName,
@@ -780,12 +787,13 @@ export default function SupplierPurchaseView({
             <form onSubmit={handleSubmitPayment} className="space-y-3 text-xs font-sans">
               <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-slate-700">
                 <div className="font-semibold">{paymentDraft.supplierName}</div>
-                {paymentDraft.purchaseOrderId ? <div className="text-[10px] font-mono text-slate-500 mt-1">PO Ref: {paymentDraft.purchaseOrderId}</div> : null}
+                {paymentDraft.purchaseOrderId ? <div className="text-[10px] font-mono text-slate-500 mt-1">PO Ref: {purchaseOrders.find(po=>po.id===paymentDraft.purchaseOrderId)?.poNumber||paymentDraft.purchaseOrderId}</div> : <p className="mt-1 text-xs text-slate-500">Supplier-level payment. Allocation is determined by the ledger; this preview does not establish a payable balance.</p>}
               </div>
 
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Amount *</label>
                 <input type="number" min="0.01" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" required />
+                {paymentAmount!==''&&!supplierPaymentValid&&<p role="alert" className="mt-1 text-rose-700">Enter a positive amount with at most two decimal places.</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -799,11 +807,12 @@ export default function SupplierPurchaseView({
                 </div>
                 <div>
                   <label className="block text-slate-500 font-semibold mb-1">Date</label>
-                  <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" />
+                  <input type="date" required max={reportDay(new Date())} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono" />
                 </div>
               </div>
 
               {financialEnabled&&<div><label className="block text-slate-500 font-semibold mb-1">Paid from *</label><select required value={sourceId} disabled={sourceLoading||isPaymentSubmitting} onChange={e=>setSourceId(e.target.value)} className="w-full rounded border p-2"><option value="">{sourceLoading?'Loading accounts…':'Select payment account'}</option>{compatibleSources.map(a=><option key={a.id} value={a.id}>{a.name} · Rs. {a.balance.toFixed(2)}</option>)}</select>{!sourceLoading&&!compatibleSources.length&&<p className="text-amber-800 mt-1">Create a matching financial account in Accounting first.</p>}</div>}
+              {financialEnabled&&selectedSource&&<div className="rounded-lg border border-slate-200 bg-slate-50 p-2 space-y-1"><p>Recorded available funds: <strong>{currencySymbol}{selectedSource.balance.toFixed(2)}</strong></p>{supplierPaymentValid&&(selectedSource.balance<supplierPaymentValue?<p role="alert" className="text-rose-700">Insufficient recorded funds in this account.</p>:<p>Estimated remaining funds: <strong>{currencySymbol}{(selectedSource.balance-supplierPaymentValue).toFixed(2)}</strong></p>)}</div>}
               {sourceError&&<p role="alert" className="text-red-700">{sourceError}</p>}
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Note</label>
@@ -812,7 +821,7 @@ export default function SupplierPurchaseView({
 
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button type="button" onClick={() => setPaymentDraft(null)} className="flex-1 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded">Cancel</button>
-                <button type="submit" disabled={isPaymentSubmitting||!!pendingPayment||(financialEnabled&&(!storageReady||sourceLoading))} className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs transition">
+                <button type="submit" disabled={isPaymentSubmitting||!!pendingPayment||!supplierPaymentReady} className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-3xs transition">
                   {isPaymentSubmitting ? 'Saving...' : 'Save Payment'}
                 </button>
               </div>
