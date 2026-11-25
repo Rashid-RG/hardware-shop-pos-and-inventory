@@ -3,6 +3,7 @@ type Props={authToken:string;shopId:string;canManage:boolean;key?:string};
 type Account={code:string;name:string;kind:string;active:boolean};
 type Financial={id:string;name:string;kind:string;active:boolean};
 type Mapping={kind:string;sourceId:string;accountCode:string;evidence:string;recorded_by:string;name:string;active:boolean};
+type Partner={id:string;name:string};
 type Source={kind:string;sourceId:string;label:string;classification:string};
 const controls:Source[]=[
  ['supplierAdvances','Supplier advances','Asset'],['receivables','Customer receivables','Asset'],['inventory','Inventory','Asset'],['cheques','Cheques receivable','Asset'],['fixedAssets','Fixed assets','Asset'],
@@ -14,15 +15,15 @@ const button='border rounded-lg px-3 py-2 text-sm disabled:opacity-50';
 const field='w-full border rounded-lg p-2 text-sm';
 export default function LedgerMappingPanel(props:Props){return <Mappings key={JSON.stringify([props.shopId,props.authToken,props.canManage])} {...props}/>;}
 function Mappings({authToken,shopId,canManage}:Props){
- const [data,setData]=useState<{accounts:Account[];financial:Financial[];mappings:Mapping[]}|null>(null);
+ const [data,setData]=useState<{accounts:Account[];financial:Financial[];mappings:Mapping[];partners:Partner[]}|null>(null);
  const [revision,setRevision]=useState(0),[error,setError]=useState(''),[message,setMessage]=useState(''),[search,setSearch]=useState(''),[filter,setFilter]=useState('all'),[page,setPage]=useState(0);
  const [selected,setSelected]=useState<Source|null>(null),[code,setCode]=useState(''),[evidence,setEvidence]=useState(''),[busy,setBusy]=useState(false);
  const live=useRef(true),lock=useRef(false);
  const headers={Authorization:'Bearer '+authToken,'X-Shop-Id':shopId,'Content-Type':'application/json'};
  useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
  useEffect(()=>{const c=new AbortController();setData(null);setError('');
- Promise.all(['/api/ledger/accounts','/api/financial-accounts','/api/ledger/mappings'].map(async path=>{const r=await fetch(path,{headers,cache:'no-store',signal:c.signal});const d=await r.json();if(!r.ok||!Array.isArray(d))throw Error(d.error||'Unable to load mapping data.');return d;})).then(([accounts,financial,mappings])=>{if(!c.signal.aborted)setData({accounts,financial,mappings});}).catch(e=>{if(!c.signal.aborted)setError(e.message);});return()=>c.abort();},[revision]);
- const sources=[...controls,...(data?.financial||[]).filter(f=>f.active&&['Office Cash','Bank','Representative Cash'].includes(f.kind)).map(f=>({kind:'financialAccount',sourceId:f.id,label:f.name+' · '+f.kind,classification:'Asset'}))];
+ Promise.all(['/api/ledger/accounts','/api/financial-accounts','/api/ledger/mappings',...(canManage?['/api/ledger/partner-mapping-sources']:[])].map(async path=>{const r=await fetch(path,{headers,cache:'no-store',signal:c.signal});const d=await r.json();if(!r.ok||!Array.isArray(d))throw Error(d.error||'Unable to load mapping data.');return d;})).then(([accounts,financial,mappings,partners=[]])=>{if(!c.signal.aborted)setData({accounts,financial,mappings,partners});}).catch(e=>{if(!c.signal.aborted)setError(e.message);});return()=>c.abort();},[revision]);
+ const sources=[...controls,...(data?.partners||[]).flatMap(p=>[{kind:'partnerCapital',sourceId:p.id,label:p.name+' · Capital',classification:'Equity'},{kind:'partnerDrawings',sourceId:p.id,label:p.name+' · Drawings',classification:'Equity'}]),...(data?.financial||[]).filter(f=>f.active&&['Office Cash','Bank','Representative Cash'].includes(f.kind)).map(f=>({kind:'financialAccount',sourceId:f.id,label:f.name+' · '+f.kind,classification:'Asset'}))];
  const mapped=(s:Source)=>data?.mappings.find(m=>m.kind===s.kind&&m.sourceId===s.sourceId);
  const choices=(data?.accounts||[]).filter(a=>a.active&&a.kind===selected?.classification&&!data?.mappings.some(m=>m.accountCode===a.code));
  const filtered=sources.filter(s=>s.label.toLowerCase().includes(search.trim().toLowerCase())&&(filter==='all'||(filter==='missing'?!mapped(s):!!mapped(s))));
