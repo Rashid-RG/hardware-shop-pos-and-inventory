@@ -1696,13 +1696,20 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
       }
       const variantsList = Array.isArray(dbProduct.variants_json) ? dbProduct.variants_json as ProductVariant[] : [];
 
+      if (item.priceOverride) {
+        const override = item.priceOverride;
+        const unit = dbProduct.shared_stock_units?.units?.find((u:any)=>u.id===item.sellingUnitId);
+        const variant = variantsList.find(v=>v.id===item.variantId);
+        const currentPrice = Number(unit?.sellingPrice ?? variant?.sellingPrice ?? dbProduct.selling_price);
+        if (quotationId || !request || !['Super Admin','Store Manager'].includes(cashierRole) || !Number.isFinite(item.sellingPrice) || item.sellingPrice<=0 || item.sellingPrice>1_000_000_000 || Math.round(item.sellingPrice*100)/100!==item.sellingPrice || typeof override.reason!=='string' || !override.reason.trim() || override.reason.length>250 || !Number.isFinite(currentPrice) || Math.round(currentPrice*100)!==Math.round(override.standardPrice*100)) throw Error('Custom price authorization or catalog price changed.');
+      }
       let stockOut = item.quantity;
       const requestedUnit = (item as typeof item & { sellingUnitId?: string }).sellingUnitId;
       if (dbProduct.shared_stock_units || requestedUnit) {
         if (!requestedUnit || item.variantId || !tx.shopId) throw new Error('Shared stock requires an explicit selling unit and direct sale.');
         const snapshot = await deductSharedSale(client, tx.shopId, item.productId, requestedUnit, item.quantity);
         // Totals have already been calculated. Reject stale or untrusted prices rather than rewriting them.
-        if (Math.round(item.sellingPrice * 100) !== Math.round(snapshot.sellingPrice * 100)) throw new Error('Selling-unit price changed. Reload product.');
+        if (Math.round((item.priceOverride?.standardPrice ?? item.sellingPrice) * 100) !== Math.round(snapshot.sellingPrice * 100)) throw new Error('Selling-unit price changed. Reload product.');
         if (quotationId && (snapshot.baseUnitsPerSaleUnit!==item.baseUnitsPerSaleUnit || snapshot.sellingUnitLabel!==item.sellingUnitLabel)) throw new Error('Quotation packaging changed. Issue a new quotation.');
         item.costPrice = snapshot.costPrice;
         item.variantUnit = snapshot.sellingUnitLabel;
@@ -1866,6 +1873,13 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
        VALUES ($1, $2, NOW(), $3, $4, 'Invoice Created', $5)`,
       [activityId, tx.shopId, tx.cashierName, cashierRole, `Billed sales transaction ${tx.invoiceNumber} for ${activeShopName}, total Rs.${tx.total.toFixed(2)}.`]
     );
+
+    for (const [index,item] of tx.items.entries()) {
+      if (!item.priceOverride) continue;
+      await client.query(
+        "INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details) VALUES ($1,$2,NOW(),$3,$4,'Invoice Price Override',$5)",
+        ['price-'+tx.id+'-'+index,tx.shopId,request?.actor||tx.cashierName,cashierRole,JSON.stringify({invoice:tx.invoiceNumber,productId:item.productId,unit:item.sellingUnitLabel||item.variantUnit,standardPrice:item.priceOverride.standardPrice,customPrice:item.sellingPrice,reason:item.priceOverride.reason})]);
+    }
 
     if(financialPayment){
       const {destinationAccountId,recordedBy,effectiveDate}=financialPayment;
