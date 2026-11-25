@@ -4,6 +4,7 @@ import type { BusinessReport } from '../utils/businessReport';
 import { arsPrintLogoUrl, isArsPrintBrand, arsDisplayName } from '../utils/arsPrintLogo';
 import { invoiceFooter } from '../utils/invoiceFooter';
 import { notify } from '../utils/notifications';
+import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -28,9 +29,18 @@ import {
   Mail,
   MessageCircle,
   Filter,
+  Package,
 } from 'lucide-react';
 import { Product, ProductVariant, Customer, Employee, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
 import { QRFeatureView } from './QRFeatureView';
+
+function BillingProductPhoto({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const src = sanitizeImageSrc(product.imageUrl);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return <div className={(compact ? 'h-10 w-10' : 'h-16 w-16 sm:h-[72px] sm:w-[72px]') + ' relative shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center'}>
+    {src && failedSrc !== src ? <img src={src} alt={product.name} loading="lazy" decoding="async" onError={()=>setFailedSrc(src)} className="h-full w-full object-contain p-0.5"/> : <div className="flex flex-col items-center text-slate-400"><Package aria-hidden="true" className="h-5 w-5"/>{!compact && <span className="mt-0.5 text-[9px]">No photo</span>}</div>}
+  </div>;
+}
 
 function A4InvoicePreview({ id, request }: {
   id: string;
@@ -1480,7 +1490,7 @@ export default function POSView({
         </div>
 
         {/* Dynamic Products Grid */}
-        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
+        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 auto-rows-min overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
             const activeStock = availableToAdd(p, selectedVariant);
@@ -1494,7 +1504,7 @@ export default function POSView({
                 key={p.id}
                 id={`pos-product-${p.id}`}
                 onClick={() => openUnitPicker(p, selectedVariant)}
-                className={`bg-white rounded-xl border p-3 flex flex-col justify-between cursor-pointer group transition-all duration-150 relative ${
+                className={`bg-white rounded-xl border p-2.5 flex flex-col justify-between cursor-pointer group transition-colors duration-150 relative min-w-0 ${
                   isOut
                     ? 'border-slate-200 bg-slate-50 opacity-55 cursor-not-allowed'
                     : isLowStock
@@ -1510,15 +1520,17 @@ export default function POSView({
                   </span>
                 ) : null}
 
-                <div>
-                  <span className="text-[9px] font-mono font-medium text-slate-400 uppercase">
+                <div className="flex items-start gap-2 min-w-0">
+                  <BillingProductPhoto product={p}/>
+                  <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase">
                     {p.category}
                   </span>
-                  <h5 className="font-sans font-semibold text-slate-900 text-xs mt-1 leading-snug group-hover:text-indigo-600 transition line-clamp-2">
+                  <h5 className="font-sans font-bold text-slate-900 text-xs mt-0.5 leading-snug group-hover:text-indigo-600 transition line-clamp-2">
                     {p.name}
                   </h5>
-                  <p className="font-mono text-[9px] text-slate-400 mt-1">
-                    {p.brand} | SKU: {p.sku}
+                  <p className="text-[10px] text-slate-500 mt-1 break-all line-clamp-2">
+                    {p.sku}
                     {isAdminSeller && p.internalCode && (
                       <span className="ml-2 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold flex items-center gap-1 inline-flex">
                         <Eye className="w-3 h-3" />
@@ -1545,14 +1557,16 @@ export default function POSView({
                       </select>
                     </div>
                   )}
+                  {p.sharedStockUnits && <span className="mt-1 block text-[10px] font-semibold text-indigo-600">{p.sharedStockUnits.units.map(u=>u.label).join(' / ')}</span>}
+                  </div>
                 </div>
 
-                <div className="mt-4 pt-2 border-t border-slate-50 flex items-center justify-between">
+                <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-1 items-center justify-between">
                   <span className="text-sm font-bold text-slate-950 font-mono">
                     {formatMoney(activePrice)}
                   </span>
                   <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
                       isOut
                         ? 'bg-rose-100 text-rose-700'
                         : isLowStock
@@ -1639,9 +1653,9 @@ export default function POSView({
                     const variant = getSelectedVariant(product);
                     const stock = availableToAdd(product, variant);
                     return <div key={product.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 p-2 text-xs">
-                      <span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? 'Available to add: '+stock : 'No stock left to add'}</span></span>
+                      <BillingProductPhoto product={product} compact/><span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? 'Available to add: '+stock : 'No stock left to add'}</span></span>
                       {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
-                      <span>{formatMoney(Number(variant?.sellingPrice ?? product.sellingPrice))}</span>
+                      <span>{formatMoney(Number(getDefaultSellingUnit(product)?.sellingPrice ?? variant?.sellingPrice ?? product.sellingPrice))}</span>
                       <button type="button" disabled={stock <= 0} onClick={() => { if(openUnitPicker(product, variant)) { setSearchTerm(''); setShowInvoiceProducts(false); } }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
                     </div>;
                   })}
@@ -1806,7 +1820,8 @@ export default function POSView({
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
           <section role="dialog" aria-modal="true" aria-label="Choose selling unit" className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl">
             <header className="flex items-start justify-between bg-[#182a45] p-4 text-white rounded-t-2xl"><div><p className="text-xs font-semibold text-amber-300">ARS DISTRIBUTORS · SELLING UNITS</p><h3 className="mt-1 text-lg font-bold">{pickerProduct.name}</h3><p className="text-xs text-slate-300">Choose Box, Piece or another configured unit.</p></div><button type="button" aria-label="Close selling unit selection" onClick={()=>setUnitPickerProductId(null)}><X className="h-5 w-5"/></button></header>
-            <div className="space-y-4 p-4">
+            <div className="space-y-3 p-4">
+              <div className="flex items-center gap-3"><BillingProductPhoto product={pickerProduct}/><div className="min-w-0"><p className="text-xs text-slate-500">Product code</p><p className="break-all text-sm font-semibold">{pickerProduct.sku}</p><p className="text-xs text-slate-500">Select an available selling unit below.</p></div></div>
               <div className="grid grid-cols-2 gap-2">{pickerProduct.sharedStockUnits?.units.map(u=>{const remaining=availableToAdd(pickerProduct,undefined,cart,u.id);return <button key={u.id} type="button" aria-pressed={u.id===pickerUnit.id} disabled={remaining<1} onClick={()=>{setUnitPickerUnitId(u.id);setUnitPickerQty('1');setPickerCustomPrice('');setPickerPriceReason('');}} className={'rounded-xl border p-3 text-left disabled:opacity-40 '+(u.id===pickerUnit.id?'border-indigo-600 bg-indigo-50':'border-slate-200')}><strong className="block">{u.label}</strong><span className="block text-xs text-slate-500">{u.baseUnits} base units · {remaining} available</span><span className="block font-semibold">{formatMoney(u.sellingPrice)}</span></button>;})}</div>
               <label className="block text-sm font-semibold">Quantity ({pickerUnit.label})<input autoFocus type="number" min="1" max={pickerAvailable} step="1" value={unitPickerQty} onChange={e=>setUnitPickerQty(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-3"/></label>
               <p className="text-xs text-slate-600">Available to add: {pickerAvailable} {pickerUnit.label}. Stock is shared across all selling units.</p>
