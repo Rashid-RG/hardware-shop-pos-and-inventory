@@ -5,6 +5,7 @@ import type { BusinessReport } from '../utils/businessReport';
 import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
 import { notify } from '../utils/notifications';
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FileText,
   Plus,
@@ -244,21 +245,10 @@ export default function QuotationView({
   });
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-semibold text-slate-900 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-indigo-500" /> Quotations & Estimates
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">Create and manage price quotes before finalising sales.</p>
-        </div>
-        <button
-          onClick={() => setIsComposing(true)}
-          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition"
-        >
-          <Plus className="w-4 h-4" /> New Quote
-        </button>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        <span className="px-2 text-xs font-semibold text-slate-600">{displayed.length} matching quotations</span>
+        <button type="button" onClick={()=>setIsComposing(true)} className="flex items-center gap-1.5 rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white"><Plus className="h-4 w-4"/>New Quote</button>
       </div>
 
       {/* Filters */}
@@ -274,14 +264,14 @@ export default function QuotationView({
 
       <ReportExportMenu settings={taxConfig} report={()=>({title:'Quotation register',filename:'ars-quotations',period:'Matching quotations | '+statusFilter,headers:['Quotation','Date','Valid until','Customer','Subtotal (LKR)','Tax (LKR)','Discount (LKR)','Total (LKR)','Status','Converted invoice ID'],moneyColumns:[4,5,6,7],rows:displayed.map(q=>[q.quoteNumber,reportDay(q.date),q.validUntil||'',q.customerName,q.subtotal,q.tax,q.discountAmount,q.total,q.status,q.convertedToTxId||'']),summary:[{label:'Matching quotes',value:displayed.length},{label:'Converted quotes',value:displayed.filter(q=>q.status==='Converted').length}]})}/>
       {/* Quotations list */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-xl border border-slate-100 shadow-xs max-h-[65dvh] overflow-auto">
         {displayed.length === 0 ? (
           <div className="text-center py-16 text-slate-400 text-sm">
             <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
             No quotations yet. Create one to get started.
           </div>
         ) : (
-          <table className="w-full text-xs text-left"><caption className="caption-top px-4 pb-3 text-left text-xs font-semibold text-slate-700">
+          <table className="w-full min-w-[760px] text-xs text-left"><caption className="caption-top px-4 pb-3 text-left text-xs font-semibold text-slate-700">
               Sales Representative for invoice conversion
               <select aria-label="Select Sales Representative for quotation invoice" value={selectedSalesRepId}
                 onChange={event=>setSelectedSalesRepId(event.target.value)}
@@ -292,26 +282,26 @@ export default function QuotationView({
               {activeSalesReps.length===0&&<span className="ml-2 text-rose-700">Register Sales Representatives in Staff first.</span>}
             </caption>
             
-            <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider">
+            <thead className="sticky top-0 z-10 bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wider">
               <tr>
-                <th className="px-4 py-3">Quote #</th>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Customer</th>
-                <th className="px-4 py-3 text-right">Total</th>
-                <th className="px-4 py-3">Valid Until</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-3 py-2">Quote #</th>
+                <th className="px-3 py-2">Date</th>
+                <th className="px-3 py-2">Customer</th>
+                <th className="px-3 py-2 text-right">Total</th>
+                <th className="px-3 py-2">Valid Until</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {displayed.map((q) => (
                 <tr key={q.id} className="hover:bg-slate-50/50">
-                  <td className="px-4 py-3 font-mono font-semibold text-indigo-600">{q.quoteNumber}</td>
-                  <td className="px-4 py-3 text-slate-500">{reportDay(q.date)}</td>
-                  <td className="px-4 py-3 font-medium text-slate-800">{q.customerName}</td>
-                  <td className="px-4 py-3 text-right font-mono font-bold text-slate-900">Rs.{q.total.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-slate-500">{q.validUntil || '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-2 font-mono font-semibold text-indigo-600">{q.quoteNumber}</td>
+                  <td className="px-3 py-2 text-slate-500">{reportDay(q.date)}</td>
+                  <td className="px-3 py-2 font-medium text-slate-800">{q.customerName}</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold text-slate-900">Rs.{q.total.toFixed(2)}</td>
+                  <td className="px-3 py-2 text-slate-500">{q.validUntil || '—'}</td>
+                  <td className="px-3 py-2">
                     <select
                       value={q.status}
                       onChange={(e) => handleUpdateStatus(q.id, e.target.value)}
@@ -322,7 +312,7 @@ export default function QuotationView({
                       {q.status === 'Converted' && <option>Converted</option>}
                     </select>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-3 py-2 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => printQuote(q)} title="Print" className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition">
                         <Printer className="w-3.5 h-3.5" />
@@ -352,10 +342,10 @@ export default function QuotationView({
       </div>
 
       {/* Compose Modal */}
-      {isComposing && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-3 sm:p-5">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex max-h-[min(92dvh,900px)] flex-col overflow-hidden">
-            <div className="flex shrink-0 items-center justify-between px-4 py-3 sm:px-5 border-b border-slate-100">
+      {isComposing && createPortal(
+        <div className="fixed inset-0 bg-black/40 z-[120] flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex max-h-[min(92dvh,900px)] flex-col overflow-hidden">
+            <div className="flex shrink-0 items-center justify-between px-3 py-2 sm:px-5 border-b border-slate-100">
               <h3 className="font-semibold text-slate-900">New Quotation</h3>
               <button onClick={() => setIsComposing(false)} className="p-1 rounded hover:bg-slate-100"><X className="w-4 h-4" /></button>
             </div>
@@ -441,7 +431,7 @@ export default function QuotationView({
                 <textarea rows={2} value={quoteNotes} onChange={(e) => setQuoteNotes(e.target.value)} placeholder="Terms, conditions, delivery notes..." className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-200 resize-none" />
               </details>
             </div>
-            <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3 sm:px-5 border-t border-slate-100 bg-white">
+            <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2 sm:px-5 border-t border-slate-100 bg-white">
               <span className="text-xs font-semibold text-slate-600">{quoteItems.length} product(s) · Rs.{total.toFixed(2)}</span>
               <div className="flex items-center gap-2"><button onClick={() => setIsComposing(false)} className="px-4 py-2 text-xs text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancel</button>
               <button onClick={handleSave} disabled={isSaving || quoteItems.length === 0} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">
@@ -449,7 +439,7 @@ export default function QuotationView({
               </button></div>
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
