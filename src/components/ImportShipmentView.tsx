@@ -67,12 +67,19 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
  });
  const shipmentReport=():BusinessReport=>{const financial=['Super Admin','Store Manager'].includes(currentRole);return {title:mode==='shipments'?'Import shipment register':'Warehouse receiving status',filename:'ars-'+mode,period:'Matching shipments | ETA '+(etaFrom||'Any')+' to '+(etaTo||'Any'),headers:['Shipment','Purchase order','Supplier','Container','Origin','ETA','Status',...(financial?['Invoice currency','Exchange rate (LKR)','Freight (LKR)','Customs (LKR)','Clearance (LKR)']:[])],moneyColumns:financial?[8,9,10,11]:[],rows:visibleRows.map(r=>[r.shipment_reference,r.po_number,r.supplier_name,r.container_number,r.origin_country,reportDay(r.eta_date||''),r.status,...(financial?[r.invoice_currency,Number(r.exchange_rate_lkr),Number(r.freight_lkr),Number(r.customs_lkr),Number(r.clearance_lkr)]:[])]),summary:[{label:'Matching shipments',value:visibleRows.length},{label:'Partially received',value:visibleRows.filter(r=>r.status==='Partially Received').length}]};};
  const displayedRows=hasActiveFilters||showAll?visibleRows:visibleRows.slice(0,12);
+ const pendingRecoveryOrders=mode==='receiving'?purchaseOrders.filter(po=>{
+   if(po.shopId!==shopId)return false;
+   try{return localStorage.getItem('ars:pending-receipt:'+JSON.stringify([shopId,po.id]))!==null;}
+   catch{return false;}
+ }):[];
+
  return <div className="space-y-3">
    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
      <span className="flex-1 px-2 text-xs font-semibold text-slate-600">{mode==='shipments'?'Import shipment register':'Warehouse receiving queue'}</span>
      {taxConfig&&<ReportExportMenu report={shipmentReport} settings={taxConfig}/>}
      {mode==='shipments'&&['Super Admin','Store Manager'].includes(currentRole)&&<button type="button" onClick={()=>{setError('');setRegisterOpen(true);}} className="rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white">+ Register shipment</button>}
    </div>
+   {pendingRecoveryOrders.length>0&&<section aria-label="Unconfirmed warehouse receipts" className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2"><h3 className="text-sm font-bold text-amber-900">Unconfirmed warehouse receipts</h3><p className="text-xs text-amber-900">Recover the original saved request even if the shipment is fully received. Do not create another delivery.</p>{pendingRecoveryOrders.map(po=><div key={po.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{po.poNumber} · {po.supplierName} · {po.status}</span><button type="button" disabled={!!receivingPo} onClick={()=>setReceivingPo({id:po.id,number:po.poNumber})} className="rounded-lg bg-slate-900 px-3 py-2 font-semibold text-white disabled:opacity-50">Recover saved receipt</button></div>)}</section>}
    {error&&<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
    {notice&&<p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
    {mode==='shipments'&&registerOpen&&['Super Admin','Store Manager'].includes(currentRole)&&createPortal(
@@ -161,6 +168,6 @@ export default function ImportShipmentView({taxConfig,authToken,shopId,currentRo
      {mode==='receiving'&&<p className="mt-4 text-xs text-amber-800">Only record verified goods actually received. Damaged or missing items must remain outstanding; formal discrepancy resolution is still pending.</p>}
    </section>
    {mode==='shipments'&&costReview?.shopId===shopId&&['Super Admin','Store Manager'].includes(currentRole)&&<LandedCostApprovalPanel key={shopId+':'+costReview.id} shipmentId={costReview.id} reference={costReview.reference} authToken={authToken} shopId={shopId} canApprove={currentRole==='Super Admin'} settings={taxConfig} onClose={()=>setCostReview(null)} onChanged={()=>void refresh()} />}
-   {mode==='receiving'&&receivingPo&&<PartialReceiptPanel poId={receivingPo.id} poNumber={receivingPo.number} authToken={authToken} shopId={shopId} onClose={()=>setReceivingPo(null)} onCommitted={()=>{void refresh();onRefreshDb();}} />}
+   {mode==='receiving'&&receivingPo&&<PartialReceiptPanel key={shopId+':'+receivingPo.id} poId={receivingPo.id} poNumber={receivingPo.number} authToken={authToken} shopId={shopId} onClose={()=>setReceivingPo(null)} onCommitted={()=>{void refresh();onRefreshDb();}} />}
  </div>;
 }
