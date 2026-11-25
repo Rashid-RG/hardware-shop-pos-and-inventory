@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { notify } from '../utils/notifications';
 import {
   Plus,
@@ -737,6 +738,19 @@ export default function ProductManagementView({
   // Access flags
   const canModify = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
 
+  const catalogModalOpen = isFormOpen || !!packagingProduct || isCategoryModalOpen;
+  useEffect(() => {
+    if (!catalogModalOpen) return;
+    const bodyOverflow = document.body.style.overflow;
+    const rootOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = bodyOverflow;
+      document.documentElement.style.overflow = rootOverflow;
+    };
+  }, [catalogModalOpen]);
+
   return (
     <div className="space-y-6 motion-safe:animate-fade-in">
       {/* View Header */}
@@ -942,9 +956,9 @@ export default function ProductManagementView({
       </div>
 
       {/* FORM MODAL PANEL (DRAWER overlay style) */}
-      {isFormOpen && (
-        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
+      {isFormOpen && createPortal(
+        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-[100]">
+          <div role="dialog" aria-modal="true" aria-label={editingProduct ? "Edit product" : "Add product"} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
             <button
               type="button"
               aria-label="Close product editor"
@@ -1493,11 +1507,11 @@ export default function ProductManagementView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
 
-      {packagingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      {packagingProduct && createPortal(
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
           <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
             <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
             <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — packaging factors protected. Managers may edit prices." : "Save a draft, then check eligibility. A manager must confirm activation."}</p>
@@ -1554,10 +1568,10 @@ export default function ProductManagementView({
               <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
             </div>
           </section>
-        </div>
+        </div>, document.body
       )}
 
-      {isCategoryModalOpen && (
+      {isCategoryModalOpen && createPortal(
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-200 font-sans relative">
             <button
@@ -1599,7 +1613,7 @@ export default function ProductManagementView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
