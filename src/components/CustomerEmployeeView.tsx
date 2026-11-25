@@ -239,6 +239,9 @@ export default function CustomerEmployeeView({
       || (balanceFilter === 'owing' ? Number(c.creditBalance || 0) > 0 : Number(c.creditBalance || 0) <= 0);
     return matchesText && matchesBalance;
   });
+  const owingCustomers = customers.filter(c=>Number(c.creditBalance || 0)>0);
+  const outstandingTotal = owingCustomers.reduce((sum,c)=>sum+Number(c.creditBalance || 0),0);
+  const directoryCustomers = balanceFilter === 'owing' ? [...filteredCustomers].sort((a,b)=>Number(b.creditBalance || 0)-Number(a.creditBalance || 0)||a.name.localeCompare(b.name)) : filteredCustomers;
 
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
   const matchesShop = (recordShopId?: string) =>
@@ -424,6 +427,11 @@ export default function CustomerEmployeeView({
         <p>Retry this exact request before recording another payment. This will not deduct the amount twice.</p>
         <button type="button" disabled={isPaymentSubmitting} onClick={()=>void submitPreservedCollection(pendingCollection)} className="mt-2 rounded bg-amber-400 px-4 py-2 font-semibold disabled:opacity-40">Retry saved payment request</button>
       </section>}
+      {activeTab === 'customers' && <section aria-label="Customer account overview" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <button type="button" aria-pressed={balanceFilter==='all'} onClick={()=>{setBalanceFilter('all');setSearchTerm('');setVisibleCount(12);}} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400"><span className="block text-xs text-slate-500">Customer accounts</span><strong className="block text-lg text-slate-900">{customers.length}</strong></button>
+        <button type="button" aria-pressed={balanceFilter==='owing'} onClick={()=>{setBalanceFilter('owing');setSearchTerm('');setVisibleCount(12);}} className="rounded-xl border border-rose-200 bg-white p-3 text-left hover:border-rose-400"><span className="block text-xs text-slate-500">Total positive outstanding</span><strong className="block text-lg text-rose-700 break-words">{formatMoney(outstandingTotal)}</strong><span className="text-xs text-slate-500">{owingCustomers.length} accounts owing · View accounts</span></button>
+        <button type="button" aria-pressed={balanceFilter==='clear'} onClick={()=>{setBalanceFilter('clear');setSearchTerm('');setVisibleCount(12);}} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-emerald-400"><span className="block text-xs text-slate-500">No outstanding balance</span><strong className="block text-lg text-emerald-700">{customers.length-owingCustomers.length}</strong></button>
+      </section>}
       {/* FILTER SEARCH AREA */}
       <div className="bg-white px-3 py-2.5 rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="relative w-full sm:w-85">
@@ -483,7 +491,7 @@ export default function CustomerEmployeeView({
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[72dvh] overflow-y-auto overscroll-contain">
-          {filteredCustomers.slice(0, visibleCount).map((c) => (
+          {directoryCustomers.slice(0, visibleCount).map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
@@ -598,7 +606,7 @@ export default function CustomerEmployeeView({
           {filteredCustomers.length === 0 && (
             <div className="col-span-full py-16 text-center bg-white border border-dashed border-slate-200 rounded-xl text-slate-400">
               <Users className="w-9 h-9 mx-auto opacity-40 text-slate-400" />
-              <p className="text-xs font-semibold mt-2">Zero matching customers in register</p>
+              <p className="text-xs font-semibold mt-2">No matching customer accounts</p><button type="button" onClick={()=>{setSearchTerm('');setBalanceFilter('all');setVisibleCount(12);}} className="mt-2 text-xs font-semibold text-indigo-700 underline">Clear filters</button>
             </div>
           )}
         </div>
