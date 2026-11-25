@@ -27,15 +27,20 @@ test('warehouse receiving remains searchable and history progressively renders',
   assert.match(shipments,/PartialReceiptPanel/);
 });
 test('shipment creation is optional and collapsed by default',()=>{
-  assert.match(shipments,/Register incoming shipment<\/summary>/);
-  assert.match(shipments,/<form onSubmit=\{add\}/);
+  assert.match(shipments,/\[registerOpen,setRegisterOpen\]=useState\(false\)/);
+  assert.match(shipments,/registerOpen&&\['Super Admin','Store Manager'\]\.includes\(currentRole\)&&createPortal/);
+  assert.match(shipments,/aria-label="Register incoming shipment"/);
+  assert.match(shipments,/max-h-\[92dvh\]/);
+  assert.match(shipments,/<form id="shipment-register-form" onSubmit=\{add\}/);
+  assert.match(shipments,/type="submit" form="shipment-register-form"/);
   assert.match(shipments,/Registering a shipment does not add stock or pay suppliers/);
 });
 test('ARS company settings use two columns and hide infrequent legal fields',()=>{
   const panel=settings.split('RENDER TAB 2: STORE SETTINGS PANEL')[1]?.split('FIXED LOG OVERHEAD EXPENSE DRAWER MODAL')[0]||'';
-  assert.match(panel,/max-w-5xl/);
+  assert.match(panel,/max-w-6xl/);
   assert.match(panel,/lg:grid-cols-2/);
-  assert.match(panel,/<details className="rounded-xl border border-slate-200 bg-slate-50\/60 p-3">/);
+  assert.match(panel,/<section hidden=\{settingsWorkspace!=='legal'\}/);
+  assert.match(panel,/setSettingsWorkspace\(id\)/);
   assert.match(panel,/Legal registration, support contacts and additional invoice details/);
   assert.match(panel,/sticky bottom-0/);
   assert.match(panel,/id="btn-save-settings"/);
