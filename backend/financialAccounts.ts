@@ -277,7 +277,7 @@ export async function recordFinancialTransfer(db:Pool,input:{
     if(accounts.rowCount!==2)throw Error('Select two active financial accounts in this shop.');
     if(accounts.rows.some(r=>!['Office Cash','Bank','Representative Cash'].includes(r.kind)))throw Error('Settlement accounts are not supported for fund transfers.');
     if(input.handover&&(accounts.rows.find(r=>r.id===fromAccountId)?.kind!=='Representative Cash'||accounts.rows.find(r=>r.id===toAccountId)?.kind!=='Office Cash'))throw Error('Handover requires a representative cash account and an office cash account.');
-    const balance=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_cash_handovers WHERE shop_id=$1 AND from_account_id=$2 AND status='Pending') >= $3::numeric AS sufficient`,[shopId,fromAccountId,amount]);
+    const balance=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_cash_handovers WHERE shop_id=$1 AND from_account_id=$2 AND status='Pending')-(SELECT COALESCE(SUM(amount),0) FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND status='Issued') >= $3::numeric AS sufficient`,[shopId,fromAccountId,amount]);
     if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in source account.');
     await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
       VALUES($1,$2,$3,-$5::numeric,'Transfer Out',$6,$7,$8,$9),($4,$2,$10,$5::numeric,'Transfer In',$6,$7,$8,$9)`,
@@ -518,7 +518,7 @@ export async function recordPaidExpense(db:Pool,input:{id:string;shopId:string;d
       const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,sourceAccountId]);
       const kind=account.rows[0]?.kind;
       if(!((paymentMethod==='Cash'&&kind==='Office Cash')||(paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active expense account matching the payment method.');
-      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,sourceAccountId,amount]);
+      const balance=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND status='Issued') >= $3::numeric AS sufficient`,[shopId,sourceAccountId,amount]);
       if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for expense.');
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note) VALUES($1,$2,$3,-$4::numeric,'Expense',$5,$6,$7,$8)`,['expense-out-'+id,shopId,sourceAccountId,amount,id,recordedBy,date,desc]);
     }
