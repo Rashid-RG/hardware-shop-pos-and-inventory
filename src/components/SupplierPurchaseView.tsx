@@ -59,6 +59,22 @@ export default function SupplierPurchaseView({
 }: SupplierPurchaseViewProps) {
   const [recoveryReturnId,setRecoveryReturnId]=useState('');
   useEffect(()=>setRecoveryReturnId(''),[financialAuthToken,financialShopId,financialOwner,currentRole]);
+  const [reconciliationOrder,setReconciliationOrder]=useState<PurchaseOrder|null>(null);
+  const [reconciliation,setReconciliation]=useState<{advance:string|null;payable:string|null;postingEnabled:boolean;cutoverDate:string|null;warnings:string[];note:string;coverage:{recordedPayments:string;unpostedPayments:number;unpostedBatches:number;receiptBatches:number;fullReceiptPosted:boolean}}|null>(null);
+  const [reconciliationError,setReconciliationError]=useState('');
+  const [reconciliationLoading,setReconciliationLoading]=useState(false);
+  const [reconciliationRevision,setReconciliationRevision]=useState(0);
+  useEffect(()=>{setReconciliationOrder(null);setReconciliation(null);},[financialAuthToken,financialShopId,currentRole]);
+  useEffect(()=>{
+    if(!reconciliationOrder||!financialAuthToken||!financialShopId||reconciliationOrder.shopId!==financialShopId||!['Super Admin','Store Manager'].includes(currentRole))return;
+    const controller=new AbortController();
+    setReconciliation(null);setReconciliationError('');setReconciliationLoading(true);
+    fetch('/api/ledger/supplier-orders/'+encodeURIComponent(reconciliationOrder.id)+'/reconciliation',{headers:{Authorization:'Bearer '+financialAuthToken,'X-Shop-Id':financialShopId},cache:'no-store',signal:controller.signal})
+      .then(async response=>{const data=await response.json();if(!response.ok)throw Error(data.error||'Unable to load reconciliation.');if(!controller.signal.aborted)setReconciliation(data);})
+      .catch(error=>{if(!controller.signal.aborted)setReconciliationError(error instanceof Error?error.message:'Unable to load reconciliation.');})
+      .finally(()=>{if(!controller.signal.aborted)setReconciliationLoading(false);});
+    return()=>controller.abort();
+  },[reconciliationOrder,financialAuthToken,financialShopId,currentRole,reconciliationRevision]);
   const [returnHistoryOrder,setReturnHistoryOrder]=useState<PurchaseOrder|null>(null);
   const [returnHistory,setReturnHistory]=useState<Array<{id:string;return_date:string;reason:string;evidence:string;recorded_by:string;items:Array<{itemId:number;baseQuantity:number;inventoryCost:string;supplierCredit:string}>}>>([]);
   const [returnHistoryError,setReturnHistoryError]=useState('');
@@ -449,6 +465,12 @@ export default function SupplierPurchaseView({
  } : {title:'Purchase order register',filename:'ars-purchase-orders',period:'Matching purchase orders',headers:['Order','Date','Supplier','Lines','Amount (LKR)','Status'],moneyColumns:[4],rows:visiblePurchaseOrders.map(p=>[p.poNumber,reportDay(p.date),p.supplierName,p.items.length,p.total,p.status]),summary:[{label:'Orders',value:visiblePurchaseOrders.length},{label:'Non-cancelled order value (LKR)',value:visiblePurchaseOrders.filter(p=>p.status!=='Cancelled').reduce((a,p)=>a+p.total,0)}]};
   return (
     <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
+      {canViewReturns&&reconciliationOrder?.shopId===financialShopId&&reconciliationOrder&&createPortal(<div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-3"><section role="dialog" aria-modal="true" aria-label="Supplier order ledger reconciliation" className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"><header className="flex items-center justify-between bg-slate-900 px-4 py-3 text-white"><div><h3 className="font-bold">Supplier order ledger reconciliation</h3><p className="text-xs">{reconciliationOrder.poNumber} · {reconciliationOrder.supplierName}</p></div><button type="button" aria-label="Close reconciliation" onClick={()=>setReconciliationOrder(null)} className="p-2"><X className="h-5 w-5"/></button></header><div className="space-y-3 overflow-auto p-4">
+      {reconciliationLoading&&<p role="status" className="text-sm">Loading posted journal balances…</p>}
+      {reconciliationError&&<p role="alert" className="rounded bg-rose-50 p-3 text-sm text-rose-800">{reconciliationError}</p>}
+      {reconciliation&&<><div className="grid gap-2 sm:grid-cols-2">{[['Posted advance',reconciliation.advance],['Posted payable',reconciliation.payable]].map(([label,value])=><div key={label} className="rounded-xl border p-3"><p className="text-xs text-slate-500">{label}</p><strong>{value===null?'Unavailable':'Rs. '+value}</strong></div>)}</div><div className="rounded-lg bg-slate-50 p-3 text-xs space-y-1"><p>Recorded payments: Rs. {reconciliation.coverage.recordedPayments}</p><p>Receipt batches: {reconciliation.coverage.receiptBatches}</p><p>Unposted payments: {reconciliation.coverage.unpostedPayments} · Unposted batches: {reconciliation.coverage.unpostedBatches}</p><p>Accounting posting: {reconciliation.postingEnabled?'Enabled':'Disabled'} · Cutover: {reconciliation.cutoverDate||'Not set'}</p></div><div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><strong>Independent reconciliation still required</strong><p>{reconciliation.note}</p>{reconciliation.warnings.map((warning,index)=><p key={index} className="mt-1">• {warning}</p>)}</div></>}
+      </div><footer className="flex justify-end gap-2 border-t p-3"><button type="button" disabled={reconciliationLoading} onClick={()=>setReconciliationRevision(n=>n+1)} className="rounded border px-3 py-2 text-xs font-semibold">Refresh balances</button><button type="button" onClick={()=>setReconciliationOrder(null)} className="rounded bg-slate-900 px-3 py-2 text-xs text-white">Close</button></footer></section></div>,document.body)}
+
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-2">
         <span className="px-2 text-xs font-semibold text-slate-600">Procurement workspace</span>
         <div className="flex bg-slate-100 p-1.5 rounded-lg border border-slate-200">
@@ -607,6 +629,7 @@ export default function SupplierPurchaseView({
                     ))}
                   </details>
 
+                  {canViewReturns&&po.shopId===financialShopId&&<button type="button" className="self-start rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" onClick={()=>{setReconciliation(null);setReconciliationError('');setReconciliationLoading(true);setReconciliationOrder(po);}}>Ledger reconciliation</button>}
                   {canViewReturns&&['Received','Partially Received'].includes(po.status)&&<button type="button" className="self-start rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700" onClick={()=>{setReturnHistory([]);setReturnHistoryError('');setReturnHistoryLoading(true);setReturnHistoryOrder(po);}}>Purchase return history</button>}
 
                   {canPostReturn&&['Received','Partially Received'].includes(po.status)&&<button type="button" disabled={!!returnSaved||!returnStorageReady||returnBusy} className="self-start rounded-lg bg-slate-900 text-white px-3 py-2 text-xs disabled:opacity-50" onClick={()=>{setReturnOrder(po);setReturnDate(reportDay(new Date()));setReturnReason('');setReturnEvidence('');setReturnDraft({});}}>Record purchase return</button>}
