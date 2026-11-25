@@ -1550,7 +1550,7 @@ export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?
       const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[p.shopId,sourceAccountId]);
       const kind=account.rows[0]?.kind;
       if(!((p.paymentMethod==='Cash'&&kind==='Office Cash')||((p.paymentMethod==='Bank Transfer'||(p.paymentMethod==='Cheque'&&!!chequeClearance))&&kind==='Bank')))throw Error('Select an active supplier payment account matching the payment method.');
-      const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[p.shopId,sourceAccountId,p.amount]);
+      const balance=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND status='Issued' AND ($4::text IS NULL OR id<>$4)) >= $3::numeric AS sufficient`,[p.shopId,sourceAccountId,p.amount,chequeClearance?.chequeId||null]);
       if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for supplier payment.');
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
         VALUES($1,$2,$3,-$4::numeric,'Supplier Payment',$5,$6,$7,$8)`,['supplier-out-'+p.id,p.shopId,sourceAccountId,p.amount,p.id,p.createdBy||'Manager',p.date,p.note||null]);
@@ -2063,7 +2063,7 @@ export const refundTransaction = async (txId: string, shopId: string, reason: st
         if(original.rowCount!==1||Number(entry.amount)!==Number(tx.total)||!['Cash','Bank Transfer'].includes(tx.payment_method))throw Error('Invoice financial movement requires reconciliation before refund.');
         const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,entry.account_id]);
         if(!account.rowCount)throw Error('Original invoice payment account is inactive; reconcile before refund.');
-        const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,entry.account_id,entry.amount]);
+        const balance=await client.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND status='Issued') >= $3::numeric AS sufficient`,[shopId,entry.account_id,entry.amount]);
         if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in the original invoice payment account.');
         await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
           VALUES($1,$2,$3,-$4::numeric,'Invoice Refund',$5,$6,(NOW() AT TIME ZONE 'Asia/Colombo')::date,$7)`,['invoice-out-'+txId,shopId,entry.account_id,entry.amount,txId,cashierName,reason||'Invoice refund']);
