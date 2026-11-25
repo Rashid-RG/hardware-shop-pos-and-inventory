@@ -166,6 +166,11 @@ export default function POSView({
   const [unitPickerProductId, setUnitPickerProductId] = useState<string | null>(null);
   const [unitPickerUnitId, setUnitPickerUnitId] = useState('');
   const [unitPickerQty, setUnitPickerQty] = useState('1');
+  const [priceEditKey, setPriceEditKey] = useState<string | null>(null);
+  const [priceDraft, setPriceDraft] = useState('');
+  const [priceReason, setPriceReason] = useState('');
+  const [pickerCustomPrice, setPickerCustomPrice] = useState('');
+  const [pickerPriceReason, setPickerPriceReason] = useState('');
 
   // Drafts are tab-local and scoped to the authenticated operator and shop.
   const draftKey = taxConfig.activeShopId && draftOwner ? `ars:invoice-draft:v1:${encodeURIComponent(draftOwner)}:${encodeURIComponent(taxConfig.activeShopId)}` : '';
@@ -543,7 +548,8 @@ export default function POSView({
   };
 
   // Handle adding a product (or variant) to register cart
-  const addToCart = (product: Product, variant?: ProductVariant, sellingUnitId?: string, requestedQty = 1) => {
+  const addToCart = (product: Product, variant?: ProductVariant, sellingUnitId?: string, requestedQty = 1, customPrice?: number, reason?: string) => {
+    if (customPrice !== undefined && (!isAdminSeller || !Number.isFinite(customPrice) || customPrice <= 0 || customPrice > 1_000_000_000 || roundMoney(customPrice)!==customPrice || !reason?.trim() || reason.trim().length>250)) { notify.warning('Enter a valid custom price and reason.'); return false; }
     const latest = products.find(p => p.id === product.id);
     if (!latest) { notify.warning(product.name + ': product unavailable.'); return; }
     product = latest;
@@ -554,9 +560,10 @@ export default function POSView({
       const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
       if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return false; }
       const existing = cart.find(entry=>entry.product.id===product.id && entry.sellingUnitId===unit.id);
+      if (existing && customPrice !== undefined && (existing.customUnitPrice ?? unit.sellingPrice)!==customPrice) { notify.warning('This unit is already on the invoice at another price. Edit its existing line price first.'); return false; }
       const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+requestedQty}:entry) : [...cart,{
         product, quantity:requestedQty, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
-        unitPrice:unit.sellingPrice, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
+        unitPrice:unit.sellingPrice, customUnitPrice:customPrice, priceOverrideReason:customPrice!==undefined?reason?.trim():undefined, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
         invoiceDescription:String(product.description || product.longDescription || '').trim().slice(0,250)
       }];
       if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock.'); return; }
@@ -602,12 +609,16 @@ export default function POSView({
     setUnitPickerProductId(product.id);
     setUnitPickerUnitId(unit.id);
     setUnitPickerQty('1');
+    setPickerCustomPrice(''); setPickerPriceReason('');
     return true;
   };
   const pickerProduct = products.find(p=>p.id===unitPickerProductId);
   const pickerUnit = pickerProduct?.sharedStockUnits?.units.find(u=>u.id===unitPickerUnitId);
   const pickerAvailable = pickerProduct && pickerUnit ? availableToAdd(pickerProduct, undefined, cart, pickerUnit.id) : 0;
 
+  const validCustomPrice = (value:string, reason:string) => value.trim()!=='' && Number.isFinite(Number(value)) && Number(value)>0 && Number(value)<=1_000_000_000 && roundMoney(Number(value))===Number(value) && !!reason.trim() && reason.trim().length<=250;
+  const priceLine = cart.find(item=>getCartKey(item)===priceEditKey);
+  const openPriceEditor = (item:CartItem) => { if(!isAdminSeller) return; setPriceEditKey(getCartKey(item)); setPriceDraft(String(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice)); setPriceReason(item.priceOverrideReason || ''); };
   // A customer-specific description applies to this invoice line only.
   const saveInvoiceLineDescription = () => {
     if (!editingDescriptionKey) return;
@@ -629,7 +640,7 @@ export default function POSView({
     if (Number(variant.quantity) < item.quantity) { notify.warning('Insufficient stock for the selected selling unit.'); return; }
     setCart(current => current.map(entry => getCartKey(entry) === itemKey ? {
       ...entry, product, variantId: variant.id, variantName: variant.name, variantUnit: variant.unit,
-      variantSku: variant.sku, variantBarcode: variant.barcode, unitPrice: variant.sellingPrice,
+      variantSku: variant.sku, variantBarcode: variant.barcode, unitPrice: variant.sellingPrice, customUnitPrice:undefined, priceOverrideReason:undefined,
       unitCostPrice: variant.costPrice, discount: 0, discountAmount: 0,
     } : entry));
   };
@@ -643,7 +654,7 @@ export default function POSView({
       notify.warning('This selling unit is already on the invoice. Adjust its quantity separately.'); return;
     }
     const next = cart.map(entry=>entry===item?{...entry,product,sellingUnitId:unit.id,variantUnit:unit.label,
-      unitPrice:unit.sellingPrice,unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,discount:0,discountAmount:0}:entry);
+      unitPrice:unit.sellingPrice,customUnitPrice:undefined,priceOverrideReason:undefined,unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,discount:0,discountAmount:0}:entry);
     if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock for this unit.'); return; }
     setCart(next);
   };
@@ -696,7 +707,7 @@ export default function POSView({
   };
 
   const getLinePricing = (item: CartItem) => {
-    const unitPrice = Number(item.unitPrice ?? item.product.sellingPrice) || 0;
+    const unitPrice = Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice) || 0;
     const gross = unitPrice * item.quantity;
     const percentDiscount = Math.min(100, Math.max(0, item.discount || 0));
     const percentAdjusted = gross * (1 - percentDiscount / 100);
@@ -1658,7 +1669,7 @@ export default function POSView({
           <div id="pos-cart-scroller" className="min-h-0 flex-1 overflow-y-auto space-y-1 pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
-              const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
+              const basePrice = Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice);
               const pricing = getLinePricing(item);
 
               return (
@@ -1680,7 +1691,7 @@ export default function POSView({
                       {item.invoiceDescription ? `Description: ${item.invoiceDescription}` : '+ Add invoice description'}
                     </button>
                     <div className={`flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5 ${expandedInvoice ? "lg:hidden" : ""}`}>
-                      <span>{formatMoney(basePrice)} ea</span>
+                      <button type="button" disabled={!isAdminSeller} onClick={()=>openPriceEditor(item)} className="font-semibold text-indigo-700 disabled:text-slate-500">{formatMoney(basePrice)} / unit {isAdminSeller && "· Edit rate"}</button>{item.customUnitPrice!==undefined && <span className="text-amber-700">Custom</span>}
                       {pricing.percentDiscount > 0 && <span className="text-emerald-600">(-{pricing.percentDiscount}%)</span>}
                       {pricing.rupeeDiscount > 0 && <span className="text-emerald-600">(-{formatMoney(pricing.rupeeDiscount)})</span>}
                     </div>
@@ -1688,7 +1699,7 @@ export default function POSView({
                   </div>
 
                   <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.sharedStockUnits ? <select aria-label={`Shared selling unit for ${item.product.name}`} value={item.sellingUnitId || ''} onChange={e=>changeSharedSellingUnit(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs">{item.product.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select> : item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit && item.variantUnit !== 'Unit' ? item.variantUnit : inferUnitLabel(item.product.name)} <span className="block text-[10px] text-slate-400" title="Configure shared selling units in Product Catalog to enable Box/Piece conversion">Fixed U/M</span></span>}</div>
-                  {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2">{formatMoney(basePrice)}</div>}
+                  {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2"><button type="button" disabled={!isAdminSeller} onClick={()=>openPriceEditor(item)} className="text-indigo-700 disabled:text-slate-700">{formatMoney(basePrice)}{isAdminSeller && <span className="block text-[10px]">Edit rate</span>}</button>{item.customUnitPrice!==undefined && <span className="block text-[10px] text-amber-700">Custom</span>}</div>}
                   {/* selectors and quantities */}
                   <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
                     <div className={`flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-md p-0.5 ${expandedInvoice ? "lg:bg-white lg:border-0" : ""}`}>
@@ -1796,18 +1807,27 @@ export default function POSView({
           <section role="dialog" aria-modal="true" aria-label="Choose selling unit" className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl">
             <header className="flex items-start justify-between bg-[#182a45] p-4 text-white rounded-t-2xl"><div><p className="text-xs font-semibold text-amber-300">ARS DISTRIBUTORS · SELLING UNITS</p><h3 className="mt-1 text-lg font-bold">{pickerProduct.name}</h3><p className="text-xs text-slate-300">Choose Box, Piece or another configured unit.</p></div><button type="button" aria-label="Close selling unit selection" onClick={()=>setUnitPickerProductId(null)}><X className="h-5 w-5"/></button></header>
             <div className="space-y-4 p-4">
-              <div className="grid grid-cols-2 gap-2">{pickerProduct.sharedStockUnits?.units.map(u=>{const remaining=availableToAdd(pickerProduct,undefined,cart,u.id);return <button key={u.id} type="button" aria-pressed={u.id===pickerUnit.id} disabled={remaining<1} onClick={()=>{setUnitPickerUnitId(u.id);setUnitPickerQty('1');}} className={'rounded-xl border p-3 text-left disabled:opacity-40 '+(u.id===pickerUnit.id?'border-indigo-600 bg-indigo-50':'border-slate-200')}><strong className="block">{u.label}</strong><span className="block text-xs text-slate-500">{u.baseUnits} base units · {remaining} available</span><span className="block font-semibold">{formatMoney(u.sellingPrice)}</span></button>;})}</div>
+              <div className="grid grid-cols-2 gap-2">{pickerProduct.sharedStockUnits?.units.map(u=>{const remaining=availableToAdd(pickerProduct,undefined,cart,u.id);return <button key={u.id} type="button" aria-pressed={u.id===pickerUnit.id} disabled={remaining<1} onClick={()=>{setUnitPickerUnitId(u.id);setUnitPickerQty('1');setPickerCustomPrice('');setPickerPriceReason('');}} className={'rounded-xl border p-3 text-left disabled:opacity-40 '+(u.id===pickerUnit.id?'border-indigo-600 bg-indigo-50':'border-slate-200')}><strong className="block">{u.label}</strong><span className="block text-xs text-slate-500">{u.baseUnits} base units · {remaining} available</span><span className="block font-semibold">{formatMoney(u.sellingPrice)}</span></button>;})}</div>
               <label className="block text-sm font-semibold">Quantity ({pickerUnit.label})<input autoFocus type="number" min="1" max={pickerAvailable} step="1" value={unitPickerQty} onChange={e=>setUnitPickerQty(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-3"/></label>
               <p className="text-xs text-slate-600">Available to add: {pickerAvailable} {pickerUnit.label}. Stock is shared across all selling units.</p>
               {(!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable) && <p role="alert" className="text-sm text-rose-700">Enter a whole quantity between 1 and {pickerAvailable}.</p>}
-              <div className="flex justify-between border-t pt-3"><span>Total</span><strong>{formatMoney(Math.max(0,Number(unitPickerQty)||0)*pickerUnit.sellingPrice)}</strong></div>
-              <button type="button" disabled={!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable} onClick={()=>{if(addToCart(pickerProduct,undefined,pickerUnit.id,Number(unitPickerQty)))setUnitPickerProductId(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Add to invoice</button>
+              {isAdminSeller && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2"><div className="flex justify-between text-sm"><strong>Invoice rate</strong><span>Standard: {formatMoney(pickerUnit.sellingPrice)}</span></div><label className="block text-xs font-semibold">Custom rate (optional)<input type="number" min="0.01" step="0.01" value={pickerCustomPrice} onChange={e=>setPickerCustomPrice(e.target.value)} placeholder={String(pickerUnit.sellingPrice)} className="mt-1 w-full rounded-lg border p-2"/></label>{pickerCustomPrice!=='' && <label className="block text-xs font-semibold">Reason for custom rate<input maxLength={250} value={pickerPriceReason} onChange={e=>setPickerPriceReason(e.target.value)} placeholder="Agreed wholesale price" className="mt-1 w-full rounded-lg border p-2"/></label>}<p className="text-xs text-slate-500">Applies only to this invoice.</p></div>}
+              <div className="flex justify-between rounded-xl bg-slate-900 p-3 text-white"><span>Line total</span><strong>{formatMoney(Math.max(0,Number(unitPickerQty)||0)*(pickerCustomPrice===''?pickerUnit.sellingPrice:Number(pickerCustomPrice)||0))}</strong></div>
+              <button type="button" disabled={!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable || (pickerCustomPrice!=="" && !validCustomPrice(pickerCustomPrice,pickerPriceReason))} onClick={()=>{if(addToCart(pickerProduct,undefined,pickerUnit.id,Number(unitPickerQty),pickerCustomPrice===""?undefined:Number(pickerCustomPrice),pickerPriceReason))setUnitPickerProductId(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Add to invoice</button>
               <p className="text-xs text-slate-500">To sell another unit of the same item, select the product again. Each unit appears on a separate invoice line.</p>
             </div>
           </section>
         </div>, document.body
       )}
 
+      {priceLine && isAdminSeller && createPortal(
+        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-slate-950/60 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Edit invoice rate" className="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden">
+            <header className="bg-[#182a45] p-4 text-white"><div className="flex justify-between"><p className="text-xs font-bold text-amber-300">ARS DISTRIBUTORS · INVOICE PRICING</p><button type="button" aria-label="Close" onClick={()=>setPriceEditKey(null)}><X className="h-5 w-5"/></button></div><h3 className="mt-2 text-lg font-bold">Edit selling rate</h3><p className="text-sm text-slate-300">{priceLine.product.name} · {priceLine.variantUnit || 'Unit'}</p></header>
+            <div className="space-y-3 p-4"><p className="text-sm">Standard rate: <strong>{formatMoney(priceLine.unitPrice ?? priceLine.product.sellingPrice)}</strong></p><label className="block text-sm font-semibold">Agreed price per unit<input autoFocus type="number" min="0.01" step="0.01" value={priceDraft} onChange={e=>setPriceDraft(e.target.value)} className="mt-1 w-full rounded-lg border p-3"/></label><label className="block text-sm font-semibold">Reason<input value={priceReason} maxLength={250} onChange={e=>setPriceReason(e.target.value)} className="mt-1 w-full rounded-lg border p-3" placeholder="Customer negotiated price"/></label><div className="rounded-xl bg-slate-100 p-3 text-sm flex justify-between"><span>Line subtotal before discounts</span><strong>{formatMoney((Number(priceDraft)||0)*priceLine.quantity)}</strong></div><p className="text-xs text-slate-500">Catalog price remains unchanged. Changes are recorded in the invoice audit.</p><button type="button" disabled={!validCustomPrice(priceDraft,priceReason)} onClick={()=>{setCart(old=>old.map(line=>getCartKey(line)===priceEditKey?{...line,customUnitPrice:Number(priceDraft),priceOverrideReason:priceReason.trim()}:line));setPriceEditKey(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Apply custom rate</button><button type="button" onClick={()=>{setCart(old=>old.map(line=>getCartKey(line)===priceEditKey?{...line,customUnitPrice:undefined,priceOverrideReason:undefined}:line));setPriceEditKey(null);}} className="w-full rounded-lg border p-2 text-sm">Restore standard rate</button></div>
+          </section>
+        </div>,document.body
+      )}
       {editingDescriptionKey && (
         <div id="pos-description-backdrop" className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
           <section role="dialog" aria-modal="true" aria-labelledby="pos-description-title"
@@ -1968,7 +1988,7 @@ export default function POSView({
                         <span className="block break-words font-semibold">{item.product.name}</span>
                         {item.invoiceDescription && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{item.invoiceDescription}</span>}
                       </span>
-                      <span className="break-words">{item.product.sharedStockUnits?.units.find(u=>u.id===item.sellingUnitId)?.label || (item.variantUnit && item.variantUnit!=='Unit' ? item.variantUnit : inferUnitLabel(item.product.name))}</span><span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
+                      <span className="break-words">{item.product.sharedStockUnits?.units.find(u=>u.id===item.sellingUnitId)?.label || (item.variantUnit && item.variantUnit!=='Unit' ? item.variantUnit : inferUnitLabel(item.product.name))}</span><span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
                     </div>;
                   })}
                 </div>
