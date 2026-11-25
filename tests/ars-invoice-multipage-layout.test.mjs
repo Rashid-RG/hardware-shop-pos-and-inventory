@@ -16,7 +16,7 @@ function pageTexts(pdf) {
 for (const count of [4, 48]) {
   test('portrait invoice preserves layout and all saved rows for ' + count + ' items', async () => {
     const items = Array.from({ length: count }, (_, i) => ({
-      productId: 'SKU-' + (i + 100), productName: 'Steel bolts',
+      productId: 'internal-id-' + (i + 100), variantSku: 'SKU-' + (i + 100), productName: 'Steel bolts',
       invoiceDescription: i % 2 ? 'Original box with the full saved description' : undefined,
       quantity: 1, sellingPrice: 100,
     }));
@@ -37,8 +37,9 @@ for (const count of [4, 48]) {
       assert.doesNotMatch(page, /SHOP STAMP|Cash Received|Change Due|Amount Paid|Balance Due/);
     });
     const printed = pages.join(' ').replace(/\s+/g, ' ');
-    assert.deepEqual(printed.match(/SKU-\d+/g), items.map(item => item.productId));
+    assert.deepEqual(printed.match(/SKU-\d+/g), items.map(item => item.variantSku));
     assert.equal(printed.match(/Original box with the full saved description/g)?.length, count / 2);
+    assert.doesNotMatch(printed, /internal-id-/);
   });
 }
 
@@ -71,3 +72,13 @@ for (const count of [4,48]) {
     for(const page of paid)assert.doesNotMatch(page,/Due Date/);
   });
 }
+
+test('23 short hardware lines fit one A4 page with readable contact numbers and saved SKU codes', async()=>{
+ const items=Array.from({length:23},(_,i)=>({productId:'internal-'+i,variantSku:'HW-'+(1000+i),productName:'Hardware item '+(i+1),invoiceDescription:'Standard hardware',sellingUnitLabel:i%2?'Box':'Piece',quantity:1,sellingPrice:100}));
+ const pages=pageTexts(await renderArsInvoicePdf({items,invoiceNumber:'ARS-INV-26-10010',date:'2026-11-25T08:00:00Z',customerName:'Trade customer',salesRepName:'Sales rep',paymentMethod:'Credit Account',subtotal:2300,total:2300},'ARS Distributors',{},null,undefined,{address:'5/4, Behind the Court, Galgamuwa',phone:'0777 373316, 0777 721284, 0770 271439'}));
+ assert.equal(pages.length,1);
+ const body=pages.join(' ').replace(/\s+/g,' ');
+ assert.deepEqual(body.match(/HW-\d+/g),items.map(i=>i.variantSku));
+ for(const label of ['0777 373316','0777 721284','0770 271439','ARS-INV-26-10010','Balance Due','Prepared By','Received By','Authorized By'])assert.ok(body.includes(label),label);
+ assert.doesNotMatch(body,/internal-/);
+});
