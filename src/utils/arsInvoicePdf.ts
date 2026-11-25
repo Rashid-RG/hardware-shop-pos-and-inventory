@@ -36,16 +36,28 @@ export const renderArsInvoicePdf = async (
   logo: Buffer | null,
   company?: InvoiceCompanyMeta,
   contact?: Contact,
+  paper: 'A4' | 'ARS-240x270' = 'A4',
 ): Promise<Buffer> => new Promise((resolve, reject) => {
   shopName = arsDisplayName(shopName);
+  const continuous = paper === 'ARS-240x270';
+  const mm = (value: number) => value * 72 / 25.4;
+  const pageWidth = continuous ? mm(240) : 595.28;
+  const pageHeight = continuous ? mm(270) : 841.89;
   const doc = new PDFDocument({
-    size: 'A4', layout: 'portrait', margin: 0, bufferPages: true,
+    size: continuous ? [pageWidth, pageHeight] : 'A4', layout: 'portrait', margin: 0, bufferPages: true,
     info: { Title: 'Invoice ' + tx.invoiceNumber, Author: shopName },
   });
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
+  // Keep the proven A4-width content centered inside the wider tractor-feed form.
+  // Translation is applied once to each page's content stream, including continuations.
+  const horizontalOffset = (pageWidth - 595.28) / 2;
+  if (continuous) {
+    doc.translate(horizontalOffset, 0);
+    doc.on('pageAdded', () => doc.translate(horizontalOffset, 0));
+  }
   const left = 26, right = 569, width = right - left;
   const ink = '#000000', rule = '#000000';
   type Align = 'left' | 'center' | 'right';
@@ -78,7 +90,7 @@ export const renderArsInvoicePdf = async (
     doc.restore();
   };
   const taxRate = Number(contact?.taxRate || 0);
-  const footerY = 768;
+  const footerY = continuous ? pageHeight - mm(34) : 768;
   const showDiscount = Number(tx.discountAmount || 0) !== 0;
   const showTax = Number(tx.tax || 0) !== 0;
   const summaryBoxHeight = Math.max(70, 8 + 22 + 16 * (1 + Number(showDiscount) + Number(showTax) + (tx.paymentMethod === 'Cash' ? 0 : 2)));
@@ -154,7 +166,7 @@ export const renderArsInvoicePdf = async (
     // Keep room for totals on the last page; use a compact continuation header.
     const limit=index===rows.length-1?footerY-summaryHeight:footerY-6;
     if(y+height>limit&&y>bodyStart){closeTable(y);doc.addPage();y=tableStart(true);}
-    if(y+height>footerY-6)throw Error('Invoice item text is too long for a single A4 page.');
+    if(y+height>footerY-6)throw Error('Invoice item text is too long for a single page.');
     values.forEach((value,i)=>doc.font(i===values.length-1?'Helvetica-Bold':'Helvetica').fontSize(8.6).fillColor(ink)
       .text(value,cols[i]+3,y+1.5,{width:cols[i+1]-cols[i]-6,align:alignments[i]}));
     y+=height;
