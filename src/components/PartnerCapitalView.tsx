@@ -136,6 +136,18 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
      localStorage.removeItem(storageKey);setPending(null);setAmount('');setReference('');setNote('');setNotice('Capital transaction and financial journal confirmed.');await refresh();
    }catch(e:any){setError(e.message+' Original request retained for safe retry.');}finally{capitalLock.current=false;setBusy(false);}
  };
+ const verifyCapital=async(p:CapitalRequest)=>{
+   if(capitalLock.current||!owner||!storageReady)return;
+   capitalLock.current=true;setBusy(true);setError('');setNotice('');
+   try{
+     const result=await call('/api/ars/partner-capital/requests/'+encodeURIComponent(p.requestId),{cache:'no-store'});
+     if(result.status==='NotConfirmed'){setNotice('No committed transaction confirmed. Keep the original request; retry only with the same details.');return;}
+     const cents=(v:unknown)=>typeof v==='string'&&/^\d{1,12}(?:\.\d{1,2})?$/.test(v)?Math.round(Number(v)*100):null;
+     if(result.status!=='Committed'||result.requestId!==p.requestId||result.id!=='capital-'+p.requestId||result.partnerId!==p.partnerId||result.accountId!==p.accountId||result.entryType!==p.entryType||cents(result.amountLkr)===null||cents(result.amountLkr)!==cents(p.amountLkr)||result.entryDate!==p.entryDate||result.reference!==p.reference||result.note!==p.note||result.consistent!==true||result.journalId!=='partner-capital:'+result.id||result.movementId!=='partner-capital:'+result.id)throw Error('Committed details do not match saved request. Accounting review required.');
+     if(localStorage.getItem(storageKey)!==JSON.stringify(p))throw Error('Saved request changed. Review before clearing.');
+     localStorage.removeItem(storageKey);setPending(null);setAmount('');setReference('');setNote('');setNotice('Original capital transaction verified. No additional payment was posted.');await refresh();
+   }catch(e:any){setError(e.message+' Original request retained.');}finally{capitalLock.current=false;setBusy(false);}
+ };
  const postCapital=async(e:React.FormEvent)=>{
    e.preventDefault();if(busy||pending||!storageReady||capitalIssue||capitalLock.current)return;
    if(!window.confirm('Confirm this actual '+type.toLowerCase()+'? This permanently posts capital, financial movement and journal.'))return;
@@ -267,7 +279,7 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
   {workspace==='capital'&&<section aria-label="Record partner capital" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <h3 className="font-bold">Record partner contribution or drawing</h3>
       <p className="mt-1 text-xs text-slate-500">Records are immutable. Verify payment evidence and reference before saving.</p>
-      {pending&&<div role="status" className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm">Unconfirmed capital request. <button type="button" disabled={busy} className="rounded border px-2 py-1" onClick={()=>void sendCapital(pending)}>Retry exact request</button></div>}
+      {pending&&<div role="status" className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm">Unconfirmed capital request. <p className="my-1 text-xs">{pending.entryType} · Rs. {n(pending.amountLkr)} · {pending.entryDate} · {pending.reference}</p><button type="button" disabled={busy} className="mr-2 rounded border px-2 py-1" onClick={()=>void verifyCapital(pending)}>Check committed status</button><button type="button" disabled={busy} className="rounded border px-2 py-1" onClick={()=>void sendCapital(pending)}>Retry exact request</button></div>}
       {capitalIssue&&<p className="text-xs text-amber-800">{capitalIssue}</p>}
       <form onSubmit={postCapital} className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold">Partner
