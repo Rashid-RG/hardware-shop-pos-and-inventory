@@ -373,7 +373,7 @@ const buildInvoicePdfBuffer = async (
     socialLinks?: string;
   },
   contact?: { address?: string; phone?: string; email?: string; taxRate?: number },
-  paper: 'A4' | 'ARS-240x270' = 'A4',
+  paper: 'A4' | 'ARS-240x270' = 'ARS-240x270',
 ): Promise<Buffer> => renderArsInvoicePdf(
   {...tx, items: tx.items.map(item => {
     if(item.variantSku) return item;
