@@ -474,6 +474,10 @@ export const initDbTables = async () => {
       CREATE UNIQUE INDEX IF NOT EXISTS products_shop_id_sku_key ON products (shop_id, sku);
     `);
 
+    await client.query(`CREATE TABLE IF NOT EXISTS ars_invoice_counter (
+      id TEXT PRIMARY KEY,
+      last_number BIGINT NOT NULL CHECK (last_number >= 10009)
+    )`);
     await initReceivableAging(client);
     await initPayableAging(client);
     await initPositionRegisters(client);
@@ -1745,6 +1749,485 @@ export const checkoutTransaction = async (tx: SalesTransaction, cashierRole: str
          VALUES ($1, $2, NOW(), $3, $4, 'Stock Out', $5, 'Invoice Sale Checkout', $6, $7)`,
         [logId, tx.shopId, item.productId, item.productName, -stockOut, tx.cashierName, tx.id]
       );
+    }
+
+    // Allocate only for new server-issued invoices, inside the same transaction.
+    // A single company-wide counter matches the globally unique invoice_number constraint.
+    if (!tx.invoiceNumber) {
+      const allocated = await client.query(`
+        INSERT INTO ars_invoice_counter (id, last_number)
+        SELECT 'sales', GREATEST(10009, COALESCE(MAX(
+          CASE WHEN invoice_number ~ '^ARS-INV-[0-9]{5,15}
+    await client.query(
+      `INSERT INTO sales_transactions (id, shop_id, invoice_number, date, customer_id, customer_name, customer_phone, customer_address, cashier_name, subtotal, tax, discount_amount, total, cash_received, change_due, payment_method, payment_status, wholesale_meta, status, sales_rep_id, sales_rep_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, 'Completed', $19, $20)`,
+      [
+        tx.id,
+        tx.shopId || null,
+        tx.invoiceNumber,
+        tx.date,
+        tx.customerId || 'cust-walkin',
+        tx.customerName,
+        tx.customerPhone || null,
+        tx.customerAddress || null,
+        tx.cashierName,
+        tx.subtotal,
+        tx.tax,
+        tx.discountAmount,
+        tx.total,
+        tx.cashReceived != null ? tx.cashReceived : null,
+        tx.changeDue != null ? tx.changeDue : null,
+        tx.paymentMethod,
+        tx.paymentStatus || null,
+        tx.wholesaleMeta ? JSON.stringify(tx.wholesaleMeta) : null,
+        tx.salesRepId || null,
+        tx.salesRepName || null,
+      ]
+    );
+
+    // 3) Save Transaction items
+    for (const item of tx.items) {
+      await client.query(
+        `INSERT INTO sales_transaction_items (transaction_id, product_id, product_name, quantity, selling_price, discount, discount_amount, cost_price, variant_id, variant_name, variant_unit, variant_sku, variant_barcode, invoice_description, selling_unit_id, selling_unit_label, base_units_per_sale_unit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [
+          tx.id,
+          item.productId,
+          item.productName,
+          item.quantity,
+          item.sellingPrice,
+          item.discount,
+          item.discountAmount || 0,
+          item.costPrice || 0,
+          item.variantId || null,
+          item.variantName || null,
+          item.variantUnit || null,
+          item.variantSku || null,
+          item.variantBarcode || null,
+          item.invoiceDescription ?? null,
+          sharedSnapshots.get(item)?.sellingUnitId ?? null,
+          sharedSnapshots.get(item)?.sellingUnitLabel ?? null,
+          sharedSnapshots.get(item)?.baseUnitsPerSaleUnit ?? null,
+        ]
+      );
+    }
+
+    // 4) Update Customer credit and loyalty balances
+    if (tx.customerId && tx.customerId !== 'cust-walkin') {
+      const customerRes = await client.query(
+        'SELECT * FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [tx.customerId, tx.shopId]
+      );
+      if (customerRes.rowCount > 0) {
+        const customer = customerRes.rows[0];
+        const currentCredit = Number(customer.credit_balance || 0);
+        const creditLimit = Number(customer.credit_limit || 0);
+
+        if (tx.paymentMethod === 'Credit Account') {
+          if (creditLimit > 0 && Math.round((currentCredit + tx.total) * 100) > Math.round(creditLimit * 100)) {
+            throw new Error(`Credit limit exceeded. Outstanding: Rs.${currentCredit.toFixed(2)}, limit: Rs.${creditLimit.toFixed(2)}`);
+          }
+          await client.query(
+            `UPDATE customers SET purchase_count = purchase_count + 1, loyalty_balance = loyalty_balance + $1, credit_balance = credit_balance + $2, updated_at = NOW() WHERE id = $3`,
+            [Math.floor(tx.total / 10), tx.total, tx.customerId]
+          );
+        } else {
+          await client.query(
+            `UPDATE customers SET purchase_count = purchase_count + 1, loyalty_balance = loyalty_balance + $1, updated_at = NOW() WHERE id = $2`,
+            [Math.floor(tx.total / 10), tx.customerId]
+          );
+        }
+      }
+    }
+
+    if(creditTerms){
+      const {dueDate,recordedBy}=creditTerms,evidence=creditTerms.evidence.trim();
+      if(!request||request.actor!==recordedBy||!['Super Admin','Store Manager'].includes(cashierRole)||tx.paymentMethod!=='Credit Account'||!tx.shopId||!tx.customerId||tx.customerId==='cust-walkin'||!evidence||evidence.length>500||!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)||Number.isNaN(Date.parse(dueDate))||new Date(dueDate).toISOString().slice(0,10)!==dueDate||dueDate>'9999-12-31')throw Error('Invalid agreed credit payment terms.');
+      const day=await client.query("SELECT ($1::timestamptz AT TIME ZONE 'Asia/Colombo')::date::text AS day",[tx.date]);
+      if(dueDate<day.rows[0].day)throw Error('Due date cannot precede the invoice date.');
+      await client.query('INSERT INTO ars_invoice_due_dates(shop_id,invoice_id,due_date,evidence,recorded_by) VALUES($1,$2,$3,$4,$5)',[tx.shopId,tx.id,dueDate,evidence,recordedBy]);
+    }
+
+    // 5) Log activity
+    const activityId = 'act-' + tx.id;
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1, $2, NOW(), $3, $4, 'Invoice Created', $5)`,
+      [activityId, tx.shopId, tx.cashierName, cashierRole, `Billed sales transaction ${tx.invoiceNumber} for ${activeShopName}, total Rs.${tx.total.toFixed(2)}.`]
+    );
+
+    if(financialPayment){
+      const {destinationAccountId,recordedBy,effectiveDate}=financialPayment;
+      if(!tx.shopId||!recordedBy||!Number.isFinite(tx.total)||tx.total<=0||!['Cash','Bank Transfer'].includes(tx.paymentMethod)||tx.paymentStatus!=='PAID')throw Error('Only fully paid cash or bank invoices can post immediate funds.');
+      const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[tx.shopId,destinationAccountId]);
+      const kind=account.rows[0]?.kind;
+      if(!((tx.paymentMethod==='Cash'&&kind==='Office Cash')||(tx.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active invoice payment account matching the payment method.');
+      await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+        VALUES($1,$2,$3,$4,'Invoice Payment',$5,$6,$7,$8)`,['invoice-in-'+tx.id,tx.shopId,destinationAccountId,tx.total,tx.id,recordedBy,effectiveDate,tx.invoiceNumber]);
+    }
+    if (quotationId) {
+      const converted=await client.query(
+        `UPDATE quotations SET status='Converted',converted_to_tx_id=$1
+         WHERE id=$2 AND shop_id=$3 AND status='Accepted' AND converted_to_tx_id IS NULL`,
+        [tx.id,quotationId,tx.shopId]);
+      if(converted.rowCount!==1)throw new Error('Quotation was already converted.');
+    }
+    // Accounting is inactive by default. If a cutover is ever enabled, journal failures roll back the entire invoice.
+    if(tx.shopId)await postInvoiceJournal(client,tx.shopId,tx.id,request?.actor||financialPayment?.recordedBy||'');
+    if(request)await client.query('INSERT INTO ars_invoice_requests(id,shop_id,actor,fingerprint) VALUES($1,$2,$3,$4)',[tx.id,tx.shopId,request.actor,request.fingerprint]);
+    await client.query('COMMIT');return {replayed:false};
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * atomic transaction for transaction refund/cancellation:
+ * 1) Select transaction FOR UPDATE.
+ * 2) Check if status is Refunded. If so, fail.
+ * 3) Return items to inventory stock (including variants).
+ * 4) Write StockLogs.
+ * 5) Deduct customer loyalty and credit outstanding if credit account.
+ * 6) Mark status as Refunded.
+ * 7) Write ActivityLogs.
+ */
+export const refundTransaction = async (txId: string, shopId: string, reason: string, cashierName: string, cashierRole: string) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Transaction row lock prevents simultaneous/double refunds.
+    const txRes = await client.query(
+      'SELECT * FROM sales_transactions WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [txId, shopId]
+    );
+    if (!txRes.rowCount) throw new Error('Transaction not found in this shop.');
+    const tx = txRes.rows[0];
+    if (tx.status === 'Refunded') throw new Error('Transaction has already been refunded.');
+
+    const itemsRes = await client.query(
+      'SELECT * FROM sales_transaction_items WHERE transaction_id = $1 ORDER BY id',
+      [txId]
+    );
+    if (!itemsRes.rowCount) throw new Error('Cannot refund an invoice with no saved items.');
+
+    // All checks and mutations occur under the same PostgreSQL transaction.
+    // Any missing variant/product causes a ROLLBACK, not a partial return.
+    for (const item of itemsRes.rows) {
+      const quantity = Number(item.quantity);
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new Error('Cannot refund an invoice with invalid item quantities.');
+      }
+      const productRes = await client.query(
+        'SELECT * FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [item.product_id, shopId]
+      );
+      if (!productRes.rowCount) throw new Error(`Cannot refund: product ${item.product_name} is missing from this shop.`);
+      const product = productRes.rows[0];
+      const variants: ProductVariant[] = Array.isArray(product.variants_json) ? product.variants_json : [];
+
+      let stockReturned = quantity;
+      if (item.selling_unit_id || item.base_units_per_sale_unit != null) {
+        if (!item.selling_unit_id || !item.base_units_per_sale_unit || item.variant_id) throw new Error('Incomplete shared-unit invoice snapshot.');
+        stockReturned = await restoreSharedSale(client, shopId, item.product_id, quantity, Number(item.base_units_per_sale_unit));
+      } else if (product.shared_stock_units) {
+        if(item.variant_id)throw new Error('Legacy variant invoice requires separate reconciliation.');
+        const factor=await getLegacyReturnFactor(client,shopId,item.product_id,item.id);
+        stockReturned=await restoreSharedSale(client,shopId,item.product_id,quantity,factor);
+      } else if (item.variant_id) {
+        const variant = variants.find((entry) => entry.id === item.variant_id);
+        if (!variant) throw new Error(`Cannot refund: product variant ${item.variant_name || item.variant_id} is missing.`);
+        variant.quantity = Number(variant.quantity || 0) + quantity;
+        const stock = variants.reduce((sum, entry) => sum + Number(entry.quantity || 0), 0);
+        await client.query(
+          'UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3 AND shop_id = $4',
+          [stock, JSON.stringify(variants), product.id, shopId]
+        );
+      } else {
+        if (variants.length > 0) {
+          throw new Error('Cannot refund invoice without recorded variant on a variant-managed product.');
+        }
+        await client.query(
+          'UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2 AND shop_id = $3',
+          [quantity, product.id, shopId]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
+         VALUES ($1, $2, NOW(), $3, $4, 'Return', $5, $6, $7, $8)`,
+        ['return-' + txId + '-' + item.id, shopId, item.product_id, item.product_name, stockReturned,
+          reason ? 'Refund processed: ' + reason : 'Refund of invoice ' + tx.invoice_number, cashierName, txId]
+      );
+    }
+
+    if (tx.customer_id && tx.customer_id !== 'cust-walkin') {
+      const customerRes = await client.query(
+        'SELECT * FROM customers WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [tx.customer_id, shopId]
+      );
+      if (tx.payment_method === 'Credit Account' && !customerRes.rowCount) {
+        throw new Error('Cannot refund credit sale: customer account is missing.');
+      }
+      if (customerRes.rowCount) {
+        const total = Number(tx.total);
+        const loyalty = Math.floor(total / 10);
+        if (tx.payment_method === 'Credit Account') {
+          const payments=await client.query('SELECT 1 FROM customer_credit_payments WHERE shop_id=$1 AND customer_id=$2 AND (invoice_id=$3 OR invoice_id IS NULL) LIMIT 1',[shopId,tx.customer_id,txId]);
+          if(payments.rowCount)throw Error('Reconcile customer payments before refunding this credit invoice.');
+          const outstanding = Number(customerRes.rows[0].credit_balance);
+          if (!Number.isFinite(outstanding) || outstanding + 0.005 < total) {
+            throw new Error('Credit balance is below this invoice total. Reconcile customer payments before refunding.');
+          }
+          await client.query(
+            `UPDATE customers
+             SET purchase_count = GREATEST(0, purchase_count - 1),
+                 loyalty_balance = GREATEST(0, loyalty_balance - $1),
+                 credit_balance = credit_balance - $2, updated_at = NOW()
+             WHERE id = $3 AND shop_id = $4`,
+            [loyalty, total, tx.customer_id, shopId]
+          );
+        } else {
+          await client.query(
+            `UPDATE customers SET purchase_count = GREATEST(0, purchase_count - 1),
+              loyalty_balance = GREATEST(0, loyalty_balance - $1), updated_at = NOW()
+              WHERE id = $2 AND shop_id = $3`,
+            [loyalty, tx.customer_id, shopId]
+          );
+        }
+      }
+    }
+
+    await client.query(
+      `UPDATE sales_transactions SET status = 'Refunded', refunded_at = NOW(), refund_reason = $1
+       WHERE id = $2 AND shop_id = $3`,
+      [reason || 'Refund Requested', txId, shopId]
+    );
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1, $2, NOW(), $3, $4, 'Invoice Refunded', $5)`,
+      ['refund-' + txId, shopId, cashierName, cashierRole,
+        `Refunded invoice ${tx.invoice_number}. Total: Rs.${Number(tx.total).toFixed(2)}. Reason: ${reason || 'Not supplied'}`]
+    );
+    // Historical invoices without a linked movement remain historical; never invent a cash refund.
+    const financialTable=await client.query("SELECT to_regclass('public.ars_financial_movements') IS NOT NULL AS present");
+    if(financialTable.rows[0].present){
+      const original=await client.query("SELECT account_id,amount FROM ars_financial_movements WHERE shop_id=$1 AND source_id=$2 AND movement_kind='Invoice Payment'",[shopId,txId]);
+      if(original.rowCount){
+        const entry=original.rows[0];
+        if(original.rowCount!==1||Number(entry.amount)!==Number(tx.total)||!['Cash','Bank Transfer'].includes(tx.payment_method))throw Error('Invoice financial movement requires reconciliation before refund.');
+        const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[shopId,entry.account_id]);
+        if(!account.rowCount)throw Error('Original invoice payment account is inactive; reconcile before refund.');
+        const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[shopId,entry.account_id,entry.amount]);
+        if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds in the original invoice payment account.');
+        await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
+          VALUES($1,$2,$3,-$4::numeric,'Invoice Refund',$5,$6,(NOW() AT TIME ZONE 'Asia/Colombo')::date,$7)`,['invoice-out-'+txId,shopId,entry.account_id,entry.amount,txId,cashierName,reason||'Invoice refund']);
+      }
+    }
+    await postSaleRefund(client,shopId,txId,cashierName,reason);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * atomic transaction for issuing a purchase order
+ */
+export const createPurchaseOrder = async (po: PurchaseOrder) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const supplierRes = await client.query(
+      'SELECT id FROM suppliers WHERE id = $1 AND shop_id = $2',
+      [po.supplierId, po.shopId]
+    );
+    if (!supplierRes.rowCount) throw new Error('Supplier is not available in this shop.');
+    await client.query(
+      `INSERT INTO purchase_orders (id, shop_id, po_number, date, supplier_id, supplier_name, total, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [po.id, po.shopId || null, po.poNumber, po.date, po.supplierId, po.supplierName, po.total, po.status]
+    );
+
+    for (const item of po.items) {
+      const product = await client.query('SELECT name, variants_json, shared_stock_units FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE', [item.productId, po.shopId]);
+      if (!product.rowCount) throw new Error('Product unavailable in this shop.');
+      const p = product.rows[0];
+      const unit = p.shared_stock_units?.units?.find((u: {id:string})=>u.id===item.sellingUnitId);
+      if (p.shared_stock_units || item.sellingUnitId) {
+        if (!unit || item.variantId || p.variants_json?.length) throw new Error('Select a valid purchasing unit.');
+        baseQuantity(item.quantity,unit.baseUnits);
+        item.sellingUnitLabel=unit.label;
+        item.baseUnitsPerPurchaseUnit=unit.baseUnits;
+      } else {
+        purchaseVariant(p.variants_json || [], item.variantId, p.name);
+      }
+      await client.query(
+        `INSERT INTO purchase_order_items (purchase_order_id, product_id, product_name, quantity, cost_price, variant_id, selling_unit_id, selling_unit_label, base_units_per_purchase_unit)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [po.id, item.productId, item.productName, item.quantity, item.costPrice, item.variantId || null, item.sellingUnitId || null, item.sellingUnitId ? item.sellingUnitLabel : null, item.sellingUnitId ? item.baseUnitsPerPurchaseUnit : null]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/**
+ * atomic transaction for receiving a purchase order and incrementing stock quantities
+ */
+export const receivePurchaseOrder = async (poId: string, shopId: string, receiveUser: string) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1) Verify and lock purchase order
+    const poRes = await client.query(
+      'SELECT * FROM purchase_orders WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [poId, shopId]
+    );
+    if (poRes.rowCount === 0) {
+      throw new Error('Purchase order not found.');
+    }
+    const po = poRes.rows[0];
+    if (po.status === 'Received') throw new Error('Purchase order already received.');
+
+    if (po.status !== 'Pending' && po.status !== 'Ordered') throw new Error('Only open orders can be received.');
+    // The legacy full-receipt path must not bypass an approved shipment cost.
+    const approvalTable=await client.query("SELECT to_regclass('public.ars_landed_cost_approvals') IS NOT NULL AS present");
+    if(approvalTable.rows[0].present){
+      const approved=await client.query('SELECT 1 FROM ars_landed_cost_approvals WHERE shop_id=$1 AND purchase_order_id=$2 LIMIT 1',[shopId,poId]);
+      if(approved.rowCount)throw new Error('Approved import costs require Warehouse Receiving. Use a verified goods receipt.');
+    }
+
+
+    // Load items
+    const itemsRes = await client.query(
+      'SELECT * FROM purchase_order_items WHERE purchase_order_id = $1',
+      [poId]
+    );
+    const poItems = itemsRes.rows;
+    if (!poItems.length) throw new Error('Cannot receive an empty purchase order.');
+
+    // 2) Acknowledge receipt and increase stock
+    for (const item of poItems) {
+      const productRes = await client.query(
+        'SELECT * FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+        [item.product_id, shopId]
+      );
+      if (!productRes.rowCount) throw new Error('Ordered product unavailable in this shop.');
+      if (!Number.isSafeInteger(Number(item.quantity)) || Number(item.quantity) <= 0) throw new Error('Invalid purchase quantity.');
+      const dbProduct = productRes.rows[0];
+      const variantsList: ProductVariant[] = dbProduct.variants_json || [];
+      let stockIn = Number(item.quantity);
+      if (dbProduct.shared_stock_units || item.selling_unit_id || item.base_units_per_purchase_unit != null) {
+        if (!dbProduct.shared_stock_units || !item.selling_unit_id || !item.base_units_per_purchase_unit || variantsList.length || item.variant_id) throw new Error('Incompatible purchasing unit snapshot.');
+        stockIn = baseQuantity(stockIn, Number(item.base_units_per_purchase_unit));
+      }
+      const variant = purchaseVariant(variantsList, item.variant_id, dbProduct.name, true);
+      if (variant) {
+        variant.quantity = Number(variant.quantity || 0) + Number(item.quantity);
+        const totalProductQty = variantsList.reduce((sum, v) => sum + Math.max(0, Number(v.quantity || 0)), 0);
+        await client.query(
+          `UPDATE products SET quantity = $1, variants_json = $2::jsonb, updated_at = NOW() WHERE id = $3`,
+          [totalProductQty, JSON.stringify(variantsList), dbProduct.id]
+        );
+      } else {
+        await client.query(
+          `UPDATE products SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`,
+          [stockIn, dbProduct.id]
+        );
+      }
+
+      // Add Stock Log
+      const logId = 'received-' + poId + '-line-' + item.id;
+      await client.query(
+        `INSERT INTO stock_logs (id, shop_id, date, product_id, product_name, type, quantity, reason, user_name, reference_id)
+         VALUES ($1, $2, NOW(), $3, $4, 'Stock In', $5, 'Purchase Order Receipt', $6, $7)`,
+        [logId, shopId, item.product_id, item.product_name, stockIn, receiveUser, poId]
+      );
+    }
+
+    await client.query(
+      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+       VALUES ($1, $2, NOW(), $3, 'Inventory Staff', 'Received Materials', $4)`,
+      ['received-' + poId, shopId, receiveUser, 'Received purchase order ' + po.po_number]
+    );
+    // 3) Update status to Received
+    await client.query(
+      `UPDATE purchase_orders SET status = 'Received' WHERE id = $1 AND shop_id = $2`,
+      [poId, shopId]
+    );
+
+    await postPurchaseReceipt(client,shopId,poId,receiveUser);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+/** Set an open PO status, without writing unrelated business tables. */
+export const updatePurchaseOrderStatus = async (
+  poId: string, shopId: string, status: 'Pending' | 'Ordered' | 'Cancelled', userName: string
+) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      'SELECT po_number, status FROM purchase_orders WHERE id = $1 AND shop_id = $2 FOR UPDATE',
+      [poId, shopId]
+    );
+    if (!result.rowCount) throw new Error('Purchase order not found in this shop.');
+    const po = result.rows[0];
+    if (po.status === 'Received' || po.status === 'Cancelled' || po.status === 'Partially Received') {
+      throw new Error('Cannot modify a received or cancelled purchase order.');
+    }
+    if (status === 'Pending' && po.status !== 'Pending') {
+      throw new Error('Cannot move an ordered purchase back to Pending.');
+    }
+    if (po.status !== status) {
+      await client.query(
+        'UPDATE purchase_orders SET status = $1 WHERE id = $2 AND shop_id = $3',
+        [status, poId, shopId]
+      );
+      await client.query(
+        `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
+         VALUES ($1, $2, NOW(), $3, 'Inventory Staff', 'PO Status Updated', $4)`,
+        ['po-status-' + poId + '-' + Date.now(), shopId, userName,
+          `Purchase order ${po.po_number} changed to ${status}`]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+          THEN substring(invoice_number FROM 9)::bigint END), 10009)) + 1
+        FROM sales_transactions
+        ON CONFLICT (id) DO UPDATE SET last_number =
+          GREATEST(ars_invoice_counter.last_number + 1, EXCLUDED.last_number)
+        RETURNING last_number
+      `);
+      tx.invoiceNumber = 'ARS-INV-' + allocated.rows[0].last_number;
     }
 
     // 2) Save main Transaction row
