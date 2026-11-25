@@ -5,4 +5,4 @@ export const arsPrintLogoUrl = 'data:image/svg+xml,'+encodeURIComponent(arsPrint
 export function isArsPrintBrand(name:string){return /^ARS(?:\s|$)/i.test(name.trim());}
 
 /** Normalize only the exact retired ARS display names, never third-party names. */
-export function arsDisplayName(name:string):string { return /^ARS (?:Hardware|Distribution)$/i.test(name.trim()) ? 'ARS Distributor' : name; }
+export function arsDisplayName(name:string):string { return /^ARS (?:Hardware|Distribution|Distributor)$/i.test(name.trim()) ? 'ARS Distributors' : name; }
