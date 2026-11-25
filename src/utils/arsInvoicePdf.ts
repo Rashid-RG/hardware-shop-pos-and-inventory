@@ -52,10 +52,13 @@ export const renderArsInvoicePdf = async (
   doc.on('end', () => resolve(Buffer.concat(chunks)));
   doc.on('error', reject);
   // Map the reference layout into the measured continuous form, without stretching glyphs.
-  // 15 mm on each side reserves the tractor holes and some feed tolerance.
+  // LQ-310 calibration: the 90% physical test printed the full right edge,
+  // while 100% at 210 mm clipped it. Keep a 185 mm content width and
+  // an 11 mm PDF left inset to leave extra room on the observed right boundary.
+  // Retain full page height and native font sizes; do not scale the entire page.
   const left = 26, right = 569, width = right - left;
-  const physicalLeft = continuous ? mm(15) : left;
-  const physicalWidth = continuous ? pageWidth - mm(30) : width;
+  const physicalLeft = continuous ? mm(11) : left;
+  const physicalWidth = continuous ? mm(185) : width;
   const xScale = physicalWidth / width;
   const px = (x: number) => physicalLeft + (x - left) * xScale;
   const pw = (w: number) => w * xScale;
