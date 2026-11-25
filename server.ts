@@ -6858,6 +6858,32 @@ app.post('/api/supplier-cheques/:id/status',requireRole(['Super Admin','Store Ma
     console.error('Supplier cheque status update failed',error);return res.status(500).json({error:'Unable to confirm supplier cheque status. Retry the same request identifier.'});
   }
 });
+app.post('/api/supplier-cheques/:id/clear',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery is required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
+  const {requestId,effectiveDate,evidence}=req.body||{};
+  const chequeId=String(req.params.id);
+  if(!validChequeRequestId(requestId)||!chequeId.trim()||chequeId.length>200||
+    typeof effectiveDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)||
+    !Number.isFinite(Date.parse(effectiveDate+'T00:00:00Z'))||new Date(effectiveDate+'T00:00:00Z').toISOString().slice(0,10)!==effectiveDate||
+    effectiveDate>reportDay(new Date())||typeof evidence!=='string'||!evidence.trim()||evidence.trim().length>500)
+    return res.status(400).json({error:'Enter a valid clearance date and bank evidence reference.'});
+  try{
+    const c=(await pool.query("SELECT c.*,COALESCE(NULLIF(s.company_name,''),s.name) AS supplier_name FROM ars_supplier_cheques c JOIN suppliers s ON s.shop_id=c.shop_id AND s.id=c.supplier_id WHERE c.shop_id=$1 AND c.id=$2",[scope.shopId,chequeId])).rows[0];
+    if(!c)return res.status(404).json({error:'Supplier cheque not found in this shop.'});
+    if(!c.purchase_order_id)return res.status(409).json({error:'A linked purchase order is required for supplier cheque clearance.'});
+    const payment:SupplierPayment={id:'spay-cheque-'+chequeId,shopId:scope.shopId,supplierId:c.supplier_id,supplierName:c.supplier_name,purchaseOrderId:c.purchase_order_id,amount:Number(c.amount),paymentMethod:'Cheque',date:effectiveDate,note:'Supplier cheque '+c.cheque_number,createdBy:scope.recordedBy};
+    await insertSupplierPayment(payment,c.bank_account_id,{chequeId,eventId:'supplier-cheque-event-'+requestId,evidence:evidence.trim()});
+    try{const fresh=await loadStateFromNormalized();if(!fresh)throw Error('Unable to reload cleared supplier payment.');db=fresh;}
+    catch(error){databaseWriteHealthy=false;console.error('Supplier cheque clearance committed but reload failed; writes disabled.',error);}
+    return res.json({id:chequeId,status:'Cleared',paymentId:payment.id});
+  }catch(error){
+    const message=error instanceof Error?error.message:'';
+    if(['Invalid supplier cheque clearance details.','Supplier cheque clearance details do not match the issued cheque.','Supplier cheque already cleared; review original payment.','Only issued supplier cheques can be cleared.','Enable verified accounting before supplier cheque clearance.','Supplier payment request identifier already used for different details.','Supplier not found in this shop.','Purchase order does not belong to this supplier and shop.','Supplier payment exceeds the remaining purchase order balance.','Select an active supplier payment account matching the payment method.','Insufficient recorded funds for supplier payment.','Verified linked supplier order required.','Payment exceeds verified received-order payable.','Supplier cheque clearance state changed.'].includes(message))return res.status(409).json({error:message});
+    console.error('Supplier cheque clearance failed',error);return res.status(500).json({error:'Unable to confirm supplier cheque clearance. Review the register or retry the same request.'});
+  }
+});
 app.get('/api/customer-cheques',requireRole(['Super Admin','Store Manager']),async(req,res)=>{
   const scope=chequeShopAccess(req);
   if(!scope)return res.status(403).json({error:'Cheque shop access denied.'});
