@@ -169,16 +169,21 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
   const overdue = status?.verifiedAt && Date.now() - Date.parse(status.verifiedAt) > 24 * 3600000;
   const [mint, setMint] = useState(() => /Linux/.test(navigator.platform) && !/Android/.test(navigator.userAgent));
   const [archive, setArchive] = useState('');
+  const [workspace,setWorkspace]=useState<'backup'|'history'|'recovery'|'advanced'>('backup');
   // Accept names produced by both generations of the Windows archive script.
   const valid = /^[a-z0-9_-][a-z0-9_. -]*\.dump$/i.test(archive);
   const path = '"backups/' + archive + '"';
   const card = 'min-w-0 space-y-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm';
-  return <div className="space-y-4 text-sm text-slate-700">
-    <header className="rounded-xl bg-[#152945] p-5 text-white">
-      <h2 className="flex items-center gap-2 text-xl font-bold"><DatabaseBackup /> Backup &amp; recovery</h2>
-      <p className="mt-1 text-slate-200">Protect business records and uploaded files. Create and verify a local backup from this workspace.</p>
-    </header>
-    <div className="grid gap-3 lg:grid-cols-3">
+  return <div className="space-y-3 text-sm text-slate-700">
+    {workspace!=='backup'&&workspace!=='advanced'&&!local?.enabled&&<p className="rounded border bg-white p-3 text-xs">Managed local backup is not available. Check the backup setup before using history or recovery.</p>}
+    <nav aria-label="Backup workspaces" className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+      {([['backup','Backup now'],['history','Backup history'],['recovery','Recovery test'],['advanced','Advanced setup']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={workspace===id} onClick={()=>setWorkspace(id)} className={workspace===id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg px-3 py-2 text-xs font-semibold text-slate-600'}>{label}</button>)}
+      <span className="ml-auto self-center text-xs text-slate-500">{busy||cloudBusy||action||local?.running?'Operation in progress':local?.enabled?'Local backup enabled':'Local backup unavailable'}</span>
+    </nav>
+    {workspace!=='backup'&&error&&<p role="alert" className="rounded bg-rose-50 p-2 text-xs text-rose-700">{error}</p>}
+    {workspace!=='backup'&&cloudMessage&&<p role="status" className="rounded bg-slate-100 p-2 text-xs">{cloudMessage}</p>}
+    {workspace!=='backup'&&result&&<p role="status" className="rounded bg-emerald-50 p-2 text-xs text-emerald-800">Backup verified: {result.archive}</p>}
+    <div className={workspace==='backup'?'grid gap-3 lg:grid-cols-3':'hidden'}>
       <section className="rounded-xl border border-slate-200 bg-white p-4 lg:col-span-2">
         <div className="flex items-start gap-3"><HardDrive className="h-6 w-6 text-amber-700"/><div className="flex-1"><h3 className="font-bold text-slate-900">Local database backup</h3><p className="mt-1 text-xs text-slate-600">Creates the database archive and available uploads, then verifies their checksums.</p></div></div>
         <button type="button" disabled={busy || !!action || !local?.enabled || local.running} onClick={runBackup} className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 px-4 py-3 font-bold text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><DatabaseBackup size={18}/>{busy || local?.running ? 'Backup in progress…' : 'Back up now'}</button>
@@ -191,18 +196,18 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={checkCloud} className="rounded border px-2 py-1.5 text-xs">Check connection setup</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(false)} className="rounded bg-amber-400 px-3 py-2 text-xs font-bold disabled:opacity-40">{cloudBusy?'Working…':'Encrypted backup now'}</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(true)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40">Enable daily 8 PM backup</button></div>
       {cloudMessage&&<p role="status" className="mt-2 text-xs">{cloudMessage}</p>}</section>
     </div>
-    {local?.enabled && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+    {local?.enabled && <section hidden={workspace!=='history'} className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
       <div className="flex items-center justify-between gap-2"><div><h3 className="font-bold text-slate-900">Local backup history</h3><p className="text-xs text-slate-500">Backup sets retained on this database computer.</p></div><button type="button" onClick={refreshHistory} className="rounded-lg border px-3 py-2 text-xs font-semibold">Refresh</button></div>
       {historyError && <p role="alert" className="text-rose-700 text-xs">{historyError}</p>}
       {historyMessage && <p role="status" className="rounded-lg bg-slate-50 p-2 text-xs">{historyMessage}</p>}
       {!history.length && !historyError && <p className="text-xs text-slate-500">No managed local backup sets found.</p>}
-      <div className="space-y-2">{history.map(row => <div key={row.name} className="rounded-lg border p-3">
+      <div className="max-h-[65dvh] overflow-y-auto overscroll-contain space-y-2">{history.map(row => <div key={row.name} className="rounded-lg border p-3">
         <div className="flex flex-wrap justify-between gap-2"><div className="min-w-0"><p className="font-semibold">{new Date(row.createdAt).toLocaleString()}</p><p className="break-all text-xs text-slate-500">{row.name}</p><p className="text-xs text-slate-600">{(row.bytes/1048576).toFixed(2)} MB database · {row.includesUploads?'Includes uploads':'Database only'}</p></div><span className="text-xs font-medium">{verified[row.name]?'Checksums verified this session':row.complete?'Files present · not yet verified':'Incomplete set'}</span></div>
         <div className="mt-2 flex flex-wrap gap-2"><button type="button" disabled={!row.complete || busy || cloudBusy || !!action || local.running} onClick={()=>downloadPackage(row.name)} className="rounded bg-amber-400 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Download complete package</button><button type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>verifySet(row.name)} className="rounded border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Verify set</button>
         {[row.name,row.name+'.sha256',...(row.includesUploads?[row.name.slice(0,-5)+'-uploads.zip',row.name.slice(0,-5)+'-uploads.zip.sha256']:[])].map((member,i)=><button key={member} type="button" disabled={!row.complete || busy || !!action || local.running} onClick={()=>downloadSetMember(row.name,member)} className="rounded border px-3 py-1.5 text-xs disabled:opacity-40">{['Database','Database checksum','Uploads ZIP','Uploads checksum'][i]}</button>)}</div>
       </div>)}</div>
     </section>}
-    {local?.enabled && <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+    {local?.enabled && <section hidden={workspace!=='recovery'} className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
       <h3 className="font-bold text-slate-900">Recovery test wizard</h3>
       <p className="text-xs text-slate-600">Restore a verified backup into a new isolated database. This does not replace the working database. The test database and recovered uploads are retained for inspection.</p>
       <label className="block text-xs font-semibold">1. Choose a complete backup<select className="mt-1 block w-full rounded border p-2" value={recoveryArchive} disabled={!!action||busy||cloudBusy} onChange={e=>{setRecoveryArchive(e.target.value);setRecoveryConfirmation('');setRecoveryResult(null);}}><option value="">Select a backup</option>{history.filter(row=>row.complete).map(row=><option key={row.name} value={row.name}>{new Date(row.createdAt).toLocaleString()} · {row.name}</option>)}</select></label>
@@ -212,7 +217,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       {recoveryError&&<p role="alert" className="text-xs text-rose-700">{recoveryError}</p>}
       {recoveryResult&&<div role="status" className="rounded-lg bg-emerald-50 p-3 text-xs text-emerald-900"><strong>Isolated recovery completed</strong><p className="break-all">{recoveryResult.target}</p><p>Products: {recoveryResult.counts.products} · Customers: {recoveryResult.counts.customers} · Sales: {recoveryResult.counts.sales}</p><p>Compare these counts with the original records and inspect recovered uploads before approving any recovery.</p></div>}
     </section>}
-    <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer font-semibold text-slate-800">Advanced setup, verification and recovery tools</summary>
+    <section hidden={workspace!=='advanced'} className="rounded-xl border border-slate-200 bg-white p-3"><h3 className="text-sm font-bold text-slate-800">Advanced setup, verification and recovery tools</h3>
     <div className="mt-4 space-y-4">
     <label className="block text-sm font-semibold">Database computer
       <select value={mint ? 'mint' : 'windows'} onChange={event => setMint(event.target.value === 'mint')} className="ml-2 rounded border px-2 py-1">
@@ -271,6 +276,6 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <aside className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
       <strong>Recovering after a failure?</strong> Stop entering transactions, preserve the original database, and review the isolated copy before switching the POS connection. The drill leaves the working database and uploads in place.
     </aside>
-    </div></details>
+    </div></section>
   </div>;
 }
