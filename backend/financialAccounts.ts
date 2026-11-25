@@ -291,6 +291,47 @@ type ChequeRegistration={id:string;shopId:string;customerId:string;invoiceId?:st
 function validChequeDay(value:string){
   return /^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 }
+type SupplierChequeRegistration={id:string;shopId:string;supplierId:string;purchaseOrderId?:string;bankAccountId:string;chequeNumber:string;amount:number;issuedDate:string;dueDate:string;recordedBy:string;note?:string};
+export async function registerSupplierCheque(db:Pool,input:SupplierChequeRegistration){
+  const {id,shopId,supplierId,purchaseOrderId,bankAccountId,amount,issuedDate,dueDate,recordedBy}=input;
+  const chequeNumber=input.chequeNumber.trim(),note=input.note?.trim()||null;
+  if(!id||!shopId||!supplierId||!bankAccountId||!recordedBy||!chequeNumber||chequeNumber.length>80||
+    !Number.isFinite(amount)||amount<=0||amount>999999999999.99||Math.abs(amount*100-Math.round(amount*100))>0.001||
+    !validChequeDay(issuedDate)||!validChequeDay(dueDate)||dueDate<issuedDate||(note&&note.length>500))throw Error('Invalid supplier cheque details.');
+  const client=await db.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[id]);
+    const prior=(await client.query('SELECT *,issued_date::text AS issued_day,due_date::text AS due_day FROM ars_supplier_cheques WHERE id=$1',[id])).rows[0];
+    if(prior){
+      if(prior.shop_id!==shopId||prior.supplier_id!==supplierId||(prior.purchase_order_id||null)!==(purchaseOrderId||null)||
+        prior.bank_account_id!==bankAccountId||prior.cheque_number!==chequeNumber||Number(prior.amount)!==amount||
+        prior.issued_day!==issuedDate||prior.due_day!==dueDate||prior.recorded_by!==recordedBy||(prior.note||null)!==note)throw Error('Supplier cheque request identifier already used for different details.');
+      await client.query('COMMIT');return {id,status:prior.status,replayed:true};
+    }
+    if(purchaseOrderId){
+      const po=await client.query("SELECT id FROM purchase_orders WHERE shop_id=$1 AND id=$2 AND supplier_id=$3 AND status<>'Cancelled' FOR UPDATE",[shopId,purchaseOrderId,supplierId]);
+      if(!po.rowCount)throw Error('Select a non-cancelled purchase order belonging to this supplier.');
+    }
+    const supplier=await client.query('SELECT id FROM suppliers WHERE shop_id=$1 AND id=$2 FOR SHARE',[shopId,supplierId]);
+    if(!supplier.rowCount)throw Error('Supplier not found in this shop.');
+    const bank=await client.query("SELECT id FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND kind='Bank' AND active FOR UPDATE",[shopId,bankAccountId]);
+    if(!bank.rowCount)throw Error('Select an active bank account in this shop.');
+    const duplicate=await client.query('SELECT 1 FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND lower(trim(cheque_number))=lower($3)',[shopId,bankAccountId,chequeNumber]);
+    if(duplicate.rowCount)throw Error('Supplier cheque number already registered for this bank account.');
+    await client.query(`INSERT INTO ars_supplier_cheques(id,shop_id,supplier_id,purchase_order_id,bank_account_id,cheque_number,amount,issued_date,due_date,recorded_by,note)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,[id,shopId,supplierId,purchaseOrderId||null,bankAccountId,chequeNumber,amount,issuedDate,dueDate,recordedBy,note]);
+    await client.query("INSERT INTO ars_supplier_cheque_events(id,shop_id,cheque_id,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Issued',$4,$5,$6)",[id+'-issued',shopId,id,issuedDate,recordedBy,note]);
+    await client.query('COMMIT');return {id,status:'Issued',replayed:false};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+export async function listSupplierCheques(db:Pool|PoolClient,shopId:string){
+  const result=await db.query(`SELECT c.id,c.supplier_id AS "supplierId",COALESCE(NULLIF(s.company_name,''),s.name) AS "supplierName",c.purchase_order_id AS "purchaseOrderId",c.bank_account_id AS "bankAccountId",a.name AS "bankAccountName",c.cheque_number AS "chequeNumber",c.amount,c.issued_date::text AS "issuedDate",c.due_date::text AS "dueDate",c.status,c.payment_id AS "paymentId",c.note
+    FROM ars_supplier_cheques c LEFT JOIN suppliers s ON s.id=c.supplier_id AND s.shop_id=c.shop_id
+    JOIN ars_financial_accounts a ON a.id=c.bank_account_id AND a.shop_id=c.shop_id WHERE c.shop_id=$1 ORDER BY c.due_date,c.id`,[shopId]);
+  return result.rows.map(r=>({...r,amount:Number(r.amount)}));
+}
+
 export async function registerCustomerCheque(db:Pool,input:ChequeRegistration){
   const {id,shopId,customerId,invoiceId,amount,receivedDate,dueDate,recordedBy}=input;
   const chequeNumber=input.chequeNumber.trim(),issuingBank=input.issuingBank.trim(),drawerName=input.drawerName.trim(),note=input.note?.trim()||null;
