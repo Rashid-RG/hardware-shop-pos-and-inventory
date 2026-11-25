@@ -49,6 +49,15 @@ export function CustomerReportsView({ settings, customers, invoices, payments, o
         || (activityFilter === 'with-payments' && row.repayments > 0));
   }), [customers, invoices, payments, search, from, to, balanceFilter, activityFilter]);
 
+  const outstandingRows = [...rows].filter(row=>row.outstanding>0).sort((a,b)=>b.outstanding-a.outstanding||a.customer.name.localeCompare(b.customer.name));
+  const positiveOutstanding = outstandingRows.reduce((sum,row)=>sum+cents(row.outstanding),0)/100;
+  const outstandingReport = (): BusinessReport => ({
+    title: 'Customer outstanding balances', filename: 'ars-customer-outstanding',
+    period: 'Current recorded balances | Matching customer filters',
+    headers: ['Customer ID','Customer shop','Phone','Outstanding (LKR)','Date / follow-up'],
+    rows: outstandingRows.map(row=>[row.customer.id,row.customer.name,row.customer.phone||'',row.outstanding,'']),
+    moneyColumns:[3], summary:[{label:'Accounts owing',value:outstandingRows.length},{label:'Total outstanding (LKR)',value:positiveOutstanding}]
+  });
   const totals = rows.reduce((acc, row) => ({
     sales: acc.sales + cents(row.sales),
     creditSales: acc.creditSales + cents(row.creditSales),
@@ -119,9 +128,11 @@ export function CustomerReportsView({ settings, customers, invoices, payments, o
             <button type="button" onClick={()=>{setSearch('');setFrom('');setTo('');setBalanceFilter('all');setActivityFilter('all');}}
               className="rounded-lg border border-slate-300 px-4 py-2 text-xs font-bold">Clear filters</button>
             <div id="ars-report-export"><ReportExportMenu report={report} settings={settings}/></div>
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 px-2 py-1"><span className="text-xs font-semibold">Outstanding-only report</span><ReportExportMenu report={outstandingReport} settings={settings}/></div>
             <span className="self-center text-xs text-slate-600">{rows.length} matching shops</span>
           </div>
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs"><span><strong>{outstandingRows.length}</strong> matching accounts owing · <strong className="text-rose-700">{currency(positiveOutstanding)}</strong> positive outstanding</span><button type="button" onClick={()=>{setBalanceFilter('outstanding');setActivityFilter('all');setFrom('');setTo('');setSearch('');}} className="rounded-lg border border-slate-300 px-3 py-2 font-semibold">View all outstanding accounts</button></div>
         <p className="text-xs text-amber-800">Date filters apply to invoices and repayments. Outstanding balances are today's recorded balances, not historical as-of-date balances. Refunded invoices are excluded from net sales.</p>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
@@ -134,9 +145,9 @@ export function CustomerReportsView({ settings, customers, invoices, payments, o
             <p className="mt-1 text-base font-bold text-slate-900">{currency(Number(amount)/100)}</p>
           </div>)}
         </div>
-        <div className="overflow-auto rounded-xl border border-slate-200 bg-white">
+        <div className="max-h-[55dvh] overflow-auto overscroll-contain rounded-xl border border-slate-200 bg-white">
           <table className="w-full min-w-[950px] text-left text-sm">
-            <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
+            <thead className="sticky top-0 z-10 bg-slate-100 text-xs uppercase text-slate-600"><tr>
               <th className="p-3">Customer shop</th><th className="p-3">Phone</th>
               <th className="p-3 text-right">Invoices</th><th className="p-3 text-right">Refunded</th>
               <th className="p-3 text-right">Net sales</th><th className="p-3 text-right">Credit sales</th>
