@@ -7551,7 +7551,20 @@ app.get('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
   try {
     const [partners,entries]=await Promise.all([
       pool.query('SELECT * FROM ars_business_partners WHERE shop_id=$1 ORDER BY is_active DESC,created_at,id',[activeShopId]),
-      pool.query('SELECT * FROM ars_partner_capital_entries WHERE shop_id=$1 ORDER BY entry_date DESC,created_at DESC LIMIT 500',[activeShopId])
+      pool.query(`SELECT e.*,m.account_id AS financial_account_id,a.name AS financial_account_name,m.id AS movement_id,j.id AS journal_id,
+      CASE WHEN m.id IS NULL AND j.id IS NULL THEN 'Historical'
+      WHEN m.id='partner-capital:'||e.id AND j.id='partner-capital:'||e.id
+      AND m.amount=CASE WHEN e.entry_type='Contribution' THEN e.amount_lkr ELSE -e.amount_lkr END
+      AND m.effective_date=e.entry_date AND j.posting_date=e.entry_date AND m.recorded_by=e.created_by AND j.recorded_by=e.created_by
+      AND (SELECT COUNT(*) FROM ars_gl_lines l WHERE l.shop_id=j.shop_id AND l.journal_id=j.id)=2
+      AND (SELECT COALESCE(SUM(l.debit),0)=e.amount_lkr AND COALESCE(SUM(l.credit),0)=e.amount_lkr FROM ars_gl_lines l WHERE l.shop_id=j.shop_id AND l.journal_id=j.id)
+      AND (SELECT COUNT(*) FROM ars_financial_movements x WHERE x.shop_id=e.shop_id AND x.source_id=e.id AND x.movement_kind='Partner Capital')=1
+      THEN 'Posted' ELSE 'Review required' END AS posting_status
+      FROM ars_partner_capital_entries e
+      LEFT JOIN LATERAL (SELECT x.* FROM ars_financial_movements x WHERE x.shop_id=e.shop_id AND x.source_id=e.id AND x.movement_kind='Partner Capital' ORDER BY x.id LIMIT 1) m ON TRUE
+      LEFT JOIN ars_financial_accounts a ON a.shop_id=e.shop_id AND a.id=m.account_id
+      LEFT JOIN ars_gl_journals j ON j.shop_id=e.shop_id AND j.source_kind='PartnerCapital' AND j.source_id=e.id
+      WHERE e.shop_id=$1 ORDER BY e.entry_date DESC,e.created_at DESC,e.id DESC LIMIT 500`,[activeShopId])
     ]);
     res.json({partners:partners.rows,entries:entries.rows});
   }catch{res.status(503).json({error:'Could not load confidential partner ledger.'});}
