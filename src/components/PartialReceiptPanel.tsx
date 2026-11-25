@@ -4,7 +4,7 @@ import { PackageCheck, RefreshCcw, ShieldCheck, X } from 'lucide-react';
 type Line = { purchaseOrderItemId: number; productId: string; productName: string; ordered: number; received: number; remaining: number; sellingUnitLabel?: string; baseUnitsPerPurchaseUnit?: number };
 type Batch = { id: string; received_by: string; note: string; created_at: string };
 type Overview = { status: string; items: Line[]; batches: Batch[] };
-type Props = { poId: string; poNumber: string; authToken: string; shopId: string; onClose: () => void; onCommitted: () => void };
+type Props = { key?: string; poId: string; poNumber: string; authToken: string; shopId: string; onClose: () => void; onCommitted: () => void };
 
 export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId, onClose, onCommitted }: Props) {
   const [overview, setOverview] = useState<Overview | null>(null);
