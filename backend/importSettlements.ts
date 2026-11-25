@@ -22,7 +22,7 @@ export async function settleImportCreditor(db:Pool,i:Input){
  if(amount>moneyCents(b.recognized)-moneyCents(b.paid))throw Error('Payment exceeds recognized outstanding liability.');
  const account=(await c.query("SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active FOR UPDATE",[i.shopId,i.accountId])).rows[0];
  if(!account||!['Office Cash','Bank'].includes(account.kind))throw Error('Active cash or bank account required.');
- const funds=(await c.query('SELECT COALESCE(sum(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[i.shopId,i.accountId,decimal(amount)])).rows[0];
+ const funds=(await c.query(`SELECT (SELECT COALESCE(SUM(amount),0) FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2)-(SELECT COALESCE(SUM(amount),0) FROM ars_supplier_cheques WHERE shop_id=$1 AND bank_account_id=$2 AND status='Issued') >= $3::numeric AS sufficient`,[i.shopId,i.accountId,decimal(amount)])).rows[0];
  if(!funds.sufficient)throw Error('Insufficient recorded funds.');
  const map=async(kind:string,source:string,classification:string)=>{
  const a=(await c.query('SELECT a.code FROM ars_gl_account_mappings m JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code WHERE m.shop_id=$1 AND m.mapping_kind=$2 AND m.source_id=$3 AND a.kind=$4 AND a.active FOR SHARE OF a',[i.shopId,kind,source,classification])).rows[0];
