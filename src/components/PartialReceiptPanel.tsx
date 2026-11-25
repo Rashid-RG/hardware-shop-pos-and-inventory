@@ -83,9 +83,9 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
           {loading && <p className="text-sm text-slate-500">Loading receiving balances…</p>}
           {!loading && overview && <>
             <div className="grid gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm sm:grid-cols-3">
-              <div><p className="text-xs text-emerald-800">Ordered quantities (by line U/M)</p><strong>{overview.items.reduce((total,line)=>total+line.ordered,0)}</strong></div>
-              <div><p className="text-xs text-emerald-800">Already received</p><strong>{overview.items.reduce((total,line)=>total+line.received,0)}</strong></div>
-              <div><p className="text-xs text-emerald-800">Still outstanding</p><strong>{overview.items.reduce((total,line)=>total+line.remaining,0)}</strong></div>
+              <div><p className="text-xs text-emerald-800">Purchase order lines</p><strong>{overview.items.length}</strong></div>
+              <div><p className="text-xs text-emerald-800">Fully received lines</p><strong>{overview.items.filter(line=>line.remaining===0).length}</strong></div>
+              <div><p className="text-xs text-emerald-800">Lines awaiting receipt</p><strong>{overview.items.filter(line=>line.remaining>0).length}</strong></div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input id="ars-receiving-product-search" type="search" aria-label="Search purchase order items"
@@ -104,9 +104,9 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
             </div>
             <p className="text-xs text-slate-600">{visibleLines.length} matching products (all displayed). Enter actual accepted quantities only. Bulk fill is a draft until you confirm.</p>
             <div className="flex flex-wrap justify-between gap-2 text-sm"><strong>Status: {overview.status}</strong><button type="button" onClick={() => void refresh()} className="inline-flex items-center gap-1 text-slate-600 underline"><RefreshCcw className="h-4 w-4" /> Refresh</button></div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[42dvh] overflow-auto overscroll-contain rounded-xl border border-slate-200">
               <table className="w-full min-w-[540px] text-left text-sm">
-                <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3">U/M</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
+                <thead className="sticky top-0 z-10 bg-slate-100 text-xs uppercase text-slate-600"><tr><th className="p-3">Product</th><th className="p-3">U/M</th><th className="p-3 text-right">Ordered</th><th className="p-3 text-right">Received</th><th className="p-3 text-right">Remaining</th><th className="p-3">Receive now</th></tr></thead>
                 <tbody>{visibleLines.map(line => <tr key={line.purchaseOrderItemId} className="border-t border-slate-100">
                   <td className="p-3 font-semibold text-slate-800">{line.productName}</td><td className="p-3">{line.sellingUnitLabel || "—"}{line.baseUnitsPerPurchaseUnit && <span className="block text-xs text-slate-500">{line.baseUnitsPerPurchaseUnit} base units each</span>}</td>
                   <td className="p-3 text-right">{line.ordered}</td><td className="p-3 text-right">{line.received}</td><td className="p-3 text-right font-bold">{line.remaining}</td>
@@ -127,7 +127,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
           </>}
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4">
-          <p className="text-xs text-slate-500">{selected.length} line(s) selected · quantities use each line’s U/M</p>
+          <div><p className="text-xs text-slate-500">{selected.length} line(s) selected · quantities use each line’s U/M</p>{selected.length>0&&!valid&&<p role="alert" className="mt-1 text-xs text-rose-700">Correct invalid quantities before posting. Each quantity must be a whole number within its remaining balance.</p>}</div>
           <div className="flex gap-2"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm">Close</button>
             <button type="button" onClick={() => void submit()} disabled={!valid || saving || loading || overview?.status === 'Received'} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><PackageCheck className="h-4 w-4" />{saving ? 'Recording…' : 'Confirm received quantities'}</button></div>
         </footer>
