@@ -1,3 +1,4 @@
+import { initGeneralLedger } from './backend/generalLedger';
 import {recordImportChargeRecovery,importRecoveryAvailability} from './backend/importChargeRecoveries';
 import {recordSupplierRefund,supplierRefundAvailability} from './backend/supplierRefunds';
 import {recordPurchaseReturn} from './backend/purchaseReturns';
@@ -7593,6 +7594,7 @@ async function startServer() {
   await initReceivableAging(pool);
   await initPayableAging(pool);
   await initPositionRegisters(pool);
+  await initGeneralLedger(pool);
   await initSharedStockSchema(pool);
   await initArsProfitLedger(pool);
   await loadDb();
