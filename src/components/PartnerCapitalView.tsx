@@ -139,13 +139,13 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  };
  const formField='mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 focus:border-amber-400 focus:outline-none';
  return <div className="space-y-3">
-  <header className="rounded-xl bg-[#172a47] px-4 py-3 text-white sm:px-5"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
-    <h2 className="mt-1 flex items-center gap-2 font-heading text-xl font-bold"><Landmark className="h-6 w-6"/>Partner Capital & Ownership Ledger</h2>
+  <header className="rounded-xl bg-[#172a47] px-3 py-2 text-white sm:px-4"><p className="text-xs font-bold uppercase tracking-widest text-amber-300">Super Admin Only · Confidential</p>
+    <h2 className="mt-1 flex items-center gap-2 font-heading text-base font-bold"><Landmark className="h-4 w-4"/>Partner Capital & Ownership Ledger</h2>
     <p className="mt-1 text-xs text-slate-300">Add or deactivate partners as the business evolves. Profit allocations require all active ownership shares to total 100%, and never transfer funds.</p></header>
   {taxConfig&&['overview','partners','capital','profits'].includes(workspace)&&<ReportExportMenu report={partnerReport} settings={taxConfig}/>}
   {error&&<p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
   {notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
-  <nav aria-label="Partner management workspaces" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+  <nav aria-label="Partner management workspaces" className="flex flex-wrap gap-1.5">
     {([
       ['overview','Overview',Landmark],
       ['partners','Partner Profiles',Users],
@@ -156,7 +156,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
     ] as const).map(([id,label,Icon])=><button key={id} type="button"
       aria-current={workspace===id?'page':undefined}
       onClick={()=>{setWorkspace(id);setError('');setNotice('');}}
-      className={`flex min-h-16 items-center gap-2 rounded-xl border px-3 py-3 text-left text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 ${workspace===id?'border-[#172a47] bg-[#172a47] text-white shadow-sm':'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50'}`}>
+      className={`flex min-h-9 items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-500 ${workspace===id?'border-[#172a47] bg-[#172a47] text-white shadow-sm':'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50'}`}>
       <Icon className="h-4 w-4 shrink-0"/><span>{label}</span>
     </button>)}
   </nav>
@@ -190,7 +190,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
       <p className="mt-3 text-xs font-medium text-slate-500">All financial records remain restricted to Super Admin. Profit allocations do not transfer funds.</p>
     </div>
   </section>}
-  {workspace==='partners'&&<section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+  {workspace==='partners'&&<section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-center justify-between"><h3 className="font-bold">Partners ({activePartners.length} active · {partners.length} total)</h3><button type="button" onClick={()=>void refresh()} className="rounded-lg p-2 text-slate-600" aria-label="Refresh partner records"><RefreshCcw className="h-4 w-4"/></button></div>
       <p className="mt-1 text-xs text-slate-500">Ownership shares are optional until agreed. Shares must not exceed 100% combined.</p>
       <div className="mt-3 space-y-3">{partners.map(p=><div key={p.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -248,7 +248,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
       </div>)}</div>
     </div>
   </section>}
-  {workspace==='capital'&&<section aria-label="Record partner capital" className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+  {workspace==='capital'&&<section aria-label="Record partner capital" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <h3 className="font-bold">Record partner contribution or drawing</h3>
       <p className="mt-1 text-xs text-slate-500">Records are immutable. Verify payment evidence and reference before saving.</p>
       <form onSubmit={postCapital} className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -263,18 +263,18 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
         <button type="submit" disabled={busy||!partners.length} className="rounded-xl bg-[#172a47] px-4 py-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-2">Record permanent capital entry</button>
       </form>
     </section>}
-  {workspace==='capital'&&<section aria-label="Partner capital entries" className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+  {workspace==='capital'&&<section aria-label="Partner capital entries" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Partner capital activity ({entries.length} records)</h3>
-    <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[580px] text-left text-xs">
+    <div className="mt-3 max-h-[55dvh] overflow-auto"><table className="w-full min-w-[580px] text-left text-xs">
       <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">Date</th><th>Partner</th><th>Type</th><th>Amount · LKR</th><th>Reference</th></tr></thead>
       <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{reportDay(e.entry_date)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
     </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>This ledger is separate from cash, bank accounts and profit distribution. Reconcile it with supporting documents.</p>
   </section>}
-  {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+  {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Ownership and partner status history ({audits.length})</h3>
     <p className="mt-2 text-xs text-slate-500">Historical allocations keep the percentages used at approval time. Changes here affect future allocations only.</p>
-    <div className="mt-3 max-h-72 overflow-x-auto overflow-y-auto">
+    <div className="mt-3 max-h-[55dvh] overflow-auto">
       <table className="w-full min-w-[640px] text-left text-xs">
         <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">When</th><th>Partner</th><th>Change</th><th>Share</th><th>Reference</th><th>By</th></tr></thead>
         <tbody>{audits.map(a=><tr key={a.id} className="border-b border-slate-100">
@@ -285,7 +285,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
       {audits.length===0&&<p className="py-4 text-center text-xs text-slate-500">No ownership history recorded yet.</p>}
     </div>
   </section>}
-  {workspace==='profits'&&<section aria-label="Approved partner profit allocation" className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm">
+  {workspace==='profits'&&<section aria-label="Approved partner profit allocation" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Approved partner profit allocation ({profits.length} periods)</h3>
     <p className="mt-1 text-xs text-slate-600">Enter a profit amount approved from reconciled accounts. This is an allocation ledger only, not a cash payment, and cannot calculate business profit automatically.</p>
     <form onSubmit={recordProfit} className="mt-4 grid gap-3 sm:grid-cols-2">
