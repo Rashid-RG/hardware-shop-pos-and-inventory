@@ -121,12 +121,15 @@ export const renderArsInvoicePdf = async (
   const alignments: Align[] = ['center', 'left', 'left', 'left', 'center', 'center', 'right', 'right', 'right'];
   const tableStart = (continued: boolean) => {
     header(continued);
-    outline(left, 239, width, 22);
     headings.forEach((name, i) => text(name, cols[i] + 4, 246, cols[i+1] - cols[i] - 8, 8.5, true, alignments[i], ink));
+    line(left, 261, right, 261);
     return 261;
   };
   const footerY = 768;
   const summaryHeight = 212;
+  const closeTable = (bottom: number) => {
+    doc.rect(left, 239, width, bottom - 239).lineWidth(0.7).strokeColor(rule).stroke();
+  };
   let y = tableStart(false);
   tx.items.forEach((item, index) => {
     const gross = Number(item.quantity) * Number(item.sellingPrice);
@@ -136,17 +139,16 @@ export const renderArsInvoicePdf = async (
       formatMoney(Number(item.sellingPrice)), discount ? formatMoney(discount) : '-', formatMoney(gross - discount)];
     const heights = values.map((value, i) => doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4)
       .heightOfString(value, { width: cols[i+1] - cols[i] - 8 }));
-    const height = Math.max(23, Math.ceil(Math.max(...heights)) + 8);
-    if (y + height > footerY - 8) { doc.addPage(); y = tableStart(true); }
+    const height = Math.max(15, Math.ceil(Math.max(...heights)) + 4);
+    const limit = index === tx.items.length - 1 ? footerY - summaryHeight : footerY - 8;
+    if (y + height > limit && y > 261) { closeTable(y); doc.addPage(); y = tableStart(true); }
     values.forEach((value, i) => {
       doc.font(i === 8 ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.4).fillColor(ink)
-        .text(value, cols[i]+4, y+4, { width: cols[i+1]-cols[i]-8, align: alignments[i] });
-      line(cols[i], y, cols[i], y+height);
+        .text(value, cols[i]+4, y+2, { width: cols[i+1]-cols[i]-8, align: alignments[i] });
     });
-    line(right, y, right, y+height);
     y += height;
-    line(left, y, right, y);
   });
+  closeTable(y);
   if (y + summaryHeight > footerY) { doc.addPage(); header(true); y = 239; }
   const top = y + 16;
   outline(left, top, 264, 102);
