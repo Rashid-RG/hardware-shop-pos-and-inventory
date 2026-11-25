@@ -26,6 +26,7 @@ import { openingReconciliation } from './backend/openingReconciliation';
 import { cutoverReadiness } from './backend/cutoverReadiness';
 import { listDocumentaryReviews, submitDocumentaryReview } from './backend/documentaryReconciliation';
 import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
+import { postPartnerCapital } from './backend/partnerCapitalPosting';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7661,7 +7662,29 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
+app.post('/api/ars/partner-capital/post',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {requestId,partnerId,accountId,entryType,amountLkr,entryDate,reference,note}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof partnerId!=='string'||typeof accountId!=='string'||!['Contribution','Drawing'].includes(entryType)||typeof amountLkr!=='string'||!/^\d{1,12}(?:\.\d{1,2})?$/.test(amountLkr)||typeof entryDate!=='string'||typeof reference!=='string'||typeof note!=='string')return res.status(400).json({error:'Enter valid capital posting details and request identifier.'});
+ try{
+  const result=await postPartnerCapital(pool,{id:'capital-'+requestId,shopId:scope.shopId,partnerId,accountId,entryType,amount:amountLkr,date:entryDate,reference,note,actor:scope.recordedBy,currentBusinessDate:reportDay(new Date())});
+  return res.status(result.replayed?200:201).json(result);
+ }catch(error){
+  const message=error instanceof Error?error.message:'';
+  if(['Invalid partner capital transaction details.','Invalid partner capital amount.','Capital request already used or requires reconciliation.','Verified accounting required for partner capital posting.','Active partner required in this shop.','Active bank or office cash account required.','Insufficient uncommitted funds for partner drawing.','Missing active accounting mapping: financialAccount','Missing active accounting mapping: partnerCapital','Missing active accounting mapping: partnerDrawings'].includes(message))return res.status(409).json({error:message});
+  console.error('Partner capital posting failed',error);return res.status(500).json({error:'Unable to confirm capital posting. Retry the exact original request.'});
+ }
+});
 app.post('/api/ars/partner-capital',requireRole(['Super Admin']),async(req,res)=>{
+  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+  try{
+    if((await pool.query('SELECT 1 FROM ars_gl_cutover WHERE shop_id=$1 AND posting_enabled',[scope.shopId])).rowCount)return res.status(409).json({error:'Active accounting requires the financial account capital posting workflow.'});
+  }catch{return res.status(503).json({error:'Unable to verify accounting status.'});}
+
   const {activeShopId}=getActiveShopContext(db,req);
   const partnerId=String(req.body?.partnerId||'').trim();
   const entryType=String(req.body?.entryType||'');
