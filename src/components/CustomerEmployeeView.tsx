@@ -241,7 +241,7 @@ export default function CustomerEmployeeView({
   });
   const owingCustomers = customers.filter(c=>Number(c.creditBalance || 0)>0);
   const outstandingTotal = owingCustomers.reduce((sum,c)=>sum+Number(c.creditBalance || 0),0);
-  const directoryCustomers = balanceFilter === 'owing' ? [...filteredCustomers].sort((a,b)=>Number(b.creditBalance || 0)-Number(a.creditBalance || 0)||a.name.localeCompare(b.name)) : filteredCustomers;
+  if (balanceFilter === 'owing') filteredCustomers.sort((a,b)=>Number(b.creditBalance || 0)-Number(a.creditBalance || 0)||a.name.localeCompare(b.name));
 
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId);
   const matchesShop = (recordShopId?: string) =>
@@ -497,7 +497,7 @@ export default function CustomerEmployeeView({
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[72dvh] overflow-y-auto overscroll-contain">
-          {directoryCustomers.slice(0, visibleCount).map((c) => (
+          {filteredCustomers.slice(0, visibleCount).map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
