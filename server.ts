@@ -5863,6 +5863,7 @@ app.post('/api/supplier-payments', requireRole(['Super Admin', 'Store Manager'])
   const authUser = (req as AppRequest).authUser;
   const { activeShopId } = getActiveShopContext(db, req);
   const { supplierId, purchaseOrderId, amount, paymentMethod, date, note, sourceAccountId, requestId } = req.body || {};
+  if(typeof paymentMethod==='string'&&paymentMethod.trim().toLowerCase()==='cheque')return res.status(400).json({error:'Supplier-issued cheques require a separate clearance workflow. Do not record an uncleared cheque as a supplier payment.'});
   if(sourceAccountId!==undefined){
     const scope=chequeShopAccess(req);
     if(!scope||scope.shopId!==activeShopId)return res.status(403).json({error:'Financial source access denied.'});
