@@ -451,6 +451,60 @@ export default function POSView({
     return true;
   };
 
+  // All quantities are checked against the latest catalog, including stock already in the draft.
+  const availableToAdd = (product: Product, variant?: ProductVariant, lines: CartItem[] = cart) => {
+    if (product.sharedStockUnits) {
+      const unit = getDefaultSellingUnit(product);
+      if (!unit || product.variants?.length) return 0;
+      let used = 0;
+      for (const line of lines.filter(entry => entry.product.id === product.id)) {
+        const selected = product.sharedStockUnits.units.find(u => u.id === line.sellingUnitId);
+        if (!selected) return 0;
+        used += line.quantity * selected.baseUnits;
+      }
+      return Math.max(0, Math.floor((product.quantity - used) / unit.baseUnits));
+    }
+    const stock = Number(variant?.quantity ?? product.quantity);
+    const used = lines.filter(entry => entry.product.id === product.id && (entry.variantId || '') === (variant?.id || '')).reduce((sum, entry) => sum + entry.quantity, 0);
+    return Math.max(0, Math.floor(stock - used));
+  };
+
+  const stockIssue = (lines: CartItem[]): string | undefined => {
+    for (const line of lines) {
+      const product = products.find(p => p.id === line.product.id);
+      if (!product) return line.product.name + ': product is no longer available.';
+      if (!Number.isSafeInteger(line.quantity) || line.quantity <= 0) return product.name + ': invalid quantity.';
+      if (product.sharedStockUnits) {
+        if (!fitsSharedStock(product, lines)) return product.name + ': insufficient shared stock (Box/Piece). Reduce the quantity.';
+      } else {
+        const variant = product.variants?.find(v => v.id === line.variantId);
+        if ((line.variantId && !variant) || (product.variants?.length && !variant)) return product.name + ': selling unit is no longer available.';
+        const stock = Number(variant?.quantity ?? product.quantity);
+        const required = lines.filter(entry => entry.product.id === product.id && (entry.variantId || '') === (line.variantId || '')).reduce((sum, entry) => sum + entry.quantity, 0);
+        if (!Number.isFinite(stock) || required > stock) return product.name + ': only ' + stock + ' available; ' + required + ' requested.';
+      }
+    }
+  };
+  const maxLineQuantity = (line: CartItem) => {
+    const product = products.find(p => p.id === line.product.id);
+    if (!product) return 0;
+    const others = cart.filter(entry => getCartKey(entry) !== getCartKey(line));
+    if (product.sharedStockUnits) {
+      const unit = product.sharedStockUnits.units.find(u => u.id === line.sellingUnitId);
+      if (!unit) return 0;
+      let used = 0;
+      for (const other of others.filter(entry => entry.product.id === product.id)) {
+        const selected = product.sharedStockUnits.units.find(u => u.id === other.sellingUnitId);
+        if (!selected) return 0;
+        used += other.quantity * selected.baseUnits;
+      }
+      return Math.max(0, Math.floor((product.quantity - used) / unit.baseUnits));
+    }
+    const variant = product.variants?.find(v => v.id === line.variantId);
+    if ((line.variantId && !variant) || (product.variants?.length && !variant)) return 0;
+    return availableToAdd(product, variant, others);
+  };
+
   const getSelectedVariant = (product: Product): ProductVariant | undefined => {
     if (!Array.isArray(product.variants) || product.variants.length === 0) {
       return undefined;
@@ -487,6 +541,11 @@ export default function POSView({
 
   // Handle adding a product (or variant) to register cart
   const addToCart = (product: Product, variant?: ProductVariant) => {
+    const latest = products.find(p => p.id === product.id);
+    if (!latest) { notify.warning(product.name + ': product unavailable.'); return; }
+    product = latest;
+    variant = variant ? product.variants?.find(v => v.id === variant?.id) : getSelectedVariant(product);
+    if (availableToAdd(product, variant) < 1) { notify.warning(product.name + ': no more stock available to add.'); return; }
     if (product.sharedStockUnits) {
       const unit = getDefaultSellingUnit(product);
       if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return; }
@@ -503,9 +562,7 @@ export default function POSView({
     const resolvedVariant = variant || getSelectedVariant(product);
     const productStock = Number(product.quantity || 0);
     const variantStock = resolvedVariant ? Number(resolvedVariant.quantity || 0) : productStock;
-    if (variantStock <= 0) {
-      return;
-    }
+    if (variantStock <= 0) { notify.warning(product.name + ': out of stock.'); return; }
 
     const existing = cart.find((item) => item.product.id === product.id && (item.variantId || '') === (resolvedVariant?.id || ''));
     const key = `${product.id}::${resolvedVariant?.id || 'base'}`;
@@ -586,7 +643,9 @@ export default function POSView({
       return item;
     });
     const product = products.find(entry=>entry.id===cart.find(item=>getCartKey(item)===itemKey)?.product.id);
-    if (product?.sharedStockUnits && !fitsSharedStock(product,updated)) { notify.warning('Insufficient shared stock.'); return; }
+    const line = cart.find(item=>getCartKey(item)===itemKey);
+    if (!line || !product) { notify.warning('Product stock unavailable.'); return; }
+    if (nextQty > maxLineQuantity(line) && nextQty >= line.quantity) { notify.warning(product.name + ': maximum available quantity is ' + maxLineQuantity(line) + '.'); return; }
     setCart(updated);
   };
 
@@ -1154,6 +1213,8 @@ export default function POSView({
   // Process core checkout
   const handleCheckout = async () => {
     if (cart.length === 0 || isSubmitting || checkoutUncertain) return;
+    const issue = stockIssue(cart);
+    if (issue) { notify.warning(issue); setIsReviewOpen(false); return; }
     if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin' && customer.shopId === taxConfig.activeShopId)) {
       notify.warning('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
@@ -1392,7 +1453,7 @@ export default function POSView({
         <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
-            const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
+            const activeStock = availableToAdd(p, selectedVariant);
             const activeReorderLevel = Number(selectedVariant?.reorderLevel ?? p.reorderLevel);
             const activePrice = Number(getDefaultSellingUnit(p)?.sellingPrice ?? selectedVariant?.sellingPrice ?? p.sellingPrice);
             const isLowStock = activeStock <= activeReorderLevel;
@@ -1402,7 +1463,7 @@ export default function POSView({
               <div
                 key={p.id}
                 id={`pos-product-${p.id}`}
-                onClick={() => !isOut && addToCart(p, selectedVariant)}
+                onClick={() => addToCart(p, selectedVariant)}
                 className={`bg-white rounded-xl border p-3 flex flex-col justify-between cursor-pointer group transition-all duration-150 relative ${
                   isOut
                     ? 'border-slate-200 bg-slate-50 opacity-55 cursor-not-allowed'
@@ -1469,7 +1530,7 @@ export default function POSView({
                         : 'bg-slate-100 text-slate-600'
                     }`}
                   >
-                    {isOut ? 'Out of Stock' : `Qty: ${activeStock}`}
+                    {isOut ? 'No stock left to add' : `Available: ${activeStock}`}
                   </span>
                 </div>
               </div>
@@ -1546,12 +1607,12 @@ export default function POSView({
                   <div className="flex justify-between items-center px-2 py-1 text-xs text-slate-500"><span>{filteredProducts.length} matching products</span><button type="button" onClick={() => setShowInvoiceProducts(false)} aria-label="Close product results"><X className="h-4 w-4" /></button></div>
                   {filteredProducts.slice(0, 30).map(product => {
                     const variant = getSelectedVariant(product);
-                    const stock = Number(variant?.quantity ?? product.quantity);
+                    const stock = availableToAdd(product, variant);
                     return <div key={product.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 p-2 text-xs">
-                      <span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · Stock: {stock}</span></span>
+                      <span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? 'Available to add: '+stock : 'No stock left to add'}</span></span>
                       {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
                       <span>{formatMoney(Number(variant?.sellingPrice ?? product.sellingPrice))}</span>
-                      <button type="button" disabled={stock <= 0} onClick={() => { addToCart(product, variant); setSearchTerm(''); setShowInvoiceProducts(false); }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">Add</button>
+                      <button type="button" disabled={stock <= 0} onClick={() => { addToCart(product, variant); setSearchTerm(''); setShowInvoiceProducts(false); }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
                     </div>;
                   })}
                   {filteredProducts.length === 0 && <p className="p-3 text-xs text-slate-500">No matching products.</p>}
@@ -1624,6 +1685,7 @@ export default function POSView({
                         type="number"
                         min="1"
                         step="1"
+                        max={maxLineQuantity(item)}
                         aria-label={`Quantity for ${item.product.name}`}
                         value={item.quantity}
                         onChange={(e) => updateCartQty(lineKey, Number(e.target.value))}
@@ -1633,8 +1695,10 @@ export default function POSView({
                       <button
                         type="button"
                         aria-label={`Increase quantity for ${item.product.name}`}
+                        disabled={item.quantity >= maxLineQuantity(item)}
+                        title={item.quantity >= maxLineQuantity(item) ? "Maximum available stock reached" : "Add one unit"}
                         onClick={() => updateCartQty(lineKey, item.quantity + 1)}
-                        className="p-0.5 text-slate-500 hover:text-slate-800"
+                        className="p-0.5 text-slate-500 hover:text-slate-800 disabled:opacity-35 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -1698,6 +1762,8 @@ export default function POSView({
               if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
                 notify.warning('Select the Sales Representative before reviewing this invoice.'); return;
               }
+              const issue = stockIssue(cart);
+              if (issue) { notify.warning(issue); return; }
               setIsReviewOpen(true);
             }}
             className="w-full lg:w-auto rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-semibold text-slate-900 hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
