@@ -205,11 +205,12 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
 }
 export async function listFinancialAccounts(db:Pool|PoolClient,shopId:string){
   const result=await db.query(`
-    SELECT a.id,a.name,a.kind,a.active,COALESCE(SUM(m.amount),0) AS balance
+    SELECT a.id,a.name,a.kind,a.active,COALESCE(SUM(m.amount),0) AS balance,
+      CASE WHEN a.kind='Bank' THEN (SELECT COALESCE(SUM(c.amount),0) FROM ars_supplier_cheques c WHERE c.shop_id=a.shop_id AND c.bank_account_id=a.id AND c.status='Issued') ELSE 0 END AS cheque_commitments
     FROM ars_financial_accounts a LEFT JOIN ars_financial_movements m ON m.shop_id=a.shop_id AND m.account_id=a.id
     WHERE a.shop_id=$1 GROUP BY a.id ORDER BY a.kind,a.name
   `,[shopId]);
-  return result.rows.map(row=>({id:row.id,name:row.name,kind:row.kind,active:row.active,balance:Number(row.balance)}));
+  return result.rows.map(row=>({id:row.id,name:row.name,kind:row.kind,active:row.active,balance:Number(row.balance),supplierChequeCommitments:Number(row.cheque_commitments),balanceAfterChequeCommitments:(Math.round(Number(row.balance)*100)-Math.round(Number(row.cheque_commitments)*100))/100}));
 }
 export async function createFinancialAccount(db:Pool|PoolClient,input:{id:string;shopId:string;name:string;kind:FinancialAccountKind;recordedBy:string}){
   const name=input.name.trim();
