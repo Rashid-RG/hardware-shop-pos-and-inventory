@@ -2,6 +2,7 @@ import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { notify } from '../utils/notifications';
 import {
   Users,
@@ -67,6 +68,8 @@ export default function CustomerEmployeeView({
   const [searchTerm, setSearchTerm] = useState('');
   const [visibleCount, setVisibleCount] = useState(12);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const [customerFileTab, setCustomerFileTab] = useState<'overview'|'ledger'|'activity'>('overview');
+  useEffect(()=>setCustomerFileTab('overview'),[selectedCustomerId]);
   const [isReportsOpen, setIsReportsOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [editDetails, setEditDetails] = useState({ name: '', phone: '', email: '', address: '' });
@@ -413,20 +416,6 @@ export default function CustomerEmployeeView({
 
   return (
     <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
-      <div className="flex flex-col gap-1 rounded-xl border border-slate-200/80 bg-white px-4 py-3 shadow-sm sm:px-5">
-        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-amber-700">
-          {activeTab === 'customers' ? 'Sales & customer relationships' : 'ARS field sales team'}
-        </p>
-        <h2 className="font-heading text-2xl font-bold tracking-tight text-slate-950">
-          {activeTab === 'customers' ? 'Customer Management' : 'Sales Representatives'}
-        </h2>
-        <p className="text-sm leading-relaxed text-slate-500">
-          {activeTab === 'customers'
-            ? 'Manage customer records, credit limits, outstanding balances and payments.'
-            : 'Keep registered sales representatives organized for accurate invoice assignment.'}
-        </p>
-      </div>
-
       {pendingCollection&&<section role="alert" className="rounded-xl border border-amber-400 bg-amber-50 p-4 text-sm">
         <strong>Unconfirmed payment request</strong>
         <p>Rs. {pendingCollection.amount.toFixed(2)} · {pendingCollection.paymentMethod} · {pendingCollection.date}</p>
@@ -471,7 +460,7 @@ export default function CustomerEmployeeView({
             <button
               id="btn-register-customer"
               onClick={() => setIsCustOpen(true)}
-              className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-1.5 transition"
+              className="bg-[#182a45] hover:bg-[#294264] text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center justify-center gap-1.5 transition"
             >
               <Plus className="w-4 h-4" /> Add Customer Shop
             </button>
@@ -491,8 +480,8 @@ export default function CustomerEmployeeView({
 
       {/* TAB 1 CONTENT: CUSTOMER DIRECTORY */}
       {activeTab === 'customers' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {(searchTerm.trim() || balanceFilter !== 'all' ? filteredCustomers : filteredCustomers.slice(0, visibleCount)).map((c) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[72dvh] overflow-y-auto overscroll-contain">
+          {filteredCustomers.slice(0, visibleCount).map((c) => (
             <div
               key={c.id}
               id={`customer-card-${c.id}`}
@@ -588,8 +577,8 @@ export default function CustomerEmployeeView({
               </div>
 
               <button type="button" onClick={() => openCustomerFile(c.id)}
-                className="mt-3 w-full rounded-xl bg-indigo-700 px-4 py-3 text-sm font-bold text-white hover:bg-indigo-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700">
-                Open customer details & full history
+                className="mt-2 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700">
+                Open customer file
               </button>
               <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] font-mono text-slate-400">
                 <span>Invoiced Checkouts: <strong className="text-slate-800">{c.purchaseCount}</strong></span>
@@ -597,7 +586,7 @@ export default function CustomerEmployeeView({
             </div>
           ))}
 
-          {!searchTerm.trim() && balanceFilter === 'all' && filteredCustomers.length > visibleCount && (
+          {filteredCustomers.length > visibleCount && (
             <button type="button" className="col-span-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               onClick={() => setVisibleCount(value => value + 12)}>
               Show 12 more customer shops ({filteredCustomers.length - visibleCount} remaining)
@@ -618,13 +607,13 @@ export default function CustomerEmployeeView({
           payments={customerCreditPayments} onClose={() => setIsReportsOpen(false)} />
       )}
 
-      {activeTab === 'customers' && selectedCustomer && (
+      {activeTab === 'customers' && selectedCustomer && createPortal(
         <div id="ars-customer-workspace" role="dialog" aria-modal="true" aria-label="Customer details and full history"
-          className="fixed inset-0 z-40 flex flex-col bg-slate-50 font-sans">
-          <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-8">
+          className="fixed inset-0 z-[100] flex flex-col bg-slate-50 font-sans">
+          <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-4">
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Customer file</p>
-              <h2 className="text-xl font-bold text-slate-900 sm:text-2xl">{selectedCustomer.name}</h2>
+              <h2 className="text-lg font-bold text-slate-900">{selectedCustomer.name}</h2>
               <p className="text-xs text-slate-500">Customer ID: {selectedCustomer.id}</p>
               {canOnboard && selectedCustomer.id !== 'cust-walkin' && (
                 <button type="button" onClick={() => beginCustomerEdit(selectedCustomer)}
@@ -638,9 +627,10 @@ export default function CustomerEmployeeView({
               <X className="mr-1 inline-block h-4 w-4" /> Close customer file
             </button>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8">
-            <div className="mx-auto max-w-6xl space-y-5">
-              <section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <nav aria-label="Customer file sections" className="flex shrink-0 gap-2 border-b bg-white px-3 py-2">{([["overview","Overview"],["ledger","Account ledger"],["activity","Invoices & payments"]] as const).map(([id,label])=><button key={id} type="button" aria-pressed={customerFileTab===id} onClick={()=>setCustomerFileTab(id)} className={customerFileTab===id?"rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white":"rounded-lg px-3 py-2 text-xs font-semibold text-slate-600"}>{label}</button>)}</nav>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
+            <div className="mx-auto max-w-7xl space-y-3">
+              <div hidden={customerFileTab!=="overview"} className="space-y-3"><section className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div><p className="text-xs text-slate-500">Phone</p><p className="break-words font-semibold">{selectedCustomer.phone || 'Not provided'}</p></div>
                 <div><p className="text-xs text-slate-500">Email</p><p className="break-words font-semibold">{selectedCustomer.email || 'Not provided'}</p></div>
                 <div><p className="text-xs text-slate-500">Address</p><p className="break-words font-semibold">{selectedCustomer.address || 'Not provided'}</p></div>
@@ -651,11 +641,12 @@ export default function CustomerEmployeeView({
                 <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Outstanding balance</p><p className="mt-1 text-lg font-bold text-rose-700">{formatMoney(Number(selectedCustomer.creditBalance || 0))}</p></div>
                 <div className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-xs text-slate-500">Recorded credit payments</p><p className="mt-1 text-lg font-bold">{formatMoney(selectedPayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0))}</p></div>
               </section>
-              <div key={selectedCustomer.id}>
+              </div>
+              <div hidden={customerFileTab!=="ledger"} key={selectedCustomer.id}>
                 <CustomerLedgerPanel customer={selectedCustomer} settings={taxConfig}
                   invoices={selectedInvoices} payments={selectedPayments} />
               </div>
-              <section className="rounded-xl border border-slate-200 bg-white p-4">
+              <section hidden={customerFileTab!=="activity"} className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div><h3 className="text-lg font-bold">Complete customer activity</h3>
                     <p className="text-xs text-slate-500">All matching records are shown; no recent-only limit. Invoice amounts and credit payments are different record types.</p></div>
@@ -678,9 +669,9 @@ export default function CustomerEmployeeView({
                     <input id="customer-history-to" type="date" value={customerHistoryTo}
                       onChange={(e) => setCustomerHistoryTo(e.target.value)} className="w-full rounded-lg border border-slate-200 p-2.5 text-sm" /></div>
                 </div>
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <div className="max-h-[48dvh] overflow-auto rounded-lg border border-slate-200">
                   <table className="w-full min-w-[650px] text-left text-sm">
-                    <thead className="bg-slate-100 text-xs uppercase text-slate-600"><tr>
+                    <thead className="sticky top-0 z-10 bg-slate-100 text-xs uppercase text-slate-600"><tr>
                       <th className="p-3">Date</th><th className="p-3">Record</th>
                       <th className="p-3">Reference</th><th className="p-3">Details</th>
                       <th className="p-3">Status</th><th className="p-3 text-right">Amount</th><th className="p-3">Receipt</th>
@@ -760,12 +751,12 @@ export default function CustomerEmployeeView({
               </section>
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
 
-      {editingCustomer && (
+      {editingCustomer && createPortal(
         <div role="dialog" aria-modal="true" aria-label="Edit customer shop details"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3">
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-3">
           <form onSubmit={saveCustomerEdit}
             className="flex max-h-[90dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 p-4">
@@ -801,11 +792,11 @@ export default function CustomerEmployeeView({
               </button>
             </div>
           </form>
-        </div>
+        </div>, document.body
       )}
 
-      {paymentDraft && !pendingCollection && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 z-40 animate-fade-in">
+      {paymentDraft && !pendingCollection && createPortal(
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 z-[120]">
           <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-md border border-slate-250 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button onClick={() => setPaymentDraft(null)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X className="w-5 h-5" />
@@ -869,7 +860,7 @@ export default function CustomerEmployeeView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
 
       {/* TAB 2 CONTENT: EMPLOYEE ROSTER */}
@@ -951,9 +942,9 @@ export default function CustomerEmployeeView({
       )}
 
       {/* DIALOG 1: ADD CUSTOMER MODAL */}
-      {isCustOpen && (
-        <div id="customer-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
+      {isCustOpen && createPortal(
+        <div id="customer-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[120]">
+          <div className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-lg max-h-[90dvh] overflow-y-auto border border-slate-250 font-sans relative">
             <button
               onClick={() => setIsCustOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -1046,12 +1037,12 @@ export default function CustomerEmployeeView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
 
       {/* DIALOG 2: ONBOARD STAFF MODAL */}
-      {isEmpOpen && (
-        <div id="employee-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
+      {isEmpOpen && createPortal(
+        <div id="employee-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[120]">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
             <button
               onClick={() => setIsEmpOpen(false)}
@@ -1164,7 +1155,7 @@ export default function CustomerEmployeeView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
