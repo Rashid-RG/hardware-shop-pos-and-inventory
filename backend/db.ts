@@ -1479,14 +1479,26 @@ export const insertManualExpense = async (e: ManualExpense) => {
   );
 };
 
-export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?:string) => {
+export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?:string, chequeClearance?:{chequeId:string;eventId:string;evidence:string}) => {
   if (!p.shopId || !Number.isFinite(p.amount) || p.amount <= 0 ||
       Math.abs(p.amount * 100 - Math.round(p.amount * 100)) > 0.00001) {
     throw new Error('Supplier payment amount must be positive with at most two decimal places.');
   }
+  if(chequeClearance&&(!sourceAccountId||p.paymentMethod!=='Cheque'||!chequeClearance.evidence.trim()||chequeClearance.evidence.trim().length>500||p.id!=='spay-cheque-'+chequeClearance.chequeId||!p.createdBy))throw Error('Invalid supplier cheque clearance details.');
+  if(p.paymentMethod==='Cheque'&&!chequeClearance)throw Error('Supplier cheque clearance required.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if(chequeClearance){
+      const c=(await client.query('SELECT *,issued_date::text AS issued_day,due_date::text AS due_day FROM ars_supplier_cheques WHERE shop_id=$1 AND id=$2 FOR UPDATE',[p.shopId,chequeClearance.chequeId])).rows[0];
+      if(!c||c.supplier_id!==p.supplierId||(c.purchase_order_id||null)!==(p.purchaseOrderId||null)||c.bank_account_id!==sourceAccountId||Number(c.amount)!==p.amount||!p.purchaseOrderId||p.date<c.due_day||p.date<c.issued_day)throw Error('Supplier cheque clearance details do not match the issued cheque.');
+      const prior=(await client.query('SELECT *,effective_date::text AS day FROM ars_supplier_cheque_events WHERE id=$1',[chequeClearance.eventId])).rows[0];
+      if(c.status==='Cleared'){
+        if(!prior||prior.shop_id!==p.shopId||prior.cheque_id!==c.id||prior.next_status!=='Cleared'||prior.day!==p.date||prior.recorded_by!==p.createdBy||prior.note!==chequeClearance.evidence.trim()||c.payment_id!==p.id)throw Error('Supplier cheque already cleared; review original payment.');
+      }else if(c.status!=='Issued'||prior)throw Error('Only issued supplier cheques can be cleared.');
+      const config=(await client.query('SELECT posting_enabled FROM ars_gl_cutover WHERE shop_id=$1 FOR SHARE',[p.shopId])).rows[0];
+      if(c.status!=='Cleared'&&!config?.posting_enabled)throw Error('Enable verified accounting before supplier cheque clearance.');
+    }
     if(sourceAccountId){
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[p.id]);
       const previous=await client.query("SELECT p.*,p.date::text AS payment_day,m.account_id FROM supplier_payments p LEFT JOIN ars_financial_movements m ON m.shop_id=p.shop_id AND m.source_id=p.id AND m.movement_kind='Supplier Payment' WHERE p.id=$1",[p.id]);
@@ -1537,13 +1549,18 @@ export const insertSupplierPayment = async (p: SupplierPayment, sourceAccountId?
     if(sourceAccountId){
       const account=await client.query('SELECT kind FROM ars_financial_accounts WHERE shop_id=$1 AND id=$2 AND active=TRUE FOR UPDATE',[p.shopId,sourceAccountId]);
       const kind=account.rows[0]?.kind;
-      if(!((p.paymentMethod==='Cash'&&kind==='Office Cash')||(p.paymentMethod==='Bank Transfer'&&kind==='Bank')))throw Error('Select an active supplier payment account matching the payment method.');
+      if(!((p.paymentMethod==='Cash'&&kind==='Office Cash')||((p.paymentMethod==='Bank Transfer'||(p.paymentMethod==='Cheque'&&!!chequeClearance))&&kind==='Bank')))throw Error('Select an active supplier payment account matching the payment method.');
       const balance=await client.query('SELECT COALESCE(SUM(amount),0)>=$3::numeric AS sufficient FROM ars_financial_movements WHERE shop_id=$1 AND account_id=$2',[p.shopId,sourceAccountId,p.amount]);
       if(!balance.rows[0]?.sufficient)throw Error('Insufficient recorded funds for supplier payment.');
       await client.query(`INSERT INTO ars_financial_movements(id,shop_id,account_id,amount,movement_kind,source_id,recorded_by,effective_date,note)
         VALUES($1,$2,$3,-$4::numeric,'Supplier Payment',$5,$6,$7,$8)`,['supplier-out-'+p.id,p.shopId,sourceAccountId,p.amount,p.id,p.createdBy||'Manager',p.date,p.note||null]);
     }
     await postFinancialJournal(client,p.shopId,p.id,'SupplierPayment');
+    if(chequeClearance){
+      const updated=await client.query("UPDATE ars_supplier_cheques SET status='Cleared',payment_id=$1 WHERE shop_id=$2 AND id=$3 AND status='Issued'",[p.id,p.shopId,chequeClearance.chequeId]);
+      if(updated.rowCount!==1)throw Error('Supplier cheque clearance state changed.');
+      await client.query("INSERT INTO ars_supplier_cheque_events(id,shop_id,cheque_id,previous_status,next_status,effective_date,recorded_by,note) VALUES($1,$2,$3,'Issued','Cleared',$4,$5,$6)",[chequeClearance.eventId,p.shopId,chequeClearance.chequeId,p.date,p.createdBy,chequeClearance.evidence.trim()]);
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
