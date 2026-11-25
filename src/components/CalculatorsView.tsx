@@ -179,12 +179,12 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
   const reorderPoint = Math.ceil((dailyDemand * leadTimeDays) + avgSafetyStock);
 
   return (
-    <div className="w-full min-w-0 space-y-4 text-slate-800">
+    <div className="w-full min-w-0 space-y-2 text-slate-800">
       <nav aria-label="Calculator categories" className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         <button
           aria-pressed={subTab === 'tile'}
           onClick={() => setSubTab('tile')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
             subTab === 'tile' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
@@ -194,7 +194,7 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
         <button
           aria-pressed={subTab === 'concrete'}
           onClick={() => setSubTab('concrete')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
             subTab === 'concrete' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
@@ -204,7 +204,7 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
         <button
           aria-pressed={subTab === 'paint'}
           onClick={() => setSubTab('paint')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
             subTab === 'paint' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
@@ -214,7 +214,7 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
         <button
           aria-pressed={subTab === 'brick-steel-timber'}
           onClick={() => setSubTab('brick-steel-timber')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
             subTab === 'brick-steel-timber' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
@@ -224,7 +224,7 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
         <button
           aria-pressed={subTab === 'business'}
           onClick={() => setSubTab('business')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
             subTab === 'business' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
@@ -234,9 +234,9 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
       </nav>
 
       {subTab === 'tile' && (
-        <section aria-label="Tile order estimate" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <section aria-label="Tile order estimate" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
           <div>
-            <h2 className="text-lg font-bold">{boxesRequired} boxes · {boxesRequired * tilesPerBox} tiles</h2>
+            <h2 className="text-base font-bold">{boxesRequired} boxes · {boxesRequired * tilesPerBox} tiles</h2>
             <p className="text-sm text-slate-700">{priceReady
               ? `${taxConfig.currency} ${tileTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} before tax and transport`
               : 'Select the stock unit to calculate the price.'}</p>
@@ -256,10 +256,10 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
       )}
 
       {/* Calculator Body */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-start">
 
         {/* Inputs (Left Panel) */}
-        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
+        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3 shadow-sm lg:max-h-[70dvh] lg:overflow-y-auto overscroll-contain">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">Estimate inputs</h2>
 
           {/* TILE CALCULATOR INPUTS */}
@@ -750,10 +750,10 @@ export default function CalculatorsView({ products = [], onQuote, taxConfig = { 
         </div>
 
         {/* Output Results (Right Panel) */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className="lg:col-span-7 space-y-3 lg:max-h-[70dvh] lg:overflow-y-auto overscroll-contain">
 
           {/* Results Summary Box */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2">
                 <Coins className="w-5 h-5 text-indigo-400" />
