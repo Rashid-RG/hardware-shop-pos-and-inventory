@@ -373,7 +373,6 @@ const buildInvoicePdfBuffer = async (
     socialLinks?: string;
   },
   contact?: { address?: string; phone?: string; email?: string; taxRate?: number },
-  paper: 'A4' | 'ARS-240x270' = 'ARS-240x270',
 ): Promise<Buffer> => renderArsInvoicePdf(
   {...tx, items: tx.items.map(item => {
     if(item.variantSku) return item;
@@ -382,7 +381,7 @@ const buildInvoicePdfBuffer = async (
     return {...item, variantSku:sku || undefined};
   })}, activeShopName, meta,
   resolvePrintableLogoBuffer(logoUrl),
-  invoiceCompanyMeta, contact, paper,
+  invoiceCompanyMeta, contact, 'ARS-240x270',
 );
 
 const buildInvoicePrintAuditRows = (
@@ -4945,8 +4944,7 @@ app.get('/api/transactions/:id/pdf', requireRole(['Super Admin', 'Store Manager'
     secondaryWatermarkText,
     printedBy,
     printedAt,
-  }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings,
-    req.query.paper === 'A4' ? 'A4' : 'ARS-240x270').then((pdfBuffer) => {
+  }, activeShopProfile?.logoUrl || db.settings.logoUrl || '', activeShopProfile?.invoiceCompanyMeta, activeShopProfile || db.settings).then((pdfBuffer) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.send(pdfBuffer);
