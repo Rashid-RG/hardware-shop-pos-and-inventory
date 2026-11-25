@@ -245,6 +245,8 @@ test('supplier refund limits use exact cents',()=>{
  for(const args of [[0n,20000n,20000n,0n],[5001n,5000n,20000n,15000n],[10001n,20000n,20000n,10000n],[1n,0n,20000n,0n]])assert.throws(()=>validateSupplierRefund(...args),/exceeds available/);
 });
 
+import {supplierReconciliation} from '../backend/supplierReconciliation.ts';
+
 test('supplier refund posting is atomic, scoped and replay safe',{timeout:60000},async()=>{
  const schema='refund_ci_'+randomUUID().replaceAll('-',''),shop='shop-a',day='2026-01-01';
  const admin=new pg.Client({connectionString:url.toString()});
@@ -255,12 +257,12 @@ test('supplier refund posting is atomic, scoped and replay safe',{timeout:60000}
  pool=new pg.Pool({connectionString:url.toString(),options:'-c search_path='+schema});
  await initGeneralLedger(pool);
  await pool.query(`
- CREATE TABLE purchase_orders(id text PRIMARY KEY,shop_id text NOT NULL);
- CREATE TABLE supplier_payments(id text PRIMARY KEY,shop_id text NOT NULL,purchase_order_id text);
+ CREATE TABLE purchase_orders(id text PRIMARY KEY,shop_id text NOT NULL,po_number text,supplier_name text,status text,total numeric(14,2));
+ CREATE TABLE supplier_payments(id text PRIMARY KEY,shop_id text NOT NULL,purchase_order_id text,amount numeric(14,2));
  CREATE TABLE ars_receipt_batches(id text PRIMARY KEY,shop_id text NOT NULL,purchase_order_id text NOT NULL);
  CREATE TABLE ars_financial_accounts(id text,shop_id text,name text,kind text,active boolean,PRIMARY KEY(shop_id,id));
  CREATE TABLE ars_financial_movements(id text PRIMARY KEY,shop_id text,account_id text,amount numeric(14,2),movement_kind text,source_id text,recorded_by text,effective_date date,note text);
- INSERT INTO purchase_orders VALUES('po','shop-a');
+ INSERT INTO purchase_orders VALUES('po','shop-a','PO-CI','Supplier CI','Ordered',200.00);
  INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES('shop-a','1000','Bank','Asset'),('shop-a','1010','Cash','Asset'),('shop-a','1250','Advance','Asset'),('shop-a','1300','Inventory','Asset'),('shop-a','2000','Payable','Liability');
  INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES('shop-a','supplierAdvances','control','1250','CI','CI'),('shop-a','supplierPayables','control','2000','CI','CI'),('shop-a','financialAccount','bank','1000','CI','CI'),('shop-a','financialAccount','cash','1010','CI','CI');
  INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES('shop-a','2026-01-01','CI','CI',true);
@@ -276,6 +278,9 @@ test('supplier refund posting is atomic, scoped and replay safe',{timeout:60000}
  const request={shopId:shop,id:'refund-1',returnId:'ret',accountId:'bank',amount:'150.00',date:day,evidence:'CI receipt',actor:'CI'};
  const before=await supplierRefundAvailability(pool,shop,'ret');
  assert.equal(before.available,'200.00');
+ const reconciliationBefore=await supplierReconciliation(pool,shop,'po');
+ assert.equal(reconciliationBefore.advance,'200.00');
+ assert.equal(reconciliationBefore.payable,'0.00');
  assert.deepEqual(before.accounts.map(a=>a.id).sort(),['bank','cash']);
  for(const accountId of ['inactive','foreign','missing'])await assert.rejects(()=>recordSupplierRefund(pool,{...request,accountId}),/Active cash or bank/);
  await assert.rejects(()=>recordSupplierRefund(pool,{...request,shopId:'shop-b'}),/Active accounting|Posted purchase return/);
@@ -284,11 +289,19 @@ test('supplier refund posting is atomic, scoped and replay safe',{timeout:60000}
  assert.equal((await recordSupplierRefund(pool,request)).replayed,true);
  await assert.rejects(()=>recordSupplierRefund(pool,{...request,amount:'149.00'}),/identifier already used/);
  assert.equal((await supplierRefundAvailability(pool,shop,'ret')).available,'50.00');
+ const reconciliationPartial=await supplierReconciliation(pool,shop,'po');
+ assert.equal(reconciliationPartial.advance,'50.00');
+ assert.equal(reconciliationPartial.payable,'0.00');
  await assert.rejects(()=>recordSupplierRefund(pool,{...request,id:'over',amount:'50.01'}),/exceeds available/);
  const results=await Promise.allSettled(['refund-2','refund-3'].map(id=>recordSupplierRefund(pool,{...request,id,accountId:'cash',amount:'50.00'})));
  assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
  assert.equal(results.filter(x=>x.status==='rejected').length,1);
  assert.equal((await supplierRefundAvailability(pool,shop,'ret')).available,'0.00');
+ const reconciliationAfter=await supplierReconciliation(pool,shop,'po');
+ assert.equal(reconciliationAfter.advance,'0.00');
+ assert.equal(reconciliationAfter.payable,'0.00');
+ assert.equal(reconciliationAfter.operationallyReconciled,false);
+ await assert.rejects(()=>supplierReconciliation(pool,'shop-b','po'),/Purchase order not found/);
  assert.deepEqual((await pool.query('SELECT count(*)::int AS n,sum(amount)::text AS total FROM ars_gl_supplier_refunds')).rows[0],{n:2,total:'200.00'});
  assert.deepEqual((await pool.query("SELECT count(*)::int AS n,sum(amount)::text AS total FROM ars_financial_movements WHERE movement_kind='Supplier Return Refund'")).rows[0],{n:2,total:'200.00'});
  assert.equal((await pool.query("SELECT sum(debit-credit)::text AS net FROM ars_gl_lines WHERE account_code='1250'")).rows[0].net,'0.00');
