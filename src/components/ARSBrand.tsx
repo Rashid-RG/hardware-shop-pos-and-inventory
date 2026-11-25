@@ -21,7 +21,7 @@ export default function ARSBrand({
   className = '',
 }: ARSBrandProps) {
   return (
-    <div className={`flex min-w-0 items-center ${featured ? 'gap-5' : 'gap-3'} ${className}`} aria-label="ARS Distributor">
+    <div className={`flex min-w-0 items-center ${featured ? 'gap-5' : 'gap-3'} ${className}`} aria-label="ARS Distributors">
       {featured ? (
         <img src={arsPrintLogoUrl} alt="ARS official logo" width={92} height={74}
           className={`h-[66px] w-[82px] shrink-0 object-contain sm:h-[74px] sm:w-[92px] ${dark ? '' : 'invert'}`} />
@@ -34,7 +34,7 @@ export default function ARSBrand({
       )}
       {!compact && (
         <div className="min-w-0">
-          <p className={`font-heading leading-tight font-extrabold tracking-tight ${featured ? 'text-3xl sm:text-4xl' : 'text-lg'} ${dark ? 'text-[#12253f]' : 'text-white'}`}>ARS <span className="font-semibold">Distributor</span></p>
+          <p className={`font-heading leading-tight font-extrabold tracking-tight ${featured ? 'text-3xl sm:text-4xl' : 'text-lg'} ${dark ? 'text-[#12253f]' : 'text-white'}`}>ARS <span className="font-semibold">Distributors</span></p>
           <p className={`mt-1 font-bold uppercase tracking-[0.12em] ${featured ? 'text-xs' : 'text-[9px]'} ${dark ? 'text-amber-700' : 'text-amber-300'}`}>{subtitle}</p>
         </div>
       )}
