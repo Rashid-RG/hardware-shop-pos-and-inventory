@@ -958,43 +958,27 @@ export default function ProductManagementView({
       {/* FORM MODAL PANEL (DRAWER overlay style) */}
       {isFormOpen && createPortal(
         <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-[100]">
-          <div role="dialog" aria-modal="true" aria-label={editingProduct ? "Edit product" : "Add product"} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-200 max-h-[94dvh] flex flex-col overflow-hidden font-sans relative">
+          <div role="dialog" aria-modal="true" aria-label={editingProduct ? "Edit product" : "Add product"} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200 max-h-[92dvh] flex flex-col overflow-hidden font-sans relative">
             <button
               type="button"
               aria-label="Close product editor"
               onClick={() => setIsFormOpen(false)}
-              className="absolute top-3 right-3 rounded-lg p-2 text-slate-500 hover:bg-slate-100"
+              className="absolute top-4 right-4 z-10 rounded-lg p-2 text-white hover:bg-white/10"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="shrink-0 border-b border-slate-100 px-4 py-3 pr-12 sm:px-5">
-              <h3 className="font-heading font-semibold text-slate-900 text-lg">
-                {editingProduct ? 'Edit product' : 'Add product'}
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">Enter the product name, category, prices and quantity. ARS creates the product code automatically.</p>
-               <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold">
-                 <span className="rounded-full bg-emerald-50 text-emerald-700 px-3 py-1.5">1 · Product details</span>
-                 <span className="rounded-full bg-indigo-50 text-indigo-700 px-3 py-1.5">2 · Price & stock</span>
-                 <span className="rounded-full bg-slate-100 text-slate-600 px-3 py-1.5">3 · Save</span>
-               </div>
+            <div className="shrink-0 bg-[#182a45] px-5 py-4 pr-14 text-white">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-300">ARS Distributors · Product catalog</p>
+              <h3 className="mt-1 text-xl font-bold">{editingProduct ? 'Edit product' : 'Add product'}</h3>
+              <p className="mt-1 text-sm text-slate-300">{editingProduct ? editingProduct.name+' · '+editingProduct.sku : 'Register a wholesale product and its selling units.'}</p>
             </div>
-
             <form id="ars-product-editor" onSubmit={handleSubmit} className="min-h-0 flex flex-1 flex-col text-xs font-sans">
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-4 sm:px-6">
               <div className="grid grid-cols-2 gap-3">
                 {/* Store Department Category at the very top (full width) */}
                 <div className="col-span-2 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-150 shadow-2xs">
-                  <label className="block text-indigo-950 font-bold mb-1.5 text-sm">What type of product is this? *</label>
-                   <div className="flex flex-wrap gap-2 mb-3">
-                     {['Electrical', 'Plumbing', 'Tools', 'Paints', 'Construction'].map((suggestion) => (
-                       <button key={suggestion} type="button" onClick={() => handleCategoryChange(suggestion)}
-                         aria-pressed={category === suggestion}
-                         className={`rounded-full border px-3 py-2 text-xs font-semibold transition ${category === suggestion ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-400'}`}>
-                         {suggestion}
-                       </button>
-                     ))}
-                   </div>
+                  <label className="block text-indigo-950 font-bold mb-1.5 text-sm">Category *</label>
                   <input
                     id="input-prod-category"
                     type="text"
@@ -1070,7 +1054,7 @@ export default function ProductManagementView({
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Opening stock quantity</label>
+                      <label className="block text-slate-500 font-semibold mb-1">{editingProduct ? "Current stock quantity" : "Opening stock quantity"}</label>
                       <input
                         id="input-prod-qty"
                         type="number"
@@ -1083,6 +1067,10 @@ export default function ProductManagementView({
 
                   </>
 
+                <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3 flex flex-wrap items-center gap-3">
+                  {sanitizeImageSrc(imageUrl) ? <img src={sanitizeImageSrc(imageUrl) || undefined} alt="Product photo preview" className="h-20 w-20 rounded-lg border border-slate-200 object-contain" /> : <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50"><Package className="h-7 w-7 text-slate-400" /></div>}
+                  <div className="min-w-0 flex-1"><label htmlFor="input-prod-image" className="block font-semibold text-slate-800">{imageUrl ? 'Replace product photo' : 'Add product photo'}</label><input id="input-prod-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={isUploadingImage || isSubmitting} onChange={e=>{const file=e.target.files?.[0];if(file)handleImageUpload(file);e.target.value='';}} className="mt-2 block w-full text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700" /><p className="mt-1 text-xs text-slate-500">PNG, JPG, WEBP or GIF · up to 5 MB</p>{isUploadingImage && <p role="status" className="mt-1 text-indigo-700">Uploading image…</p>}{imageUrl && !isUploadingImage && <button type="button" onClick={()=>setImageUrl('')} className="mt-1 font-semibold text-rose-700">Remove photo</button>}</div>
+                </div>
                 <div className="col-span-2">
                   <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
                     aria-expanded={showAdvancedProduct}
@@ -1436,41 +1424,6 @@ export default function ProductManagementView({
                   </p>
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-slate-500 font-semibold mb-1">Product Image Upload</label>
-                  <input
-                    id="input-prod-image"
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/gif"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        handleImageUpload(file);
-                      }
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Supported: PNG, JPG, WEBP, GIF (max 5MB)</p>
-
-                  {isUploadingImage && (
-                    <p className="text-[11px] text-indigo-600 font-semibold mt-2">Uploading image...</p>
-                  )}
-
-                  {sanitizeImageSrc(imageUrl) && !isUploadingImage && (
-                    <div className="mt-2 flex items-center gap-3">
-                      <div className="h-16 w-16 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                        IMG
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setImageUrl('')}
-                        className="text-[11px] font-semibold text-rose-600 hover:text-rose-700"
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  )}
-                </div>
                 </div>}
               </div>
               </div>
@@ -1499,7 +1452,7 @@ export default function ProductManagementView({
                 <button
                   id="btn-submit-prod"
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isUploadingImage}
                   className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition"
                 >
                   {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : newProductMultipleUnits ? 'Save & Configure Units' : 'Save Product & Finish'}
