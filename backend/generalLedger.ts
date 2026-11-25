@@ -172,6 +172,22 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_mapping_immutable ON ars_gl_account_mappings;
  CREATE TRIGGER ars_gl_mapping_immutable BEFORE UPDATE OR DELETE ON ars_gl_account_mappings
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ -- Documentary review only: does not create a cash movement or journal.
+ CREATE TABLE IF NOT EXISTS ars_gl_partner_capital_reviews(
+  shop_id TEXT NOT NULL,entry_id TEXT NOT NULL,request_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('Included in opening balances','Discrepancy identified')),
+  entry_snapshot JSONB NOT NULL CHECK(jsonb_typeof(entry_snapshot)='object'),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  opening_journal_id TEXT,
+  reviewed_by TEXT NOT NULL,reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,request_id),
+  FOREIGN KEY(shop_id,opening_journal_id) REFERENCES ars_gl_journals(shop_id,id),
+  CHECK((decision='Included in opening balances')=(opening_journal_id IS NOT NULL))
+ );
+ CREATE INDEX IF NOT EXISTS ars_gl_partner_capital_review_entry ON ars_gl_partner_capital_reviews(shop_id,entry_id,reviewed_at);
+ DROP TRIGGER IF EXISTS ars_gl_partner_capital_review_immutable ON ars_gl_partner_capital_reviews;
+ CREATE TRIGGER ars_gl_partner_capital_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_partner_capital_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
