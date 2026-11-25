@@ -79,7 +79,12 @@ export const renderArsInvoicePdf = async (
   };
   const taxRate = Number(contact?.taxRate || 0);
   const footerY = 768;
-  const summaryHeight = 170;
+  const showDiscount = Number(tx.discountAmount || 0) !== 0;
+  const showTax = Number(tx.tax || 0) !== 0;
+  const summaryBoxHeight = Math.max(70, 8 + 22 + 16 * (1 + Number(showDiscount) + Number(showTax) + (tx.paymentMethod === 'Cash' ? 0 : 2)));
+  // Reserve the final-page signature area and handwriting space above it.
+  const signatureY = footerY - 44;
+  const summaryHeight = 9 + summaryBoxHeight + 72;
   const issued = new Date(tx.date).toLocaleString('en-GB', {timeZone:'Asia/Colombo',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
   const title = taxRate > 0 && company?.vatRegistrationNo ? 'TAX INVOICE' : 'CUSTOMER INVOICE';
   const wrap = (value:string,x:number,y:number,w:number,size=9,bold=false) => {
@@ -157,10 +162,10 @@ export const renderArsInvoicePdf = async (
   closeTable(y);
   if(y+summaryHeight>footerY){doc.addPage();y=header(true);}
   const top=y+9;
-  outline(left,top,264,70);
+  outline(left,top,264,summaryBoxHeight);
   text('Notes',left+8,top+5,248,10,true);
   wrap('Goods once sold will be exchanged only with original invoice and management approval.',left+8,top+20,248,9);
-  text('Thank you for your business.',left+8,top+52,248,9);
+  text('Thank you for your business.',left+8,top+summaryBoxHeight-17,248,9);
   const knownPaid = tx.paymentMethod === 'Credit Account' ? 0
     : tx.cashReceived != null ? Math.min(Number(tx.total), Math.max(0, Number(tx.cashReceived)))
     : String(tx.paymentStatus || '').toUpperCase() === 'PAID' ? Number(tx.total) : null;
@@ -168,25 +173,32 @@ export const renderArsInvoicePdf = async (
     ? 'Discount (' + Number(tx.wholesaleMeta.invoiceDiscountPercent || 0) + '%)'
     : tx.wholesaleMeta?.invoiceDiscountMode === 'amount' ? 'Discount (Fixed)' : 'Discount';
   const summary = [
-    ['Subtotal', formatMoney(tx.subtotal)], [discountLabel, formatMoney(tx.discountAmount || 0)],
-    ['Tax (' + taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%)', formatMoney(tx.tax || 0)], ['Total', formatMoney(tx.total)],
+    ['Subtotal', formatMoney(tx.subtotal)],
+    ...(showDiscount ? [[discountLabel, formatMoney(tx.discountAmount || 0)]] : []),
+    ...(showTax ? [['Tax (' + taxRate.toLocaleString('en-US', {minimumFractionDigits:1}) + '%)', formatMoney(tx.tax || 0)]] : []),
+    ['Total', formatMoney(tx.total)],
     ...(tx.paymentMethod === 'Cash'
       ? []
       : [['Amount Paid', knownPaid == null ? 'Not recorded' : formatMoney(knownPaid)], ['Balance Due', knownPaid == null ? 'Not recorded' : formatMoney(Math.max(0, tx.total - knownPaid))]]),
   ];
-  doc.roundedRect(304, top, 265, 70, 4).lineWidth(0.6).strokeColor(rule).stroke();
-  if (tx.paymentMethod !== 'Cash') outline(304, top+73, 265, 31);
-  summary.forEach(([name, amount], i) => {
-    const yy = top + [4, 20, 36, 52, 76, 91][i];
-    if (i === 3) outline(304, yy-2, 265, 20);
-    const size = i === 3 ? 13 : 10;
-    text(name, 314, yy, 124, size, i >= 3, 'left', ink);
+  outline(304, top, 265, summaryBoxHeight);
+  let summaryY = top + 4;
+  summary.forEach(([name, amount]) => {
+    const isTotal = name === 'Total';
+    const emphasized = isTotal || name === 'Amount Paid' || name === 'Balance Due';
+    const rowHeight = isTotal ? 22 : 16;
+    if (isTotal) {
+      line(304, summaryY, 569, summaryY);
+      if (tx.paymentMethod !== 'Cash') line(304, summaryY + rowHeight, 569, summaryY + rowHeight);
+    }
+    const size = isTotal ? 13 : 10;
+    const yy = summaryY + (isTotal ? 4 : 2);
+    text(name, 314, yy, 124, size, emphasized, 'left', ink);
     text(amount, 439, yy, 120, size, true, 'right', ink);
+    summaryY += rowHeight;
   });
-  const signatureY = top + 120;
   ['Prepared By', 'Received By', 'Authorized By'].forEach((title, i) => {
     const x = left + i * width / 3;
-    if (i > 0) line(x, signatureY-14, x, signatureY+34);
     doc.moveTo(x+18, signatureY).lineTo(x+width/3-18, signatureY).lineWidth(0.9).strokeColor(ink).stroke();
     text(title, x, signatureY+5, width/3, 10, true, 'center');
     text(i === 1 ? 'Customer' : shopName, x, signatureY+19, width/3, 9, false, 'center');
