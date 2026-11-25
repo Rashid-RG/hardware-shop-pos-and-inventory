@@ -1,8 +1,10 @@
 import { reportDay, reportTime } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
-import React,{useEffect,useState} from 'react';
+import React,{useEffect,useState,useRef} from 'react';
 import {Landmark,ShieldCheck,RefreshCcw,Plus,Users,Wallet,History,ChartNoAxesColumn,ArrowRight} from 'lucide-react';
+type CapitalRequest={requestId:string;partnerId:string;accountId:string;entryType:'Contribution'|'Drawing';amountLkr:string;entryDate:string;reference:string;note:string};
+type CapitalAccount={id:string;name:string;kind:string;active:boolean;balance:number;balanceAfterChequeCommitments?:number};
 type Partner={id:string;name:string;ownership_percent:string|null;is_active:boolean;};
 type OwnershipAudit={id:string;partner_id:string;partner_name:string;old_percent:string|null;new_percent:string|null;change_type:string;reference:string;changed_by:string;changed_at:string;};
 type Capital={id:string;partner_id:string;entry_type:'Contribution'|'Drawing';amount_lkr:string;entry_date:string;reference:string;note:string;created_by:string;};
@@ -33,6 +35,9 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
  const [reference,setReference]=useState('');
  const [note,setNote]=useState('');
  const [date,setDate]=useState(()=>reportDay(new Date()));
+ const [accounts,setAccounts]=useState<CapitalAccount[]>([]),[accountId,setAccountId]=useState(''),[pending,setPending]=useState<CapitalRequest|null>(null),[storageReady,setStorageReady]=useState(false);
+ const capitalLock=useRef(false);
+ const storageKey='ars:pending-partner-capital:'+shopId;
  const [error,setError]=useState('');
  const [notice,setNotice]=useState('');
  const [busy,setBusy]=useState(false);
@@ -43,9 +48,10 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
    return data;
  };
  const refresh=async()=>{try{
-   const [data,allocations,history,agreementHistory]=await Promise.all([
+   const [data,allocations,history,agreementHistory,financialAccounts]=await Promise.all([
      call('/api/ars/partners'),call('/api/ars/partner-profits'),
-     call('/api/ars/partner-ownership-audit'),call('/api/ars/ownership-agreements')]);
+     call('/api/ars/partner-ownership-audit'),call('/api/ars/ownership-agreements'),call('/api/financial-accounts')]);
+   setAccounts(financialAccounts.filter((a:CapitalAccount)=>a.active&&['Bank','Office Cash'].includes(a.kind)));
    setPartners(data.partners);setEntries(data.entries);setProfits(allocations);setAudits(history);setAgreements(agreementHistory);
    setAgreementShares(previous=>{
      const next:Record<string,string>={};
@@ -87,7 +93,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
      await refresh();
    }catch(e:any){setError(e.message)}finally{setBusy(false);}
  };
- useEffect(()=>{void refresh()},[authToken,shopId]);
+ useEffect(()=>{setAccounts([]);setAccountId('');setPending(null);setStorageReady(false);try{const raw=localStorage.getItem(storageKey);if(raw){const p=JSON.parse(raw);if(!p||typeof p.requestId!=='string'||typeof p.accountId!=='string'||typeof p.amountLkr!=='string')throw Error('Invalid saved capital request');setPending(p);}setStorageReady(true);}catch{setError('Saved capital request cannot be read. Administrator review required.');}void refresh()},[authToken,shopId]);
  const register=async(e:React.FormEvent)=>{
    e.preventDefault();setBusy(true);setError('');setNotice('');
    try{await call('/api/ars/partners',{method:'POST',body:JSON.stringify({name,ownershipPercent:ownership===''?null:Number(ownership)})});
@@ -119,13 +125,21 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
      await refresh();
    }catch(e:any){setError(e.message)}finally{setBusy(false);}
  };
+ const selectedAccount=accounts.find(a=>a.id===accountId);
+ const capitalIssue=!partners.some(p=>p.id===partnerId&&p.is_active)?'Select an active partner.':!selectedAccount?'Select a financial account.':!/^\d{1,12}(?:\.\d{1,2})?$/.test(amount)||Number(amount)<=0?'Enter a positive amount with up to two decimals.':!date||date>reportDay(new Date())?'Select a valid effective date.':!reference.trim()?'Enter a payment reference.':type==='Drawing'&&(selectedAccount.balanceAfterChequeCommitments===undefined||Number(amount)>selectedAccount.balanceAfterChequeCommitments)?'Insufficient or unverified uncommitted funds.':'';
+ const sendCapital=async(p:CapitalRequest)=>{
+   if(capitalLock.current)return;capitalLock.current=true;setBusy(true);setError('');setNotice('');
+   try{const result=await call('/api/ars/partner-capital/post',{method:'POST',body:JSON.stringify(p)});
+     if(result.id!=='capital-'+p.requestId||typeof result.replayed!=='boolean')throw Error('Capital transaction not confirmed.');
+     localStorage.removeItem(storageKey);setPending(null);setAmount('');setReference('');setNote('');setNotice('Capital transaction and financial journal confirmed.');await refresh();
+   }catch(e:any){setError(e.message+' Original request retained for safe retry.');}finally{capitalLock.current=false;setBusy(false);}
+ };
  const postCapital=async(e:React.FormEvent)=>{
-   e.preventDefault();
-   if(!window.confirm(`Record ${type.toLowerCase()} of Rs. ${amount} for the selected partner? This capital entry is permanent and will not change the cash drawer automatically.`))return;
-   setBusy(true);setError('');setNotice('');
-   try{await call('/api/ars/partner-capital',{method:'POST',body:JSON.stringify({partnerId,entryType:type,amountLkr:Number(amount),reference,entryDate:date,note})});
-     setAmount('');setReference('');setNote('');setNotice('Capital ledger entry recorded. Accounting bank/cash reconciliation remains separate.');await refresh();
-   }catch(e:any){setError(e.message)}finally{setBusy(false);}
+   e.preventDefault();if(busy||pending||!storageReady||capitalIssue||capitalLock.current)return;
+   if(!window.confirm('Confirm this actual '+type.toLowerCase()+'? This permanently posts capital, financial movement and journal.'))return;
+   const p:CapitalRequest={requestId:crypto.randomUUID(),partnerId,accountId,entryType:type,amountLkr:amount,entryDate:date,reference:reference.trim(),note:note.trim()};
+   try{localStorage.setItem(storageKey,JSON.stringify(p));}catch{setError('Cannot safely preserve capital request.');return;}
+   setPending(p);await sendCapital(p);
  };
  const n=(v:any)=>Number(v||0).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
  const activePartners=partners.filter(p=>p.is_active);
@@ -251,16 +265,20 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
   {workspace==='capital'&&<section aria-label="Record partner capital" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
       <h3 className="font-bold">Record partner contribution or drawing</h3>
       <p className="mt-1 text-xs text-slate-500">Records are immutable. Verify payment evidence and reference before saving.</p>
+      {pending&&<div role="status" className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm">Unconfirmed capital request. <button type="button" disabled={busy} className="rounded border px-2 py-1" onClick={()=>void sendCapital(pending)}>Retry exact request</button></div>}
+      {capitalIssue&&<p className="text-xs text-amber-800">{capitalIssue}</p>}
       <form onSubmit={postCapital} className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold">Partner
           <select required value={partnerId} onChange={e=>setPartnerId(e.target.value)} className={formField}><option value="">Select partner</option>{partners.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
         <label className="text-xs font-semibold">Transaction type
           <select value={type} onChange={e=>setType(e.target.value as 'Contribution'|'Drawing')} className={formField}><option value="Contribution">Capital contribution</option><option value="Drawing">Partner drawing</option></select></label>
+        <label className="text-xs font-semibold sm:col-span-2">Financial account<select required value={accountId} onChange={e=>setAccountId(e.target.value)} className={formField}><option value="">Select bank or office cash</option>{accounts.map(a=><option key={a.id} value={a.id}>{a.name} · {a.kind}</option>)}</select></label>
+        {selectedAccount&&<p className="text-xs sm:col-span-2">Recorded balance: Rs. {n(selectedAccount.balance)} · After cheque commitments: {selectedAccount.balanceAfterChequeCommitments===undefined?'Unavailable':'Rs. '+n(selectedAccount.balanceAfterChequeCommitments)}</p>}
         <label className="text-xs font-semibold">Amount LKR<input required min="0.01" step="0.01" type="number" value={amount} onChange={e=>setAmount(e.target.value)} className={formField}/></label>
         <label className="text-xs font-semibold">Effective date<input required type="date" value={date} onChange={e=>setDate(e.target.value)} className={formField}/></label>
         <label className="text-xs font-semibold sm:col-span-2">Bank transfer / voucher reference<input required maxLength={120} value={reference} onChange={e=>setReference(e.target.value)} className={formField}/></label>
         <label className="text-xs font-semibold sm:col-span-2">Notes<textarea maxLength={1000} rows={2} value={note} onChange={e=>setNote(e.target.value)} className={formField}/></label>
-        <button type="submit" disabled={busy||!partners.length} className="rounded-xl bg-[#172a47] px-4 py-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-2">Record permanent capital entry</button>
+        <button type="submit" disabled={busy||!!pending||!storageReady||!!capitalIssue} className="rounded-xl bg-[#172a47] px-4 py-3 text-xs font-bold text-white disabled:opacity-50 sm:col-span-2">Post capital and accounting journal</button>
       </form>
     </section>}
   {workspace==='capital'&&<section aria-label="Partner capital entries" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -269,7 +287,7 @@ export default function PartnerCapitalView({taxConfig,authToken,shopId}:Props){
       <thead className="border-b border-slate-200 text-slate-500"><tr><th className="py-2">Date</th><th>Partner</th><th>Type</th><th>Amount · LKR</th><th>Reference</th></tr></thead>
       <tbody>{entries.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="py-3">{reportDay(e.entry_date)}</td><td>{partners.find(p=>p.id===e.partner_id)?.name||'Unknown'}</td><td>{e.entry_type}</td><td className="font-semibold">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td>{e.reference}</td></tr>)}</tbody>
     </table>{entries.length===0&&<p className="py-8 text-center text-xs text-slate-500">No capital contributions or drawings recorded yet.</p>}</div>
-    <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>This ledger is separate from cash, bank accounts and profit distribution. Reconcile it with supporting documents.</p>
+    <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>New posted capital entries include cash or bank movements. Historical entries require separate reconciliation. Profit allocations remain separate.</p>
   </section>}
   {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Ownership and partner status history ({audits.length})</h3>
