@@ -15,6 +15,21 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   const [requestKey, setRequestKey] = useState(() => crypto.randomUUID());
   const [pendingReceipt, setPendingReceipt] = useState<{requestKey:string;note:string;items:{purchaseOrderItemId:number;quantity:number}[]}|null>(null);
   const posting = useRef(false);
+  const storageKey = 'ars:pending-receipt:'+JSON.stringify([shopId,poId]);
+  const [storageReady,setStorageReady]=useState(false);
+  const [storageError,setStorageError]=useState('');
+  useEffect(()=>{
+    setStorageReady(false);setStorageError('');setPendingReceipt(null);
+    try {
+      const raw=localStorage.getItem(storageKey);
+      if(raw){
+        const saved=JSON.parse(raw);
+        if(!saved||typeof saved.requestKey!=='string'||!saved.requestKey||typeof saved.note!=='string'||!Array.isArray(saved.items)||!saved.items.length||!saved.items.every((item:{purchaseOrderItemId:number;quantity:number})=>Number.isSafeInteger(item.purchaseOrderItemId)&&Number.isSafeInteger(item.quantity)&&item.quantity>0))throw Error('Invalid saved receipt');
+        setPendingReceipt(saved);setRequestKey(saved.requestKey);setNote(saved.note);
+      }
+      setStorageReady(true);
+    } catch {setStorageError('Cannot read the saved receipt. Contact an administrator before receiving this order.');}
+  },[storageKey]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -54,9 +69,14 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
     return info && Number.isSafeInteger(line.quantity) && line.quantity > 0 && line.quantity <= info.remaining;
   });
   const submit = async () => {
-    if (posting.current || loading || (!pendingReceipt && !valid)) return;
+    if (posting.current || loading || !storageReady || (!pendingReceipt && !valid)) return;
     if (!pendingReceipt && !window.confirm(`Post ${selected.length} purchase line(s) to warehouse stock for ${poNumber}? This receipt cannot be edited or deleted.`)) return;
     const request = pendingReceipt || { requestKey, note, items: selected };
+    try {
+      const existing=localStorage.getItem(storageKey);
+      if(existing&&JSON.stringify(JSON.parse(existing))!==JSON.stringify(request)){setStorageError('Another receipt is saved for this order. Reopen this screen to recover it.');setStorageReady(false);return;}
+      localStorage.setItem(storageKey,JSON.stringify(request));
+    } catch {setStorageError('Cannot preserve the receipt safely. Nothing was submitted.');return;}
     posting.current = true;
     setPendingReceipt(request);
     setSaving(true); setError(''); setSuccess('');
@@ -67,7 +87,8 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
       const data = await response.json();
       if (!response.ok) throw Error(data.error || 'Could not save goods receipt');
       setSuccess(data.repeated ? 'Previous receipt found; stock was not added again.' : `Goods receipt recorded. Status: ${data.status}.`);
-      setPendingReceipt(null); setRequestKey(crypto.randomUUID()); setNote('');
+      localStorage.removeItem(storageKey);
+      setPendingReceipt(null); setRequestKey(crypto.randomUUID()); setNote('');setStorageError('');
       await refresh(); onCommitted();
     } catch (e) {
       // Keep the request key unchanged so a retry is idempotent after an uncertain network result.
@@ -84,6 +105,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
         <div className="space-y-4 overflow-y-auto p-5">
           <p className="flex items-center gap-2 text-sm text-slate-600"><ShieldCheck className="h-4 w-4 text-emerald-600" />Only enter quantities physically checked and accepted at the warehouse.</p>
           {pendingReceipt && <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Receipt request locked: {pendingReceipt.items.length} line(s). Retry the exact receipt until its outcome is confirmed. Do not create another delivery.</p>}
+          {storageError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{storageError}</p>}
           {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
           {success && <p role="status" className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">{success}</p>}
           {loading && <p className="text-sm text-slate-500">Loading receiving balances…</p>}
@@ -135,7 +157,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 p-4">
           <div><p className="text-xs text-slate-500">{selected.length} line(s) selected · quantities use each line’s U/M</p>{selected.length>0&&!valid&&<p role="alert" className="mt-1 text-xs text-rose-700">Correct invalid quantities before posting. Each quantity must be a whole number within its remaining balance.</p>}</div>
           <div className="flex gap-2"><button type="button" onClick={onClose} disabled={saving || !!pendingReceipt} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm">Close</button>
-            <button type="button" onClick={() => void submit()} disabled={saving || loading || (!pendingReceipt && (!valid || overview?.status === 'Received'))} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><PackageCheck className="h-4 w-4" />{saving ? 'Recording…' : pendingReceipt ? 'Retry exact receipt' : 'Confirm received quantities'}</button></div>
+            <button type="button" onClick={() => void submit()} disabled={saving || loading || !storageReady || (!pendingReceipt && (!valid || overview?.status === 'Received'))} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-40"><PackageCheck className="h-4 w-4" />{saving ? 'Recording…' : pendingReceipt ? 'Retry exact receipt' : 'Confirm received quantities'}</button></div>
         </footer>
       </section>
     </div>
