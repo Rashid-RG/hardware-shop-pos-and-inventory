@@ -1,6 +1,7 @@
 # Offline PostgreSQL recovery rehearsal with optional candidate startup and historical row checks.
-param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$CandidateStartup,[string]$DependencyImage)
+param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$CandidateStartup,[string]$DependencyImage,[switch]$PreviousVersion,[string]$PreviousDependencyImage)
 $ErrorActionPreference='Stop'
+if ($PreviousVersion -and -not $CandidateStartup) { throw 'Previous-version rehearsal requires candidate startup.' }
 . (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
 if ($RecoveryId -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') { throw 'Invalid recovery identifier.' }
 $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
@@ -20,7 +21,7 @@ if ($fingerprint.digest -cne $record.preparedDigest) { throw 'Prepared release m
 & node (Join-Path $root 'scripts/verify-backup.mjs') $archive
 if ($LASTEXITCODE -ne 0) { throw 'Recovery archive verification failed.' }
 $before=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
-$receipt=Join-Path $folder $(if ($CandidateStartup) {'candidate-startup-rehearsal.json'} else {'offline-restore-rehearsal.json'})
+$receipt=Join-Path $folder $(if ($PreviousVersion) {'rollback-compatibility-rehearsal.json'} elseif ($CandidateStartup) {'candidate-startup-rehearsal.json'} else {'offline-restore-rehearsal.json'})
 if (Test-Path -LiteralPath $receipt) { throw 'Existing rehearsal evidence will not be overwritten.' }
 $answer=Read-Host 'Type OFFLINE RESTORE to test this archive in a disposable disconnected PostgreSQL container'
 if ($answer -cne 'OFFLINE RESTORE') { return }
@@ -79,6 +80,11 @@ $historicalRowsCompared=$false
 $historicalTableCount=0
 $imageId=$null
 $copyRoot=$null
+$oldCopy=$null
+$previousBuildDigest=$null
+$backwardStartupPassed=$false
+$backwardReadsPassed=$false
+$backwardWritesPassed=$false
 try {
   if ($CandidateStartup) {
     # A Windows npm installation is not a Linux dependency tree. Require a separately
@@ -166,6 +172,55 @@ try {
     $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
     $null=Invoke-DockerChecked @('stop','-t','15',$appName)
     $authenticatedWritesPassed=$true
+    if ($PreviousVersion) {
+      if ($PreviousDependencyImage -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Previous version requires its own pinned trusted dependency image.' }
+      $oldImage=@(Invoke-DockerChecked @('image','inspect','--format','{{.Id}}',$PreviousDependencyImage))
+      if ($oldImage.Count -ne 1 -or $oldImage[0] -cne $PreviousDependencyImage) { throw 'Previous dependency image mismatch.' }
+      $oldLock=(Get-FileHash -LiteralPath (Join-Path $root 'package-lock.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+      $oldLabel=@(Invoke-DockerChecked @('image','inspect','--format','{{index .Config.Labels "com.rsnextward.ars-lock-sha256"}}',$PreviousDependencyImage))
+      if ($oldLabel.Count -ne 1 -or $oldLabel[0] -cne $oldLock) { throw 'Previous dependency lockfile mismatch.' }
+      # Only executable dist output is copied; never mount the operational project.
+      $oldDist=Join-Path $root 'dist'
+      $previousBuildDigest=(Get-ArsPreparedFingerprint $oldDist).digest
+      $oldCopy=Join-Path ([IO.Path]::GetTempPath()) ('ars-previous-'+[guid]::NewGuid().ToString('N'))
+      Copy-Item -LiteralPath $oldDist -Destination $oldCopy -Recurse
+      if ((Get-ArsPreparedFingerprint $oldCopy).digest -cne $previousBuildDigest) { throw 'Previous build copy differs.' }
+      # Include the candidate's newly created transactions in the rollback baseline.
+      $rollbackSchema=Get-TestSchema $name
+      $rollbackBefore=Get-TestRowFingerprints $name $rollbackSchema
+      $null=Invoke-DockerChecked @('rm','-f','-v',$appName)
+      $appCreated=$false
+      $jwt=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
+      $null=Invoke-DockerChecked @('run','-d','--pull=never','--name',$appName,'--network',('container:'+$name),'--read-only','--tmpfs','/tmp','--tmpfs','/app/uploads','--cap-drop','ALL','--security-opt','no-new-privileges','--mount',('type=bind,source='+$oldCopy+',target=/app/dist,readonly'),'-w','/app','-e','NODE_ENV=production','-e','ARS_LISTEN_HOST=127.0.0.1','-e','PORT=3000','-e',('JWT_SECRET='+$jwt),'-e',('DATABASE_URL=postgresql://restore_admin:'+$password+'@127.0.0.1:5432/ars_update_test'),'--entrypoint','node',$PreviousDependencyImage,'dist/server.cjs')
+      $appCreated=$true
+      for ($i=0;$i -lt 90;$i++) {
+        & docker exec $appName node -e $probe | Out-Null
+        if ($LASTEXITCODE -eq 0) { $backwardStartupPassed=$true;break }
+        Start-Sleep -Seconds 2
+      }
+      if (-not $backwardStartupPassed) { throw 'Previous version failed startup on candidate-updated test database.' }
+      $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main',$appName,'node','-e',$runner,$encoded)
+      $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+      $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+      $rollbackAfter=Get-TestRowFingerprints $name $rollbackSchema
+      foreach ($table in $rollbackSchema.Keys) {
+        if ($rollbackBefore[$table] -cne $rollbackAfter[$table]) { throw "Previous version changed historical records: $table" }
+      }
+      $backwardReadsPassed=$true
+      $null=Invoke-DockerChecked @('start',$appName)
+      $oldReady=$false
+      for ($i=0;$i -lt 90;$i++) {
+        & docker exec $appName node -e $probe | Out-Null
+        if ($LASTEXITCODE -eq 0) { $oldReady=$true;break }
+        Start-Sleep -Seconds 2
+      }
+      if (-not $oldReady) { throw 'Previous version failed readiness before write test.' }
+      $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main','-e','ARS_TEST_ALLOW_WRITES=isolated-disposable',$appName,'node','-e',$runner,$writeEncoded)
+      $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+      if ((Get-ArsPreparedFingerprint $oldCopy).digest -cne $previousBuildDigest -or (Get-ArsPreparedFingerprint $oldDist).digest -cne $previousBuildDigest) { throw 'Previous build changed during rehearsal.' }
+      $backwardWritesPassed=$true
+    }
+
 
   }
   if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $before) { throw 'Recovery archive changed during test.' }
@@ -176,12 +231,13 @@ try {
   } finally {
     try {
       if ($copyRoot -and (Test-Path -LiteralPath $copyRoot)) { Remove-Item -LiteralPath $copyRoot -Recurse -Force }
+      if ($oldCopy -and (Test-Path -LiteralPath $oldCopy)) { Remove-Item -LiteralPath $oldCopy -Recurse -Force }
     } finally {
       if ($created) { $null=Invoke-DockerChecked @('rm','-f','-v',$name) }
     }
   }
 }
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;authenticatedWritesPassed=$authenticatedWritesPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
+$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;authenticatedWritesPassed=$authenticatedWritesPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;previousBuildDigest=$previousBuildDigest;previousDependencyImageId=$PreviousDependencyImage;backwardStartupPassed=$backwardStartupPassed;backwardReadsPassed=$backwardReadsPassed;backwardWritesPassed=$backwardWritesPassed;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 $bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
 $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
 try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }

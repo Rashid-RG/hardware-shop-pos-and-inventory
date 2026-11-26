@@ -181,3 +181,13 @@ test('Windows candidate transaction probe runs after preservation comparison and
  assert.match(probe,/createRequire\('\/app\/package\.json'\)/);
  assert.match(probe,/assert\.equal\(url\.pathname,'\/ars_update_test'\)/);
 });
+
+test('Windows rollback rehearsal tests prior executable against candidate-modified disposable database',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ assert.ok(s.indexOf('$authenticatedWritesPassed=$true')<s.indexOf('$rollbackBefore='));
+ assert.match(s,/Previous dependency lockfile mismatch/);
+ assert.match(s,/Previous version changed historical records/);
+ assert.match(s,/backwardWritesPassed=\$backwardWritesPassed/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.match(s,/target=\/app\/dist,readonly/);
+});
