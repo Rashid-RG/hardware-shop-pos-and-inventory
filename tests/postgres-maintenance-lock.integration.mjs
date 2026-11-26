@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {inspectRecoveryDatabase} from '../scripts/writer-loss-database-inspection.mjs';
 import {acquireRehearsalWriter} from '../scripts/database-handoff-writer-rehearsal.mjs';
 import {assertGateOwner} from '../scripts/database-handoff-gate.mjs';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
@@ -173,4 +174,18 @@ test('protected candidate lease acquisition rejects competing writers and lost c
   await coordinator.end();
   await assert.rejects(acquireRehearsalWriter(rival,identity,keys),/ownership not verified/);
  }finally{for(const c of clients)await c.end().catch(()=>{});}
+});
+
+test('read-only recovery inspection detects real competing database sessions',{timeout:30000},async()=>{
+ const observer=new pg.Client({connectionString:url.toString(),options:'-c default_transaction_read_only=on',connectionTimeoutMillis:5000,query_timeout:5000});
+ const rival=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ try{
+  await observer.connect();await rival.connect();
+  const identity=(await observer.query("SELECT current_database() AS database, system_identifier::text AS \"systemIdentifier\", (SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+  const result=await inspectRecoveryDatabase(observer,identity);
+  assert.equal(result.state,'activity-detected');
+  assert.ok(result.otherSessions>=1);
+  assert.equal(result.recoveryAllowed,false);
+  assert.equal((await inspectRecoveryDatabase(observer,{...identity,databaseOid:'0'})).state,'identity-or-readonly-mismatch');
+ }finally{await observer.end().catch(()=>{});await rival.end().catch(()=>{});}
 });
