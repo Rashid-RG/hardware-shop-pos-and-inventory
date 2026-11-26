@@ -422,6 +422,47 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_employee_advance_recovery_guard BEFORE INSERT ON ars_gl_employee_advance_recoveries
  FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_employee_advance_recovery();
  CREATE INDEX IF NOT EXISTS ars_gl_employee_advance_recovery_lookup ON ars_gl_employee_advance_recoveries(shop_id,disbursement_id,posting_date);
+ -- Salary settlements reduce accrued net pay, never salary expense a second time.
+ CREATE TABLE IF NOT EXISTS ars_gl_salary_payments(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,accrual_id TEXT NOT NULL,
+  financial_account_id TEXT NOT NULL,amount NUMERIC(16,2) NOT NULL CHECK(amount>0),
+  posting_date DATE NOT NULL,journal_id TEXT NOT NULL,
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),UNIQUE(shop_id,journal_id),
+  FOREIGN KEY(shop_id,accrual_id) REFERENCES ars_gl_payroll_accruals(shop_id,id),
+  FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_salary_payment_immutable ON ars_gl_salary_payments;
+ CREATE TRIGGER ars_gl_salary_payment_immutable BEFORE UPDATE OR DELETE ON ars_gl_salary_payments
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE OR REPLACE FUNCTION ars_gl_guard_salary_payment() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ DECLARE net NUMERIC; accrued_day DATE; accrued_journal TEXT; paid NUMERIC;
+ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('salary-payment:'||NEW.shop_id,0));
+  SELECT COALESCE(d.net_salary,a.gross_amount),a.posting_date,a.journal_id INTO net,accrued_day,accrued_journal
+   FROM ars_gl_payroll_accruals a LEFT JOIN ars_gl_payroll_details d ON d.shop_id=a.shop_id AND d.proposal_id=a.id
+   WHERE a.shop_id=NEW.shop_id AND a.id=NEW.accrual_id FOR UPDATE OF a;
+  IF NOT FOUND OR NEW.posting_date<accrued_day
+  THEN RAISE EXCEPTION 'Salary payment requires matching accrued payroll' USING ERRCODE='23514'; END IF;
+  IF EXISTS(SELECT 1 FROM ars_gl_journals WHERE shop_id=NEW.shop_id AND source_kind='Reversal' AND source_id=accrued_journal)
+  THEN RAISE EXCEPTION 'Reversed payroll requires reconciliation' USING ERRCODE='23514'; END IF;
+  SELECT COALESCE(SUM(amount),0) INTO paid FROM ars_gl_salary_payments WHERE shop_id=NEW.shop_id AND accrual_id=NEW.accrual_id;
+  IF paid+NEW.amount>net
+  THEN RAISE EXCEPTION 'Salary payment exceeds outstanding net salary' USING ERRCODE='23514'; END IF;
+  IF EXISTS(SELECT 1 FROM ars_gl_salary_payments WHERE shop_id=NEW.shop_id AND accrual_id=NEW.accrual_id AND posting_date>NEW.posting_date)
+  THEN RAISE EXCEPTION 'Salary payment date precedes recorded settlement' USING ERRCODE='23514'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=NEW.shop_id AND j.id=NEW.journal_id
+   AND j.source_kind='SalaryPayment' AND j.source_id=NEW.id AND j.posting_date=NEW.posting_date
+   AND j.recorded_by=NEW.recorded_by AND j.xmin::text::bigint=mod(txid_current(),4294967296))
+  THEN RAISE EXCEPTION 'Salary payment requires same-transaction journal' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_salary_payment_guard ON ars_gl_salary_payments;
+ CREATE TRIGGER ars_gl_salary_payment_guard BEFORE INSERT ON ars_gl_salary_payments
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_salary_payment();
+ CREATE INDEX IF NOT EXISTS ars_gl_salary_payment_lookup ON ars_gl_salary_payments(shop_id,accrual_id,posting_date);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
