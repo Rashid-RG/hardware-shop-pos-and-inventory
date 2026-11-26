@@ -118,3 +118,14 @@ test('Windows preflight backup is retained independently and never authorizes ac
  assert.match(s,/quiesced=\$false/);
  assert.doesNotMatch(s,/docker compose|Remove-Item|Stop-Process/);
 });
+
+test('Windows update rehearsal uses unique isolated restore database and records no activation approval',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-restore.ps1',import.meta.url),'utf8');
+ assert.match(s,/ars_restore_test_/);
+ assert.match(s,/restore-local-postgres-test\.ps1/);
+ assert.match(s,/Archive changed during restore rehearsal/);
+ assert.match(s,/compatibilityTestPassed=\$false/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.match(s,/FileMode\]::CreateNew/);
+ assert.doesNotMatch(s,/DROP DATABASE|docker compose|Stop-Process/);
+});
