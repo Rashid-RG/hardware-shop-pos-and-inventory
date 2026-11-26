@@ -278,3 +278,14 @@ test('Windows final backup observes database activity before and after backup wi
  assert.match(s,/externalWritersExcluded=\$false/);
  assert.doesNotMatch(s,/pg_terminate_backend|ALTER ROLE|REVOKE CONNECT/);
 });
+
+test('Windows switch preflight binds final backup to maintenance and rollback rehearsal without activation',()=>{
+ const s=readFileSync(new URL('../scripts/plan-windows-update-switch.ps1',import.meta.url),'utf8');
+ assert.match(s,/Final backup belongs to a different maintenance session/);
+ assert.match(s,/rollback-compatibility-rehearsal\.json/);
+ assert.match(s,/Previous executable differs from rehearsal/);
+ assert.match(s,/backwardWritesPassed/);
+ assert.match(s,/activationAllowed=\$false/);
+ assert.match(s,/rollbackAllowed=\$false/);
+ assert.doesNotMatch(s,/Move-Item|Remove-Item|Start-Process|pg_restore|docker compose/);
+});
