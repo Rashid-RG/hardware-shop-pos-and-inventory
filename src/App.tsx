@@ -603,6 +603,7 @@ export default function App() {
   };
 
   const handleAddProductCategory = async (categoryName: string) => {
+    if(!(currentRole==='Super Admin'&&!authUser?.scopedShopId&&!authUser?.fixedShopId&&!(authUser?.allowedShopIds||[]).length))throw Error('Shared categories require an unrestricted administrator session.');
     const normalized = categoryName.trim();
     if (!normalized) {
       throw new Error('Category name is required');
@@ -617,7 +618,7 @@ export default function App() {
 
     const res = await apiRequest('/api/settings', {
       method: 'PUT',
-      body: JSON.stringify(nextSettings),
+      body: JSON.stringify({productCategories:nextSettings.productCategories}),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -1248,6 +1249,7 @@ export default function App() {
                   onAddProduct={handleAddProduct}
                   onEditProduct={handleEditProduct}
                   onDeleteProduct={handleDeleteProduct}
+                  canManageCategories={currentRole==='Super Admin'&&!authUser?.scopedShopId&&!authUser?.fixedShopId&&!(authUser?.allowedShopIds||[]).length}
                   onAddCategory={handleAddProductCategory}
                 />
               )}

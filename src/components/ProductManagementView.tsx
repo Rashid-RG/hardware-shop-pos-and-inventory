@@ -29,6 +29,7 @@ interface ProductManagementViewProps {
   onAddProduct: (prodData: Omit<Product, 'id'>) => Promise<Product>;
   onEditProduct: (id: string, prodData: Partial<Product> & { reason?: string; user?: string }) => Promise<void>;
   onDeleteProduct: (id: string) => Promise<void>;
+  canManageCategories?: boolean;
   onAddCategory: (categoryName: string) => Promise<void>;
 }
 
@@ -41,6 +42,7 @@ export default function ProductManagementView({
   onEditProduct,
   onDeleteProduct,
   onAddCategory,
+  canManageCategories=false,
 }: ProductManagementViewProps) {
   const currencySymbol = 'Rs.';
   const unitOptions = ['Piece', 'Liter', 'Milliliter', 'Kilogram', 'Gram', 'Meter', 'Feet', 'Roll', 'Box', 'Bag', 'Pack', 'Set', 'Square Feet', 'Square Meter'];
@@ -698,6 +700,7 @@ export default function ProductManagementView({
 
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(!canManageCategories)return;
     const normalized = newCategoryName.trim();
     if (!normalized) {
       notify.warning('Please enter a category name.');
@@ -748,7 +751,7 @@ export default function ProductManagementView({
   // Access flags
   const canModify = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
 
-  const catalogModalOpen = isFormOpen || !!packagingProduct || isCategoryModalOpen;
+  const catalogModalOpen = isFormOpen || !!packagingProduct || (isCategoryModalOpen && canManageCategories);
   useEffect(() => {
     if (!catalogModalOpen) return;
     const bodyOverflow = document.body.style.overflow;
@@ -797,7 +800,7 @@ export default function ProductManagementView({
           </select>
           <button type="button" aria-pressed={showCatalogMetrics} onClick={()=>setShowCatalogMetrics(v=>!v)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold">{showCatalogMetrics?'Hide metrics':'Show metrics'}</button>
           {canModify && <button id="btn-add-product" type="button" onClick={handleOpenAdd} className="flex items-center gap-1.5 rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white"><Plus className="h-4 w-4"/> Add Product</button>}
-          {canModify && (
+          {canModify && canManageCategories && (
             <button
               type="button"
               onClick={() => setIsCategoryModalOpen(true)}
@@ -1524,7 +1527,7 @@ export default function ProductManagementView({
         </div>, document.body
       )}
 
-      {isCategoryModalOpen && createPortal(
+      {isCategoryModalOpen && canManageCategories && createPortal(
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-200 font-sans relative">
             <button
