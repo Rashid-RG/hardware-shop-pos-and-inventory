@@ -256,3 +256,14 @@ test('Windows final backup requires matching shutdown evidence, holds launcher m
  assert.match(s,/quiesced=\$false/);
  assert.match(s,/activationApproved=\$false/);
 });
+
+test('Windows maintenance cancellation archives evidence before removing restart block and never restores database',()=>{
+ const s=readFileSync(new URL('../scripts/cancel-windows-maintenance.ps1',import.meta.url),'utf8');
+ assert.match(s,/Matching verified pre-activation shutdown required/);
+ assert.match(s,/activation\.json/);
+ assert.match(s,/ARSDistributorPOSLauncher/);
+ assert.match(s,/CANCEL MAINTENANCE/);
+ assert.ok(s.indexOf('Maintenance evidence archive verification failed')<s.indexOf('Remove-Item -LiteralPath $marker'));
+ assert.ok(s.indexOf('Remove-Item -LiteralPath $proof')<s.indexOf('Remove-Item -LiteralPath $marker'));
+ assert.doesNotMatch(s,/pg_restore|docker compose|Start-Process|Stop-Process/);
+});
