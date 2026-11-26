@@ -27,6 +27,7 @@ import { cutoverReadiness } from './backend/cutoverReadiness';
 import { listDocumentaryReviews, submitDocumentaryReview } from './backend/documentaryReconciliation';
 import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
 import { postPartnerCapital } from './backend/partnerCapitalPosting';
+import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend/partnerCapitalReview';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7675,6 +7676,33 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
+app.get('/api/ars/partner-capital/:entryId/reviews',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ const entryId=req.params.entryId;
+ if(typeof entryId!=='string'||!entryId.trim()||entryId.length>200)return res.status(400).json({error:'Invalid capital entry identifier.'});
+ try{
+  if(!(await pool.query('SELECT 1 FROM ars_partner_capital_entries WHERE shop_id=$1 AND id=$2',[scope.shopId,entryId])).rowCount)return res.status(404).json({error:'Capital entry not found.'});
+  return res.json(await listHistoricalCapitalReviews(pool,scope.shopId,entryId));
+ }catch(error){console.error('Historical capital review history failed',error);return res.status(503).json({error:'Unable to load capital review history.'});}
+});
+app.post('/api/ars/partner-capital/:entryId/reviews',requireRole(['Super Admin']),async(req,res)=>{
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const entryId=req.params.entryId,{requestId,decision,evidence,openingJournalId}=req.body||{};
+ if(typeof entryId!=='string'||!entryId.trim()||entryId.length>200||!validChequeRequestId(requestId)||!['Included in opening balances','Discrepancy identified'].includes(decision)||typeof evidence!=='string'||!evidence.trim()||evidence.trim().length>500||(openingJournalId!==undefined&&(typeof openingJournalId!=='string'||!openingJournalId.trim()||openingJournalId.length>200))||(decision==='Included in opening balances')!==!!openingJournalId)return res.status(400).json({error:'Valid historical review details and evidence required.'});
+ try{
+  const result=await reviewHistoricalCapital(pool,scope.shopId,scope.recordedBy,{requestId,entryId,decision,evidence,openingJournalId});
+  return res.status(result.replayed?200:201).json(result);
+ }catch(error){
+  const message=error instanceof Error?error.message:'';
+  if(message==='Historical capital entry not found.')return res.status(404).json({error:message});
+  if(['Valid historical capital review and evidence required.','Opening journal required only for inclusion review.','Review request already used with different details.','Linked financial posting requires a different reconciliation workflow.','Approved opening journal at accounting cutover required.'].includes(message))return res.status(409).json({error:message});
+  console.error('Historical capital review failed',error);return res.status(503).json({error:'Unable to confirm review. Retry identical details and request identifier.'});
+ }
+});
 app.get('/api/ars/partner-capital/requests/:requestId',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
