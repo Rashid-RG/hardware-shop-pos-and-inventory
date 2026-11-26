@@ -66,3 +66,27 @@ test('maintenance writer lease excludes application startup until connection end
   await candidate.end().catch(()=>{});
  }
 });
+
+test('handoff gate remains held while writer lease changes owners',{timeout:30000},async()=>{
+ const gate=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const old=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const next=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const rival=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const cls=1642958133;
+ // Random disposable keys prevent interference with the real application lease.
+ const key=Math.floor(Math.random()*900000000)*2+10;
+ const acquire=(c,id)=>c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[cls,id]);
+ const release=(c,id)=>c.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[cls,id]);
+ try{
+  for(const c of [gate,old,next,rival]) await c.connect();
+  assert.equal((await acquire(old,key)).rows[0].acquired,true);
+  assert.equal((await acquire(gate,key+1)).rows[0].acquired,true);
+  assert.equal((await acquire(rival,key+1)).rows[0].acquired,false);
+  assert.equal((await release(old,key)).rows[0].released,true);
+  assert.equal((await acquire(rival,key+1)).rows[0].acquired,false);
+  assert.equal((await acquire(next,key)).rows[0].acquired,true);
+  assert.equal((await release(gate,key+1)).rows[0].released,true);
+  assert.equal((await acquire(rival,key+1)).rows[0].acquired,true);
+  assert.equal((await acquire(rival,key)).rows[0].acquired,false);
+ }finally{for(const c of [gate,old,next,rival])await c.end().catch(()=>{});}
+});
