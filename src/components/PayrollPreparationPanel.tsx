@@ -4,6 +4,7 @@ import PayrollPolicyPanel from './PayrollPolicyPanel';
 import PayrollEligibilityPanel from './PayrollEligibilityPanel';
 import EmployeeAdvancePanel from './EmployeeAdvancePanel';
 import SalaryPaymentPanel from './SalaryPaymentPanel';
+import StatutorySettlementPanel from './StatutorySettlementPanel';
 type Props={shopId:string;authToken:string;owner:string;employees:{id:string;name:string;salary:number}[];key?:string};
 type Calculation={baseSalary:string;earnings:{id:string;kind:'Overtime'|'Bonus'|'Allowance';amount:string;evidence:string}[];deductions:{id:string;kind:'UnpaidLeave'|'Other'|'AdvanceRecovery';amount:string;evidence:string}[];contributions:never[];policyReference:string};
 type AdvanceBalance={id:string;employee_id:string;posting_date:string;outstanding:string};
@@ -18,7 +19,7 @@ export default function PayrollPreparationPanel(props:Props){
  return <PayrollSections key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;
 }
 function PayrollSections(props:Props){
- const [section,setSection]=useState<'monthly'|'policies'|'eligibility'|'advances'|'payments'>('monthly');
+ const [section,setSection]=useState<'monthly'|'policies'|'eligibility'|'advances'|'payments'|'statutory'>('monthly');
  return <div className="space-y-3">
   <nav aria-label="Payroll sections" className="flex flex-wrap gap-2 rounded-xl border bg-white p-2">
    <button type="button" aria-pressed={section==='monthly'} className={button+' '+(section==='monthly'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('monthly')}>Monthly payroll</button>
@@ -26,8 +27,9 @@ function PayrollSections(props:Props){
    <button type="button" aria-pressed={section==='eligibility'} className={button+' '+(section==='eligibility'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('eligibility')}>Employee eligibility</button>
    <button type="button" aria-pressed={section==='advances'} className={button+' '+(section==='advances'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('advances')}>Salary advances</button>
    <button type="button" aria-pressed={section==='payments'} className={button+' '+(section==='payments'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('payments')}>Salary payments</button>
+   <button type="button" aria-pressed={section==='statutory'} className={button+' '+(section==='statutory'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('statutory')}>EPF / ETF settlements</button>
   </nav>
-  {section==='monthly'?<PayrollWorkspace {...props}/>:section==='policies'?<PayrollPolicyPanel shopId={props.shopId} authToken={props.authToken} owner={props.owner}/>:section==='eligibility'?<PayrollEligibilityPanel {...props}/>:section==='advances'?<EmployeeAdvancePanel {...props}/>:<SalaryPaymentPanel shopId={props.shopId} authToken={props.authToken}/>}
+  {section==='monthly'?<PayrollWorkspace {...props}/>:section==='policies'?<PayrollPolicyPanel shopId={props.shopId} authToken={props.authToken} owner={props.owner}/>:section==='eligibility'?<PayrollEligibilityPanel {...props}/>:section==='advances'?<EmployeeAdvancePanel {...props}/>:section==='payments'?<SalaryPaymentPanel shopId={props.shopId} authToken={props.authToken}/>:<StatutorySettlementPanel shopId={props.shopId} authToken={props.authToken}/>}
  </div>;
 }
 function PayrollWorkspace({shopId,authToken,owner,employees}:Props){
