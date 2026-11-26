@@ -51,6 +51,7 @@ jobs:
       - name: Release fingerprint regression tests
         run: |
           python3 scripts/mint/test-release-fingerprint.py
+          python3 scripts/mint/test-open.py
           python3 scripts/mint/test-switch-journal.py
           python3 scripts/mint/test-switch-coordinator.py
           python3 scripts/mint/test-interrupted-switch.py
