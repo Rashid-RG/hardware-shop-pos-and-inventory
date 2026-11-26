@@ -37,6 +37,7 @@ import { prepareEmployeeAdvance, reviewEmployeeAdvance, listEmployeeAdvanceReque
 import { listSalaryBalances, listSalaryPayments } from './backend/salaryPayments';
 import { listMonthlyStatutoryLiabilities, listStatutorySettlementHistory } from './backend/statutoryRegister';
 import { listStatutoryBankAvailability } from './backend/statutoryBankAvailability';
+import { reconcileStatutoryContributions } from './backend/statutoryReconciliation';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7726,6 +7727,14 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
+});
+app.get('/api/ars/payroll/statutory-settlements/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;
+ if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{return res.json(await reconcileStatutoryContributions(pool,scope.shopId,period));}
+ catch(error){console.error('Statutory reconciliation failed',error);return res.status(503).json({error:'Unable to confirm statutory reconciliation.'});}
 });
 app.get('/api/ars/payroll/statutory-settlements/banks',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
