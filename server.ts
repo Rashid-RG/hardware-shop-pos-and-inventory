@@ -30,7 +30,7 @@ import { postPartnerCapital } from './backend/partnerCapitalPosting';
 import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend/partnerCapitalReview';
 import { partnerCapitalStatement, exportPartnerCapitalStatement } from './backend/partnerCapitalStatement';
 import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/payrollPreparation';
-import { calculatePayroll } from './backend/payrollCalculation';
+import { calculatePayroll, calculateStatutoryPayroll } from './backend/payrollCalculation';
 import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effectivePayrollPolicy } from './backend/payrollPolicies';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
@@ -7721,6 +7721,25 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
+});
+app.post('/api/ars/payroll/calculate-statutory',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {employeeId,period,calculation,eligibilityEvidence}=req.body||{};
+ if(typeof employeeId!=='string'||!employeeId.trim()||employeeId.length>200||typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||period>reportDay(new Date()).slice(0,7)||typeof eligibilityEvidence!=='string'||!eligibilityEvidence.trim()||eligibilityEvidence.trim().length>500||!calculation||typeof calculation!=='object'||Array.isArray(calculation))return res.status(400).json({error:'Valid employee, payroll month, calculation and provisional eligibility evidence required.'});
+ try{
+  const employee=(await pool.query('SELECT salary::text AS salary FROM employees WHERE shop_id=$1 AND id=$2',[scope.shopId,employeeId])).rows[0];
+  if(!employee)return res.status(404).json({error:'Employee not found in this shop.'});
+  const preliminary=calculatePayroll(calculation);
+  if(preliminary.baseSalary!==calculatePayroll({baseSalary:employee.salary,earnings:[],deductions:[],contributions:[],policyReference:'Salary verification'}).baseSalary)return res.status(409).json({error:'Base salary changed. Refresh and review payroll.'});
+  const policy=await effectivePayrollPolicy(pool,scope.shopId,period);
+  const result=calculateStatutoryPayroll(calculation,policy);
+  return res.json({employeeId,period,policyId:result.policyId,effectiveMonth:policy.effective_month,calculation:result.results,eligibilityEvidence:eligibilityEvidence.trim(),statutoryVerified:false,postingEnabled:false});
+ }catch(error){
+  const message=error instanceof Error?error.message:'';
+  if(payrollErrors.has(message)||payrollPolicyErrors.has(message)||['Approved policy terms and payroll without manual contributions required.','Executable statutory eligibility rules required.','Explicit statutory earnings and unpaid leave treatment required.','Statutory contribution basis cannot be negative.'].includes(message))return res.status(409).json({error:message});
+  console.error('Statutory payroll preview failed',error);return res.status(503).json({error:'Unable to verify provisional statutory calculation.'});
+ }
 });
 app.post('/api/ars/payroll/calculate',requireRole(['Super Admin']),(req,res)=>{
  res.setHeader('Cache-Control','no-store');
