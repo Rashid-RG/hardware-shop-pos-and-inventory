@@ -1,4 +1,9 @@
-import {moneyCents} from './generalLedger';
+// Keep this arithmetic module independent of database initialization and test-loader resolution.
+function moneyCents(value:string):bigint{
+ if(typeof value!=='string'||!/^\d{1,14}(?:\.\d{1,2})?$/.test(value))throw Error('Use a non-negative decimal amount with at most two decimal places.');
+ const [whole,fraction='']=value.split('.');
+ return BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
+}
 type EarningKind='Overtime'|'Bonus'|'Allowance';
 type DeductionKind='UnpaidLeave'|'AdvanceRecovery'|'Other';
 type Component<K>={id:string;kind:K;amount:string;evidence:string};
