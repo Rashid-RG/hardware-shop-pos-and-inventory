@@ -244,3 +244,15 @@ test('retained Windows maintenance marker blocks launcher restart and precedes s
  assert.ok(stop.indexOf('$process.WaitForExit(120000)')<stop.indexOf("'maintenance-shutdown.json'"));
  assert.match(stop,/activationApproved=\$false/);
 });
+
+test('Windows final backup requires matching shutdown evidence, holds launcher mutex and does not approve activation',()=>{
+ const s=readFileSync(new URL('../scripts/prepare-windows-final-backup.ps1',import.meta.url),'utf8');
+ assert.match(s,/maintenance-shutdown\.json/);
+ assert.match(s,/Matching verified maintenance shutdown evidence required/);
+ assert.match(s,/ARSDistributorPOSLauncher/);
+ assert.ok(s.indexOf('$maintenanceDigest=Assert-Maintenance')<s.indexOf('backup-local-postgres.ps1'));
+ assert.match(s,/Maintenance evidence changed during backup/);
+ assert.match(s,/externalWritersExcluded=\$false/);
+ assert.match(s,/quiesced=\$false/);
+ assert.match(s,/activationApproved=\$false/);
+});
