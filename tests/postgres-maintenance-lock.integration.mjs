@@ -360,3 +360,20 @@ test('supplier and stock estimates distinguish incomplete coverage on temporary 
  assert.equal(r.recoveryAllowed,false);
  }finally{await c.end();}
 });
+
+test('partner controls compare contributions and drawings separately on disposable temporary tables',{timeout:30000},async()=>{
+ const {inspectRecoveryPartnerControls}=await import('../scripts/writer-loss-partner-controls.mjs');
+ const c=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
+ try{
+ await c.connect();
+ const expected=(await c.query("SELECT current_database() AS database,system_identifier::text AS \"systemIdentifier\",(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+ await c.query("CREATE TEMP TABLE ars_business_partners(shop_id text,id text); CREATE TEMP TABLE ars_partner_capital_entries(shop_id text,id text,partner_id text,entry_type text,amount_lkr numeric,entry_date date,created_by text); CREATE TEMP TABLE ars_gl_journals(shop_id text,id text,source_kind text,source_id text,posting_date date,recorded_by text); CREATE TEMP TABLE ars_gl_cutover(shop_id text,posting_enabled boolean); CREATE TEMP TABLE ars_gl_accounts(shop_id text,code text,kind text,active boolean); CREATE TEMP TABLE ars_gl_account_mappings(shop_id text,mapping_kind text,source_id text,account_code text); CREATE TEMP TABLE ars_gl_lines(shop_id text,account_code text,debit numeric,credit numeric)");
+ await c.query("INSERT INTO ars_business_partners VALUES ('s','p'); INSERT INTO ars_partner_capital_entries VALUES ('s','a','p','Contribution',100.25,'2026-01-01','u'),('s','b','p','Drawing',20.10,'2026-01-02','u'); INSERT INTO ars_gl_journals VALUES ('s','j1','PartnerCapital','a','2026-01-01','u'),('s','j2','PartnerCapital','b','2026-01-02','u'); INSERT INTO ars_gl_cutover VALUES ('s',true); INSERT INTO ars_gl_accounts VALUES ('s','3000','Equity',true),('s','3001','Equity',true); INSERT INTO ars_gl_account_mappings VALUES ('s','partnerCapital','p','3000'),('s','partnerDrawings','p','3001'); INSERT INTO ars_gl_lines VALUES ('s','3000',0,100.25),('s','3001',20.10,0)");
+ assert.equal((await inspectRecoveryPartnerControls(c,expected)).counts['selected-balance-matches'],2);
+ await c.query("UPDATE ars_gl_lines SET debit=21.10 WHERE account_code='3001'");
+ assert.equal((await inspectRecoveryPartnerControls(c,expected)).counts['balance-difference'],1);
+ await c.query("INSERT INTO ars_gl_journals VALUES ('s','r','Reversal','j1','2026-01-03','u')");
+ const r=await inspectRecoveryPartnerControls(c,expected);
+ assert.equal(r.counts['entry-review'],1);assert.equal(r.recoveryAllowed,false);
+ }finally{await c.end();}
+});
