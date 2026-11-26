@@ -117,7 +117,8 @@ dotenv.config();
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
 const PORT = Number(process.env.PORT || 3000);
-const SHUTDOWN_TIMEOUT_MS = 10_000;
+const SHUTDOWN_WARNING_MS = 10_000;
+let shutdownRequested = false;
 const PROCESS_STARTED_AT = Date.now();
 
 const parseCsvList = (value?: string) => (value || '')
@@ -207,6 +208,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// Reject new requests before parsing bodies or admitting writes once shutdown starts.
+app.use((_req, res, next) => {
+  if (!shutdownRequested) return next();
+  res.setHeader('Connection', 'close');
+  res.setHeader('Retry-After', '60');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(503).json({ ok: false, status: 'maintenance', error: 'Application is shutting down. Retry only after checking the original transaction status.' });
+});
 app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -2760,6 +2769,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.get('/api/ready', async (_req, res) => {
+  if (shutdownRequested) return res.status(503).json({ ok: false, status: 'maintenance' });
   if (!databaseWriteHealthy) {
     return res.status(503).json({
       ok: false,
@@ -8190,26 +8200,39 @@ async function startServer() {
   });
 
   const shutdown = (signal: string) => {
-    console.log(`${signal} received. Shutting down gracefully...`);
-    const timeout = setTimeout(() => {
-      console.error('Graceful shutdown timed out. Forcing exit.');
-      process.exit(1);
-    }, SHUTDOWN_TIMEOUT_MS);
-
-    server.close(async () => {
-      clearTimeout(timeout);
+    if (shutdownRequested) return;
+    shutdownRequested = true;
+    console.log(`${signal} received. Rejecting new requests and closing application listener.`);
+    // A slow request is not permission to terminate the process during business operations.
+    const warning = setTimeout(() => {
+      console.error('Graceful shutdown is still pending. Do not force-stop PostgreSQL or start another application instance.');
+    }, SHUTDOWN_WARNING_MS);
+    server.close(async (closeError) => {
+      if (closeError) {
+        clearTimeout(warning);
+        console.error('HTTP shutdown failed; application remains in maintenance mode.', closeError);
+        process.exitCode = 1;
+        return;
+      }
       try {
+        await writeQueue;
         await releaseSingleWriterLease();
         await pool.end();
+        console.log('Application listener and PostgreSQL pool closed.');
+        process.exit(0);
       } catch (error) {
-        console.error('Error while closing PostgreSQL pool:', error);
+        console.error('Database shutdown failed; maintenance remains unverified:', error);
+        process.exitCode = 1;
+      } finally {
+        clearTimeout(warning);
       }
-      process.exit(0);
     });
+    server.closeIdleConnections();
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  // Repeated signals must not bypass the in-progress shutdown.
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 process.on('unhandledRejection', (error) => {

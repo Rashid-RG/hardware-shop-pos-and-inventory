@@ -191,3 +191,15 @@ test('Windows rollback rehearsal tests prior executable against candidate-modifi
  assert.match(s,/activationApproved=\$false/);
  assert.match(s,/target=\/app\/dist,readonly/);
 });
+
+test('server shutdown refuses new requests and does not force exit on warning timeout',()=>{
+ const s=readFileSync(new URL('../server.ts',import.meta.url),'utf8');
+ const shutdown=s.slice(s.indexOf('  const shutdown = (signal: string) => {'),s.indexOf("process.on('unhandledRejection'"));
+ assert.match(s,/if \(!shutdownRequested\) return next\(\)/);
+ assert.match(s,/status: 'maintenance'/);
+ assert.match(shutdown,/if \(shutdownRequested\) return/);
+ assert.match(shutdown,/await writeQueue/);
+ assert.match(shutdown,/server\.closeIdleConnections/);
+ assert.doesNotMatch(shutdown,/process\.exit\(1\)|Forcing exit/);
+ assert.match(shutdown,/process\.on\('SIGTERM'/);
+});
