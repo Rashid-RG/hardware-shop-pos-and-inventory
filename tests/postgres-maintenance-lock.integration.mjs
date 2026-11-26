@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {rehearseProtectedRecovery} from '../scripts/writer-loss-protected-rehearsal.mjs';
 import {inspectRecoveryDatabase} from '../scripts/writer-loss-database-inspection.mjs';
 import {acquireRehearsalWriter} from '../scripts/database-handoff-writer-rehearsal.mjs';
 import {assertGateOwner} from '../scripts/database-handoff-gate.mjs';
@@ -188,4 +189,27 @@ test('read-only recovery inspection detects real competing database sessions',{t
   assert.equal(result.recoveryAllowed,false);
   assert.equal((await inspectRecoveryDatabase(observer,{...identity,databaseOid:'0'})).state,'identity-or-readonly-mismatch');
  }finally{await observer.end().catch(()=>{});await rival.end().catch(()=>{});}
+});
+
+test('protected recovery rehearsal releases both keys after success or competing writer',{timeout:30000},async()=>{
+ const make=()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const rival=make(),first=make(),second=make();
+ const gateId=Math.floor(Math.random()*900000000)*2+10,writerId=gateId+1;
+ const keys={gateId,writerId};
+ const acquire=async id=>(await rival.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,id])).rows[0].acquired;
+ const release=async id=>(await rival.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[1642958133,id])).rows[0].released;
+ try{
+  await rival.connect();await first.connect();
+  assert.equal(await acquire(writerId),true);
+  await assert.rejects(rehearseProtectedRecovery(first,keys),/lock unavailable/);
+  assert.equal(await acquire(gateId),true);
+  assert.equal(await release(gateId),true);
+  assert.equal(await release(writerId),true);
+  await second.connect();
+  const result=await rehearseProtectedRecovery(second,keys);
+  assert.equal(result.state,'protected-rehearsal-observed');
+  assert.equal(result.recoveryAllowed,false);
+  assert.equal(await acquire(gateId),true);
+  assert.equal(await acquire(writerId),true);
+ }finally{for(const c of [rival,first,second])await c.end().catch(()=>{});}
 });
