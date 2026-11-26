@@ -65,7 +65,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
-import { Pool, PoolClient } from 'pg';
+import { Client, Pool, PoolClient } from 'pg';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import QRCode from 'qrcode';
@@ -277,15 +277,26 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // The legacy Windows server holds mutable state in process memory and replaces
 // normalized tables during saves. Only one instance may own a PostgreSQL
 // database until all writes have migrated to targeted SQL transactions.
-// Session-level advisory lock stays held on this dedicated pooled connection.
+// Session-level advisory lock stays held on this dedicated non-pooled connection.
 const SINGLE_WRITER_LOCK_CLASS = 1642958133;
 const SINGLE_WRITER_LOCK_ID = 1;
 const DATABASE_HANDOFF_GATE_ID = 2;
-let singleWriterLease: PoolClient | null = null;
+let singleWriterLease: Client | null = null;
 
 const acquireSingleWriterLease = async () => {
-  const client = await pool.connect();
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  let connectionLost = false;
+  client.on('error', (error) => {
+    connectionLost = true;
+    if (singleWriterLease !== client) return;
+    databaseWriteHealthy = false;
+    interruptedWriteRequiresReview = true;
+    try { recordWriterLoss(runtimePaths.root); }
+    catch (recordError) { console.error('Writer loss recovery evidence could not be persisted. Do not restart before reconciliation.', recordError); }
+    console.error('Hardware POS single-writer lease connection lost; requests blocked and operator reconciliation required.', error);
+  });
   try {
+    await client.connect();
     const gate = await client.query<{ acquired: boolean }>(
       'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
       [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
@@ -301,23 +312,16 @@ const acquireSingleWriterLease = async () => {
     if (!result.rows[0]?.acquired) {
       throw new Error('Another Hardware POS server already owns this database. Stop the duplicate instance before starting.');
     }
-    client.on('error', (error) => {
-      if (singleWriterLease !== client) return;
-      databaseWriteHealthy = false;
-      interruptedWriteRequiresReview = true;
-      try { recordWriterLoss(runtimePaths.root); }
-      catch (recordError) { console.error('Writer loss recovery evidence could not be persisted. Do not restart before reconciliation.', recordError); }
-      console.error('Hardware POS single-writer lease connection lost; requests blocked and operator reconciliation required.', error);
-    });
+    singleWriterLease = client;
     const released = await client.query<{ released: boolean }>(
       'SELECT pg_advisory_unlock($1::integer, $2::integer) AS released',
       [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
     );
     if (released.rows[0]?.released !== true) throw new Error('Database handoff gate release not verified.');
-    singleWriterLease = client;
+    if (connectionLost) throw new Error('Writer lease connection lost during startup.');
   } catch (error) {
-    // Destroy the physical session on failure; never return a locked session to the pool.
-    client.release(true);
+    singleWriterLease = null;
+    await client.end();
     throw error;
   }
 };
@@ -332,8 +336,8 @@ const releaseSingleWriterLease = async () => {
     ]);
     if (result.rows[0]?.released !== true) throw new Error('Database writer lease release not verified.');
   } finally {
-    // Never return an ambiguously locked or broken lease session to the pool.
-    client.release(true);
+    // Close the independent session even if explicit unlock failed.
+    await client.end();
   }
 };
 const LOGIN_ATTEMPT_LIMIT = 5;
@@ -8257,6 +8261,7 @@ async function startServer() {
     });
   }
 
+  if (interruptedWriteRequiresReview || !singleWriterLease) throw new Error('Writer lease unavailable before listener startup.');
   const listenHost = process.env.ARS_LISTEN_HOST || '0.0.0.0';
   const server = app.listen(PORT, listenHost, () => {
     const address = server.address();
@@ -8288,8 +8293,9 @@ async function startServer() {
           process.exitCode = 1;
           return;
         }
-        await releaseSingleWriterLease();
         await pool.end();
+        if (interruptedWriteRequiresReview) throw new Error('Writer loss during pool drain requires reconciliation.');
+        await releaseSingleWriterLease();
         console.log('Application listener and PostgreSQL pool closed.');
         process.exit(0);
       } catch (error) {
@@ -8347,8 +8353,8 @@ process.on('uncaughtException', (error) => {
 startServer().catch(async (error) => {
   console.error('Server startup failed:', error);
   try {
-    await releaseSingleWriterLease();
     await pool.end();
+    await releaseSingleWriterLease();
   } catch (shutdownError) {
     console.error('Cleanup after failed startup failed:', shutdownError);
   }

@@ -12,5 +12,15 @@ test('lost writer lease requires reconciliation and blocks API except diagnostic
 test('writer release verifies unlock and destroys dedicated lease session',()=>{
  const section=source.slice(source.indexOf('const releaseSingleWriterLease'),source.indexOf('const LOGIN_ATTEMPT_LIMIT'));
  assert.match(section,/released !== true/);
- assert.match(section,/client\.release\(true\)/);
+ assert.match(section,/await client\.end\(\)/);
+});
+
+test('dedicated writer session remains held until business pool drains',()=>{
+ const acquisition=source.slice(source.indexOf('const acquireSingleWriterLease'),source.indexOf('const LOGIN_ATTEMPT_LIMIT'));
+ assert.match(acquisition,/new Client\(/);
+ assert.doesNotMatch(acquisition,/pool\.connect\(/);
+ assert.ok(acquisition.indexOf("client.on('error'")<acquisition.indexOf('await client.connect()'));
+ const shutdown=source.slice(source.indexOf('const shutdown ='),source.indexOf("process.on('unhandledRejection'"));
+ assert.ok(shutdown.indexOf('await pool.end()')<shutdown.indexOf('await releaseSingleWriterLease()'));
+ assert.match(shutdown,/Writer loss during pool drain/);
 });
