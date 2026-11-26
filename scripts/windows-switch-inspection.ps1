@@ -13,7 +13,7 @@ function Get-ArsSwitchInspection([string]$Control) {
     $pointer=@($entries | Where-Object {$_.Name -ieq 'runtime-active.json'})
     $pending=@($entries | Where-Object {$_.Name -like 'runtime-switch-pending-*' -or $_.Name -ieq 'runtime-previous.json' -or $_.Name -ieq 'runtime-failed-candidate.json'})
     $history=@($entries | Where-Object {$_.Name -like 'journal-history-*'})
-    $other=@($entries | Where-Object {$_.Name -in @('handoff-pending.json','maintenance-shutdown.json')})
+    $other=@($entries | Where-Object {$_.Name -in @('handoff-pending.json','maintenance-shutdown.json','runtime-switch-intent.json')})
     if ($journal.Count -eq 0 -and $pointer.Count -eq 0 -and $pending.Count -eq 0 -and $history.Count -eq 0 -and $other.Count -eq 0) { $blocked.state='no-switch-evidence';return [pscustomobject]$blocked }
     if ($journal.Count -ne 1 -or $pointer.Count -ne 1) { $blocked.state='incomplete-switch-evidence';return [pscustomobject]$blocked }
     foreach ($f in @($journal[0],$pointer[0])) {
