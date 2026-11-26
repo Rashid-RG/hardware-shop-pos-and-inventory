@@ -340,6 +340,21 @@ const releaseSingleWriterLease = async () => {
     await client.end();
   }
 };
+// Best-effort pre-commit fence. This does not make a remote session failure atomic with COMMIT.
+const assertWriterBeforeCommit = async () => {
+  const lease = singleWriterLease;
+  if (!lease || !databaseWriteHealthy || interruptedWriteRequiresReview) throw new Error('Database writer lease unavailable; transaction must roll back.');
+  const result = await lease.query<{ owned: boolean }>(
+    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=$1::oid AND objid=$2::oid AND objsubid=2 AND mode='ExclusiveLock' AND granted AND pid=pg_backend_pid()) AS owned",
+    [SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID]
+  );
+  if (result.rows[0]?.owned !== true || singleWriterLease !== lease || !databaseWriteHealthy || interruptedWriteRequiresReview) {
+    databaseWriteHealthy = false;
+    interruptedWriteRequiresReview = true;
+    try { recordWriterLoss(runtimePaths.root); } catch (error) { console.error('Writer loss evidence persistence failed.', error); }
+    throw new Error('Database writer ownership not verified; transaction must roll back.');
+  }
+};
 const LOGIN_ATTEMPT_LIMIT = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map<string, { failedCount: number; lockUntil: number }>();
@@ -2632,6 +2647,7 @@ const syncNormalizedFromState = async (state: DBState) => {
     await client.query('BEGIN');
     await saveStateToNormalized(client, state);
     await saveAppStateMirror(client, state);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');
@@ -2905,6 +2921,7 @@ app.post('/api/auth/setup-admin', requireLocalSetup, loginLimiter, async (req, r
       'INSERT INTO users (id, email, name, role, password_hash) VALUES ($1,$2,$3,$4,$5)',
       [user.id, user.email, user.name, user.role, user.passwordHash]
     );
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     db.users = [user];
     return res.status(201).json({ success: true, message: 'Administrator account created. Please sign in.' });
@@ -3068,6 +3085,7 @@ app.post('/api/auth/recovery/complete', recoveryLimiter, async (req,res) => {
     if (expected.length!==actual.length || !timingSafeEqual(expected,actual)) {
       await client.query('UPDATE password_recovery SET attempts=attempts+1 WHERE user_id=$1',[account.id]);
       await client.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'invalid_code')",[account.id]);
+      await assertWriterBeforeCommit();
       await client.query('COMMIT'); return res.status(400).json(invalid);
     }
     const hash = await bcrypt.hash(password,12);
@@ -3076,6 +3094,7 @@ app.post('/api/auth/recovery/complete', recoveryLimiter, async (req,res) => {
     await client.query('UPDATE auth_sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL',[account.id]);
     await client.query('UPDATE password_recovery SET expires_at=NOW(), attempts=5 WHERE user_id=$1',[account.id]);
     await client.query("INSERT INTO password_recovery_audit (user_id,event) VALUES ($1,'completed')",[account.id]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     db.users = db.users.map(u=>u.id===account.id?{...u,passwordHash:hash,updatedAt:new Date().toISOString()}:u);
     return res.json({message:'Password updated. Sign in with your new password.'});
@@ -5008,6 +5027,7 @@ app.post('/api/transactions/:id/print',requireRole(['Super Admin','Store Manager
        VALUES($1,$2,NOW(),$3,$4,'Invoice Print Logged',$5)`,
       ['act-'+randomUUID(),activeShopId,printLog.printedBy,user?.role||'Cashier',
         `Invoice ${printLog.invoiceNumber} printed as ${copyType} (sequence ${printSequence}).`]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
   } catch(error) {
     await client.query('ROLLBACK').catch(()=>{});
@@ -6836,6 +6856,7 @@ app.post('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),
     await client.query('BEGIN');
     await createFinancialAccount(client,{id,shopId:activeShopId,name,kind:kind as FinancialAccountKind,recordedBy:authUser?.name||'Manager'});
     await client.query("INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Financial Account Created',$5)",['act-'+randomUUID(),activeShopId,authUser?.name||'Manager',authUser?.role||'Store Manager',name.trim()+' ('+kind+')']);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     res.status(201).json({id,name:name.trim(),kind,active:true,balance:0});
   }catch(error){await client.query('ROLLBACK').catch(()=>{});console.error('Financial account creation failed',error);res.status(409).json({error:'Unable to create account. Check whether that account name already exists.'});}
@@ -7237,6 +7258,7 @@ app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']
        quotation.customerId,quotation.customerName,quotation.customerPhone||null,
        JSON.stringify(quotation.items),quotation.subtotal,quotation.tax,quotation.discountAmount,
        quotation.total,quotation.notes||null,quotation.createdBy]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
   }catch(error){await client.query('ROLLBACK');return res.status(409).json({error:'Could not save quotation.'});}finally{client.release();}
   if(!(await refreshCommittedQuoteState(res)))return;
@@ -7260,6 +7282,7 @@ app.put('/api/quotations/:id/status',requireRole(['Super Admin','Store Manager',
       return res.status(409).json({error:'Invalid quotation state change.'});
     }
     await client.query('UPDATE quotations SET status=$1 WHERE id=$2 AND shop_id=$3',[status,req.params.id,activeShopId]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
   }catch(error){
     await client.query('ROLLBACK').catch(()=>{});
@@ -7380,6 +7403,7 @@ app.post('/api/shifts/open', requireRole(['Super Admin','Store Manager','Cashier
        VALUES($1,$2,NOW(),$3,$4,'Shift Opened',$5)`,
       ['act-'+randomUUID(),activeShopId,shift.cashierName,authUser?.role||'Cashier',
        `Shift started with float Rs.${openingFloat.toFixed(2)}.`]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
   } catch(error) {
     await client.query('ROLLBACK').catch(()=>{});
@@ -7430,6 +7454,7 @@ app.post('/api/shifts/:id/close',requireRole(['Super Admin','Store Manager','Cas
        VALUES($1,$2,NOW(),$3,$4,'Shift Closed',$5)`,
       ['act-'+randomUUID(),activeShopId,authUser?.name||'Cashier',authUser?.role||'Cashier',
        `Shift closed. Expected Rs.${expectedCash.toFixed(2)}, actual Rs.${closingCash.toFixed(2)}, difference Rs.${cashDifference.toFixed(2)}.`]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     result={id:shift.id,shopId:activeShopId,cashierName:shift.cashier_name,openedAt:shift.opened_at,
       closedAt,openingFloat:Number(shift.opening_float),closingCash,expectedCash,cashDifference,status:'Closed',notes};
@@ -7717,6 +7742,7 @@ app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
       (id,shop_id,partner_id,old_percent,new_percent,change_type,reference,changed_by)
       VALUES($1,$2,$3,NULL,$4,'Registered',$5,$6)`,
       ['ownership-audit-'+randomUUID(),activeShopId,id,pct,'New partner registration',(req as AppRequest).authUser!.email]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     res.status(201).json({id,name,ownership_percent:pct});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Could not register partner.'});}
@@ -7749,6 +7775,7 @@ app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req
       VALUES($1,$2,$3,$4,$5,'Updated',$6,$7)`,
       ['ownership-audit-'+randomUUID(),activeShopId,req.params.id,existing.ownership_percent,pct,
         reference,(req as AppRequest).authUser!.email]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     res.json({id:req.params.id,ownership_percent:pct});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Ownership update failed.'});}
@@ -7784,6 +7811,7 @@ app.post('/api/ars/partners/:id/status',requireRole(['Super Admin']),async(req,r
       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
       ['ownership-audit-'+randomUUID(),activeShopId,req.params.id,old.ownership_percent,
         old.ownership_percent,isActive?'Reactivated':'Deactivated',reference,(req as AppRequest).authUser!.email]);
+    await assertWriterBeforeCommit();
     await client.query('COMMIT');
     res.json({id:req.params.id,is_active:isActive});
   }catch{await client.query('ROLLBACK').catch(()=>{});res.status(503).json({error:'Partner status update failed.'});}
