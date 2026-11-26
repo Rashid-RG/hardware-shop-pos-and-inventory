@@ -449,6 +449,35 @@ test('real PostgreSQL payroll controls: isolated schema, partial payment and ten
  const statutoryDetail=await reconcileStatutoryControls(pool,shop);
  assert.equal(statutoryDetail.controls.find(c=>c.fund==='EPF').subledgerBalance,'10000.00');
  assert.equal(statutoryDetail.controls.find(c=>c.fund==='ETF').subledgerBalance,'1500.00');
+ // Exercise the actual internal statutory settlement engine, not just journal fixtures.
+ const {settleStatutoryRemittance}=await import('../backend/statutoryPayments.ts');
+ await pool.query("CREATE TABLE ars_supplier_cheques(id text PRIMARY KEY,shop_id text,bank_account_id text,status text,amount numeric(14,2))");
+ await pool.query("INSERT INTO ars_financial_movements VALUES('ci-funding',$1,'bank',100000,'Opening Balance','ci-funding','CI',$2,'Synthetic bank funding')",[shop,day]);
+ const remittance={id:'epf-1',fund:'EPF',period,accountId:'bank',postingDate:payrollDay,currentBusinessDate:payrollDay,receiptReference:'CI-EPF-001',evidence:'Synthetic remittance',allocations:[{accrualId:proposal,amount:'3000.01',expectedOutstanding:'10000.00'}]};
+ const settle=i=>settleStatutoryRemittance(pool,shop,'CI',i);
+ const balances=async()=>{const r=await reconcileStatutoryControls(pool,shop);return r.controls.map(c=>[c.fund,c.subledgerBalance,c.ledgerBalance]);};
+ await pool.query("INSERT INTO ars_supplier_cheques VALUES('ci-hold',$1,'bank','Issued',70000)",[shop]);
+ await assert.rejects(()=>settle(remittance),/Insufficient uncommitted bank funds/);
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM ars_gl_statutory_settlements')).rows[0].n,0);
+ await pool.query("UPDATE ars_supplier_cheques SET status='Cancelled' WHERE id='ci-hold'");
+ assert.equal((await settle(remittance)).replayed,false);
+ assert.equal((await settle(remittance)).replayed,true);
+ assert.deepEqual(await balances(),[['EPF','6999.99','6999.99'],['ETF','1500.00','1500.00']]);
+ await assert.rejects(()=>settle({...remittance,id:'duplicate-receipt',receiptReference:'ci-epf-001'}),/Receipt reference already used/);
+ await assert.rejects(()=>settle({...remittance,allocations:[{...remittance.allocations[0],amount:'3000.00'}]}),/identifier already used/);
+ await assert.rejects(()=>settle({...remittance,id:'stale',receiptReference:'CI-STALE',allocations:[{accrualId:proposal,amount:'7000.00',expectedOutstanding:'10000.00'}]}),/outstanding changed/);
+ await assert.rejects(()=>settleStatutoryRemittance(pool,other,'CI',remittance),/Insufficient uncommitted bank funds|Matching posted statutory payroll/);
+ const concurrent=await Promise.allSettled(['epf-2','epf-3'].map(id=>settle({...remittance,id,receiptReference:id,allocations:[{accrualId:proposal,amount:'6999.99',expectedOutstanding:'6999.99'}]})));
+ assert.equal(concurrent.filter(x=>x.status==='fulfilled').length,1);
+ assert.equal(concurrent.filter(x=>x.status==='rejected').length,1);
+ assert.deepEqual(await balances(),[['EPF','0.00','0.00'],['ETF','1500.00','1500.00']]);
+ await settle({...remittance,id:'etf-1',fund:'ETF',receiptReference:'CI-ETF-001',allocations:[{accrualId:proposal,amount:'1500.00',expectedOutstanding:'1500.00'}]});
+ assert.deepEqual(await balances(),[['EPF','0.00','0.00'],['ETF','0.00','0.00']]);
+ const settled=await reconcileStatutoryControls(pool,shop);
+ assert.ok(settled.exceptions.every(e=>e.id!==proposal),'Detailed payroll must have no statutory settlement exceptions');
+ assert.deepEqual((await pool.query("SELECT count(*)::int AS n,sum(amount)::text AS total FROM ars_gl_statutory_settlements WHERE shop_id=$1",[shop])).rows[0],{n:3,total:'11500.00'});
+ assert.deepEqual((await pool.query("SELECT count(*)::int AS n,sum(amount)::text AS total FROM ars_financial_movements WHERE shop_id=$1 AND movement_kind='Statutory Settlement'",[shop])).rows[0],{n:3,total:'-11500.00'});
+
  // Direct settlement after payroll recovery must not predate the recorded recovery.
  await tx(async c=>{
  const j='advance-repayment:r2';
