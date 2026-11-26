@@ -111,14 +111,21 @@ try {
   Write-Host "Archive SHA-256: $hash"
   if (Test-Path $uploadZip) { Write-Host "Uploaded files archived: $uploadZip" }
   Write-Warning 'Archive metadata verification is not a restore drill. Copy files to an encrypted external drive.'
-  # Only completed backups have the companion SHA-256 file.
-  $completed = @(Get-ChildItem -LiteralPath $Destination -Filter "ars-$Database-*.dump" -File |
-    Where-Object { Test-Path -LiteralPath "$($_.FullName).sha256" } |
-    Sort-Object Name -Descending)
-  foreach ($old in ($completed | Select-Object -Skip $Keep)) {
-    $base = $old.FullName.Substring(0, $old.FullName.Length - '.dump'.Length)
-    foreach ($filePath in @($old.FullName, "$($old.FullName).sha256", "$base-uploads.zip", "$base-uploads.zip.sha256")) {
-      if (Test-Path -LiteralPath $filePath) { Remove-Item -LiteralPath $filePath -Force }
+  # The cloud runner holds its lock from before archive creation until remote verification.
+  # Defer all pruning when that lock exists (including interrupted cloud runs).
+  $driveEvidence=@(Get-ChildItem -LiteralPath $lockDirectory -Force -ErrorAction Stop | Where-Object { $_.Name -ieq '.ars-drive-backup.lock' })
+  if ($driveEvidence.Count -gt 0) {
+    Write-Warning 'Backup retention deferred while encrypted backup is running or interrupted.'
+  } else {
+    # Only completed backups have the companion SHA-256 file.
+    $completed = @(Get-ChildItem -LiteralPath $Destination -Filter "ars-$Database-*.dump" -File |
+      Where-Object { Test-Path -LiteralPath "$($_.FullName).sha256" } |
+      Sort-Object Name -Descending)
+    foreach ($old in ($completed | Select-Object -Skip $Keep)) {
+      $base = $old.FullName.Substring(0, $old.FullName.Length - '.dump'.Length)
+      foreach ($filePath in @($old.FullName, "$($old.FullName).sha256", "$base-uploads.zip", "$base-uploads.zip.sha256")) {
+        if (Test-Path -LiteralPath $filePath) { Remove-Item -LiteralPath $filePath -Force }
+      }
     }
   }
 } catch {

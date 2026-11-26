@@ -80,11 +80,16 @@ def backup():
             if companion != dump:
                 companion.rename(BACKUPS / companion.name)
         dump.rename(BACKUPS / dump.name)
-    completed = sorted((p for p in BACKUPS.glob('ars-mint-*.dump') if MANAGED.fullmatch(p.name)
-                        and Path(str(p) + '.sha256').is_file()), reverse=True)
-    for old in completed[30:]:
-        for suffix in ['.dump', '.dump.sha256', '.manifest.json', '.manifest.json.sha256', '-uploads.zip', '-uploads.zip.sha256']:
-            (BACKUPS / (old.stem + suffix)).unlink(missing_ok=True)
+    # The cloud runner acquires its lock before this local archive stage.
+    # A retained or malformed lock is still evidence: preserve all archives.
+    if os.path.lexists(BACKUPS / '.ars-drive-backup.lock'):
+        print('Backup retention deferred while encrypted backup is running or interrupted.', file=sys.stderr)
+    else:
+        completed = sorted((p for p in BACKUPS.glob('ars-mint-*.dump') if MANAGED.fullmatch(p.name)
+                            and Path(str(p) + '.sha256').is_file()), reverse=True)
+        for old in completed[30:]:
+            for suffix in ['.dump', '.dump.sha256', '.manifest.json', '.manifest.json.sha256', '-uploads.zip', '-uploads.zip.sha256']:
+                (BACKUPS / (old.stem + suffix)).unlink(missing_ok=True)
     print('ARS_ARCHIVE=' + str(BACKUPS / dump.name))
 
 
