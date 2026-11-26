@@ -149,3 +149,14 @@ test('Windows candidate readiness requires pinned Linux dependencies and disconn
  assert.match(s,/candidateStartupPassed=\$startupPassed/);
  assert.match(s,/compatibilityTestPassed=\$false/);
 });
+
+test('Windows candidate startup preserves existing table projections and row fingerprints',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ assert.equal((s.match(/\$evidence=\[ordered\]/g)||[]).length,1);
+ assert.match(s,/Get-TestSchema/);
+ assert.match(s,/Get-TestRowFingerprints/);
+ assert.match(s,/set -o pipefail/);
+ assert.match(s,/Historical records changed during startup/);
+ assert.match(s,/historicalRowsCompared=\$historicalRowsCompared/);
+ assert.match(s,/activationApproved=\$false/);
+});

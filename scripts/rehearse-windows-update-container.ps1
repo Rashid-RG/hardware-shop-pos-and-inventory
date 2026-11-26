@@ -1,4 +1,4 @@
-# Offline PostgreSQL recovery rehearsal; candidate application execution remains disabled.
+# Offline PostgreSQL recovery rehearsal with optional candidate startup and historical row checks.
 param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$CandidateStartup,[string]$DependencyImage)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
@@ -29,6 +29,43 @@ function Invoke-DockerChecked([string[]]$Arguments) {
   if ($LASTEXITCODE -ne 0) { throw 'Disposable container command failed.' }
   $result
 }
+# Capture existing column projections and hash sorted JSON rows inside the test container.
+function Get-TestSchema([string]$Container) {
+  $tables=@(Invoke-DockerChecked @('exec',$Container,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-Atc',"SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename"))
+  $schema=[ordered]@{}
+  foreach ($table in $tables) {
+    if ($table -cnotmatch '^[a-z_][a-z0-9_]*$') { throw 'Unsupported table identifier in historical baseline.' }
+    $cols=@(Invoke-DockerChecked @('exec',$Container,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-Atc',("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='"+$table+"' ORDER BY ordinal_position")))
+    if (-not $cols.Count) { throw 'Missing historical columns.' }
+    foreach ($col in $cols) { if ($col -cnotmatch '^[a-z_][a-z0-9_]*$') { throw 'Unsupported historical column identifier.' } }
+    $schema[$table]=$cols
+  }
+  if (-not $schema.Count) { throw 'No historical tables found.' }
+  return $schema
+}
+function Get-TestRowFingerprints([string]$Container,$Schema) {
+  $result=[ordered]@{}
+  foreach ($table in $Schema.Keys) {
+    $projection=($Schema[$table] | ForEach-Object { '"'+$_+'"' }) -join ','
+    $sql='SELECT row_to_json(q)::text FROM (SELECT '+$projection+' FROM public."'+$table+'") q ORDER BY row_to_json(q)::text COLLATE "C"'
+    # Write query to a uniquely named container-local file to avoid Windows native argument quoting.
+    $local=Join-Path ([IO.Path]::GetTempPath()) ('ars-history-'+[guid]::NewGuid().ToString('N')+'.sql')
+    $remote='/tmp/'+[IO.Path]::GetFileName($local)
+    try {
+      [IO.File]::WriteAllText($local,$sql,[Text.UTF8Encoding]::new($false))
+      $null=Invoke-DockerChecked @('cp',$local,($Container+':'+$remote))
+      # pipefail prevents an unsuccessful query from appearing as a successful hash.
+      $command='set -o pipefail; psql -X -U restore_admin -d ars_update_test -v ON_ERROR_STOP=1 -At -f '+$remote+' | sha256sum'
+      $hash=@(Invoke-DockerChecked @('exec',$Container,'sh','-c',$command))
+      if ($hash.Count -ne 1 -or $hash[0] -notmatch '^[a-f0-9]{64}\s+') { throw 'Historical row fingerprint failed.' }
+      $result[$table]=($hash[0] -split '\s+')[0]
+    } finally {
+      if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force }
+      $null=Invoke-DockerChecked @('exec',$Container,'rm','-f',$remote)
+    }
+  }
+  return $result
+}
 $name='ars-windows-rehearsal-'+[guid]::NewGuid().ToString('N')
 $image='postgres:16-alpine'
 $password=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
@@ -36,64 +73,15 @@ $created=$false
 $appCreated=$false
 $appName=$name+'-app'
 $startupPassed=$false
+$historicalRowsCompared=$false
+$historicalTableCount=0
 $imageId=$null
 $copyRoot=$null
 try {
   if ($CandidateStartup) {
     # A Windows npm installation is not a Linux dependency tree. Require a separately
     # provisioned trusted Linux image with /app/node_modules matching the release lock.
-    if ($DependencyImage -cnotmatch '^sha256:[a-f0-9]{64}
-  $null=Invoke-DockerChecked @('image','inspect',$image)
-  $null=Invoke-DockerChecked @('run','-d','--pull=never','--network','none','--name',$name,'--label','com.rsnextward.ars-purpose=windows-update-rehearsal','--tmpfs','/var/lib/postgresql/data:rw,mode=0700','-e','POSTGRES_USER=restore_admin','-e','POSTGRES_DB=ars_update_test','-e',('POSTGRES_PASSWORD='+$password),$image)
-  $created=$true
-  $ready=$false
-  for ($i=0;$i -lt 90;$i++) {
-    & docker exec $name pg_isready -h 127.0.0.1 -U restore_admin -d ars_update_test | Out-Null
-    if ($LASTEXITCODE -eq 0) { $ready=$true;break }
-    Start-Sleep -Seconds 2
-  }
-  if (-not $ready) { throw 'Offline PostgreSQL did not become ready.' }
-  $null=Invoke-DockerChecked @('cp',$archive,($name+':/tmp/recovery.dump'))
-  $hash=@(Invoke-DockerChecked @('exec',$name,'sha256sum','/tmp/recovery.dump'))
-  if ($hash.Count -ne 1 -or ($hash[0].Trim() -split '\s+')[0] -ine $before) { throw 'Copied archive checksum mismatch.' }
-  $null=Invoke-DockerChecked @('exec',$name,'pg_restore','-U','restore_admin','-d','ars_update_test','--single-transaction','--exit-on-error','--no-owner','--no-acl','/tmp/recovery.dump')
-  $counts=[ordered]@{}
-  foreach ($table in @('products','customers','sales_transactions','sales_transaction_items','purchase_orders','purchase_order_items','supplier_payments','customer_credit_payments')) {
-    $rows=@(Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-Atc',('SELECT count(*) FROM public.'+$table)))
-    if ($rows.Count -ne 1 -or $rows[0] -notmatch '^\d+$') { throw 'Invalid restored table count.' }
-    $counts[$table]=[long]$rows[0]
-  }
-  if ($CandidateStartup) {
-    # Mount only executable build output, never the active project or its credentials.
-    $jwt=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
-    $null=Invoke-DockerChecked @('run','-d','--pull=never','--name',$appName,'--network',('container:'+$name),'--read-only','--tmpfs','/tmp','--tmpfs','/app/uploads','--cap-drop','ALL','--security-opt','no-new-privileges','--mount',('type=bind,source='+(Join-Path $copyRoot 'dist')+',target=/app/dist,readonly'),'-w','/app','-e','NODE_ENV=production','-e','ARS_LISTEN_HOST=127.0.0.1','-e','PORT=3000','-e',('JWT_SECRET='+$jwt),'-e',('DATABASE_URL=postgresql://restore_admin:'+$password+'@127.0.0.1:5432/ars_update_test'),'--entrypoint','node',$DependencyImage,'dist/server.cjs')
-    $appCreated=$true
-    $probe="fetch('http://127.0.0.1:3000/api/ready',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"
-    for ($i=0;$i -lt 90;$i++) {
-      & docker exec $appName node -e $probe | Out-Null
-      if ($LASTEXITCODE -eq 0) { $startupPassed=$true;break }
-      Start-Sleep -Seconds 2
-    }
-    if (-not $startupPassed) { throw 'Candidate failed disconnected readiness check.' }
-    $null=Invoke-DockerChecked @('stop','-t','15',$appName)
-  }
-  if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $before) { throw 'Recovery archive changed during test.' }
-  if ((Assert-ArsPreparedFingerprint $prepared).digest -cne $fingerprint.digest) { throw 'Prepared release changed during test.' }
-} finally {
-  if ($appCreated) { $null=Invoke-DockerChecked @('rm','-f','-v',$appName) }
-  if ($copyRoot -and (Test-Path -LiteralPath $copyRoot)) { Remove-Item -LiteralPath $copyRoot -Recurse -Force }
-  if ($created) {
-    # Remove only the uniquely named disposable container created by this invocation.
-    $null=Invoke-DockerChecked @('rm','-f','-v',$name)
-  }
-}
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$false;activationApproved=$false}
-$bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
-$stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
-try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
-Write-Host "Offline restoration evidence: $receipt"
-Write-Host 'No application compatibility approval or activation was performed.'
-) { throw 'Provide the exact trusted Linux dependency image ID, not a mutable tag.' }
+    if ($DependencyImage -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Provide the exact trusted Linux dependency image ID, not a mutable tag.' }
     $imageId=@(Invoke-DockerChecked @('image','inspect','--format','{{.Id}}',$DependencyImage))
     if ($imageId.Count -ne 1 -or $imageId[0] -cne $DependencyImage) { throw 'Dependency image identity mismatch.' }
     $copyRoot=Join-Path ([IO.Path]::GetTempPath()) ('ars-candidate-'+[guid]::NewGuid().ToString('N'))
@@ -131,7 +119,7 @@ Write-Host 'No application compatibility approval or activation was performed.'
     $null=Invoke-DockerChecked @('rm','-f','-v',$name)
   }
 }
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;compatibilityTestPassed=$false;historicalRowsCompared=$false;activationApproved=$false}
+$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 $bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
 $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
 try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
