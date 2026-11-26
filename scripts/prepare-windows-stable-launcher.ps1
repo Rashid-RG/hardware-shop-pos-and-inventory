@@ -44,17 +44,10 @@ try {
     Copy-Item -LiteralPath $from -Destination $to
     if ((Get-FileHash -LiteralPath $from -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $to -Algorithm SHA256).Hash) { throw 'Launcher copy checksum mismatch.' }
   }
-  $node=(Get-Command node.exe -CommandType Application).Source
   $bundle=Join-Path $scripts 'probe-postgres-identity.cjs'
-  $esbuild=Join-Path $source 'node_modules\esbuild\bin\esbuild'
-  # Use the fingerprinted release's existing bundler; no dependency downloads.
-  Push-Location -LiteralPath $source
-  try {
-    & $node $esbuild 'scripts/probe-postgres-identity.mjs' '--bundle' '--platform=node' '--format=cjs' '--external:pg-native' ("--outfile="+$bundle)
-    if ($LASTEXITCODE -ne 0) { throw 'Independent identity probe bundle failed.' }
-    & $node --check $bundle
-    if ($LASTEXITCODE -ne 0) { throw 'Independent identity probe syntax check failed.' }
-  } finally { Pop-Location }
+  # Build with the trusted installation's helper and fingerprinted release dependencies.
+  . (Join-Path $PSScriptRoot 'windows-identity-probe-bundle.ps1')
+  New-ArsIdentityProbeBundle $source $bundle
   if ((Assert-ArsPreparedFingerprint $source).digest -cne $digest) { throw 'Prepared release changed during launcher preparation.' }
   $record=[ordered]@{schema=1;sourceVersion=$Version;sourceDigest=$digest;createdAt=[DateTime]::UtcNow.ToString('o');activationAllowed=$false;shortcutInstalled=$false;startupAllowed=$false;schedulingAllowed=$false}
   $record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pending 'launcher-preparation.json') -Encoding UTF8

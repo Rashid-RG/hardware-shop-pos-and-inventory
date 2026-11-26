@@ -6,8 +6,10 @@ test('launcher preparation uses fingerprinted source, independent bundle and new
  assert.match(s,/Assert-ArsPreparedFingerprint \$source/);
  assert.match(s,/PREPARE LAUNCHER/);
  assert.match(s,/probe-postgres-identity\.cjs/);
- assert.match(s,/--bundle/);
- assert.match(s,/--check \$bundle/);
+ const helper=readFileSync(new URL('../scripts/windows-identity-probe-bundle.ps1',import.meta.url),'utf8');
+ assert.match(s,/New-ArsIdentityProbeBundle/);
+ assert.match(helper,/--bundle/);
+ assert.match(helper,/--check \$Destination/);
  assert.match(s,/Assert-ArsPreparedFingerprint \$pending/);
  assert.match(s,/\[IO.Directory\]::Move\(\$pending,\$target\)/);
  assert.match(s,/shortcutInstalled=\$false;startupAllowed=\$false;schedulingAllowed=\$false/);
