@@ -1,5 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {reportDay} from '../utils/reporting';
+import PayrollPolicyPanel from './PayrollPolicyPanel';
 type Props={shopId:string;authToken:string;owner:string;employees:{id:string;name:string;salary:number}[];key?:string};
 type Calculation={baseSalary:string;earnings:{id:string;kind:'Overtime'|'Bonus'|'Allowance';amount:string;evidence:string}[];deductions:{id:string;kind:'UnpaidLeave'|'Other';amount:string;evidence:string}[];contributions:never[];policyReference:string};
 type Preview={grossSalary:string;totalDeductions:string;netSalary:string;employerCost:string};
@@ -8,7 +9,19 @@ type Request={kind:'prepare';body:{requestId:string;employeeId:string;period:str
 const field='w-full rounded-lg border border-slate-300 p-2 text-sm';
 const button='rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:opacity-50';
 const money=(v:number|string)=>Number(v).toLocaleString('en-LK',{minimumFractionDigits:2,maximumFractionDigits:2});
-export default function PayrollPreparationPanel(props:Props){return <PayrollWorkspace key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;}
+export default function PayrollPreparationPanel(props:Props){
+ return <PayrollSections key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;
+}
+function PayrollSections(props:Props){
+ const [section,setSection]=useState<'monthly'|'policies'>('monthly');
+ return <div className="space-y-3">
+  <nav aria-label="Payroll sections" className="flex flex-wrap gap-2 rounded-xl border bg-white p-2">
+   <button type="button" aria-pressed={section==='monthly'} className={button+' '+(section==='monthly'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('monthly')}>Monthly payroll</button>
+   <button type="button" aria-pressed={section==='policies'} className={button+' '+(section==='policies'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('policies')}>Statutory policies</button>
+  </nav>
+  {section==='monthly'?<PayrollWorkspace {...props}/>:<PayrollPolicyPanel shopId={props.shopId} authToken={props.authToken} owner={props.owner}/>}
+ </div>;
+}
 function PayrollWorkspace({shopId,authToken,owner,employees}:Props){
  const today=reportDay(new Date()),storageKey='ars:pending-payroll:'+JSON.stringify([shopId,owner]);
  const [period,setPeriod]=useState(today.slice(0,7)),[rows,setRows]=useState<Proposal[]|null>(null),[revision,setRevision]=useState(0),[search,setSearch]=useState(''),[filter,setFilter]=useState('all'),[page,setPage]=useState(0);
