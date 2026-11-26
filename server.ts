@@ -33,6 +33,7 @@ import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/p
 import { calculatePayroll, calculateStatutoryPayroll } from './backend/payrollCalculation';
 import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effectivePayrollPolicy } from './backend/payrollPolicies';
 import { proposePayrollEligibility, reviewPayrollEligibility, listPayrollEligibility, effectivePayrollEligibility } from './backend/payrollEligibility';
+import { prepareEmployeeAdvance, reviewEmployeeAdvance, listEmployeeAdvanceRequests, listEmployeeAdvanceBalances } from './backend/employeeAdvances';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7723,6 +7724,49 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
 });
+const employeeAdvanceErrors=new Set(['Valid employee advance request and evidence required.','Positive employee advance amount required.','Advance request identifier already used with different details.','Employee not found in this shop.','Valid employee advance review required.','Advance request not found in this shop.','Advance request already reviewed.','Independent advance reviewer required.','Valid payroll shop required.','Valid payroll shop and employee required.','Use a non-negative decimal amount with at most two decimal places.']);
+app.get('/api/ars/payroll/advances',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json(await listEmployeeAdvanceRequests(pool,scope.shopId));}
+ catch(error){console.error('Employee advance register failed',error);return res.status(503).json({error:'Unable to load employee advance requests.'});}
+});
+app.get('/api/ars/payroll/advances/balances',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const employeeId=req.query.employeeId;
+ if(employeeId!==undefined&&(typeof employeeId!=='string'||!employeeId.trim()||employeeId.length>200))return res.status(400).json({error:'Valid payroll shop and employee required.'});
+ try{return res.json(await listEmployeeAdvanceBalances(pool,scope.shopId,employeeId as string|undefined));}
+ catch(error){console.error('Employee advance balances failed',error);return res.status(503).json({error:'Unable to confirm employee advance balances.'});}
+});
+app.post('/api/ars/payroll/advances',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {requestId,employeeId,amount,requestedDate,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof amount!=='string'||typeof employeeId!=='string'||typeof requestedDate!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid employee advance request and evidence required.'});
+ try{const result=await prepareEmployeeAdvance(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,amount,requestedDate,currentBusinessDate:reportDay(new Date()),evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(employeeAdvanceErrors.has(message))return res.status(409).json({error:message});console.error('Employee advance preparation failed',error);return res.status(503).json({error:'Unable to confirm advance preparation. Retry identical request.'});}
+});
+app.post('/api/ars/payroll/advances/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {decision,evidence}=req.body||{},id=req.params.id;
+ if(!validChequeRequestId(id)||!['Approved','Rejected'].includes(decision)||typeof evidence!=='string')return res.status(400).json({error:'Valid employee advance review required.'});
+ try{const result=await reviewEmployeeAdvance(pool,scope.shopId,scope.recordedBy,{id,decision,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(employeeAdvanceErrors.has(message))return res.status(409).json({error:message});console.error('Employee advance review failed',error);return res.status(503).json({error:'Unable to confirm advance review. Retry identical decision.'});}
+});
+app.post('/api/ars/payroll/advances/:id/disburse',requireRole(['Super Admin']),(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
+ return res.status(409).json({error:'Employee advance disbursement is disabled pending accounting verification.'});
+});
+app.post('/api/ars/payroll/advances/:id/repay',requireRole(['Super Admin']),(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
+ return res.status(409).json({error:'Employee advance repayment is disabled pending accounting verification.'});
+});
 const payrollEligibilityErrors=new Set(['Valid employee eligibility proposal and evidence required.','Eligibility request identifier already used with different details.','Employee not found in this shop.','Pending or approved eligibility record already exists for this month.','Valid eligibility review and evidence required.','Eligibility record not found in this shop.','Eligibility record already reviewed.','Independent eligibility reviewer required.','Approved eligibility already exists for this month.','Approved payroll requires eligibility reconciliation before retrospective approval.','Valid payroll shop required.','Valid employee and payroll month required.','No employee eligibility record for this month.','Conflicting eligibility records require reconciliation.','Latest employee eligibility requires independent approval.','Employee requires special statutory review.']);
 app.get('/api/ars/payroll/eligibility',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
@@ -7782,7 +7826,7 @@ app.post('/api/ars/payroll/calculate',requireRole(['Super Admin']),(req,res)=>{
  try{return res.json({calculation:calculatePayroll(req.body),postingEnabled:false,statutoryVerified:false});}
  catch(error){const message=error instanceof Error?error.message:'';return res.status(400).json({error:payrollErrors.has(message)?message:'Invalid payroll calculation inputs.'});}
 });
-const statutorySnapshotErrors=new Set(["Valid statutory snapshot request required.","Statutory calculations require verified source bindings.","Statutory policy or eligibility changed. Recalculate payroll.","Statutory calculation changed. Recalculate payroll.","Independent statutory payroll review and intact snapshot required.","Statutory policy or eligibility changed. Reject and prepare a new proposal.","Statutory payroll snapshot integrity verification failed.","Approved policy terms and payroll without manual contributions required.","Executable statutory eligibility rules required.","Explicit statutory earnings and unpaid leave treatment required.","Statutory contribution basis cannot be negative."]);
+const statutorySnapshotErrors=new Set(["Advance recovery requires a disbursement reference.","Advance recovery requires matching disbursement before payroll date.","Payroll recovery exceeds outstanding employee advance.","Reversed employee advance requires reconciliation.","Valid statutory snapshot request required.","Statutory calculations require verified source bindings.","Statutory policy or eligibility changed. Recalculate payroll.","Statutory calculation changed. Recalculate payroll.","Independent statutory payroll review and intact snapshot required.","Statutory policy or eligibility changed. Reject and prepare a new proposal.","Statutory payroll snapshot integrity verification failed.","Approved policy terms and payroll without manual contributions required.","Executable statutory eligibility rules required.","Explicit statutory earnings and unpaid leave treatment required.","Statutory contribution basis cannot be negative."]);
 app.post('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
