@@ -8247,6 +8247,35 @@ async function startServer() {
     server.closeIdleConnections();
   };
 
+  // Windows desktop launcher may opt into a private, per-process control channel.
+  // No HTTP route, no browser-accessible token, and no remote listener.
+  const controlPath = process.env.ARS_DESKTOP_SHUTDOWN_PIPE;
+  if (process.platform === 'win32' && controlPath && /^\\\\\.\\pipe\\ars-pos-[a-f0-9]{32}$/.test(controlPath) && listenHost === '127.0.0.1') {
+    const controlSecret = process.env.ARS_DESKTOP_SHUTDOWN_SECRET || '';
+    if (!/^[a-f0-9]{64}$/.test(controlSecret)) throw new Error('Invalid desktop shutdown secret.');
+    const { createServer: createControlServer } = await import('node:net');
+    const { timingSafeEqual } = await import('node:crypto');
+    const control = createControlServer(socket => {
+      let received = '';
+      socket.setTimeout(3000, () => socket.destroy());
+      socket.on('error', () => socket.destroy());
+      socket.on('data', chunk => {
+        received += chunk.toString('utf8');
+        if (received.length > 65) return socket.destroy();
+        if (!received.endsWith('\n')) return;
+        const token = received.slice(0, -1);
+        if (!/^[a-f0-9]{64}$/.test(token) || !timingSafeEqual(Buffer.from(token), Buffer.from(controlSecret))) return socket.destroy();
+        if (interruptedWriteRequiresReview) return socket.end('REVIEW_REQUIRED\n');
+        socket.end('SHUTDOWN_REQUESTED\n', () => {
+          control.close();
+          shutdown('Desktop maintenance');
+        });
+      });
+    });
+    control.on('error', error => console.error('Desktop shutdown channel unavailable:', error.message));
+    control.listen(controlPath);
+  }
+
   // Repeated signals must not bypass the in-progress shutdown.
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

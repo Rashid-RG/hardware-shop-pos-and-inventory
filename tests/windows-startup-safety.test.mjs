@@ -215,3 +215,12 @@ test('interrupted admitted writes fail closed and block successful maintenance h
  assert.ok(shutdown.indexOf('if (interruptedWriteRequiresReview)')<shutdown.indexOf('await releaseSingleWriterLease()'));
  assert.match(shutdown,/Shutdown blocked: an interrupted write/);
 });
+
+test('Windows desktop control channel is opt-in, loopback-bound and secret authenticated',()=>{
+ const s=readFileSync(new URL('../server.ts',import.meta.url),'utf8');
+ assert.match(s,/ARS_DESKTOP_SHUTDOWN_PIPE/);
+ assert.match(s,/ARS_DESKTOP_SHUTDOWN_SECRET/);
+ assert.match(s,/timingSafeEqual\(Buffer\.from\(token\)/);
+ assert.match(s,/REVIEW_REQUIRED/);
+ assert.match(s,/shutdown\('Desktop maintenance'\)/);
+});
