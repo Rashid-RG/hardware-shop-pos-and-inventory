@@ -413,3 +413,17 @@ test('fenced writer transfer and rollback retain the disposable coordinator gate
   }finally{for(const c of clients)await c.end().catch(()=>{});}
  }
 });
+
+test('private authorized child owns disposable writer and fence itself',{timeout:30000},async()=>{
+ const {rehearseChildWriter}=await import('../scripts/database-handoff-child-writer.mjs');
+ const c=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const base=100+Math.floor(Math.random()*1000000000),keys={gateId:base,writerId:base+1,fenceId:base+2};
+ try{
+  await c.connect();
+  assert.equal((await c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,base])).rows[0].acquired,true);
+  for(const purpose of ['candidate','rollback']){
+   const result=await rehearseChildWriter(c,url.toString(),keys,{releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64),purpose});
+   assert.equal(result.childHeldWriterAndFence,true);assert.equal(result.liveStartupAllowed,false);
+  }
+ }finally{await c.end();}
+});
