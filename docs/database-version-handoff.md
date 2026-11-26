@@ -11,3 +11,7 @@ Failure boundaries:
 - Schema compatibility and recovery archives must be verified independently. No automatic database restore on application rollback.
 
 The disposable PostgreSQL integration tests cover candidate failure and coordinator connection loss. They do not execute a production release switch.
+
+## Authorization primitive
+
+A coordinator-local challenge now binds a random 256-bit single-use secret to the candidate PID, release, runtime and maintenance digests, and candidate/rollback purpose. Grants expire using monotonic time, support revocation and reject replay. No live server uses the primitive yet. The future local transport must independently authenticate the peer, verify the actual process and release, and confirm the coordinator still holds the database gate. Do not persist or log secrets, pass them on a command line, or accept claimed PID as proof.
