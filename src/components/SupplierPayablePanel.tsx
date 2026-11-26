@@ -19,7 +19,7 @@ export default function SupplierPayablePanel({authToken,shopId,owner,canApprove,
  const q=search.toLowerCase().trim(),size=40;
  const orders=(data?.orders||[]).filter(o=>(!bucket||o.bucket===bucket)&&[o.supplier_name,o.po_number].some(v=>String(v||'').toLowerCase().includes(q)));
  const [statementSupplier,setStatementSupplier]=useState<{scope:string;id:string}|null>(null);
- const supplierOptions=Array.from(new Map((data?.orders||[]).map(o=>[o.supplier_id,o.supplier_name])).entries()).sort((a,b)=>a[1].localeCompare(b[1]));
+ const supplierOptions=Array.from(new Map<string,string>((data?.orders||[]).map((o):[string,string]=>[o.supplier_id,o.supplier_name])).entries()).sort((a,b)=>a[1].localeCompare(b[1]));
  const statementId=statementSupplier?.scope===scope?statementSupplier.id:'';
  const statementOrders=(data?.orders||[]).filter(o=>o.supplier_id===statementId);
  const statementPayments=(data?.unmatchedPayments||[]).filter(p=>p.supplier_id===statementId);
