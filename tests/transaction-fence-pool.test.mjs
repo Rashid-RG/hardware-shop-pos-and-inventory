@@ -56,3 +56,14 @@ test('callback checkout exposes protected release after acquisition',async()=>{
  }));
  assert.deepEqual(released,[true]);
 });
+
+test('repeatable read snapshot is admitted and commits without losing its isolation',async()=>{
+ const {client,pool,calls,released}=fixture();
+ await pool.connect();
+ await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+ await client.query('SELECT 1');
+ await client.query('COMMIT');
+ client.release();
+ assert.deepEqual(calls,['BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY','fence','SELECT 1','check','COMMIT']);
+ assert.deepEqual(released,[undefined]);
+});

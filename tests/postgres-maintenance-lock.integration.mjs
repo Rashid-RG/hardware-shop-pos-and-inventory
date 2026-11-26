@@ -248,7 +248,10 @@ test('real pg pool checkout discards unfinished transaction and preserves query 
   const result=await pool.query('SELECT pg_backend_pid() AS pid');
   assert.notEqual(result.rows[0].pid,pid);
   const second=await pool.connect();
-  await second.query('BEGIN');await second.query('COMMIT');second.release();
+  await second.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  assert.equal((await second.query('SHOW transaction_read_only')).rows[0].transaction_read_only,'on');
+  assert.equal((await second.query('SHOW transaction_isolation')).rows[0].transaction_isolation,'repeatable read');
+  await second.query('COMMIT');second.release();
   assert.equal((await pool.query('SELECT pg_backend_pid() AS pid')).rows[0].pid,result.rows[0].pid);
  }finally{await pool.end();}
 });

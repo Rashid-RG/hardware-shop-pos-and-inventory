@@ -7,7 +7,9 @@ export function installTransactionFence(pool: import('pg').Pool, beforeWrite: ()
     const original = client.query.bind(client);
     client.query = ((...args: any[]) => {
       const sql = typeof args[0] === 'string' ? args[0].trim().toUpperCase() : '';
-      if (!['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return (original as any)(...args);
+      const readOnlyBegin = sql === 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY';
+      const begin = sql === 'BEGIN' || readOnlyBegin;
+      if (!begin && !['COMMIT', 'ROLLBACK'].includes(sql)) return (original as any)(...args);
       if (args.length !== 1) throw new Error('Unsupported transaction boundary invocation.');
       return (async () => {
         if (sql === 'ROLLBACK') {
@@ -37,7 +39,7 @@ export function installTransactionFence(pool: import('pg').Pool, beforeWrite: ()
         if (state.active) throw new Error('Nested transaction boundary rejected.');
         state.active = true;
         try {
-          const result = await original('BEGIN');
+          const result = await original(sql);
           await acquireFence(client);
           return result;
         } catch (error) {
