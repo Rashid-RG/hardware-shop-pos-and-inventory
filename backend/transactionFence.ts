@@ -80,4 +80,35 @@ export function installTransactionFence(pool: import('pg').Pool, beforeWrite: ()
     }
     return connect().then(protectRelease);
   }) as typeof pool.connect;
+  // Standalone pool.query calls also need a transaction-scoped fence. Wrap all
+  // statements, including reads and CTEs, rather than guessing which SQL writes.
+  // Internal callers must not submit transaction-control SQL through pool.query.
+  const standalone = async (args: any[]) => {
+    const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text;
+    if (typeof sql !== 'string' || /^\s*(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE\s+SAVEPOINT|PREPARE\s+TRANSACTION|VACUUM)\b/i.test(sql)) {
+      throw new Error('Unsupported standalone SQL operation.');
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await (client.query as any)(...args);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      // A failed rollback leaves the session marked uncertain by the wrapper.
+      try { await client.query('ROLLBACK'); } catch { /* discard on release */ }
+      throw error;
+    } finally {
+      client.release();
+    }
+  };
+  pool.query = ((...args: any[]) => {
+    const callback = typeof args[args.length - 1] === 'function' ? args.pop() : undefined;
+    const result = standalone(args);
+    if (callback) {
+      result.then(value => callback(null, value), error => callback(error));
+      return;
+    }
+    return result;
+  }) as typeof pool.query;
 }

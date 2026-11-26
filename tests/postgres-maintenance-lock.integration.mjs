@@ -255,3 +255,24 @@ test('real pg pool checkout discards unfinished transaction and preserves query 
   assert.equal((await pool.query('SELECT pg_backend_pid() AS pid')).rows[0].pid,result.rows[0].pid);
  }finally{await pool.end();}
 });
+
+test('standalone pool SQL is fenced and a rejected commit rolls back its write',{timeout:30000},async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const {transformSync}=await import('esbuild');
+ const source=await readFile(new URL('../backend/transactionFence.ts',import.meta.url),'utf8');
+ const {installTransactionFence}=await import('data:text/javascript;base64,'+Buffer.from(transformSync(source,{loader:'ts',format:'esm'}).code).toString('base64'));
+ const pool=new pg.Pool({connectionString:url.toString(),max:1,connectionTimeoutMillis:5000});
+ let fail=false, admissions=0;
+ installTransactionFence(pool,async()=>{if(fail)throw Error('simulated writer loss');},async()=>{admissions++;});
+ try{
+  await pool.query('CREATE TEMP TABLE ars_fence_fixture (n integer)');
+  await pool.query('INSERT INTO ars_fence_fixture VALUES ($1)',[1]);
+  fail=true;
+  await assert.rejects(pool.query('INSERT INTO ars_fence_fixture VALUES ($1)',[2]),/simulated writer loss/);
+  fail=false;
+  const rows=await new Promise((resolve,reject)=>pool.query('SELECT n FROM ars_fence_fixture ORDER BY n',(error,result)=>error?reject(error):resolve(result.rows)));
+  assert.deepEqual(rows,[{n:1}]);
+  assert.equal(admissions,4);
+  await assert.rejects(pool.query('BEGIN'),/Unsupported standalone/);
+ }finally{await pool.end();}
+});
