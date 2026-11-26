@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.Drawing
 . (Join-Path $PSScriptRoot 'windows-runtime-paths.ps1')
 $form=New-Object Windows.Forms.Form
 $form.Text='ARS Distributor | RS Nextward'
-$form.ClientSize=New-Object Drawing.Size(700,580)
+$form.ClientSize=New-Object Drawing.Size(700,620)
 $form.StartPosition='CenterScreen'
 $form.FormBorderStyle='FixedDialog'
 $form.MaximizeBox=$false
@@ -24,20 +24,20 @@ $sub.SetBounds(26,64,590,25)
 $form.Controls.Add($sub)
 $status=New-Object Windows.Forms.Label
 $status.Text='Ready to inspect retained recovery evidence.'
-$status.SetBounds(26,102,650,380)
+$status.SetBounds(26,102,650,420)
 $form.Controls.Add($status)
 $notice=New-Object Windows.Forms.Label
 $notice.Text='Recovery and normal startup are not authorized by this screen.'
 $notice.ForeColor=[Drawing.Color]::DarkRed
-$notice.SetBounds(26,486,650,40)
+$notice.SetBounds(26,526,650,40)
 $form.Controls.Add($notice)
 $refresh=New-Object Windows.Forms.Button
 $refresh.Text='Run diagnostics'
-$refresh.SetBounds(26,530,170,36)
+$refresh.SetBounds(26,570,170,36)
 $form.Controls.Add($refresh)
 $close=New-Object Windows.Forms.Button
 $close.Text='Close'
-$close.SetBounds(554,530,120,36)
+$close.SetBounds(554,570,120,36)
 $form.Controls.Add($close)
 $close.Add_Click({$form.Close()})
 $refresh.Add_Click({
@@ -68,14 +68,14 @@ $refresh.Add_Click({
   }
   $lines+=''
   $lines+='Business reconciliation (separate read-only snapshots):'
-  $sections=[ordered]@{business='Invoices and stock integrity';financial='Cash and customer balances';stockPayables='Stock and supplier estimates';partnerPayroll='Partner and payroll links';partner='Partner capital and drawings';imports='Import creditor balances'}
+  $sections=[ordered]@{business='Invoices and stock integrity';financial='Cash and customer balances';stockPayables='Stock and supplier estimates';partnerPayroll='Partner and payroll links';partner='Partner capital and drawings';imports='Import creditor balances';payroll='Salary, advances, EPF and ETF';inventory='Variant and Box/Piece valuation'}
   $states=@{'selected-checks-match'='Selected checks match';'estimate-review'='Estimate review';'no-coverage'='No coverage';'review-required'='Review required';'unavailable'='Unavailable'}
   foreach ($key in $sections.Keys) {
    $value=[string]$data.reconciliation.sections.$key
    $label=if ($states.ContainsKey($value)) {$states[$value]} else {'Not inspected'}
    $lines+=($sections[$key]+': '+$label)
   }
-  $lines+='Full payroll and variant valuation integration pending. External evidence required.'
+  $lines+='External evidence and operator approval remain required.'
   $status.Text=$lines -join [Environment]::NewLine
  } catch {
   $status.Text='Recovery diagnostics unavailable. A previously registered database binding, valid runtime and retained evidence are required. Contact RS Nextward support. No changes made.'

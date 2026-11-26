@@ -27,5 +27,20 @@ export async function inspectRecoveryReconciliation(client,expected){
    sections[key]=r.startupAllowed===false&&r.recoveryAllowed===false?classifyReconciliation(r.state,matched):'unavailable';
   }catch{sections[key]='unavailable';}
  }
+ // Production build supplies these modules; absence is explicitly unavailable.
+ sections.payroll='unavailable';
+ sections.inventory='unavailable';
+ try{
+  const advanced=await import('../dist/recovery-advanced-controls.mjs');
+  for(const [key,matched,inspect] of [['payroll','payroll-controls-matched',advanced.inspectRecoveryPayrollControls],['inventory','recorded-inventory-estimates-match',advanced.inspectRecoveryInventory]]){
+   try{
+    const r=await inspect(client,expected);
+    if(r.startupAllowed===false&&r.recoveryAllowed===false){
+     sections[key]=classifyReconciliation(r.state,matched);
+     if(key==='inventory'&&sections[key]==='selected-checks-match')sections[key]='estimate-review';
+    }
+   }catch{sections[key]='unavailable';}
+  }
+ }catch{/* Missing or incompatible build: never report a match. */}
  return {sections,consistentAcrossSections:false,accountingVerified:false,startupAllowed:false,recoveryAllowed:false};
 }
