@@ -34,6 +34,7 @@ import { calculatePayroll, calculateStatutoryPayroll } from './backend/payrollCa
 import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effectivePayrollPolicy } from './backend/payrollPolicies';
 import { proposePayrollEligibility, reviewPayrollEligibility, listPayrollEligibility, effectivePayrollEligibility } from './backend/payrollEligibility';
 import { prepareEmployeeAdvance, reviewEmployeeAdvance, listEmployeeAdvanceRequests, listEmployeeAdvanceBalances } from './backend/employeeAdvances';
+import { listSalaryBalances, listSalaryPayments } from './backend/salaryPayments';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7723,6 +7724,27 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
+});
+app.get('/api/ars/payroll/salary-payments/balances',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const employeeId=req.query.employeeId;
+ if(employeeId!==undefined&&(typeof employeeId!=='string'||!employeeId.trim()||employeeId.length>200))return res.status(400).json({error:'Valid employee identifier required.'});
+ try{return res.json(await listSalaryBalances(pool,scope.shopId,employeeId as string|undefined));}
+ catch(error){console.error('Salary balance listing failed',error);return res.status(503).json({error:'Unable to confirm salary balances.'});}
+});
+app.get('/api/ars/payroll/salary-payments',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const accrualId=req.query.accrualId;
+ if(accrualId!==undefined&&(typeof accrualId!=='string'||!accrualId.trim()||accrualId.length>200))return res.status(400).json({error:'Valid payroll accrual identifier required.'});
+ try{return res.json(await listSalaryPayments(pool,scope.shopId,accrualId as string|undefined));}
+ catch(error){console.error('Salary payment history failed',error);return res.status(503).json({error:'Unable to confirm salary payment history.'});}
+});
+app.post('/api/ars/payroll/salary-payments',requireRole(['Super Admin']),(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
+ return res.status(409).json({error:'Salary payment posting is disabled pending accounting verification.'});
 });
 const employeeAdvanceErrors=new Set(['Valid employee advance request and evidence required.','Positive employee advance amount required.','Advance request identifier already used with different details.','Employee not found in this shop.','Valid employee advance review required.','Advance request not found in this shop.','Advance request already reviewed.','Independent advance reviewer required.','Valid payroll shop required.','Valid payroll shop and employee required.','Use a non-negative decimal amount with at most two decimal places.']);
 app.get('/api/ars/payroll/advances',requireRole(['Super Admin']),async(req,res)=>{
