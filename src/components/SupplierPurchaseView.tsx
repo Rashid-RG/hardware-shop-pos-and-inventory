@@ -1,3 +1,4 @@
+import {purchaseOrderDocument} from '../utils/purchaseOrderDocument';
 import ImportChargeRecovery from './ImportChargeRecovery';
 import DisbursementVoucherActions from './DisbursementVoucherActions';
 import { reportDay } from '../utils/reporting';
@@ -612,6 +613,7 @@ export default function SupplierPurchaseView({
                     </span>
                   </div>
 
+                  {taxConfig&&canViewReturns&&po.shopId===financialShopId&&<details className="rounded-lg border border-slate-200 p-2"><summary className="cursor-pointer text-xs font-semibold">Purchase order document</summary><div className="mt-2"><ReportExportMenu settings={{...taxConfig,activeShopId:financialShopId}} report={()=>purchaseOrderDocument(po,financialShopId!)}/></div></details>}
                   {/* PO details list */}
                   <details className="rounded-lg border border-slate-100 bg-slate-50 p-2 text-[11px]">
                     <summary className="cursor-pointer font-semibold text-slate-700">{po.items.length} product lines · view PO details</summary>
