@@ -1,3 +1,4 @@
+import {monthlyPayrollReport} from './backend/monthlyPayrollReport';
 import { initGeneralLedger } from './backend/generalLedger';
 import {recordImportChargeRecovery,importRecoveryAvailability} from './backend/importChargeRecoveries';
 import {recordSupplierRefund,supplierRefundAvailability} from './backend/supplierRefunds';
@@ -7763,6 +7764,11 @@ app.post('/api/ars/payroll/statutory-settlements',requireRole(['Super Admin']),(
  res.setHeader('Cache-Control','no-store');
  if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
  return res.status(409).json({error:'Statutory payment posting is disabled pending accounting verification.'});
+});
+app.get('/api/ars/payroll/monthly-report',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{return res.json(await monthlyPayrollReport(pool,scope.shopId,period));}catch(error){if(error instanceof Error&&error.message==='Payroll month exceeds report capacity.')return res.status(422).json({error:error.message});console.error('Monthly payroll report failed',error);return res.status(503).json({error:'Unable to verify monthly payroll report.'});}
 });
 app.get('/api/ars/payroll/payslips/:id/pdf',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
