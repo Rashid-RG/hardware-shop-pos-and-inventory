@@ -29,6 +29,7 @@ import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMapping
 import { postPartnerCapital } from './backend/partnerCapitalPosting';
 import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend/partnerCapitalReview';
 import { partnerCapitalStatement, exportPartnerCapitalStatement } from './backend/partnerCapitalStatement';
+import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/payrollPreparation';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7677,6 +7678,40 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
+const payrollErrors=new Set(['Valid payroll proposal and evidence required.','Positive base salary required.','Use a non-negative decimal amount with at most two decimal places.','Payroll proposal identifier already used with different details.','Employee not found in this shop.','Base salary changed. Refresh and review payroll.','Employee payroll already accrued for this month.','An unresolved or approved payroll proposal already exists for this month.','Valid payroll decision and evidence required.','Payroll proposal not found in this shop.','Payroll proposal already reviewed.','Employee or base salary changed. Reject and prepare a new proposal.','Valid payroll month required.']);
+app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;
+ if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
+ catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
+});
+app.post('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {requestId,employeeId,period,expectedBaseSalary,postingDate,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId)||typeof employeeId!=='string'||typeof period!=='string'||typeof expectedBaseSalary!=='string'||typeof postingDate!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll proposal and evidence required.'});
+ try{
+  const result=await preparePayroll(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,currentBusinessDate:reportDay(new Date())});
+  return res.status(result.replayed?200:201).json(result);
+ }catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message))return res.status(409).json({error:message});console.error('Payroll preparation failed',error);return res.status(503).json({error:'Unable to confirm payroll preparation. Retry identical request.'});}
+});
+app.post('/api/ars/payroll/proposals/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {decision,evidence}=req.body||{},proposalId=req.params.id;
+ if(!validChequeRequestId(proposalId)||!['Approved','Rejected'].includes(decision)||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll decision and evidence required.'});
+ try{const result=await reviewPayroll(pool,scope.shopId,scope.recordedBy,{proposalId,decision,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message))return res.status(409).json({error:message});console.error('Payroll review failed',error);return res.status(503).json({error:'Unable to confirm payroll review. Retry identical decision.'});}
+});
+app.post('/api/ars/payroll/proposals/:id/post',requireRole(['Super Admin']),(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
+ return res.status(409).json({error:'Payroll posting is disabled pending statutory payroll and deduction verification.'});
+});
 app.get('/api/ars/partners/:partnerId/capital-statement/export',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
