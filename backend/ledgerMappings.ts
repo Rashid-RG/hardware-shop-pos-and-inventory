@@ -2,7 +2,7 @@ import type {Pool,PoolClient} from 'pg';
 
 export const controlMappings={
  supplierAdvances:'Asset',receivables:'Asset',inventory:'Asset',cheques:'Asset',fixedAssets:'Asset',
- importPayables:'Liability',supplierPayables:'Liability',customerCredits:'Liability',loans:'Liability',tax:'Liability',
+ importPayables:'Liability',supplierPayables:'Liability',customerCredits:'Liability',loans:'Liability',tax:'Liability',salaryPayable:'Liability',
  capital:'Equity',retainedEarnings:'Equity',sales:'Revenue',costOfGoods:'Expense',
  purchaseReturnVariance:'Expense',inventoryRounding:'Expense',operatingExpense:'Expense',salary:'Expense'
 } as const;
