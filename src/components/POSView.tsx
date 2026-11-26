@@ -1,3 +1,4 @@
+import {printDeliveryNote} from '../utils/deliveryNote';
 import { ReportExportMenu } from './ReportExportMenu';
 import { reportTime } from '../utils/reporting';
 import type { BusinessReport } from '../utils/businessReport';
@@ -2632,6 +2633,7 @@ export default function POSView({
                 </div>
               </div>
 
+              {receiptModel.shopId===taxConfig.activeShopId&&receiptModel.status==='Completed'&&<button type="button" className="mt-3 w-full rounded-lg border border-slate-300 py-2 text-xs font-bold" onClick={()=>{try{printDeliveryNote(receiptModel,taxConfig);}catch(e){notify.warning(e instanceof Error?e.message:'Unable to print delivery note');}}}>Print delivery note (no prices)</button>}
               {/* Action options */}
               <div className="mt-6 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-center">
