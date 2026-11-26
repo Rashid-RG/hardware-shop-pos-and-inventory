@@ -29,7 +29,7 @@ try {
     if (Test-Path -LiteralPath (Join-Path $control $name)) { throw 'Existing activation evidence blocks launcher preparation.' }
   }
   $digest=(Assert-ArsPreparedFingerprint $source).digest
-  $files=@('preview-windows-stable-launcher.ps1','windows-prepared-fingerprint.ps1','windows-database-binding.ps1','preview-windows-docker-binding.ps1','windows-runtime-paths.ps1')
+  $files=@('preview-windows-stable-launcher.ps1','windows-prepared-fingerprint.ps1','windows-database-binding.ps1','preview-windows-docker-binding.ps1','windows-runtime-paths.ps1','show-windows-launcher-preview.ps1')
   foreach ($name in ($files+@('probe-postgres-identity.mjs'))) {
     $item=Get-Item -LiteralPath (Join-Path (Join-Path $source 'scripts') $name) -Force
     if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid launcher source file.' }
