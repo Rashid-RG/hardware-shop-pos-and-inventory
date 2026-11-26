@@ -57,6 +57,7 @@ try {
     }
     Copy-Item -LiteralPath $m -Destination (Join-Path $source '.ars-release-manifest.json')
     Copy-Item -LiteralPath $sig -Destination (Join-Path $source '.ars-release-manifest.sig')
+    Copy-Item -LiteralPath (Join-Path $temp 'release.zip') -Destination (Join-Path $source '.ars-release.zip')
     # Publish to a unique pending directory on the same volume before final rename.
     $pending = Join-Path $staging ('.pending-' + [guid]::NewGuid().ToString('N'))
     try {

@@ -87,3 +87,12 @@ test('Windows staging rejects unsafe ZIP members and publishes only to a new rel
  assert.match(inspector,/\[IO.Directory\]::Move\(\$pending,\$target\)/);
  assert.match(inspector,/No build, database connection or installation/);
 });
+
+test('Windows staged source revalidation uses signed original archive',()=>{
+ const s=readFileSync(new URL('../scripts/verify-windows-staged-release.ps1',import.meta.url),'utf8');
+ assert.match(s,/dgst -sha256 -verify/);
+ assert.match(s,/Staged source file count mismatch/);
+ assert.match(s,/ReparsePoint/);
+ assert.match(s,/Staged source mismatch/);
+ assert.doesNotMatch(s,/npm\.cmd|docker compose/);
+});
