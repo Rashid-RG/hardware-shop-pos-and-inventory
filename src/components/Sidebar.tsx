@@ -8,7 +8,7 @@ import {
 import { Role } from '../types';
 import ARSBrand from './ARSBrand';
 
-type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators' | 'my-collections';
+type Tab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'payroll' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators' | 'my-collections';
 interface SidebarProps {
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
@@ -55,6 +55,7 @@ const groups: NavGroup[] = [
   { id: 'people', title: 'Customers & Staff', items: [
     { id: 'customers', label: 'Customers', icon: Users2, roles: SALES_ROLES },
     { id: 'staff', label: 'Staff', icon: UserRoundCog, roles: MANAGERS },
+    { id: 'payroll', label: 'Payroll', icon: Landmark, roles: ['Super Admin'] },
   ] },
   { id: 'management', title: 'Reports & Management', items: [
     { id: 'reports', label: 'Reports & Analytics', icon: FileBarChart2, roles: SALES_ROLES },
