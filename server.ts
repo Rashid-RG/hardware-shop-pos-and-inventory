@@ -32,6 +32,7 @@ import { partnerCapitalStatement, exportPartnerCapitalStatement } from './backen
 import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/payrollPreparation';
 import { calculatePayroll, calculateStatutoryPayroll } from './backend/payrollCalculation';
 import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effectivePayrollPolicy } from './backend/payrollPolicies';
+import { proposePayrollEligibility, reviewPayrollEligibility, listPayrollEligibility, effectivePayrollEligibility } from './backend/payrollEligibility';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7722,6 +7723,39 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
 });
+const payrollEligibilityErrors=new Set(['Valid employee eligibility proposal and evidence required.','Eligibility request identifier already used with different details.','Employee not found in this shop.','Pending or approved eligibility record already exists for this month.','Valid eligibility review and evidence required.','Eligibility record not found in this shop.','Eligibility record already reviewed.','Independent eligibility reviewer required.','Approved eligibility already exists for this month.','Approved payroll requires eligibility reconciliation before retrospective approval.','Valid payroll shop required.','Valid employee and payroll month required.','No employee eligibility record for this month.','Conflicting eligibility records require reconciliation.','Latest employee eligibility requires independent approval.','Employee requires special statutory review.']);
+app.get('/api/ars/payroll/eligibility',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json(await listPayrollEligibility(pool,scope.shopId));}
+ catch(error){console.error('Payroll eligibility listing failed',error);return res.status(503).json({error:'Unable to load eligibility records.'});}
+});
+app.get('/api/ars/payroll/eligibility/effective',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const {employeeId,period}=req.query;
+ if(typeof employeeId!=='string'||typeof period!=='string')return res.status(400).json({error:'Valid employee and payroll month required.'});
+ try{return res.json({eligibility:await effectivePayrollEligibility(pool,scope.shopId,employeeId,period),statutoryVerified:false,postingEnabled:false});}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollEligibilityErrors.has(message))return res.status(409).json({error:message});console.error('Eligibility lookup failed',error);return res.status(503).json({error:'Unable to confirm employee eligibility.'});}
+});
+app.post('/api/ars/payroll/eligibility',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {requestId,employeeId,effectiveMonth,classification,authorityReference,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId))return res.status(400).json({error:'Valid eligibility request identifier required.'});
+ try{const result=await proposePayrollEligibility(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,effectiveMonth,classification,authorityReference,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollEligibilityErrors.has(message))return res.status(409).json({error:message});console.error('Eligibility preparation failed',error);return res.status(503).json({error:'Unable to confirm eligibility preparation. Retry identical request.'});}
+});
+app.post('/api/ars/payroll/eligibility/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const id=req.params.id,{decision,evidence}=req.body||{};
+ if(!validChequeRequestId(id)||!['Approved','Rejected'].includes(decision)||typeof evidence!=='string')return res.status(400).json({error:'Valid eligibility review and evidence required.'});
+ try{const result=await reviewPayrollEligibility(pool,scope.shopId,scope.recordedBy,{id,decision,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollEligibilityErrors.has(message))return res.status(409).json({error:message});console.error('Eligibility review failed',error);return res.status(503).json({error:'Unable to confirm eligibility review. Retry identical decision.'});}
+});
 app.post('/api/ars/payroll/calculate-statutory',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
@@ -7733,11 +7767,12 @@ app.post('/api/ars/payroll/calculate-statutory',requireRole(['Super Admin']),asy
   const preliminary=calculatePayroll(calculation);
   if(preliminary.baseSalary!==calculatePayroll({baseSalary:employee.salary,earnings:[],deductions:[],contributions:[],policyReference:'Salary verification'}).baseSalary)return res.status(409).json({error:'Base salary changed. Refresh and review payroll.'});
   const policy=await effectivePayrollPolicy(pool,scope.shopId,period);
+  const eligibility=await effectivePayrollEligibility(pool,scope.shopId,employeeId,period);
   const result=calculateStatutoryPayroll(calculation,policy);
-  return res.json({employeeId,period,policyId:result.policyId,effectiveMonth:policy.effective_month,calculation:result.results,eligibilityEvidence:eligibilityEvidence.trim(),statutoryVerified:false,postingEnabled:false});
+  return res.json({employeeId,period,policyId:result.policyId,effectiveMonth:policy.effective_month,eligibilityId:eligibility.id,eligibilityEffectiveMonth:eligibility.effective_month,calculation:result.results,eligibilityEvidence:eligibilityEvidence.trim(),statutoryVerified:false,postingEnabled:false});
  }catch(error){
   const message=error instanceof Error?error.message:'';
-  if(payrollErrors.has(message)||payrollPolicyErrors.has(message)||['Approved policy terms and payroll without manual contributions required.','Executable statutory eligibility rules required.','Explicit statutory earnings and unpaid leave treatment required.','Statutory contribution basis cannot be negative.'].includes(message))return res.status(409).json({error:message});
+  if(payrollErrors.has(message)||payrollPolicyErrors.has(message)||payrollEligibilityErrors.has(message)||['Approved policy terms and payroll without manual contributions required.','Executable statutory eligibility rules required.','Explicit statutory earnings and unpaid leave treatment required.','Statutory contribution basis cannot be negative.'].includes(message))return res.status(409).json({error:message});
   console.error('Statutory payroll preview failed',error);return res.status(503).json({error:'Unable to verify provisional statutory calculation.'});
  }
 });
