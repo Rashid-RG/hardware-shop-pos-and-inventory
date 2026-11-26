@@ -26,3 +26,12 @@ test('Windows startup avoids launching Docker for unreachable remote PostgreSQL'
   assert.match(launcher, /Configured remote PostgreSQL is not reachable/);
   assert.match(launcher, /Database connection verified/);
 });
+
+test('Windows desktop starts prepared production build on loopback, not dev server', () => {
+  assert.match(launcher, /Test-Path 'dist\/server\.cjs' -PathType Leaf/);
+  assert.match(launcher, /Test-Path 'dist\/index\.html' -PathType Leaf/);
+  assert.match(launcher, /\$env:NODE_ENV = 'production'/);
+  assert.match(launcher, /\$env:ARS_LISTEN_HOST = '127\.0\.0\.1'/);
+  assert.match(launcher, /-ArgumentList 'dist\/server\.cjs'/);
+  assert.doesNotMatch(launcher, /-ArgumentList '[^']*npm run dev/);
+});

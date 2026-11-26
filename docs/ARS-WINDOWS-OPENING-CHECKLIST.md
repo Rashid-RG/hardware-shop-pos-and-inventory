@@ -36,6 +36,10 @@ It requires confirmation of a backup and updates **only the password hash of an 
 
 ## Start the application
 
+For the daily desktop launcher, prepare the approved release first with `npm ci --include=dev` and `npm run build` (after a verified backup for existing installations). Stop any previous development instance before switching. Double-click **Launch-Hardware-POS.vbs** to start the prepared production build on localhost and open the browser after database readiness is confirmed. The launcher does not download updates or rebuild automatically. A missing build produces an error rather than falling back to development mode.
+
+For developer testing only:
+
 ```powershell
 npm run local:start
 ```

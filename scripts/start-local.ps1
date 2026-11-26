@@ -238,8 +238,15 @@ if (-not (Test-PostgresAuth $dbUrl)) {
 Write-Host 'Database connection verified. Starting application...'
 Write-Host 'Open http://localhost:3000 after the server reports ready.'
 if ($DesktopLaunch) {
-  # Keep the developer CLI unchanged; a desktop launch waits for readiness before opening the browser.
-  $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d /c npm run dev' -WindowStyle Hidden -PassThru
+  # Desktop business use runs only a prepared production build, never a development server.
+  if (-not (Test-Path 'dist/server.cjs' -PathType Leaf) -or -not (Test-Path 'dist/index.html' -PathType Leaf)) {
+    throw 'Production build is missing. Run npm run build during approved installation or update preparation.'
+  }
+  $env:NODE_ENV = 'production'
+  $env:ARS_LISTEN_HOST = '127.0.0.1'
+  $env:PORT = '3000'
+  $env:CORS_ALLOWED_ORIGINS = 'http://localhost:3000'
+  $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList 'dist/server.cjs' -WindowStyle Hidden -PassThru
   $deadline = (Get-Date).AddSeconds(150)
   while ((Get-Date) -lt $deadline) {
     $process.Refresh()
