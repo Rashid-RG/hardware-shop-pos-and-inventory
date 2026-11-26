@@ -23,3 +23,7 @@ The incident receipt inspector expects isolated-restore-receipt.json in the inci
 ## Combined recovery preflight
 
 The read-only preflight composes incident inspection, evidence integrity, isolated restore receipt matching and database diagnostics. A matching preflight is not recovery authorization. Expected database identity must come from an independently trusted binding. Independent accounting reconciliation, continuous writer exclusion and operator authorization remain mandatory; no marker is cleared.
+
+## Offline diagnostic command
+
+Run from a trusted application installation with Node dependencies installed: `node scripts/writer-loss-offline-diagnostics.mjs <absolute-runtime-root> <database-name> <trusted-system-identifier> <trusted-database-oid>`. Use a previously independently verified database identity, not values taken from the database being investigated. Windows local port 5433 and Mint local port 5434 are supported. Output is JSON without credentials. Exit zero means the preflight observations matched, not permission to restart. No incident clearance or server startup is performed.
