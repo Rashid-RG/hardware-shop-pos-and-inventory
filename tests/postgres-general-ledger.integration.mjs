@@ -413,7 +413,50 @@ test('real PostgreSQL payroll controls: isolated schema, partial payment and ten
  await assert.rejects(()=>repay('over','10000.03'),/exceeds outstanding amount/);
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_gl_journals WHERE id='advance-repayment:over'")).rows[0].n,0);
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_financial_movements WHERE id='advance-repayment:over'")).rows[0].n,0);
- await repay('r2','10000.02');
+ // A second payroll period recovers part of the advance through net pay.
+ const {calculateStatutoryPayroll}=await import('../backend/payrollCalculation.ts');
+ const {planDetailedPayrollJournal}=await import('../backend/payrollJournalPlan.ts');
+ const {createHash}=await import('node:crypto');
+ const canonical=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}';
+ const payrollDay='2026-12-01',period='2026-12',proposal='p2';
+ const rules={version:1,employeeEligibility:'StandardCoveredEmployee',exceptions:'None',epf:{included:['Base'],subtractUnpaidLeave:false},etf:{included:['Base'],subtractUnpaidLeave:false}};
+ const policy={id:'policy-ci',employee_epf_bp:800,employer_epf_bp:1200,employer_etf_bp:300,eligibility_rules:rules,authority_reference:'Synthetic CI policy'};
+ const sourceInputs={baseSalary:'50000.00',earnings:[],deductions:[{id:'advance:d1',kind:'AdvanceRecovery',amount:'4000.02',evidence:'CI recovery'}],contributions:[],policyReference:'CI'};
+ const {inputs,results}=calculateStatutoryPayroll(sourceInputs,policy);
+ const detailHash=createHash('sha256').update(canonical({version:1,inputs,results})).digest('hex');
+ const eligibilityEvidence='Synthetic eligibility';
+ const bindingHash=createHash('sha256').update(canonical({version:1,shopId:shop,proposalId:proposal,employeeId:'e1',period,policyId:policy.id,eligibilityId:'elig-ci',eligibilityEvidence,sourceInputs,expectedResults:results,detailHash})).digest('hex');
+ await pool.query("INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES($1,'5100','Employer contributions','Expense')",[shop]);
+ await pool.query("INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES($1,'employerContributions','control','5100','CI','CI')",[shop]);
+ await pool.query("INSERT INTO ars_gl_payroll_policies(shop_id,id,effective_month,employee_epf_bp,employer_epf_bp,employer_etf_bp,eligibility_rules,authority_reference,evidence,submitted_by) VALUES($1,$2,$3,800,1200,300,$4,'Synthetic CI policy','CI','submitter')",[shop,policy.id,period,JSON.stringify(rules)]);
+ await pool.query("INSERT INTO ars_gl_payroll_policy_reviews(shop_id,policy_id,decision,evidence,reviewed_by) VALUES($1,$2,'Approved','CI','reviewer')",[shop,policy.id]);
+ await pool.query("INSERT INTO ars_gl_payroll_eligibility(shop_id,id,employee_id,employee_name,effective_month,classification,authority_reference,evidence,submitted_by) VALUES($1,'elig-ci','e1','Synthetic employee',$2,'StandardCoveredEmployee','CI',$3,'submitter')",[shop,period,eligibilityEvidence]);
+ await pool.query("INSERT INTO ars_gl_payroll_eligibility_reviews(shop_id,eligibility_id,decision,evidence,reviewed_by) VALUES($1,'elig-ci','Approved','CI','reviewer')",[shop]);
+ await pool.query("INSERT INTO ars_gl_payroll_proposals(shop_id,id,employee_id,employee_name,period_key,base_salary,posting_date,evidence,submitted_by) VALUES($1,$2,'e1','Synthetic employee',$3,50000,$4,'CI','submitter')",[shop,proposal,period,payrollDay]);
+ await pool.query("INSERT INTO ars_gl_payroll_reviews(shop_id,proposal_id,decision,evidence,reviewed_by) VALUES($1,$2,'Approved','CI','reviewer')",[shop,proposal]);
+ await pool.query("INSERT INTO ars_gl_payroll_details(shop_id,proposal_id,calculation_version,inputs,results,snapshot_hash,gross_salary,total_deductions,net_salary,employer_contributions,employer_cost,recorded_by) VALUES($1,$2,1,$3,$4,$5,$6,$7,$8,$9,$10,'CI')",[shop,proposal,JSON.stringify(inputs),JSON.stringify(results),detailHash,results.grossSalary,results.totalDeductions,results.netSalary,results.employerContributions,results.employerCost]);
+ await pool.query("INSERT INTO ars_gl_payroll_statutory_snapshots(shop_id,proposal_id,policy_id,eligibility_id,snapshot_version,source_inputs,eligibility_evidence,binding_hash,recorded_by) VALUES($1,$2,$3,'elig-ci',1,$4,$5,$6,'CI')",[shop,proposal,policy.id,JSON.stringify(sourceInputs),eligibilityEvidence,bindingHash]);
+ const plan=planDetailedPayrollJournal(inputs),codes={salary:'5000',employerContributions:'5100',salaryPayable:'2100',employeeAdvances:'1200',epfPayable:'2110',etfPayable:'2120'};
+ await tx(async c=>{
+ await postJournal(c,{id:'payroll-accrual:p2',shopId:shop,postingDate:payrollDay,sourceKind:'PayrollAccrual',sourceId:proposal,description:'Detailed CI payroll',actor:'CI',lines:plan.lines.map(({control,...l})=>({...l,accountCode:codes[control]}))});
+ await c.query("INSERT INTO ars_gl_payroll_accruals(shop_id,id,employee_id,employee_name,period_key,base_salary,gross_amount,posting_date,evidence,journal_id,recorded_by) VALUES($1,$2,'e1','Synthetic employee',$3,50000,50000,$4,'CI','payroll-accrual:p2','CI')",[shop,proposal,period,payrollDay]);
+ await c.query("INSERT INTO ars_gl_employee_advance_recoveries(shop_id,id,disbursement_id,employee_id,recovery_kind,payroll_proposal_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,'payroll-recovery','d1','e1','PayrollRecovery',$2,4000.02,$3,'payroll-accrual:p2','CI','CI')",[shop,proposal,payrollDay]);
+ });
+ const payrollRecovery=await reconcileEmployeeAdvances(pool,shop);
+ assert.equal(payrollRecovery.checksPassed,true);assert.equal(payrollRecovery.advances[0].outstanding,'6000.00');
+ assert.equal(results.netSalary,'41999.98');
+ const detail=await reconcileSalaryPayable(pool,shop);assert.equal(detail.checksPassed,true);assert.equal(detail.rows.find(r=>r.id===proposal).amounts.netSalary,'41999.98');
+ const statutoryDetail=await reconcileStatutoryControls(pool,shop);
+ assert.equal(statutoryDetail.controls.find(c=>c.fund==='EPF').subledgerBalance,'10000.00');
+ assert.equal(statutoryDetail.controls.find(c=>c.fund==='ETF').subledgerBalance,'1500.00');
+ // Direct settlement after payroll recovery must not predate the recorded recovery.
+ await tx(async c=>{
+ const j='advance-repayment:r2';
+ await postJournal(c,{id:j,shopId:shop,postingDate:payrollDay,sourceKind:'EmployeeAdvanceRepayment',sourceId:'r2',description:'CI final repayment',actor:'CI',lines:[{accountCode:'1000',debit:'6000.00',credit:'0.00'},{accountCode:'1200',debit:'0.00',credit:'6000.00'}]});
+ await c.query("INSERT INTO ars_financial_movements VALUES($1,$2,'bank',6000,'Employee Advance',$1,'CI',$3,'CI')",[j,shop,payrollDay]);
+ await c.query("INSERT INTO ars_gl_employee_advance_recoveries(shop_id,id,disbursement_id,employee_id,recovery_kind,financial_account_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,'r2','d1','e1','DirectRepayment','bank',6000,$2,$3,'CI','CI')",[shop,payrollDay,j]);
+ });
+
  const recovered=await reconcileEmployeeAdvances(pool,shop);
  assert.equal(recovered.checksPassed,true);assert.equal(recovered.advances[0].outstanding,'0.00');assert.equal(recovered.ledgerBalance,'0.00');
 
@@ -422,7 +465,7 @@ test('real PostgreSQL payroll controls: isolated schema, partial payment and ten
  await assert.rejects(()=>pay('over','30000.00'),/exceeds outstanding net salary/);
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_gl_journals WHERE shop_id=$1 AND id='salary-payment:over'",[shop])).rows[0].n,0);
  assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_financial_movements WHERE id='salary-payment:over'")).rows[0].n,0);
- await pay('pay2','29999.99');assert.equal((await reconcileSalaryPayable(pool,shop)).verifiedOutstanding,'0.00');
+ await pay('pay2','29999.99');assert.equal((await reconcileSalaryPayable(pool,shop)).verifiedOutstanding,'41999.98');
  assert.equal((await payrollAccountingOverview(pool,other)).checksPassed,true);
  }finally{if(pool)await pool.end();await admin.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await admin.end();}
 });
