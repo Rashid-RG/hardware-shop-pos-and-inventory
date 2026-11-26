@@ -2,6 +2,10 @@
 
 This guide applies to the existing **hardware-shop-pos-and-inventory** repository. It does not deploy or alter a production service.
 
+## Fresh checkout setup shortcut
+
+Double-click `Setup-ARS-Distributor.vbs` to prepare dependencies, compile the production build and create the desktop shortcut. This preparation tool intentionally refuses existing configuration, builds and shortcuts. It does not initialize a database or configure credentials. Complete the database configuration below before opening the POS. Existing installations must follow the approved backup and update procedure instead. If setup fails after compilation, inspect the failure before retrying; do not delete operational files.
+
 ## Before the first start
 
 Install **Node.js 22**, **Git**, and **Docker Desktop with Linux containers**. Use the existing local project folder and the development branch `codex/shop-opening-pilot` when testing new changes. Never overwrite an existing database or replace an existing `.env.local` with template values.

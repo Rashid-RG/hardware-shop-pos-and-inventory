@@ -35,3 +35,12 @@ test('Windows desktop starts prepared production build on loopback, not dev serv
   assert.match(launcher, /-ArgumentList 'dist\/server\.cjs'/);
   assert.doesNotMatch(launcher, /-ArgumentList '[^']*npm run dev/);
 });
+
+test('Windows fresh setup refuses existing configuration and does not initialize a database',()=>{
+ const setup=readFileSync(new URL('../scripts/setup-windows.ps1',import.meta.url),'utf8');
+ assert.match(setup,/Existing configuration detected/);
+ assert.match(setup,/An existing build was found/);
+ assert.match(setup,/npm\.cmd run build/);
+ assert.match(setup,/CreateShortcut/);
+ assert.doesNotMatch(setup,/docker compose (up|down)|Remove-Item|Copy-Item/);
+});
