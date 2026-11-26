@@ -32,6 +32,9 @@ def plain(path, directory=False):
         raise ValueError("Unexpected evidence type.")
     return s
 
+def identity(s):
+    return (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns,s.st_mode)
+
 def read(path, maximum=65536):
     s=plain(path)
     if not 0<s.st_size<=maximum:
@@ -40,7 +43,7 @@ def read(path, maximum=65536):
         a=os.fstat(f.fileno())
         raw=f.read(maximum+1)
         b=os.fstat(f.fileno())
-    if (s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns,a.st_ctime_ns) or a!=b or len(raw)!=s.st_size:
+    if identity(s)!=identity(a) or identity(a)!=identity(b) or len(raw)!=s.st_size:
         raise ValueError("Evidence changed.")
     return raw
 
@@ -91,7 +94,7 @@ def snapshot(folder):
     for key in ("schema","database","systemIdentifier","databaseOid","volume","port","activationAllowed"):
         if binding.get(key)!=db.get(key):
             raise ValueError("Database binding changed.")
-    plan=load("update-switch-plan.py").plan(folder)
+    plan=load("update-switch-plan.py").plan(folder, quiet=True)
     receipt=json.loads(raw["restore"])
     if plan.get("activationAllowed") is not False or plan.get("rollbackAllowed") is not False or plan.get("candidateVersion")!=version or any(receipt.get(k) is not True for k in ("authenticatedReadsPassed","authenticatedWritesPassed","backwardStartupPassed","migrationCompatibilityPassed","restoreTestPassed")):
         raise ValueError("Compatibility review incomplete.")

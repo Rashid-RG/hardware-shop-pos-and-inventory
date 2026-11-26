@@ -18,7 +18,8 @@ def sha(path):
     with path.open("rb") as f:
         return hashlib.file_digest(f,"sha256").hexdigest()
 
-def plan(folder):
+def plan(folder, quiet=False):
+    output=subprocess.DEVNULL if quiet else None
     folder=folder.resolve(strict=True)
     if folder.parent!=(STATE/"update-recovery").resolve(strict=True):
         raise ValueError("Choose a managed recovery folder.")
@@ -37,10 +38,10 @@ def plan(folder):
     if not isinstance(archive,str) or not re.fullmatch(r"ars-mint-\d{8}T\d{6}Z-[0-9a-f]{32}-(?:v2-)?(with-uploads|database-only)\.dump",archive):
         raise ValueError("Invalid archive reference.")
     dump=folder/archive
-    subprocess.run([str(STATE/"node"),str(current/"scripts/verify-backup.mjs"),str(dump)],check=True)
+    subprocess.run([str(STATE/"node"),str(current/"scripts/verify-backup.mjs"),str(dump)],check=True,stdout=output)
     if receipt.get("version")!=version or receipt.get("archive")!=archive or receipt.get("archiveSha256")!=sha(dump) or receipt.get("restoreTestPassed") is not True or receipt.get("migrationCompatibilityPassed") is not True:
         raise ValueError("Matching successful restoration and compatibility results required.")
-    subprocess.run(["openssl","dgst","-sha256","-verify",str(STATE/"release-signing-public.pem"),"-signature",str(staged/".ars-release-manifest.sig"),str(staged/".ars-release-manifest.json")],check=True)
+    subprocess.run(["openssl","dgst","-sha256","-verify",str(STATE/"release-signing-public.pem"),"-signature",str(staged/".ars-release-manifest.sig"),str(staged/".ars-release-manifest.json")],check=True,stdout=output)
     manifest=json.loads((staged/".ars-release-manifest.json").read_text())
     if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
         raise ValueError("Manifest mismatch.")
