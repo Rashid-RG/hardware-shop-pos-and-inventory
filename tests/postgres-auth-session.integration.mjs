@@ -120,6 +120,35 @@ test('real login, logout and password rotation revoke previous session tokens', 
       const response=await fetch(origin+'/api/ars/payroll/'+path,{method:'POST',headers:adminHeaders});
       assert.equal(response.status,409,path+' posting must remain locked');await response.text();
     }
+    // Exercise the real authenticated GRN route using committed, isolated CI fixtures.
+    const poId='ci-grn-po-'+suffix,batchId='ci-grn-'+suffix,otherPo='ci-other-po-'+suffix,otherBatch='ci-other-grn-'+suffix;
+    const grnPath=(po,batch)=>origin+'/api/ars/purchases/'+encodeURIComponent(po)+'/receipts/'+encodeURIComponent(batch)+'/document';
+    const endpoint=grnPath(poId,batchId);
+    assert.equal((await fetch(endpoint)).status,401);
+    assert.equal((await fetch(endpoint,{headers:{...withToken(firstJson.token),'X-Shop-Id':'shop-main'}})).status,403);
+    assert.equal((await fetch(endpoint,{headers:adminHeaders})).status,404);
+    // Existing purchase and receipt tables are initialized by the running server.
+    const supplier='ci-grn-supplier-'+suffix,product='ci-grn-product-'+suffix;
+    await pool.query("INSERT INTO suppliers(id,shop_id,name,company_name,phone) VALUES($1,'shop-main','CI GRN Supplier','CI GRN Supplier','')",[supplier]);
+    await pool.query("INSERT INTO products(id,shop_id,name,sku,brand,category,cost_price,selling_price,quantity,reorder_level,warranty,description,variants_json) VALUES($1,'shop-main','CI GRN Lock',$2,'CI','Parts',10,20,0,1,'None','CI','[]'::jsonb)",[product,product]);
+    await pool.query("INSERT INTO purchase_orders(id,shop_id,po_number,date,supplier_id,supplier_name,total,status) VALUES($1,'shop-main',$2,NOW(),$3,'CI GRN Supplier',100,'Partially Received')",[poId,poId,supplier]);
+    const line=await pool.query("INSERT INTO purchase_order_items(purchase_order_id,product_id,product_name,quantity,cost_price,selling_unit_label,base_units_per_purchase_unit) VALUES($1,$2,'CI GRN Lock',10,10,'Box',5) RETURNING id",[poId,product]);
+    await pool.query("INSERT INTO ars_receipt_batches(id,shop_id,purchase_order_id,request_key,received_by,note) VALUES($1,'shop-main',$2,$1,'CI Receiver','First batch'),($3,'shop-main',$2,$3,'CI Receiver','Second batch')",[batchId,poId,batchId+'-second']);
+    await pool.query("INSERT INTO ars_receipt_batch_items(batch_id,purchase_order_item_id,quantity) VALUES($1,$2,2),($3,$2,3)",[batchId,line.rows[0].id,batchId+'-second']);
+    const beforeStock=await pool.query('SELECT quantity FROM products WHERE id=$1',[product]);
+    for(let repeat=0;repeat<2;repeat++){
+      const result=await fetch(endpoint,{headers:adminHeaders});assert.equal(result.status,200,'GRN read failed');
+      assert.match(result.headers.get('cache-control')||'',/no-store/);
+      const grn=await result.json();
+      assert.equal(grn.id,batchId);assert.equal(grn.shopId,'shop-main');assert.equal(grn.recorded_count,1);
+      assert.deepEqual(grn.items,[{productName:'CI GRN Lock',unit:'Box',quantity:2,baseUnitsPerUnit:5}]);
+      assert.equal(grn.note,'First batch');assert.ok(!('request_key' in grn));
+    }
+    assert.equal((await fetch(grnPath(poId,batchId+'-missing'),{headers:adminHeaders})).status,404);
+    assert.equal((await fetch(grnPath(otherPo,batchId),{headers:adminHeaders})).status,404);
+    assert.equal((await fetch(endpoint,{headers:{...adminHeaders,'X-Shop-Id':'ci-unauthorized-shop-'+suffix}})).status,403);
+    assert.deepEqual((await pool.query('SELECT quantity FROM products WHERE id=$1',[product])).rows,beforeStock.rows);
+    assert.equal(Number((await pool.query('SELECT COUNT(*) AS n FROM ars_receipt_batches WHERE purchase_order_id=$1',[poId])).rows[0].n),2);
     const adminLogout=await fetch(origin+'/api/auth/logout',{method:'POST',headers:adminHeaders});assert.equal(adminLogout.status,200);
     const revoked=await fetch(origin+'/api/ars/payroll/accounting-overview',{headers:adminHeaders});assert.equal(revoked.status,401);await revoked.text();
     const logout = await fetch(origin + '/api/auth/logout', {
