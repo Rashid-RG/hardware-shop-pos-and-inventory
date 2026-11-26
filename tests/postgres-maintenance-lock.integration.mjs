@@ -195,7 +195,8 @@ test('protected recovery rehearsal releases both keys after success or competing
  const make=()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
  const rival=make(),first=make(),second=make();
  const gateId=Math.floor(Math.random()*900000000)*2+10,writerId=gateId+1;
- const keys={gateId,writerId};
+ const fenceId=writerId+1;
+ const keys={gateId,writerId,fenceId};
  const acquire=async id=>(await rival.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,id])).rows[0].acquired;
  const release=async id=>(await rival.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[1642958133,id])).rows[0].released;
  try{
@@ -211,6 +212,7 @@ test('protected recovery rehearsal releases both keys after success or competing
   assert.equal(result.recoveryAllowed,false);
   assert.equal(await acquire(gateId),true);
   assert.equal(await acquire(writerId),true);
+  assert.equal(await acquire(fenceId),true);
  }finally{for(const c of [rival,first,second])await c.end().catch(()=>{});}
 });
 
@@ -291,4 +293,19 @@ test('maintenance fence excludes shared transaction locks until maintenance sess
   assert.equal(await shared(),true);
   await tx.query('ROLLBACK');
  }finally{for(const c of clients)await c.end().catch(()=>{});}
+});
+
+test('protected recovery rejects an outstanding shared transaction fence',{timeout:30000},async()=>{
+ const make=()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const tx=make(),recovery=make(),observer=make();
+ const gateId=Math.floor(Math.random()*700000000)*3+10,writerId=gateId+1,fenceId=gateId+2;
+ try{
+  await tx.connect();await recovery.connect();await observer.connect();
+  await tx.query('BEGIN');
+  assert.equal((await tx.query('SELECT pg_try_advisory_xact_lock_shared($1::integer,$2::integer) AS acquired',[1642958133,fenceId])).rows[0].acquired,true);
+  await assert.rejects(rehearseProtectedRecovery(recovery,{gateId,writerId,fenceId}),/Recovery lock unavailable/);
+  for(const id of [gateId,writerId])assert.equal((await observer.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,id])).rows[0].acquired,true);
+  await tx.query('ROLLBACK');
+  assert.equal((await observer.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,fenceId])).rows[0].acquired,true);
+ }finally{for(const c of [tx,recovery,observer])await c.end().catch(()=>{});}
 });
