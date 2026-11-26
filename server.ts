@@ -281,6 +281,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const SINGLE_WRITER_LOCK_CLASS = 1642958133;
 const SINGLE_WRITER_LOCK_ID = 1;
 const DATABASE_HANDOFF_GATE_ID = 2;
+const DATABASE_TRANSACTION_FENCE_ID = 3;
 let singleWriterLease: Client | null = null;
 
 const acquireSingleWriterLease = async () => {
@@ -313,6 +314,17 @@ const acquireSingleWriterLease = async () => {
       throw new Error('Another Hardware POS server already owns this database. Stop the duplicate instance before starting.');
     }
     singleWriterLease = client;
+    // A replacement writer cannot start while an admitted fenced transaction survives.
+    const fence = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
+      [SINGLE_WRITER_LOCK_CLASS, DATABASE_TRANSACTION_FENCE_ID]
+    );
+    if (fence.rows[0]?.acquired !== true) throw new Error('Outstanding fenced database transaction. Startup blocked.');
+    const fenceRelease = await client.query<{ released: boolean }>(
+      'SELECT pg_advisory_unlock($1::integer, $2::integer) AS released',
+      [SINGLE_WRITER_LOCK_CLASS, DATABASE_TRANSACTION_FENCE_ID]
+    );
+    if (fenceRelease.rows[0]?.released !== true) throw new Error('Transaction fence release not verified.');
     const released = await client.query<{ released: boolean }>(
       'SELECT pg_advisory_unlock($1::integer, $2::integer) AS released',
       [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
@@ -354,6 +366,15 @@ const assertWriterBeforeCommit = async () => {
     try { recordWriterLoss(runtimePaths.root); } catch (error) { console.error('Writer loss evidence persistence failed.', error); }
     throw new Error('Database writer ownership not verified; transaction must roll back.');
   }
+};
+// Shared transaction lock survives loss of the separate writer session until rollback or commit.
+const acquireTransactionFence = async (client: PoolClient) => {
+  const result = await client.query<{ acquired: boolean }>(
+    'SELECT pg_try_advisory_xact_lock_shared($1::integer, $2::integer) AS acquired',
+    [SINGLE_WRITER_LOCK_CLASS, DATABASE_TRANSACTION_FENCE_ID]
+  );
+  if (result.rows[0]?.acquired !== true) throw new Error('Database transaction fence unavailable.');
+  await assertWriterBeforeCommit();
 };
 const LOGIN_ATTEMPT_LIMIT = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
@@ -2645,6 +2666,7 @@ const syncNormalizedFromState = async (state: DBState) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await saveStateToNormalized(client, state);
     await saveAppStateMirror(client, state);
     await assertWriterBeforeCommit();
@@ -2903,6 +2925,7 @@ app.post('/api/auth/setup-admin', requireLocalSetup, loginLimiter, async (req, r
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     // Serialize all attempts at first-account creation.
     await client.query('SELECT pg_advisory_xact_lock($1)', [5412927]);
     const exists = await client.query('SELECT 1 FROM users LIMIT 1');
@@ -3076,6 +3099,7 @@ app.post('/api/auth/recovery/complete', recoveryLimiter, async (req,res) => {
   try {
     client = await pool.connect();
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     const result = await client.query("SELECT digest,auth_revision FROM password_recovery WHERE user_id=$1 AND expires_at>NOW() AND attempts<5 FOR UPDATE",[account.id]);
     const row = result.rows[0];
     if (!row || row.auth_revision!==getAuthRevision(account)) {
@@ -5002,6 +5026,7 @@ app.post('/api/transactions/:id/print',requireRole(['Super Admin','Store Manager
   let secondaryWatermarkText='';
   try {
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     const tx=await client.query('SELECT invoice_number FROM sales_transactions WHERE id=$1 AND shop_id=$2 FOR UPDATE',[req.params.id,activeShopId]);
     if(!tx.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Invoice not found in this branch.'});}
     const count=await client.query('SELECT COALESCE(MAX(print_sequence),0)::integer AS max_sequence FROM invoice_print_logs WHERE transaction_id=$1 AND shop_id=$2',
@@ -6854,6 +6879,7 @@ app.post('/api/financial-accounts',requireRole(['Super Admin','Store Manager']),
   const id='fund-'+randomUUID();
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await createFinancialAccount(client,{id,shopId:activeShopId,name,kind:kind as FinancialAccountKind,recordedBy:authUser?.name||'Manager'});
     await client.query("INSERT INTO activity_logs(id,shop_id,date,user_name,role,action,details) VALUES($1,$2,NOW(),$3,$4,'Financial Account Created',$5)",['act-'+randomUUID(),activeShopId,authUser?.name||'Manager',authUser?.role||'Store Manager',name.trim()+' ('+kind+')']);
     await assertWriterBeforeCommit();
@@ -7249,6 +7275,7 @@ app.post('/api/quotations',requireRole(['Super Admin','Store Manager','Cashier']
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     quotation.quoteNumber=await allocateTradeDocumentNumber(client,'QTN',quotation.date);
     await client.query(
       `INSERT INTO quotations(id,shop_id,quote_number,date,valid_until,customer_id,customer_name,customer_phone,
@@ -7275,6 +7302,7 @@ app.put('/api/quotations/:id/status',requireRole(['Super Admin','Store Manager',
   let changed:Quotation|undefined;
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     const row=await client.query('SELECT status FROM quotations WHERE id=$1 AND shop_id=$2 FOR UPDATE',[req.params.id,activeShopId]);
     if(!row.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Quotation not found.'});}
     if(!(allowed[row.rows[0].status]||[]).includes(status)){
@@ -7386,6 +7414,7 @@ app.post('/api/shifts/open', requireRole(['Super Admin','Store Manager','Cashier
   let shift:CashShift|undefined;
   try {
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await client.query("SELECT pg_advisory_xact_lock(hashtext('ars-cash-shifts'),hashtext($1))",[activeShopId]);
     const current=await client.query("SELECT id FROM cash_shifts WHERE shop_id=$1 AND status='Open' LIMIT 1",[activeShopId]);
     if(current.rowCount) {
@@ -7433,6 +7462,7 @@ app.post('/api/shifts/:id/close',requireRole(['Super Admin','Store Manager','Cas
   let result:CashShift|undefined;
   try {
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtext(\'ars-cash-shifts\'),hashtext($1))',[activeShopId]);
     const rows=await client.query("SELECT * FROM cash_shifts WHERE id=$1 AND shop_id=$2 FOR UPDATE",[req.params.id,activeShopId]);
     if(!rows.rowCount) {await client.query('ROLLBACK');return res.status(404).json({error:'Shift not found in this branch.'});}
@@ -7731,6 +7761,7 @@ app.post('/api/ars/partners',requireRole(['Super Admin']),async(req,res)=>{
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
     const partners=await client.query('SELECT ownership_percent FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
     const allocated=partners.rows.reduce((sum,row)=>sum+Number(row.ownership_percent||0),0);
@@ -7762,6 +7793,7 @@ app.put('/api/ars/partners/:id/ownership',requireRole(['Super Admin']),async(req
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
     const partners=await client.query('SELECT id,ownership_percent,is_active FROM ars_business_partners WHERE shop_id=$1 FOR UPDATE',[activeShopId]);
     const existing=partners.rows.find(p=>p.id===req.params.id);
@@ -7793,6 +7825,7 @@ app.post('/api/ars/partners/:id/status',requireRole(['Super Admin']),async(req,r
   const client=await pool.connect();
   try{
     await client.query('BEGIN');
+    await acquireTransactionFence(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[activeShopId+':ars-partners']);
     const partner=await client.query(
       'SELECT id,is_active,ownership_percent FROM ars_business_partners WHERE id=$1 AND shop_id=$2 FOR UPDATE',

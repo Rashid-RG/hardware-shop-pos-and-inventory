@@ -213,3 +213,22 @@ test('protected recovery rehearsal releases both keys after success or competing
   assert.equal(await acquire(writerId),true);
  }finally{for(const c of [rival,first,second])await c.end().catch(()=>{});}
 });
+
+test('transaction fence survives loss of writer and blocks replacement until rollback',{timeout:30000},async()=>{
+ const clients=Array.from({length:3},()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000}));
+ const [writer,tx,replacement]=clients;
+ const writerId=Math.floor(Math.random()*900000000)*2+10, fenceId=writerId+1;
+ const key=id=>[1642958133,id];
+ const exclusive=async(c,id)=>(await c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',key(id))).rows[0].acquired;
+ try{
+  for(const c of clients)await c.connect();
+  assert.equal(await exclusive(writer,writerId),true);
+  await tx.query('BEGIN');
+  assert.equal((await tx.query('SELECT pg_try_advisory_xact_lock_shared($1::integer,$2::integer) AS acquired',key(fenceId))).rows[0].acquired,true);
+  await writer.end();
+  assert.equal(await exclusive(replacement,writerId),true);
+  assert.equal(await exclusive(replacement,fenceId),false);
+  await tx.query('ROLLBACK');
+  assert.equal(await exclusive(replacement,fenceId),true);
+ }finally{for(const c of clients)await c.end().catch(()=>{});}
+});
