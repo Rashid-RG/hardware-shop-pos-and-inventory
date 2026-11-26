@@ -1,3 +1,4 @@
+import StatutoryControlPanel from './StatutoryControlPanel';
 import React,{useEffect,useState} from 'react';
 import {reportDay} from '../utils/reporting';
 import StatutoryRemittanceDraft from './StatutoryRemittanceDraft';
@@ -14,7 +15,7 @@ const validAmount=(v:unknown)=>typeof v==='string'&&/^\d+(\.\d{1,2})?$/.test(v);
 const fund=(v:unknown)=>v==='EPF'||v==='ETF';
 const count=(v:unknown)=>typeof v==='number'&&Number.isSafeInteger(v)&&v>=0;
 export default function StatutorySettlementPanel({shopId,authToken}:{shopId:string;authToken:string}){
- const [draft,setDraft]=useState(false);
+ const [draft,setDraft]=useState(false),[controlView,setControlView]=useState(false);
  const [period,setPeriod]=useState(reportDay(new Date()).slice(0,7)),[version,setVersion]=useState(0),[view,setView]=useState<'balances'|'history'|'reconciliation'>('balances');
  const [filter,setFilter]=useState<'all'|Fund>('all'),[search,setSearch]=useState(''),[reviewOnly,setReviewOnly]=useState(false),[page,setPage]=useState(0);
  const [loaded,setLoaded]=useState<{key:string;register:Register;history:Payment[]}|null>(null),[failure,setFailure]=useState<{key:string;message:string}|null>(null),[detail,setDetail]=useState<Payment|null>(null);
@@ -36,8 +37,9 @@ export default function StatutorySettlementPanel({shopId,authToken}:{shopId:stri
  const total=view==='balances'?rows.length:history.length;
  const selected=detail&&current?.history.some(p=>p.id===detail.id)?detail:null;
  const cell=(v:string|null,review:boolean)=>review?'Review required':money(v);
+ if(controlView)return <div className="space-y-2"><button className={button} onClick={()=>setControlView(false)}>Back to monthly settlements</button><StatutoryControlPanel shopId={shopId} authToken={authToken}/></div>;
  return <section aria-label="Statutory settlements" className="rounded-xl border bg-white p-3 space-y-3">
-  <header className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold">EPF / ETF settlements</h3><p className="text-xs text-slate-500">Monthly posted liabilities · confidential · LKR</p></div><button className={button} onClick={()=>setVersion(v=>v+1)}>Refresh</button></header>
+  <header className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold">EPF / ETF settlements</h3><p className="text-xs text-slate-500">Monthly posted liabilities · confidential · LKR</p></div><div className="flex flex-wrap gap-2"><button className={button} onClick={()=>setVersion(v=>v+1)}>Refresh</button><button className={button} onClick={()=>{setDraft(false);setDetail(null);setControlView(true);}}>Control accounts</button></div></header>
   <p className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">Read-only until accounting acceptance. Unposted payroll is not included. No payment can be submitted here.</p>
   <div className="flex flex-wrap items-end gap-2"><label className="text-xs font-semibold">Payroll month<input className={field} type="month" value={period} onChange={e=>{setPeriod(e.target.value);setPage(0);setDetail(null);}}/></label><button className={button} disabled={!current} onClick={()=>setDraft(true)}>Prepare remittance</button></div>
   {error?<p role="alert" className="rounded-lg bg-rose-50 p-2 text-sm text-rose-800">{error}</p>:!current?<p role="status" className="text-xs text-slate-500">Loading statutory register…</p>:<>
