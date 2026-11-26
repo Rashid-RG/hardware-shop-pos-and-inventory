@@ -31,7 +31,8 @@ def format_status(data):
     labels={"business":"Invoices and stock integrity","financial":"Cash and customer balances","stockPayables":"Stock and supplier estimates","partnerPayroll":"Partner and payroll links","partner":"Partner capital and drawings","imports":"Import creditor balances","payroll":"Salary, advances, EPF and ETF","inventory":"Variant and Box/Piece valuation"}
     states={"selected-checks-match":"Selected checks match","estimate-review":"Estimate review","no-coverage":"No coverage","review-required":"Review required","unavailable":"Unavailable"}
     lines=[label+": "+states.get(sections.get(key),"Not inspected") for key,label in labels.items()]
-    return base+"\n\nBusiness reconciliation (separate read-only snapshots):\n"+"\n".join(lines)+"\n\nExternal evidence and operator approval remain required."
+    snapshot="one read-only snapshot" if data.get("reconciliation",{}).get("consistentAcrossSections") is True else "snapshot unavailable"
+    return base+"\n\nBusiness reconciliation ("+snapshot+"):\n"+"\n".join(lines)+"\n\nExternal evidence and operator approval remain required."
 
 def notice(message):
     subprocess.run(["zenity","--info","--no-markup","--title="+TITLE,"--width=580","--text="+message],check=False)

@@ -6,11 +6,11 @@ import {reconcileStatutoryControls} from './statutoryControlReconciliation';
 const blocked={startupAllowed:false,recoveryAllowed:false,accountingVerified:false,externalDocumentsReconciled:false} as const;
 type Identity={database:string;systemIdentifier:string;databaseOid:string};
 // Dedicated offline connection only; no application server or writes.
-export async function inspectRecoveryPayrollControls(client:Client,expected:Identity){
+export async function inspectRecoveryPayrollControls(client:Client,expected:Identity,sharedSnapshot:boolean=false){
  let begun=false;
  try{
   if(!['hardware_pos','hardware_pos_ars','hardware_pos_ci'].includes(expected?.database)||!/^[0-9]{1,20}$/.test(expected?.systemIdentifier??'')||!/^[0-9]{1,10}$/.test(expected?.databaseOid??''))throw Error('Trusted identity required.');
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
+  if(!sharedSnapshot){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;}
   await client.query("SET LOCAL statement_timeout='10000ms'");
   await client.query("SET LOCAL lock_timeout='2000ms'");
   const identity=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid,current_setting('transaction_read_only')='on' AS read_only,current_setting('transaction_isolation')='repeatable read' AS snapshot FROM pg_control_system()");
@@ -31,8 +31,8 @@ export async function inspectRecoveryPayrollControls(client:Client,expected:Iden
     if(rows.length!==1||rows[0].controlMatched!==true||rows[0].exceptionCount!==0||statutory.unattributed.length||statutory.exceptions.length)counts[key]++;
    }
   }
-  await client.query('ROLLBACK');begun=false;
+  if(!sharedSnapshot){await client.query('ROLLBACK');begun=false;}
   return {state:!shops.length?'no-coverage':Object.values(counts).some(Boolean)?'payroll-control-review-required':'payroll-controls-matched',shopsInspected:shops.length,shopsWithExceptions:counts,...blocked};
- }catch{return {state:'payroll-control-inspection-unavailable',...blocked};}
+ }catch(error){if(sharedSnapshot)throw error;return {state:'payroll-control-inspection-unavailable',...blocked};}
  finally{if(begun)await client.query('ROLLBACK').catch(()=>{});}
 }

@@ -67,7 +67,7 @@ $refresh.Add_Click({
    $lines+=($labels[$key]+': '+$result)
   }
   $lines+=''
-  $lines+='Business reconciliation (separate read-only snapshots):'
+  $lines+=if ($data.reconciliation.consistentAcrossSections -eq $true) {'Business reconciliation (one read-only snapshot):'} else {'Business reconciliation (snapshot unavailable):'}
   $sections=[ordered]@{business='Invoices and stock integrity';financial='Cash and customer balances';stockPayables='Stock and supplier estimates';partnerPayroll='Partner and payroll links';partner='Partner capital and drawings';imports='Import creditor balances';payroll='Salary, advances, EPF and ETF';inventory='Variant and Box/Piece valuation'}
   $states=@{'selected-checks-match'='Selected checks match';'estimate-review'='Estimate review';'no-coverage'='No coverage';'review-required'='Review required';'unavailable'='Unavailable'}
   foreach ($key in $sections.Keys) {

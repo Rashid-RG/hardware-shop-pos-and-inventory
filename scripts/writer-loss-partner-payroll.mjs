@@ -7,11 +7,11 @@ export function summarizePartnerPayroll(row){
  const checks=Object.fromEntries(keys.map(k=>[k,row[k]]));
  return {state:Object.values(checks).every(n=>n==='0')?'selected-links-matched':'partner-payroll-review-required',checks,...blocked};
 }
-export async function inspectRecoveryPartnerPayroll(client,expected){
+export async function inspectRecoveryPartnerPayroll(client,expected,sharedSnapshot=false){
  let begun=false;
  try{
   if(!['hardware_pos','hardware_pos_ars','hardware_pos_ci'].includes(expected?.database)||!/^[0-9]{1,20}$/.test(expected?.systemIdentifier??'')||!/^[0-9]{1,10}$/.test(expected?.databaseOid??''))throw Error('Trusted identity required.');
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
+  if(!sharedSnapshot){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;}
   await client.query("SET LOCAL statement_timeout='10000ms'");
   await client.query("SET LOCAL lock_timeout='2000ms'");
   const r=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid,current_setting('transaction_read_only')='on' AS read_only,current_setting('transaction_isolation')='repeatable read' AS snapshot FROM pg_control_system()");
@@ -20,8 +20,8 @@ export async function inspectRecoveryPartnerPayroll(client,expected){
   const result=await client.query(partnerPayrollSql);
   if(result.rows.length!==1)throw Error('Unexpected result.');
   const report=summarizePartnerPayroll(result.rows[0]);
-  await client.query('ROLLBACK');begun=false;
+  if(!sharedSnapshot){await client.query('ROLLBACK');begun=false;}
   return report;
- }catch{return {state:'partner-payroll-inspection-unavailable',...blocked};}
+ }catch(error){if(sharedSnapshot)throw error;return {state:'partner-payroll-inspection-unavailable',...blocked};}
  finally{if(begun)await client.query('ROLLBACK').catch(()=>{});}
 }

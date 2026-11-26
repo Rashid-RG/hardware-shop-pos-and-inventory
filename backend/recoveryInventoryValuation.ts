@@ -35,11 +35,11 @@ export function recoveryProductValue(p:Product){
  if(sum!==q)throw Error('Variant quantity mismatch.');
  return total;
 }
-export async function inspectRecoveryInventory(client:Client,expected:{database:string;systemIdentifier:string;databaseOid:string}){
+export async function inspectRecoveryInventory(client:Client,expected:{database:string;systemIdentifier:string;databaseOid:string},sharedSnapshot:boolean=false){
  let begun=false;
  try{
   if(!['hardware_pos','hardware_pos_ars','hardware_pos_ci'].includes(expected?.database)||!/^[0-9]{1,20}$/.test(expected?.systemIdentifier??'')||!/^[0-9]{1,10}$/.test(expected?.databaseOid??''))throw Error('Trusted identity required.');
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
+  if(!sharedSnapshot){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;}
   await client.query("SET LOCAL statement_timeout='10000ms'");
   await client.query("SET LOCAL lock_timeout='2000ms'");
   const r=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid,current_setting('transaction_read_only')='on' AS read_only,current_setting('transaction_isolation')='repeatable read' AS snapshot FROM pg_control_system()");
@@ -66,8 +66,8 @@ export async function inspectRecoveryInventory(client:Client,expected:{database:
    const amount=moneyCents(negative?raw.slice(1):raw)*(negative?-1n:1n);
    if(amount===total)matched++;else differences++;
   }
-  await client.query('ROLLBACK');begun=false;
+  if(!sharedSnapshot){await client.query('ROLLBACK');begun=false;}
   return {state:!totals.size?'no-coverage':exceptions||differences||unmapped?'inventory-review-required':'recorded-inventory-estimates-match',productsInspected:products.length,invalidProducts:exceptions,shopsWithDifferences:differences,shopsWithoutValidMapping:unmapped,shopsWithMatchingEstimate:matched,...blocked};
- }catch{return {state:'inventory-inspection-unavailable',...blocked};}
+ }catch(error){if(sharedSnapshot)throw error;return {state:'inventory-inspection-unavailable',...blocked};}
  finally{if(begun)await client.query('ROLLBACK').catch(()=>{});}
 }

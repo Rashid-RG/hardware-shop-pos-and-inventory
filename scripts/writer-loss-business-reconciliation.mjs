@@ -11,11 +11,11 @@ export const recoveryChecks=Object.freeze({
  invalidJournalLines:"SELECT count(*)::text AS n FROM ars_gl_lines l WHERE l.debit IS NULL OR l.credit IS NULL OR NOT ((l.debit>0 AND l.credit=0) OR (l.credit>0 AND l.debit=0)) OR NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=l.shop_id AND j.id=l.journal_id) OR NOT EXISTS(SELECT 1 FROM ars_gl_accounts a WHERE a.shop_id=l.shop_id AND a.code=l.account_code)"
 });
 const blocked={startupAllowed:false,recoveryAllowed:false,accountingVerified:false,externalDocumentsReconciled:false,continuousExclusionVerified:false};
-export async function inspectRecoveryBusinessRecords(client,expected){
+export async function inspectRecoveryBusinessRecords(client,expected,sharedSnapshot=false){
  let begun=false;
  try{
   if(!['hardware_pos','hardware_pos_ars','hardware_pos_ci'].includes(expected?.database)||!/^[0-9]{1,20}$/.test(expected?.systemIdentifier??'')||!/^[0-9]{1,10}$/.test(expected?.databaseOid??''))throw Error('Trusted identity required.');
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
+  if(!sharedSnapshot){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;}
   await client.query("SET LOCAL statement_timeout='10000ms'");
   await client.query("SET LOCAL lock_timeout='2000ms'");
   const identity=await client.query("SELECT current_database() AS database, system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid,current_setting('transaction_read_only')='on' AS read_only,current_setting('transaction_isolation')='repeatable read' AS snapshot FROM pg_control_system()");
@@ -28,8 +28,8 @@ export async function inspectRecoveryBusinessRecords(client,expected){
    if(result.rows.length!==1||typeof n!=='string'||!/^(0|[1-9][0-9]{0,18})$/.test(n))throw Error('Invalid reconciliation count.');
    checks[key]=n;
   }
-  await client.query('ROLLBACK');begun=false;
+  if(!sharedSnapshot){await client.query('ROLLBACK');begun=false;}
   return {state:Object.values(checks).every(n=>n==='0')?'structural-checks-matched':'exceptions-detected',checks,...blocked};
- }catch{return {state:'reconciliation-unavailable',...blocked};}
+ }catch(error){if(sharedSnapshot)throw error;return {state:'reconciliation-unavailable',...blocked};}
  finally{if(begun)await client.query('ROLLBACK').catch(()=>{});}
 }

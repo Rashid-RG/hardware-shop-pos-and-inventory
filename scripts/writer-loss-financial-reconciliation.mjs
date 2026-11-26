@@ -8,19 +8,19 @@ export function summarizeControlComparison(rows){
  for(const r of rows)counts[r.status]++;
  return {state:!rows.length?'no-coverage':counts.matched===rows.length?'selected-controls-matched':'control-review-required',counts,compared:rows.length,excludedControls:['supplierPayables','inventory','partnerCapital','settlementAccounts','payroll','tax'],...blocked};
 }
-export async function inspectRecoveryFinancialControls(client,expected){
+export async function inspectRecoveryFinancialControls(client,expected,sharedSnapshot=false){
  let begun=false;
  try{
   if(!['hardware_pos','hardware_pos_ars','hardware_pos_ci'].includes(expected?.database)||!/^[0-9]{1,20}$/.test(expected?.systemIdentifier??'')||!/^[0-9]{1,10}$/.test(expected?.databaseOid??''))throw Error('Trusted identity required.');
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
+  if(!sharedSnapshot){await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;}
   await client.query("SET LOCAL statement_timeout='10000ms'");
   await client.query("SET LOCAL lock_timeout='2000ms'");
   const result=await client.query("SELECT current_database() AS database, system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid,current_setting('transaction_read_only')='on' AS read_only,current_setting('transaction_isolation')='repeatable read' AS snapshot FROM pg_control_system()");
   const a=result.rows[0];
   if(result.rows.length!==1||a.database!==expected.database||a.system_identifier!==expected.systemIdentifier||a.database_oid!==expected.databaseOid||a.read_only!==true||a.snapshot!==true)throw Error('Database identity mismatch.');
   const report=summarizeControlComparison((await client.query(controlComparisonSql)).rows);
-  await client.query('ROLLBACK');begun=false;
+  if(!sharedSnapshot){await client.query('ROLLBACK');begun=false;}
   return report;
- }catch{return {state:'control-inspection-unavailable',...blocked};}
+ }catch(error){if(sharedSnapshot)throw error;return {state:'control-inspection-unavailable',...blocked};}
  finally{if(begun)await client.query('ROLLBACK').catch(()=>{});}
 }
