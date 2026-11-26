@@ -1,5 +1,7 @@
 param([ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')][string]$At = '20:00')
 $ErrorActionPreference = 'Stop'
+# Scheduled tasks do not reliably inherit the launching process environment.
+if ($null -ne [Environment]::GetEnvironmentVariable('ARS_RUNTIME_ROOT','Process')) { throw 'External runtime scheduling is disabled until a stable desktop launcher is configured.' }
 $root = Split-Path -Parent $PSScriptRoot
 $node = (Get-Command node.exe -CommandType Application).Source
 Get-Command rclone.exe -CommandType Application | Out-Null

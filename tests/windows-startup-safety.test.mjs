@@ -324,3 +324,15 @@ test('Windows local backup and isolated recovery resolve the same explicit runti
  assert.match(restore,/Get-ArsWindowsRuntimeRoot \$root/);
  assert.match(restore,/Join-Path \$runtimeRoot '\.env\.local'/);
 });
+
+test('Windows encrypted Drive backup resolves external storage before status and archive handling',()=>{
+ const drive=readFileSync(new URL('../scripts/drive-backup.mjs',import.meta.url),'utf8');
+ const resolver=readFileSync(new URL('../scripts/resolve-windows-backup-directory.ps1',import.meta.url),'utf8');
+ const scheduler=readFileSync(new URL('../scripts/install-drive-backup.ps1',import.meta.url),'utf8');
+ assert.match(resolver,/Get-ArsWindowsRuntimeRoot \$root/);
+ assert.match(drive,/External backup directory mismatch/);
+ assert.ok(drive.indexOf('backups = await resolveBackupDirectory()')<drive.indexOf('await mkdir(backups'));
+ assert.match(drive,/--immutable/);
+ assert.match(drive,/--download/);
+ assert.match(scheduler,/External runtime scheduling is disabled/);
+});

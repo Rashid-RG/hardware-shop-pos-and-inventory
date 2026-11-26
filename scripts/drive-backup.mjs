@@ -9,9 +9,19 @@ import { verifyBackup } from './verify-backup.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
-const backups = resolve(root, 'backups');
-const statusFile = join(backups, 'drive-status.json');
-const historyDir = join(backups, 'drive-history');
+// Resolve the same Windows runtime contract as the local backup script before writing status.
+async function resolveBackupDirectory() {
+  if (process.env.ARS_RUNTIME_ROOT === undefined) return resolve(root, 'backups');
+  if (process.platform !== 'win32') throw new Error('External runtime cloud backup is not enabled on this platform.');
+  const { stdout } = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', join(root, 'scripts', 'resolve-windows-backup-directory.ps1')], { cwd: root });
+  const lines = stdout.trim().split(/\r?\n/);
+  if (lines.length !== 1 || !lines[0].startsWith('ARS_BACKUP_DIRECTORY=')) throw new Error('External backup directory validation failed.');
+  const selected = lines[0].slice('ARS_BACKUP_DIRECTORY='.length);
+  if (resolve(selected).toLowerCase() !== resolve(process.env.ARS_RUNTIME_ROOT, 'backups').toLowerCase()) throw new Error('External backup directory mismatch.');
+  return resolve(selected);
+}
+let backups, statusFile, historyDir;
 const backing = 'ars-drive:ARS-Backups';
 const remote = 'ars-encrypted:daily';
 
@@ -58,6 +68,9 @@ async function writeHistory(state) {
 }
 
 async function dailyBackup() {
+  backups = await resolveBackupDirectory();
+  statusFile = join(backups, 'drive-status.json');
+  historyDir = join(backups, 'drive-history');
   await mkdir(backups, { recursive: true });
   let previous;
   try { previous = JSON.parse(await readFile(statusFile, 'utf8')); }
@@ -71,7 +84,7 @@ async function dailyBackup() {
       : await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', join(root, 'scripts', 'backup-local-postgres.ps1'), '-OutputArchive'], { cwd: root });
     const archive = stdout.split(/\r?\n/).find(line => line.startsWith('ARS_ARCHIVE='))?.slice(12);
-    if (!archive || dirname(resolve(archive)) !== backups) throw new Error('Backup did not return its archive.');
+    if (!archive || (process.platform === 'win32' ? dirname(resolve(archive)).toLowerCase() !== backups.toLowerCase() : dirname(resolve(archive)) !== backups)) throw new Error('Backup did not return its archive.');
     state.archive = basename(archive);
     state.phase = 'upload';
     await writeHistory(state);
