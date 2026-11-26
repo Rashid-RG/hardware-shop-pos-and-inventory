@@ -40,7 +40,13 @@ try {
   $dist=Join-Path $release 'dist'
   Assert-PlainDirectory $dist
   foreach ($name in @('server.cjs','index.html')) { $null=Assert-PlainFile (Join-Path $dist $name) }
-  [ordered]@{schema=1;version=$p.version;release=$release;fingerprintMatched=$true;activationAllowed=$false;startupAllowed=$false;schedulingAllowed=$false} | ConvertTo-Json
+  # The preview must use an explicitly selected permanent runtime, never the release config.
+  if ($null -eq [Environment]::GetEnvironmentVariable('ARS_RUNTIME_ROOT','Process')) { throw 'Explicit permanent runtime is required for launcher preview.' }
+  $bindingHelper=Assert-PlainFile (Join-Path $PSScriptRoot 'windows-database-binding.ps1')
+  $bindingRaw=@(& $bindingHelper.FullName)
+  $binding=($bindingRaw -join "`n") | ConvertFrom-Json
+  if ($binding.schema -ne 1 -or $binding.bindingMatched -isnot [bool] -or -not $binding.bindingMatched -or $binding.activationAllowed -isnot [bool] -or $binding.activationAllowed) { throw 'Saved database binding did not pass verification.' }
+  [ordered]@{schema=1;version=$p.version;release=$release;fingerprintMatched=$true;databaseBindingMatched=$true;activationAllowed=$false;startupAllowed=$false;schedulingAllowed=$false} | ConvertTo-Json
 } finally {
   if ($owns) { $mutex.ReleaseMutex() }
   $mutex.Dispose()

@@ -15,3 +15,12 @@ test('stable launcher preview shares maintenance mutex and rejects reparse point
   assert.match(source,/maintenance\.json.*activation\.json.*instance\.json/);
   assert.match(source,/finally[\s\S]*ReleaseMutex/);
 });
+
+test('stable launcher requires explicit runtime and a verified saved database binding',()=>{
+  assert.match(source,/Explicit permanent runtime is required/);
+  assert.match(source,/windows-database-binding\.ps1/);
+  assert.match(source,/\$binding\.bindingMatched -isnot \[bool\]/);
+  assert.match(source,/databaseBindingMatched=\$true/);
+  assert.ok(source.indexOf('Saved database binding did not pass verification')<source.indexOf('databaseBindingMatched=$true'));
+  assert.doesNotMatch(source,/-Register\b/);
+});

@@ -9,7 +9,7 @@ $owns=$false
 $keys=@('context','endpoint','project','volume','database','port','systemIdentifier','databaseOid')
 function Get-VerifiedIdentity {
   $raw=@(& (Join-Path $PSScriptRoot 'preview-windows-docker-binding.ps1'))
-  $p=($raw -join "\`n") | ConvertFrom-Json
+  $p=($raw -join "`n") | ConvertFrom-Json
   if ($p.schema -ne 1 -or $p.databaseIdentityVerified -ne $true -or $p.activationAllowed -ne $false -or $p.systemIdentifier -cnotmatch '^[0-9]{1,20}$' -or $p.databaseOid -cnotmatch '^[0-9]{1,10}$') { throw 'No verified database identity returned.' }
   $p
 }
