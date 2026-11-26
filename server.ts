@@ -58,6 +58,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { resolveRuntimePaths } from './backend/runtimePaths';
+import { assertOrdinaryStartupAllowed } from './backend/maintenanceStartupGuard';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -290,6 +291,8 @@ const acquireSingleWriterLease = async () => {
       [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
     );
     if (gate.rows[0]?.acquired !== true) throw new Error('Database maintenance handoff is active. Startup blocked.');
+    // Inspect durable local evidence while holding the startup transition gate.
+    assertOrdinaryStartupAllowed();
     const result = await client.query<{ acquired: boolean }>(
       'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
       [SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID]
