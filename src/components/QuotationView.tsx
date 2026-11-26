@@ -1,3 +1,4 @@
+import {rsNextwardLogoDataUrl} from '../utils/rsNextwardPrintLogo';
 import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
@@ -233,6 +234,7 @@ export default function QuotationView({
     </div>
     ${q.notes ? `<div style="margin-top:20px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;"><strong>Notes:</strong> ${q.notes}</div>` : ''}
     <div style="margin-top:30px;font-size:11px;color:#94a3b8;text-align:center;">This is a quotation only — not a tax invoice. Prices valid until ${q.validUntil || 'further notice'}.</div>
+    <div style="margin-top:16px;border-top:1px solid #222;padding-top:8px;text-align:right;color:#111;font-size:10px;break-inside:avoid;">Powered by RS Nextward<br><img alt="RS Nextward logo" src="${rsNextwardLogoDataUrl}" style="width:115px;height:auto;"></div>
     <script>window.onload=()=>{window.print();}</script></body></html>`;
     win.document.write(html);
     win.document.close();
