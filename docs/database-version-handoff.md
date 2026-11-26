@@ -15,3 +15,7 @@ The disposable PostgreSQL integration tests cover candidate failure and coordina
 ## Authorization primitive
 
 A coordinator-local challenge now binds a random 256-bit single-use secret to the candidate PID, release, runtime and maintenance digests, and candidate/rollback purpose. Grants expire using monotonic time, support revocation and reject replay. No live server uses the primitive yet. The future local transport must independently authenticate the peer, verify the actual process and release, and confirm the coordinator still holds the database gate. Do not persist or log secrets, pass them on a command line, or accept claimed PID as proof.
+
+## Private transport rehearsal
+
+The coordinator forks a fixed disposable fixture with an inherited Node IPC channel. The parent binds the grant to the spawned child PID; secrets travel over IPC, not arguments, environment variables or files. The fixture proves the single-use grant, and the parent rejects wrong bindings, replay, disconnects and timeouts. This is not production peer attestation: executable integrity, database gate ownership, durable maintenance evidence and the live server integration remain required.
