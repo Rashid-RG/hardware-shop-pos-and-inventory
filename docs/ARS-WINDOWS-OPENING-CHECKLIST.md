@@ -52,6 +52,10 @@ The launcher verifies credentials, checks PostgreSQL connectivity, refuses to ki
 
 If Docker is used, the database is exposed on Windows port **5433**, not 5432. Port 5432 is inside the container. If a different database host is configured, make sure it is reachable; do not assume Docker Compose's local database is the intended business database.
 
+## Optional automatic startup
+
+After successful manual startup and backup verification, double-click `Configure-ARS-Startup.vbs` and confirm. This creates a shortcut in the current Windows user's Startup folder. At sign-in, the normal production launcher checks readiness and opens the browser. Run the utility again to disable startup. It refuses to replace or remove a shortcut belonging to a different installation. No database or Windows service settings are changed.
+
 ## Verify before entering real sales
 
 - Confirm the login works for each intended role and the role cannot use another shop's records.

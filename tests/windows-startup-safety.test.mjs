@@ -44,3 +44,12 @@ test('Windows fresh setup refuses existing configuration and does not initialize
  assert.match(setup,/CreateShortcut/);
  assert.doesNotMatch(setup,/docker compose (up|down)|Remove-Item|Copy-Item/);
 });
+
+test('Windows autostart requires consent and protects other installation shortcuts',()=>{
+ const s=readFileSync(new URL('../scripts/configure-windows-startup.ps1',import.meta.url),'utf8');
+ assert.match(s,/GetFolderPath\('Startup'\)/);
+ assert.match(s,/A different startup shortcut already exists/);
+ assert.match(s,/\$answer -ne 'Yes'/);
+ assert.match(s,/Remove-Item -LiteralPath \$path/);
+ assert.doesNotMatch(s,/Register-ScheduledTask|docker compose|Set-Content/);
+});
