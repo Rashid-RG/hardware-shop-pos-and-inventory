@@ -327,3 +327,20 @@ test('recovery structural checks report real exceptions using disposable tempora
   assert.equal(result.recoveryAllowed,false);
  }finally{await client.end();}
 });
+
+test('financial recovery controls compare exact signed balances on disposable temporary tables',{timeout:30000},async()=>{
+ const {inspectRecoveryFinancialControls}=await import('../scripts/writer-loss-financial-reconciliation.mjs');
+ const client=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
+ try{
+  await client.connect();
+  const expected=(await client.query("SELECT current_database() AS database,system_identifier::text AS \"systemIdentifier\",(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+  await client.query("CREATE TEMP TABLE customers(shop_id text,credit_balance numeric); CREATE TEMP TABLE ars_financial_accounts(shop_id text,id text,kind text); CREATE TEMP TABLE ars_financial_movements(shop_id text,account_id text,amount numeric); CREATE TEMP TABLE ars_gl_lines(shop_id text,account_code text,debit numeric,credit numeric); CREATE TEMP TABLE ars_gl_account_mappings(shop_id text,mapping_kind text,source_id text,account_code text); CREATE TEMP TABLE ars_gl_accounts(shop_id text,code text,kind text,active boolean); CREATE TEMP TABLE ars_gl_cutover(shop_id text,posting_enabled boolean)");
+  await client.query("INSERT INTO customers VALUES ('s',100.25),('s',-10.50); INSERT INTO ars_financial_accounts VALUES ('s','bank','Bank'); INSERT INTO ars_financial_movements VALUES ('s','bank',25.10); INSERT INTO ars_gl_cutover VALUES ('s',true); INSERT INTO ars_gl_accounts VALUES ('s','1000','Asset',true),('s','2000','Liability',true),('s','1100','Asset',true); INSERT INTO ars_gl_account_mappings VALUES ('s','receivables','control','1000'),('s','customerCredits','control','2000'),('s','financialAccount','bank','1100'); INSERT INTO ars_gl_lines VALUES ('s','1000',100.25,0),('s','2000',0,10.50),('s','1100',25.10,0)");
+  assert.equal((await inspectRecoveryFinancialControls(client,expected)).counts.matched,3);
+  await client.query("UPDATE customers SET credit_balance=101.25 WHERE credit_balance>0");
+  const r=await inspectRecoveryFinancialControls(client,expected);
+  assert.equal(r.state,'control-review-required');assert.equal(r.counts.mismatch,1);assert.equal(r.recoveryAllowed,false);
+  await client.query("UPDATE ars_gl_cutover SET posting_enabled=false");
+  assert.equal((await inspectRecoveryFinancialControls(client,expected)).counts['posting-disabled'],3);
+ }finally{await client.end();}
+});
