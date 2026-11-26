@@ -344,3 +344,19 @@ test('financial recovery controls compare exact signed balances on disposable te
   assert.equal((await inspectRecoveryFinancialControls(client,expected)).counts['posting-disabled'],3);
  }finally{await client.end();}
 });
+
+test('supplier and stock estimates distinguish incomplete coverage on temporary tables',{timeout:30000},async()=>{
+ const {inspectRecoveryStockPayables}=await import('../scripts/writer-loss-stock-payables.mjs');
+ const c=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
+ try{
+ await c.connect();
+ const expected=(await c.query("SELECT current_database() AS database,system_identifier::text AS \"systemIdentifier\",(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+ await c.query("CREATE TEMP TABLE products(shop_id text,quantity int,cost_price numeric,variants_json jsonb); CREATE TEMP TABLE purchase_orders(shop_id text,id text,supplier_id text,total numeric,status text); CREATE TEMP TABLE supplier_payments(shop_id text,supplier_id text,purchase_order_id text,amount numeric); CREATE TEMP TABLE ars_gl_cutover(shop_id text,posting_enabled boolean); CREATE TEMP TABLE ars_gl_accounts(shop_id text,code text,kind text,active boolean); CREATE TEMP TABLE ars_gl_account_mappings(shop_id text,mapping_kind text,source_id text,account_code text); CREATE TEMP TABLE ars_gl_lines(shop_id text,account_code text,debit numeric,credit numeric)");
+ await c.query("INSERT INTO products VALUES ('s',10,5.25,'[]'); INSERT INTO purchase_orders VALUES ('s','p','supplier',100,'Received'); INSERT INTO supplier_payments VALUES ('s','supplier','p',25); INSERT INTO ars_gl_cutover VALUES ('s',true); INSERT INTO ars_gl_accounts VALUES ('s','1000','Asset',true),('s','2000','Liability',true); INSERT INTO ars_gl_account_mappings VALUES ('s','inventory','control','1000'),('s','supplierPayables','control','2000'); INSERT INTO ars_gl_lines VALUES ('s','1000',52.50,0),('s','2000',0,75)");
+ assert.equal((await inspectRecoveryStockPayables(c,expected)).counts['estimate-matches'],2);
+ await c.query("INSERT INTO products VALUES ('s',2,10,'[{\"id\":\"v\"}]'); INSERT INTO purchase_orders VALUES ('s','partial','supplier',20,'Partially Received')");
+ const r=await inspectRecoveryStockPayables(c,expected);
+ assert.equal(r.counts['incomplete-estimate'],2);
+ assert.equal(r.recoveryAllowed,false);
+ }finally{await c.end();}
+});
