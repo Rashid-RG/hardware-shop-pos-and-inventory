@@ -19,3 +19,7 @@ A coordinator-local challenge now binds a random 256-bit single-use secret to th
 ## Private transport rehearsal
 
 The coordinator forks a fixed disposable fixture with an inherited Node IPC channel. The parent binds the grant to the spawned child PID; secrets travel over IPC, not arguments, environment variables or files. The fixture proves the single-use grant, and the parent rejects wrong bindings, replay, disconnects and timeouts. This is not production peer attestation: executable integrity, database gate ownership, durable maintenance evidence and the live server integration remain required.
+
+## Persistent preparation record
+
+The preparation primitive exclusively creates handoff-pending.json, flushes file contents and on POSIX flushes the parent directory. Partial or malformed markers remain blocking evidence. Inspection never clears the marker or authorizes recovery. This primitive is not yet called by a live coordinator; Windows power-loss durability, subsequent transaction phases and verified cancellation remain outstanding.
