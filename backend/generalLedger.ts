@@ -203,6 +203,30 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_payroll_accrual_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_accruals
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_payroll_period ON ars_gl_payroll_accruals(shop_id,period_key,employee_id);
+ -- Payroll proposals and decisions are evidence records; neither creates a journal.
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_proposals(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,employee_id TEXT NOT NULL,employee_name TEXT NOT NULL,
+  period_key TEXT NOT NULL CHECK(period_key ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  base_salary NUMERIC(16,2) NOT NULL CHECK(base_salary>0),posting_date DATE NOT NULL,
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),CHECK(to_char(posting_date,'YYYY-MM')=period_key)
+ );
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_reviews(
+  shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('Approved','Rejected')),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  reviewed_by TEXT NOT NULL,reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,proposal_id) REFERENCES ars_gl_payroll_proposals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_payroll_proposal_immutable ON ars_gl_payroll_proposals;
+ CREATE TRIGGER ars_gl_payroll_proposal_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_proposals
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ DROP TRIGGER IF EXISTS ars_gl_payroll_review_immutable ON ars_gl_payroll_reviews;
+ CREATE TRIGGER ars_gl_payroll_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_payroll_proposal_period ON ars_gl_payroll_proposals(shop_id,employee_id,period_key);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
