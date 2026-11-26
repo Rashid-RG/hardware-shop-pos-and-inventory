@@ -11,7 +11,9 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Keep -lt 7 -or $Keep -gt 3650) { throw 'Keep must be between 7 and 3650 successful backups.' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$envFile = Join-Path $projectRoot '.env.local'
+. (Join-Path $PSScriptRoot 'windows-runtime-paths.ps1')
+$runtimeRoot = Get-ArsWindowsRuntimeRoot $projectRoot
+$envFile = Join-Path $runtimeRoot '.env.local'
 if (-not (Test-Path -LiteralPath $envFile)) { throw 'Missing .env.local; refusing to guess the active database.' }
 $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
 if (-not $line) { throw 'DATABASE_URL is missing.' }
@@ -24,7 +26,7 @@ $configuredDb = [System.Uri]::UnescapeDataString($uri.AbsolutePath.Trim('/'))
 if ($configuredDb -notmatch '^[a-zA-Z][a-zA-Z0-9_]*$') { throw 'Configured database name is missing or unsafe.' }
 if (-not $Database) { $Database = $configuredDb }
 if ($Database -cne $configuredDb) { throw 'Requested database does not match DATABASE_URL. Refusing backup.' }
-if (-not [System.IO.Path]::IsPathRooted($Destination)) { $Destination = Join-Path $projectRoot $Destination }
+if (-not [System.IO.Path]::IsPathRooted($Destination)) { $Destination = Join-Path $runtimeRoot $Destination }
 New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 $Destination = (Resolve-Path -LiteralPath $Destination).Path
 # Windows PowerShell 5.1 can promote Docker stderr warnings to terminating errors.
@@ -46,7 +48,7 @@ $configuredPort = if ($uri.Port -gt 0) { $uri.Port } else { 5432 }
 if (-not ($portMap -match ":$configuredPort$")) {
   throw 'Docker mapped port does not match DATABASE_URL.'
 }
-$uploadsDir = Join-Path $projectRoot 'uploads'
+$uploadsDir = Join-Path $runtimeRoot 'uploads'
 $hasUploads = Test-Path -LiteralPath $uploadsDir -PathType Container
 $scope = if ($hasUploads) { 'with-uploads' } else { 'database-only' }
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff')

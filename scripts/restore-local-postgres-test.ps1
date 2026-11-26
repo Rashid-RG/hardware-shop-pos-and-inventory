@@ -9,7 +9,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$envPath = Join-Path $root '.env.local'
+. (Join-Path $PSScriptRoot 'windows-runtime-paths.ps1')
+$runtimeRoot = Get-ArsWindowsRuntimeRoot $root
+$envPath = Join-Path $runtimeRoot '.env.local'
 if (-not (Test-Path $envPath)) { throw 'Missing .env.local; cannot identify protected active database.' }
 $dbLine = Get-Content $envPath | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
 if (-not $dbLine) { throw 'DATABASE_URL is not configured.' }

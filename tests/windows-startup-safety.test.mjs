@@ -310,3 +310,17 @@ test('Windows runtime integration plan rejects stale prepared copies and never c
  assert.match(s,/activationAllowed=\$false/);
  assert.doesNotMatch(s,/Remove-Item|Move-Item|Start-Process|docker compose up|Set-Content/);
 });
+
+test('Windows local backup and isolated recovery resolve the same explicit runtime configuration',()=>{
+ const helper=readFileSync(new URL('../scripts/windows-runtime-paths.ps1',import.meta.url),'utf8');
+ const backup=readFileSync(new URL('../scripts/backup-local-postgres.ps1',import.meta.url),'utf8');
+ const restore=readFileSync(new URL('../scripts/restore-local-postgres-test.ps1',import.meta.url),'utf8');
+ assert.match(helper,/ARS_RUNTIME_ROOT/);
+ assert.match(helper,/ReparsePoint/);
+ assert.match(helper,/External runtime must be outside/);
+ assert.match(backup,/Get-ArsWindowsRuntimeRoot \$projectRoot/);
+ assert.match(backup,/Join-Path \$runtimeRoot \$Destination/);
+ assert.match(backup,/Join-Path \$runtimeRoot 'uploads'/);
+ assert.match(restore,/Get-ArsWindowsRuntimeRoot \$root/);
+ assert.match(restore,/Join-Path \$runtimeRoot '\.env\.local'/);
+});
