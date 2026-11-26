@@ -59,7 +59,8 @@ try {
   $target=Join-Path $recovery ($Version+'-'+$id)
   New-Item -ItemType Directory -Path $pending | Out-Null
   Assert-NoObservedDatabaseClients
-  $result=@(& (Join-Path $PSScriptRoot 'backup-local-postgres.ps1') -Destination $pending -OutputArchive)
+  $result=@(& node (Join-Path $PSScriptRoot 'windows-locked-maintenance-backup.mjs') $pending)
+  if ($LASTEXITCODE -ne 0) { throw 'Protected maintenance backup failed.' }
   $paths=@($result | Where-Object { $_ -is [string] -and $_.StartsWith('ARS_ARCHIVE=') })
   if ($paths.Count -ne 1) { throw 'Backup did not return exactly one archive.' }
   $archive=$paths[0].Substring(12)
@@ -70,7 +71,7 @@ try {
   if ((Assert-Maintenance) -cne $maintenanceDigest) { throw 'Maintenance evidence changed during backup.' }
   if ((Assert-ArsPreparedFingerprint $prepared).digest -cne $fingerprint.digest) { throw 'Prepared release changed during backup.' }
   if ((Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash -cne $envHash) { throw 'Operational configuration changed during backup.' }
-  $meta=[ordered]@{schema=1;version=$Version;previousProject=$root;preparedDigest=$fingerprint.digest;archive=[IO.Path]::GetFileName($archive);archiveSha256=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash;createdAt=[DateTime]::UtcNow.ToString('o');maintenanceDigest=$maintenanceDigest;managedShutdownVerified=$true;externalWritersExcluded=$false;databaseActivityChecksPassed=$true;quiesced=$false;activationApproved=$false;restoreTestPassed=$false;note='Managed launcher shutdown verified. No other clients observed immediately before and after backup; this is not continuous writer exclusion. Restore and compatibility evidence required.'}
+  $meta=[ordered]@{schema=1;version=$Version;previousProject=$root;preparedDigest=$fingerprint.digest;archive=[IO.Path]::GetFileName($archive);archiveSha256=(Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash;createdAt=[DateTime]::UtcNow.ToString('o');maintenanceDigest=$maintenanceDigest;managedShutdownVerified=$true;externalWritersExcluded=$false;applicationWriterLeaseDuringArchive=$true;publicTableLocksDuringArchive=$true;databaseActivityChecksPassed=$true;quiesced=$false;activationApproved=$false;restoreTestPassed=$false;note='Managed launcher shutdown verified. Application advisory lease and public table SHARE locks held during archive creation; not continuous writer exclusion across activation. Restore and compatibility evidence required.'}
   $meta | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $pending 'recovery.json') -Encoding UTF8
   [IO.Directory]::Move($pending,$target)
   Write-Host "Retained maintenance backup: $target"
