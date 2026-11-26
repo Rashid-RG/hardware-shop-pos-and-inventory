@@ -14,6 +14,7 @@ const SupplierPurchaseView = lazy(() => import('./components/SupplierPurchaseVie
 const ImportCostPlanner = lazy(() => import('./components/ImportCostPlanner'));
 const ImportShipmentView = lazy(() => import('./components/ImportShipmentView'));
 const PartnerCapitalView = lazy(() => import('./components/PartnerCapitalView'));
+const PayrollPreparationPanel = lazy(() => import('./components/PayrollPreparationPanel'));
 const BackupRecoveryView = lazy(() => import('./components/BackupRecoveryView'));
 const CustomerEmployeeView = lazy(() => import('./components/CustomerEmployeeView'));
 const AccountingSettingsView = lazy(() => import('./components/AccountingSettingsView'));
@@ -26,7 +27,7 @@ const CalculatorsView = lazy(() => import('./components/CalculatorsView'));
 
 import { Product, Supplier, Customer, Employee, SalesTransaction, PurchaseOrder, StockLog, ActivityLog, Role, StoreSettings, ManualExpense, AuthUser, SupplierPayment, Quotation, CashShift, CustomerCreditPayment } from './types';
 
-type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators' | 'my-collections';
+type AppTab = 'dashboard' | 'pos' | 'products' | 'inventory' | 'purchases' | 'imports' | 'shipments' | 'warehouse-receiving' | 'partners' | 'customers' | 'staff' | 'payroll' | 'reports' | 'quotations' | 'shifts' | 'accounting' | 'company-profile' | 'backup-recovery' | 'db-admin' | 'calculators' | 'my-collections';
 const SESSION_KEY = 'hardware_shop_session';
 const SHOP_SESSION_KEY = 'hardware_shop_active_shop';
 const ACTIVE_TAB_SESSION_KEY = 'ars_active_workspace';
@@ -36,7 +37,7 @@ const permittedTabs = (role: Role): AppTab[] => {
   if (['Super Admin', 'Store Manager', 'Inventory Staff'].includes(role)) tabs.push('products', 'inventory', 'purchases', 'warehouse-receiving');
   if (['Super Admin', 'Store Manager'].includes(role)) tabs.push('imports', 'shipments', 'staff', 'accounting', 'company-profile');
   if (role === 'Cashier') tabs.push('my-collections');
-  if (role === 'Super Admin') tabs.push('partners', 'backup-recovery', 'db-admin');
+  if (role === 'Super Admin') tabs.push('partners', 'payroll', 'backup-recovery', 'db-admin');
   return tabs;
 };
 
@@ -1175,7 +1176,7 @@ export default function App() {
               <p className="truncate font-heading text-base font-bold leading-tight text-slate-900 sm:text-lg">{({
                 dashboard: 'Business Overview', pos: 'Wholesale Billing', products: 'Product Catalog',
                 inventory: 'Stock Management', purchases: 'Suppliers & Purchasing', imports: 'Import Landed Costs', shipments: 'Import Shipments', 'warehouse-receiving': 'Warehouse Receiving', partners: 'Partner Capital',
-                'my-collections': 'My Collections', customers: 'Customer Management', staff: 'Staff Management', reports: 'Reports & Analytics',
+                'my-collections': 'My Collections', customers: 'Customer Management', staff: 'Staff Management', payroll: 'Payroll Management', reports: 'Reports & Analytics',
                 quotations: 'Quotations', shifts: 'Cash Shifts', 
                 accounting: 'Accounting', 'company-profile': 'Company Profile', 'backup-recovery': 'Backup & Recovery', 'db-admin': 'System Administration', calculators: 'Calculators',
               } as Record<AppTab, string>)[activeTab]}</p>
@@ -1304,6 +1305,7 @@ export default function App() {
               )}
 
               {activeTab === 'my-collections' && currentRole === 'Cashier' && <MyCollectionsView owner={authUser.email} authToken={sessionToken} shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} onOpenCustomers={()=>setActiveTab('customers')} />}
+              {activeTab === 'payroll' && currentRole === 'Super Admin' && <PayrollPreparationPanel authToken={sessionToken} owner={authUser.email} shopId={authUser.scopedShopId || selectedShopId || taxConfig.activeShopId || 'shop-main'} employees={employees}/>}
               {(activeTab === 'customers' || activeTab === 'staff') && (
                 <CustomerEmployeeView
                   taxConfig={taxConfig}
