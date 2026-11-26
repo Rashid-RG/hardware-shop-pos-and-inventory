@@ -11,3 +11,14 @@ test('stable startup inventory recognizes legacy entries without modifying start
  assert.match(s,/automaticStartupAllowed=\$false;existingStartupChanged=\$false/);
  assert.doesNotMatch(s,/\.Save\(|Register-ScheduledTask|Remove-Item|Start-Process|Set-Content|New-Item/);
 });
+
+test('startup inventory reads registry views and scheduled task triggers without mutation',()=>{
+ assert.match(s,/RegistryView\]::Registry32/);
+ assert.match(s,/RegistryView\]::Registry64/);
+ assert.match(s,/OpenSubKey\(\$sub,\$false\)/);
+ assert.match(s,/Get-ScheduledTask -ErrorAction Stop/);
+ assert.match(s,/MSFT_TaskBootTrigger/);
+ assert.match(s,/MSFT_TaskLogonTrigger/);
+ assert.match(s,/registryMatchingObservations=\$registryMatches/);
+ assert.doesNotMatch(s,/SetValue\(|DeleteValue\(|Set-ItemProperty|Unregister-ScheduledTask|Disable-ScheduledTask/);
+});
