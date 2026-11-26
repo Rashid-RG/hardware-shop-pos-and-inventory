@@ -377,3 +377,20 @@ test('partner controls compare contributions and drawings separately on disposab
  assert.equal(r.counts['entry-review'],1);assert.equal(r.recoveryAllowed,false);
  }finally{await c.end();}
 });
+
+test('import controls compare recognized liabilities less settlements on disposable tables',{timeout:30000},async()=>{
+ const {inspectRecoveryImportControls}=await import('../scripts/writer-loss-import-controls.mjs');
+ const c=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
+ try{
+ await c.connect();
+ const expected=(await c.query("SELECT current_database() AS database,system_identifier::text AS \"systemIdentifier\",(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+ await c.query("CREATE TEMP TABLE ars_gl_import_obligations(shop_id text,id text,amount numeric); CREATE TEMP TABLE ars_gl_import_obligation_reviews(shop_id text,obligation_id text,decision text); CREATE TEMP TABLE ars_gl_import_receipt_allocations(shop_id text,obligation_id text,amount numeric,journal_id text,batch_id text); CREATE TEMP TABLE ars_gl_import_settlements(shop_id text,id text,obligation_id text,amount numeric,journal_id text,payment_date date,recorded_by text,account_id text); CREATE TEMP TABLE ars_gl_journals(shop_id text,id text,source_kind text,source_id text,posting_date date,recorded_by text); CREATE TEMP TABLE ars_financial_movements(shop_id text,movement_kind text,source_id text,account_id text,amount numeric,effective_date date,recorded_by text); CREATE TEMP TABLE ars_gl_cutover(shop_id text,posting_enabled boolean); CREATE TEMP TABLE ars_gl_accounts(shop_id text,code text,kind text,active boolean); CREATE TEMP TABLE ars_gl_account_mappings(shop_id text,mapping_kind text,source_id text,account_code text); CREATE TEMP TABLE ars_gl_lines(shop_id text,account_code text,debit numeric,credit numeric)");
+ await c.query("INSERT INTO ars_gl_import_obligations VALUES ('s','o',100); INSERT INTO ars_gl_import_obligation_reviews VALUES ('s','o','Approved'); INSERT INTO ars_gl_import_receipt_allocations VALUES ('s','o',80,'j1','b'); INSERT INTO ars_gl_import_settlements VALUES ('s','p','o',30,'j2','2026-01-02','u','bank'); INSERT INTO ars_gl_journals VALUES ('s','j1','ReceiptBatch','b','2026-01-01','u'),('s','j2','ImportCreditorPayment','p','2026-01-02','u'); INSERT INTO ars_financial_movements VALUES ('s','Import Creditor Payment','p','bank',-30,'2026-01-02','u'); INSERT INTO ars_gl_cutover VALUES ('s',true); INSERT INTO ars_gl_accounts VALUES ('s','2000','Liability',true); INSERT INTO ars_gl_account_mappings VALUES ('s','importPayables','control','2000'); INSERT INTO ars_gl_lines VALUES ('s','2000',30,80)");
+ assert.equal((await inspectRecoveryImportControls(c,expected)).counts['selected-balances-match'],1);
+ await c.query("UPDATE ars_gl_lines SET credit=81");
+ assert.equal((await inspectRecoveryImportControls(c,expected)).counts['balance-difference'],1);
+ await c.query("UPDATE ars_financial_movements SET amount=-31");
+ const r=await inspectRecoveryImportControls(c,expected);
+ assert.equal(r.counts['evidence-review'],1);assert.equal(r.recoveryAllowed,false);
+ }finally{await c.end();}
+});
