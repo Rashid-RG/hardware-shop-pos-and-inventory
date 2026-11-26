@@ -44,10 +44,12 @@ def matches(record,binding):
             and record.get("observationOnly") is True and record.get("binding")==binding
             and all(record.get(k) is False for k in FLAGS))
 
-def retain(folder,verify=False,confirmation=""):
+def retain(folder,verify=False,confirmation="",cancel=False):
     if os.geteuid()==0 or not folder.is_absolute():
         raise ValueError("Desktop user and absolute recovery folder required.")
-    if not verify and confirmation!="RETAIN MINT SWITCH INTENT":
+    if cancel and (verify or confirmation!="CANCEL MINT SWITCH INTENT"):
+        raise ValueError("Explicit cancellation confirmation required.")
+    if not verify and not cancel and confirmation!="RETAIN MINT SWITCH INTENT":
         raise ValueError("Explicit confirmation required.")
     proposal=load()
     proposal.plain(STATE,True)
@@ -58,7 +60,7 @@ def retain(folder,verify=False,confirmation=""):
                 raise ValueError("Invalid lock.")
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         binding=verified_binding(folder,proposal)
-        if not verify:
+        if not verify and not cancel:
             if target.exists() or target.is_symlink():
                 raise ValueError("Existing intent must be retained.")
             if verified_binding(folder,proposal)!=binding:
@@ -75,15 +77,35 @@ def retain(folder,verify=False,confirmation=""):
         record=json.loads(raw)
         if not matches(record,verified_binding(folder,proposal)) or proposal.read(target)!=raw:
             raise ValueError("Intent stale or invalid.")
+        if cancel:
+            # Hard link preserves exact original bytes without overwriting evidence.
+            # A crash before unlink leaves the live blocking marker in place.
+            archive=STATE/("cancelled-switch-intent-"+record["switchId"]+".json")
+            if archive.exists() or archive.is_symlink():
+                raise ValueError("Cancellation evidence already exists; manual review required.")
+            if proposal.read(target)!=raw:
+                raise ValueError("Intent changed before cancellation.")
+            os.link(target,archive,follow_symlinks=False)
+            fd=os.open(STATE,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+            if proposal.read(archive)!=raw or proposal.read(target)!=raw or verified_binding(folder,proposal)!=binding:
+                raise ValueError("Cancellation evidence changed.")
+            target.unlink()
+            fd=os.open(STATE,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+            return {"schema":1,"intentCancelled":True,"intentDigest":proposal.sha(raw),"maintenanceRetained":True,**FLAGS}
         return {"schema":1,"intentMatched":True,"switchId":record["switchId"],"intentDigest":proposal.sha(raw),**FLAGS}
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder",type=Path)
     parser.add_argument("--verify",action="store_true")
+    parser.add_argument("--cancel",action="store_true")
     parser.add_argument("--confirmation",default="")
     args=parser.parse_args()
     try:
-        print(json.dumps(retain(args.folder,args.verify,args.confirmation)))
+        print(json.dumps(retain(args.folder,args.verify,args.confirmation,args.cancel)))
     except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         sys.exit("ARS Distributor switch intent blocked. Contact RS Nextward support.")

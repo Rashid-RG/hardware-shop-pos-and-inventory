@@ -11,3 +11,10 @@ test('switch intent is non-authorizing and blocks ordinary startup',()=>{
  assert.doesNotMatch(s,/Start-Process|Remove-Item|Move-Item|\[IO.File\]::Replace/);
  for(const p of ['scripts/windows-switch-inspection.ps1','backend/maintenanceStartupGuard.ts'])assert.match(read(p),/runtime-switch-intent\.json/);
 });
+
+test('Windows cancellation retains exact original intent without resuming POS',()=>{
+ const s=read('scripts/prepare-windows-switch-intent.ps1');
+ assert.match(s,/CANCEL SWITCH INTENT/);
+ assert.match(s,/\[IO.File\]::Move\(\$target,\$archive\)/);
+ assert.match(s,/maintenanceRetained=\$true/);
+});

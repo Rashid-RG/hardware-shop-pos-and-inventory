@@ -1,5 +1,5 @@
 # Retain a switch intent only. Never create an active pointer or start the POS.
-param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[string]$Confirmation)
+param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[switch]$Cancel,[string]$Confirmation)
 $ErrorActionPreference='Stop'
 if ($RecoveryId -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') {throw 'Invalid recovery identifier.'}
 $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
@@ -45,8 +45,9 @@ try {
  Assert-Chain $PSScriptRoot
  $conflicts=@(Get-ChildItem -LiteralPath $control -Force | Where-Object {$_.Name -in @('runtime-active.json','runtime-switch-journal.json','handoff-pending.json','runtime-previous.json','runtime-failed-candidate.json') -or $_.Name -like 'journal-history-*' -or $_.Name -like 'runtime-switch-pending-*'})
  if ($conflicts.Count -gt 0) {throw 'Unresolved switching evidence.'}
+ if ($Cancel -and ($Verify -or $Confirmation -cne 'CANCEL SWITCH INTENT')) {throw 'Explicit cancellation confirmation required.'}
  $binding=Get-VerifiedBinding
- if (-not $Verify) {
+ if (-not $Verify -and -not $Cancel) {
   if (Test-Path -LiteralPath $target) {throw 'Existing switch intent must be retained.'}
   if (-not $Confirmation) {$Confirmation=Read-Host 'Type RETAIN SWITCH INTENT to record intent only'}
   if ($Confirmation -cne 'RETAIN SWITCH INTENT') {throw 'Explicit confirmation required.'}
@@ -60,6 +61,16 @@ try {
  $saved=Read-Record $target
  $current=Get-VerifiedBinding
  if ($saved.data.schema -ne 1 -or $saved.data.kind -cne 'runtime-switch-intent' -or $saved.data.switchId -cnotmatch '^[a-f0-9]{32}$' -or $saved.data.observationOnly -ne $true -or $saved.data.activationAllowed -ne $false -or $saved.data.startupAllowed -ne $false -or $saved.data.rollbackAllowed -ne $false -or ($saved.data.binding | ConvertTo-Json -Compress) -cne ($current | ConvertTo-Json -Compress) -or (Read-Record $target).digest -cne $saved.digest) {throw 'Switch intent invalid or stale.'}
+ if ($Cancel) {
+  $archive=Join-Path $control ('cancelled-switch-intent-'+$saved.data.switchId+'.json')
+  if (Test-Path -LiteralPath $archive) {throw 'Cancellation evidence already exists.'}
+  if ((Read-Record $target).digest -cne $saved.digest) {throw 'Intent changed before cancellation.'}
+  # Same-directory non-overwriting rename retains original bytes.
+  [IO.File]::Move($target,$archive)
+  if ((Read-Record $archive).digest -cne $saved.digest) {throw 'Retained cancellation evidence differs.'}
+  [ordered]@{schema=1;intentCancelled=$true;intentDigest=$saved.digest;maintenanceRetained=$true;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false} | ConvertTo-Json
+  return
+ }
  [ordered]@{schema=1;intentMatched=$true;switchId=$saved.data.switchId;intentDigest=$saved.digest;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false} | ConvertTo-Json
 } finally {
  if ($owns) {$mutex.ReleaseMutex()}
