@@ -93,6 +93,14 @@ test('real login, logout and password rotation revoke previous session tokens', 
       const forbidden=await fetch(endpoint,{method,headers:withToken(firstJson.token)});
       assert.equal(forbidden.status,403,action+' must reject cashier access');
     }
+    // Confidential payroll endpoints must reject anonymous and cashier requests.
+    const payrollPaths=['policies','policies/effective?period=2026-11','proposals?period=2026-11','statutory-settlements/reconciliation?period=2026-11','statutory-settlements/banks','statutory-settlements/balances?period=2026-11','statutory-settlements?period=2026-11','advances/reconciliation','statutory-settlements/controls','salary-payable/reconciliation','accounting-overview','reconciliation?period=2026-11','monthly-report/pdf?period=2026-11','monthly-report?period=2026-11','payslips/ci-missing/pdf','salary-payments/balances?period=2026-11','salary-payments?period=2026-11','advances','advances/balances','eligibility','eligibility/effective?period=2026-11'];
+    const payrollWrites=['policies','policies/ci-missing/review','statutory-settlements','salary-payments','advances','advances/ci-missing/review','advances/ci-missing/disburse','advances/ci-missing/repay','eligibility','eligibility/ci-missing/review','calculate-statutory','calculate','proposals','proposals/ci-missing/review','proposals/ci-missing/post'];
+    for(const [method,paths] of [['GET',payrollPaths],['POST',payrollWrites]])for(const path of paths){
+      const endpoint=origin+'/api/ars/payroll/'+path;
+      const anonymous=await fetch(endpoint,{method});assert.equal(anonymous.status,401,path+' requires authentication');await anonymous.text();
+      const forbidden=await fetch(endpoint,{method,headers:{...withToken(firstJson.token),'X-Shop-Id':'shop-main'}});assert.equal(forbidden.status,403,path+' must reject cashier access');await forbidden.text();
+    }
     const logout = await fetch(origin + '/api/auth/logout', {
       method: 'POST', headers: withToken(firstJson.token),
     });
