@@ -107,3 +107,14 @@ test('Windows preparation compiles freshly verified source with a restricted pro
  assert.match(s,/prepared-releases/);
  assert.doesNotMatch(s,/docker compose|Start-Process.*server\.cjs/);
 });
+
+test('Windows preflight backup is retained independently and never authorizes activation',()=>{
+ const s=readFileSync(new URL('../scripts/prepare-windows-update-backup.ps1',import.meta.url),'utf8');
+ assert.match(s,/Assert-ArsPreparedFingerprint/);
+ assert.match(s,/backup-local-postgres\.ps1/);
+ assert.match(s,/verify-backup\.mjs/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.match(s,/restoreTestPassed=\$false/);
+ assert.match(s,/quiesced=\$false/);
+ assert.doesNotMatch(s,/docker compose|Remove-Item|Stop-Process/);
+});
