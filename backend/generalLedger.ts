@@ -227,6 +227,27 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_payroll_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_reviews
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_payroll_proposal_period ON ars_gl_payroll_proposals(shop_id,employee_id,period_key);
+ -- Detailed payroll is a versioned, immutable calculation snapshot, not a journal.
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_details(
+  shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,
+  calculation_version INTEGER NOT NULL CHECK(calculation_version=1),
+  inputs JSONB NOT NULL CHECK(jsonb_typeof(inputs)='object'),
+  results JSONB NOT NULL CHECK(jsonb_typeof(results)='object'),
+  snapshot_hash TEXT NOT NULL CHECK(snapshot_hash ~ '^[0-9a-f]{64}$'),
+  gross_salary NUMERIC(16,2) NOT NULL CHECK(gross_salary>0),
+  total_deductions NUMERIC(16,2) NOT NULL CHECK(total_deductions>=0),
+  net_salary NUMERIC(16,2) NOT NULL CHECK(net_salary>=0),
+  employer_contributions NUMERIC(16,2) NOT NULL CHECK(employer_contributions>=0),
+  employer_cost NUMERIC(16,2) NOT NULL CHECK(employer_cost>=gross_salary),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,proposal_id) REFERENCES ars_gl_payroll_proposals(shop_id,id),
+  CHECK(gross_salary=total_deductions+net_salary),
+  CHECK(employer_cost=gross_salary+employer_contributions)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_payroll_detail_immutable ON ars_gl_payroll_details;
+ CREATE TRIGGER ars_gl_payroll_detail_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_details
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
