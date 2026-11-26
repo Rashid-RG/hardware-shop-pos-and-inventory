@@ -267,3 +267,14 @@ test('Windows maintenance cancellation archives evidence before removing restart
  assert.ok(s.indexOf('Remove-Item -LiteralPath $proof')<s.indexOf('Remove-Item -LiteralPath $marker'));
  assert.doesNotMatch(s,/pg_restore|docker compose|Start-Process|Stop-Process/);
 });
+
+test('Windows final backup observes database activity before and after backup without forcibly excluding clients',()=>{
+ const s=readFileSync(new URL('../scripts/prepare-windows-final-backup.ps1',import.meta.url),'utf8');
+ assert.match(s,/pg_stat_activity/);
+ assert.match(s,/pg_prepared_xacts/);
+ assert.match(s,/rolsuper/);
+ assert.equal((s.match(/^\s+Assert-NoObservedDatabaseClients$/gm)||[]).length,2);
+ assert.match(s,/databaseActivityChecksPassed=\$true/);
+ assert.match(s,/externalWritersExcluded=\$false/);
+ assert.doesNotMatch(s,/pg_terminate_backend|ALTER ROLE|REVOKE CONNECT/);
+});
