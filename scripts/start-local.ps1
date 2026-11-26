@@ -1,7 +1,16 @@
+param([switch]$DesktopLaunch)
 $ErrorActionPreference = 'Stop'
+$launchMutex = $null
+$ownsLaunch = $false
+try {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $scriptDir '..')
+if ($DesktopLaunch) {
+  $launchMutex = New-Object System.Threading.Mutex($false, 'Local\ARSDistributorPOSLauncher')
+  try { $ownsLaunch = $launchMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsLaunch = $true }
+  if (-not $ownsLaunch) { return }
+}
 
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
@@ -209,6 +218,15 @@ $portProcess = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction S
   Select-Object -First 1 -ExpandProperty OwningProcess
 
 if ($portProcess) {
+  if ($DesktopLaunch) {
+    try {
+      $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 3
+      if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
+        Start-Process 'http://localhost:3000'
+        return
+      }
+    } catch { }
+  }
   throw "Port 3000 is already in use by PID $portProcess. Close the existing process yourself if appropriate; no process was stopped."
 }
 
@@ -219,4 +237,34 @@ if (-not (Test-PostgresAuth $dbUrl)) {
 }
 Write-Host 'Database connection verified. Starting application...'
 Write-Host 'Open http://localhost:3000 after the server reports ready.'
-npm run dev
+if ($DesktopLaunch) {
+  # Keep the developer CLI unchanged; a desktop launch waits for readiness before opening the browser.
+  $process = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d /c npm run dev' -WindowStyle Hidden -PassThru
+  $deadline = (Get-Date).AddSeconds(150)
+  while ((Get-Date) -lt $deadline) {
+    $process.Refresh()
+    if ($process.HasExited) { throw 'ARS application exited before it became ready. Contact RS Nextward support.' }
+    try {
+      $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 2
+      if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
+        Start-Process 'http://localhost:3000'
+        return
+      }
+    } catch { }
+    Start-Sleep -Seconds 1
+  }
+  throw 'ARS could not confirm readiness. The application may still be starting; no process was stopped. Contact support if the problem persists.'
+} else {
+  npm run dev
+}
+} catch {
+  if ($DesktopLaunch) {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'ARS Distributor POS', 'OK', 'Error')
+    exit 1
+  }
+  throw
+} finally {
+  if ($ownsLaunch -and $launchMutex) { $launchMutex.ReleaseMutex() }
+  if ($launchMutex) { $launchMutex.Dispose() }
+}
