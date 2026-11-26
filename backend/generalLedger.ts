@@ -301,6 +301,22 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_payroll_eligibility_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_eligibility_reviews
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_payroll_eligibility_month ON ars_gl_payroll_eligibility(shop_id,employee_id,effective_month);
+ -- Bind a provisional statutory calculation to immutable reviewed source records.
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_statutory_snapshots(
+  shop_id TEXT NOT NULL,proposal_id TEXT NOT NULL,policy_id TEXT NOT NULL,eligibility_id TEXT NOT NULL,
+  snapshot_version INTEGER NOT NULL CHECK(snapshot_version=1),
+  source_inputs JSONB NOT NULL CHECK(jsonb_typeof(source_inputs)='object'),
+  eligibility_evidence TEXT NOT NULL CHECK(length(trim(eligibility_evidence)) BETWEEN 1 AND 500),
+  binding_hash TEXT NOT NULL CHECK(binding_hash ~ '^[0-9a-f]{64}$'),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,proposal_id) REFERENCES ars_gl_payroll_details(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,policy_id) REFERENCES ars_gl_payroll_policy_reviews(shop_id,policy_id),
+  FOREIGN KEY(shop_id,eligibility_id) REFERENCES ars_gl_payroll_eligibility_reviews(shop_id,eligibility_id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_payroll_statutory_snapshot_immutable ON ars_gl_payroll_statutory_snapshots;
+ CREATE TRIGGER ars_gl_payroll_statutory_snapshot_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_statutory_snapshots
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
