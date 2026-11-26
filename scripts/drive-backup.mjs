@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyBackup } from './verify-backup.mjs';
+import { withDriveBackupLock } from './drive-backup-lock.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -68,7 +69,12 @@ async function writeHistory(state) {
 }
 
 async function dailyBackup() {
-  backups = await resolveBackupDirectory();
+  const directory = await resolveBackupDirectory();
+  return withDriveBackupLock(directory, async () => runDailyBackup(directory));
+}
+
+async function runDailyBackup(directory) {
+  backups = directory;
   statusFile = join(backups, 'drive-status.json');
   historyDir = join(backups, 'drive-history');
   await mkdir(backups, { recursive: true });
