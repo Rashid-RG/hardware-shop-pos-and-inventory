@@ -94,5 +94,16 @@ test('Windows staged source revalidation uses signed original archive',()=>{
  assert.match(s,/Staged source file count mismatch/);
  assert.match(s,/ReparsePoint/);
  assert.match(s,/Staged source mismatch/);
- assert.doesNotMatch(s,/npm\.cmd|docker compose/);
+ assert.doesNotMatch(s,/docker compose/);
+});
+
+test('Windows preparation compiles freshly verified source with a restricted process environment',()=>{
+ const s=readFileSync(new URL('../scripts/verify-windows-staged-release.ps1',import.meta.url),'utf8');
+ assert.match(s,/Copy-Item -LiteralPath \$clean -Destination \$pending/);
+ assert.match(s,/\$answer -cne 'PREPARE'/);
+ assert.match(s,/ci --include=dev --ignore-scripts/);
+ assert.match(s,/NPM_CONFIG_USERCONFIG/);
+ assert.match(s,/--check dist\/server\.cjs/);
+ assert.match(s,/prepared-releases/);
+ assert.doesNotMatch(s,/docker compose|Start-Process.*server\.cjs/);
 });

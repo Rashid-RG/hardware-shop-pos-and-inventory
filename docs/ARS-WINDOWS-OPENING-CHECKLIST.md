@@ -104,6 +104,10 @@ Double-click `Inspect-ARS-Update.vbs` to inspect a signed manifest, detached sig
 
 Use `Stage-ARS-Update.vbs` to repeat signature and checksum verification and, after explicit confirmation, extract the ZIP into a new version directory under the current user's local application data. The staging utility rejects unsafe paths, duplicate names, links, private/runtime files, oversized archives and missing required source files. It does not build, execute, switch or install the release. A staged directory is not authorization to apply an update; revalidation and separate backup/activation safeguards are required.
 
+## Prepare a signed release build (technical support only)
+
+Run `powershell -NoProfile -File scripts/verify-windows-staged-release.ps1 -Version 1.2.3 -PrepareBuild` with the actual staged version, then explicitly type PREPARE. The original signed ZIP is revalidated and freshly extracted before compilation. The release package version must match its manifest. The build uses a restricted process environment and isolated npm configuration, disables dependency lifecycle scripts, and checks production output and server syntax. This is not a security sandbox: approved signed code runs with the Windows user's filesystem permissions. Use a dedicated non-operational build environment for untrusted code. Prepared output is separate from the active installation and is not approved for activation. Runtime acceptance, backups and switching remain separate requirements.
+
 ## Opening decision
 
 Do not label the system commercial-ready until physical Windows startup, actual A4 printing, user permissions, backup/restore, and end-to-end sales reconciliation have been checked and signed off. All automated CI tests passing is necessary but not sufficient.

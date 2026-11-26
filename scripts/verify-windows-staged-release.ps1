@@ -1,5 +1,5 @@
 # Revalidate staged source against the independently trusted original signed ZIP.
-param([Parameter(Mandatory=$true)][string]$Version)
+param([Parameter(Mandatory=$true)][string]$Version,[switch]$PrepareBuild)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'expand-windows-release.ps1')
 if ($Version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') { throw 'Invalid release version.' }
@@ -52,6 +52,70 @@ try {
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf) -or (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash) { throw "Staged source mismatch: $relative" }
   }
   Write-Host 'Staged source matches signed archive. Inspection only; no build or activation performed.'
+  if ($PrepareBuild) {
+    $package = Get-Content -LiteralPath (Join-Path $clean 'package.json') -Raw | ConvertFrom-Json
+    if ($package.version -cne $Version) { throw 'Package version differs from signed release version.' }
+    foreach ($required in @('package-lock.json','server.ts','scripts/start-local.ps1')) {
+      if (-not (Test-Path -LiteralPath (Join-Path $clean $required) -PathType Leaf)) { throw 'Required release file missing.' }
+    }
+    $npm = Get-Command npm.cmd -ErrorAction Stop
+    $node = Get-Command node.exe -ErrorAction Stop
+    & $node.Source -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)'
+    if ($LASTEXITCODE -ne 0) { throw 'Node.js 22 or newer required.' }
+    $prepared = Join-Path $state 'prepared-releases'
+    New-Item -ItemType Directory -Path $prepared -Force | Out-Null
+    $target = Join-Path $prepared $Version
+    if (Test-Path -LiteralPath $target) { throw 'Prepared release already exists.' }
+    $answer = Read-Host 'Type PREPARE to compile this signed release (does not activate it)'
+    if ($answer -cne 'PREPARE') { return }
+    $pending = Join-Path $prepared ('.pending-' + [guid]::NewGuid().ToString('N'))
+    try {
+      Copy-Item -LiteralPath $clean -Destination $pending -Recurse
+      # Explicit environment allowlist. This is process hygiene, not an OS sandbox.
+      $buildHome = Join-Path $work 'build-home'
+      New-Item -ItemType Directory -Path $buildHome | Out-Null
+      $emptyConfig = Join-Path $buildHome 'npmrc'
+      [IO.File]::WriteAllText($emptyConfig,'')
+      $allowed = @('SystemRoot','WINDIR','ComSpec','PATHEXT','PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','OS')
+      $saved = @{}
+      foreach ($entry in Get-ChildItem Env:) { $saved[$entry.Name] = $entry.Value }
+      try {
+        foreach ($key in @($saved.Keys)) { if ($key -notin $allowed) { [Environment]::SetEnvironmentVariable($key,$null,'Process') } }
+        $env:Path = (Split-Path -Parent $node.Source) + ';' + (Split-Path -Parent $npm.Source) + ';' + (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+        $env:HOME = $buildHome
+        $env:USERPROFILE = $buildHome
+        $env:APPDATA = $buildHome
+        $env:LOCALAPPDATA = $buildHome
+        $env:TEMP = $buildHome
+        $env:TMP = $buildHome
+        $env:NPM_CONFIG_USERCONFIG = $emptyConfig
+        $env:NPM_CONFIG_GLOBALCONFIG = $emptyConfig
+        $env:NPM_CONFIG_CACHE = Join-Path $buildHome 'npm-cache'
+        Push-Location -LiteralPath $pending
+        try {
+          & $npm.Source ci --include=dev --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Release dependency preparation failed.' }
+          & $npm.Source --ignore-scripts run build
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+          & $node.Source --check dist/server.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Prepared server syntax check failed.' }
+        } finally { Pop-Location }
+      } finally {
+        foreach ($entry in Get-ChildItem Env:) { [Environment]::SetEnvironmentVariable($entry.Name,$null,'Process') }
+        foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key,$saved[$key],'Process') }
+      }
+      foreach ($required in @('dist/server.cjs','dist/index.html')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $pending $required) -PathType Leaf)) { throw 'Production output missing.' }
+      }
+      Copy-Item -LiteralPath $manifest -Destination (Join-Path $pending '.ars-release-manifest.json')
+      Copy-Item -LiteralPath $signature -Destination (Join-Path $pending '.ars-release-manifest.sig')
+      Copy-Item -LiteralPath $archive -Destination (Join-Path $pending '.ars-release.zip')
+      [IO.Directory]::Move($pending,$target)
+      Write-Host "Prepared release: $target. Not activated. No database startup requested."
+    } finally {
+      if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Recurse -Force }
+    }
+  }
 } finally {
   if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
 }
