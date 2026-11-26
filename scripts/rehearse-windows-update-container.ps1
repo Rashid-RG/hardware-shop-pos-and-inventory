@@ -111,15 +111,41 @@ try {
     if ($rows.Count -ne 1 -or $rows[0] -notmatch '^\d+$') { throw 'Invalid restored table count.' }
     $counts[$table]=[long]$rows[0]
   }
+  if ($CandidateStartup) {
+    $schema=Get-TestSchema $name
+    $historicalBefore=Get-TestRowFingerprints $name $schema
+    $jwt=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
+    $null=Invoke-DockerChecked @('run','-d','--pull=never','--name',$appName,'--network',('container:'+$name),'--read-only','--tmpfs','/tmp','--tmpfs','/app/uploads','--cap-drop','ALL','--security-opt','no-new-privileges','--mount',('type=bind,source='+(Join-Path $copyRoot 'dist')+',target=/app/dist,readonly'),'-w','/app','-e','NODE_ENV=production','-e','ARS_LISTEN_HOST=127.0.0.1','-e','PORT=3000','-e',('JWT_SECRET='+$jwt),'-e',('DATABASE_URL=postgresql://restore_admin:'+$password+'@127.0.0.1:5432/ars_update_test'),'--entrypoint','node',$DependencyImage,'dist/server.cjs')
+    $appCreated=$true
+    $probe="fetch('http://127.0.0.1:3000/api/ready',{signal:AbortSignal.timeout(3000)}).then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"
+    for ($i=0;$i -lt 90;$i++) {
+      & docker exec $appName node -e $probe | Out-Null
+      if ($LASTEXITCODE -eq 0) { $startupPassed=$true;break }
+      Start-Sleep -Seconds 2
+    }
+    if (-not $startupPassed) { throw 'Candidate failed disconnected readiness check.' }
+    $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+    $historicalAfter=Get-TestRowFingerprints $name $schema
+    foreach ($table in $schema.Keys) {
+      if ($historicalBefore[$table] -cne $historicalAfter[$table]) { throw "Historical records changed during startup: $table" }
+    }
+    $historicalRowsCompared=$true
+    $historicalTableCount=$schema.Count
+  }
   if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $before) { throw 'Recovery archive changed during test.' }
   if ((Assert-ArsPreparedFingerprint $prepared).digest -cne $fingerprint.digest) { throw 'Prepared release changed during test.' }
 } finally {
+  try {
+    if ($appCreated) { $null=Invoke-DockerChecked @('rm','-f','-v',$appName) }
+  } finally {
+    if ($copyRoot -and (Test-Path -LiteralPath $copyRoot)) { Remove-Item -LiteralPath $copyRoot -Recurse -Force }
+  }
   if ($created) {
     # Remove only the uniquely named disposable container created by this invocation.
     $null=Invoke-DockerChecked @('rm','-f','-v',$name)
   }
 }
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
+$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 $bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
 $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
 try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
