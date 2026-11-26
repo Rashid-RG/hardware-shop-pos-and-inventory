@@ -70,6 +70,9 @@ export async function reconcileEmployeeAdvances(db:Pool,shopId:string){
  `,[shopId]);
  const row=result.rows[0];
  const advances=row.advances.map((a:{issued:string;recovered:string;issues:string[]})=>({...a,outstanding:a.issues.length?null:decimal(moneyCents(a.issued)-moneyCents(a.recovered))}));
- const controlMatched=row.mapping_count===1&&Number.isFinite(Number(row.ledger_balance))&&row.ledger_balance===row.subledger_balance;
+ // Compare signed decimal values exactly, independent of PostgreSQL display scale.
+ const signedCents=(v:string)=>{if(typeof v!=='string'||! /^-?\d+(?:\.\d{1,2})?$/.test(v))throw Error('Invalid advance control balance.');const negative=v.startsWith('-'),[whole,fraction='']=(negative?v.slice(1):v).split('.');const n=BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));return negative?-n:n;};
+ const ledger=signedCents(row.ledger_balance),subledger=signedCents(row.subledger_balance);
+ const controlMatched=row.mapping_count===1&&subledger>=0n&&ledger===subledger;
  return {scope:'Shop-wide; all recorded disbursements and recoveries',advances,recoveries:row.recoveries,unattributed:row.unattributed,ledgerBalance:row.ledger_balance,subledgerBalance:row.subledger_balance,controlMatched,checksPassed:controlMatched&&advances.every((a:{issues:string[]})=>!a.issues.length)&&row.recoveries.every((r:{issues:string[]})=>!r.issues.length)&&!row.unattributed.length,postingEnabled:false as const};
 }
