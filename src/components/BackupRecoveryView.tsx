@@ -144,6 +144,43 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     } catch (err) { setError(err instanceof Error ? err.message : 'Backup failed.'); }
     finally { setBusy(false); }
   }
+  const [health,setHealth]=useState<{health:string;lastVerifiedAt:string|null;lockPresent:boolean;requiresReview:boolean;verificationOverdue:boolean}|null>(null);
+  const [inspection,setInspection]=useState<{lockRecordValid:boolean;historyMatches:boolean;archiveState:string}|null>(null);
+  const [inspectionBusy,setInspectionBusy]=useState(false);
+  const [inspectionError,setInspectionError]=useState('');
+  React.useEffect(()=>{
+    const controller=new AbortController();
+    setHealth(null);setInspection(null);setInspectionError('');
+    if (!local?.enabled) return ()=>controller.abort();
+    async function refresh(){
+      try {
+        const response=await fetch('/api/backup/drive-health',{headers:{Authorization:'Bearer '+authToken},signal:controller.signal});
+        if(!response.ok) throw new Error();
+        const data=await response.json();
+        if(!controller.signal.aborted) setHealth(data);
+      } catch {if(!controller.signal.aborted) setHealth(null);}
+    }
+    void refresh();
+    const timer=window.setInterval(refresh,15000);
+    return ()=>{controller.abort();window.clearInterval(timer);};
+  },[authToken,local?.enabled,cloudBusy]);
+  async function inspectRecovery(){
+    if(inspectionBusy||!local?.enabled) return;
+    setInspectionBusy(true);setInspection(null);setInspectionError('');
+    try {
+      const response=await fetch('/api/backup/drive-recovery-inspection',{headers:{Authorization:'Bearer '+authToken}});
+      if(!response.ok) throw new Error();
+      setInspection(await response.json());
+    } catch {setInspectionError('Recovery inspection unavailable. No recovery action was requested.');}
+    finally {setInspectionBusy(false);}
+  }
+  const healthLabels:Record<string,string>={
+    verified:'Cloud backup verified', 'never-run':'No cloud backup recorded',
+    'running-or-interrupted':'Backup running or interrupted', 'interrupted-or-unconfirmed':'Previous run unconfirmed',
+    'verification-overdue':'Cloud verification overdue','status-unreadable':'Backup status unreadable',
+    'local-failed':'Local archive creation failed','upload-failed':'Encrypted upload or verification failed',
+    'recording-failed':'Backup status recording failed'
+  };
   const [status, setStatus] = useState<{phase: string; verifiedAt: string | null; attemptedAt: string | null} | null>(null);
   React.useEffect(() => {
     const controller = new AbortController();
@@ -166,7 +203,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     upload: 'Uploading and checking files', 'local-failed': 'Local backup failed',
     'upload-failed': 'Upload or verification failed', unavailable: 'Status unavailable',
   };
-  const overdue = status?.verifiedAt && Date.now() - Date.parse(status.verifiedAt) > 24 * 3600000;
+  const overdue = health?.verificationOverdue;
   const [mint, setMint] = useState(() => /Linux/.test(navigator.platform) && !/Android/.test(navigator.userAgent));
   const [archive, setArchive] = useState('');
   const [workspace,setWorkspace]=useState<'backup'|'history'|'recovery'|'advanced'>('backup');
@@ -180,6 +217,23 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
       {([['backup','Backup now'],['history','Backup history'],['recovery','Recovery test'],['advanced','Advanced setup']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={workspace===id} onClick={()=>setWorkspace(id)} className={workspace===id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg px-3 py-2 text-xs font-semibold text-slate-600'}>{label}</button>)}
       <span className="ml-auto self-center text-xs text-slate-500">{busy||cloudBusy||action||local?.running?'Operation in progress':local?.enabled?'Local backup enabled':'Local backup unavailable'}</span>
     </nav>
+    {(workspace==='backup'||workspace==='recovery')&&<section className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h3 className="font-bold text-slate-900">Encrypted backup health</h3>
+        <p role="status" className={health?.health==='verified'?'text-xs text-emerald-700':'text-xs text-amber-800'}>{health?healthLabels[health.health]||'Unknown backup health':'Diagnostics unavailable or loading'}</p>
+        <p className="text-xs text-slate-500">Last verified: {health?.lastVerifiedAt?new Date(health.lastVerifiedAt).toLocaleString():'Not recorded'}</p></div>
+        <button type="button" disabled={!local?.enabled||inspectionBusy||busy||cloudBusy||!!action||local.running} onClick={inspectRecovery} className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40">{inspectionBusy?'Inspecting…':'Inspect recovery evidence'}</button>
+      </div>
+      {health?.lockPresent&&<p role="alert" className="mt-2 text-xs text-amber-800">A retained lock may indicate a running or interrupted backup. Do not remove it or force a retry.</p>}
+      {health?.verificationOverdue&&<p className="mt-1 text-xs text-amber-800">No recent verified cloud backup (36-hour threshold).</p>}
+      {inspectionError&&<p role="alert" className="mt-2 text-xs text-rose-700">{inspectionError}</p>}
+      {inspection&&<div className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-2 text-xs sm:grid-cols-3" role="status">
+        <span>Lock record: {inspection.lockRecordValid?'Valid format':'Missing or invalid'}</span>
+        <span>History: {inspection.historyMatches?'Matches':'Not confirmed'}</span>
+        <span>Archive: {inspection.archiveState==='locally-verified'?'Locally verified':inspection.archiveState==='not-recorded'?'Not recorded':'Not verified'}</span>
+        <p className="sm:col-span-3 text-slate-600">Inspection only. No lock removal, retry, upload or restoration authorized.</p>
+      </div>}
+    </section>}
     {workspace!=='backup'&&error&&<p role="alert" className="rounded bg-rose-50 p-2 text-xs text-rose-700">{error}</p>}
     {workspace!=='backup'&&cloudMessage&&<p role="status" className="rounded bg-slate-100 p-2 text-xs">{cloudMessage}</p>}
     {workspace!=='backup'&&result&&<p role="status" className="rounded bg-emerald-50 p-2 text-xs text-emerald-800">Backup verified: {result.archive}</p>}
@@ -193,7 +247,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
         {result && <div role="status" className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-900"><strong className="flex items-center gap-2"><ShieldCheck size={16}/> Backup created and checksums verified</strong><p className="mt-1 break-all">{result.archive}</p><p>{new Date(result.verifiedAt).toLocaleString()} · Saved on database computer</p><p className="mt-1">A separate recovery test is still recommended.</p></div>}
       </section>
       <section className="rounded-xl border border-slate-200 bg-white p-4"><Cloud className="h-6 w-6 text-slate-600"/><h3 className="mt-2 font-bold text-slate-900">Google Drive backup</h3><p className="mt-1 text-xs">{status ? labels[status.phase] || 'Unknown status' : 'Checking status…'}</p><p className="mt-2 text-xs text-slate-500">{cloudReady?.ready?'Drive and crypt remotes detected. Upload verification is still required.':cloudReady?.installed?'Configure both ARS remotes using the setup instructions below.':'Install rclone on the database computer first.'}</p>
-      <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={checkCloud} className="rounded border px-2 py-1.5 text-xs">Check connection setup</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(false)} className="rounded bg-amber-400 px-3 py-2 text-xs font-bold disabled:opacity-40">{cloudBusy?'Working…':'Encrypted backup now'}</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(true)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40">Enable daily 8 PM backup</button></div>
+      <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={checkCloud} className="rounded border px-2 py-1.5 text-xs">Check connection setup</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||!health||health.lockPresent||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(false)} className="rounded bg-amber-400 px-3 py-2 text-xs font-bold disabled:opacity-40">{cloudBusy?'Working…':'Encrypted backup now'}</button><button type="button" disabled={!local?.enabled||!cloudReady?.ready||cloudBusy||busy||!!action||local.running} onClick={()=>cloudAction(true)} className="rounded border px-3 py-2 text-xs font-semibold disabled:opacity-40">Enable daily 8 PM backup</button></div>
       {cloudMessage&&<p role="status" className="mt-2 text-xs">{cloudMessage}</p>}</section>
     </div>
     {local?.enabled && <section hidden={workspace!=='history'} className="rounded-xl border border-slate-200 bg-white p-3 space-y-3">
@@ -227,7 +281,7 @@ export default function BackupRecoveryView({ authToken }: { authToken: string })
     <section className={card}>
       <h3 className="text-base font-bold text-slate-900">Daily Google Drive backup</h3>
       <p role="status">{status ? labels[status.phase] : 'Loading status…'}{status?.verifiedAt && ' · Last verified ' + new Date(status.verifiedAt).toLocaleString()}</p>
-      {overdue && <p className="font-semibold text-amber-800">More than 24 hours since the last verified upload.</p>}
+      {overdue && <p className="font-semibold text-amber-800">No verified upload within the 36-hour threshold.</p>}
       <details><summary className="cursor-pointer font-semibold">Set up on the database computer</summary>
         <ol className="my-3 list-decimal space-y-1 pl-5">
           <li>Install rclone and run <code>rclone config</code>. Create a Google Drive remote named <code>ars-drive</code> using the ARS business account.</li>

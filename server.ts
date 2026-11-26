@@ -3654,6 +3654,24 @@ app.post('/api/backup/recovery-test', requireRole(['Super Admin']), async (req, 
   finally { manualBackupRunning = false; }
 });
 
+// Fixed read-only backup diagnostics; never accept a client-supplied path or command.
+app.get('/api/backup/drive-health', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({error:'Managed backup diagnostics are unavailable on this host.'});
+  try {
+    const raw=await runBackupTool(process.execPath,[path.resolve('scripts/drive-backup.mjs'),'--health']);
+    res.json(JSON.parse(raw));
+  } catch { res.status(503).json({error:'Backup health unavailable.'}); }
+});
+app.get('/api/backup/drive-recovery-inspection', requireRole(['Super Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!manualBackupAvailable()) return res.status(403).json({error:'Managed backup diagnostics are unavailable on this host.'});
+  if (manualBackupRunning) return res.status(409).json({error:'Wait for the current backup operation.'});
+  try {
+    const raw=await runBackupTool(process.execPath,[path.resolve('scripts/drive-backup.mjs'),'--inspect-recovery']);
+    res.json(JSON.parse(raw));
+  } catch { res.status(503).json({error:'Recovery inspection unavailable.'}); }
+});
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
