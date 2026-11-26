@@ -1,3 +1,4 @@
+import PartnerStatementPanel from './PartnerStatementPanel';
 import { reportDay, reportTime } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
@@ -14,7 +15,7 @@ type ProfitAllocation={id:string;period_key:string;approved_profit_lkr:string;ap
 type Agreement={id:string;effective_period:string;approval_reference:string;approved_by:string;approved_at:string;shares:Array<{partnerId:string;name:string;ownershipBasisPoints:number}>;};
 import type {StoreSettings} from '../types';
 type Props={taxConfig?:StoreSettings;authToken:string;shopId:string;owner?:string;key?:string;};
-type PartnerWorkspace='overview'|'partners'|'agreements'|'capital'|'profits'|'history';
+type PartnerWorkspace='overview'|'partners'|'agreements'|'capital'|'profits'|'history'|'statement';
 export default function PartnerCapitalView(props:Props){return <PartnerCapitalWorkspace key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;}
 function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
  const [partners,setPartners]=useState<Partner[]>([]);
@@ -207,6 +208,7 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
       ['partners','Partner Profiles',Users],
       ['agreements','Agreements',ShieldCheck],
       ['capital','Capital Ledger',Wallet],
+      ['statement','Partner Statements',Landmark],
       ['profits','Profit Allocations',ChartNoAxesColumn],
       ['history','Audit & History',History],
     ] as const).map(([id,label,Icon])=><button key={id} type="button"
@@ -350,6 +352,7 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
     </div></section></div>}
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>New posted capital entries include cash or bank movements. Historical entries require separate reconciliation. Profit allocations remain separate.</p>
   </section>}
+  {workspace==='statement'&&<PartnerStatementPanel authToken={authToken} shopId={shopId} partners={partners}/>}
   {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Ownership and partner status history ({audits.length})</h3>
     <p className="mt-2 text-xs text-slate-500">Historical allocations keep the percentages used at approval time. Changes here affect future allocations only.</p>
