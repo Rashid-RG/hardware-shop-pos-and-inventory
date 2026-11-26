@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyBackup } from './verify-backup.mjs';
 import { withDriveBackupLock } from './drive-backup-lock.mjs';
+import { inspectDriveBackupHealth } from './drive-backup-health.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -112,5 +113,9 @@ async function runDailyBackup(directory) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  dailyBackup().catch(error => { console.error(error.message); process.exitCode = 1; });
+  const args=process.argv.slice(2);
+  const run=args.length===0 ? dailyBackup : args.length===1 && args[0]==='--health'
+    ? async()=>{console.log(JSON.stringify(await inspectDriveBackupHealth(await resolveBackupDirectory())));}
+    : async()=>{throw new Error('Unsupported backup command');};
+  run().catch(() => { console.error('Backup operation failed or blocked. Review local backup health and history.'); process.exitCode = 1; });
 }
