@@ -372,6 +372,56 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_employee_advance_disbursement_guard BEFORE INSERT ON ars_gl_employee_advance_disbursements
  FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_employee_advance_disbursement();
  CREATE INDEX IF NOT EXISTS ars_gl_employee_advance_disbursement_employee ON ars_gl_employee_advance_disbursements(shop_id,employee_id,posting_date);
+ -- Each recovery applies to one actually disbursed advance, never to an unpaid request.
+ CREATE TABLE IF NOT EXISTS ars_gl_employee_advance_recoveries(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,disbursement_id TEXT NOT NULL,employee_id TEXT NOT NULL,
+  recovery_kind TEXT NOT NULL CHECK(recovery_kind IN ('DirectRepayment','PayrollRecovery')),
+  financial_account_id TEXT,payroll_proposal_id TEXT,
+  amount NUMERIC(16,2) NOT NULL CHECK(amount>0),posting_date DATE NOT NULL,
+  journal_id TEXT NOT NULL,evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),UNIQUE(shop_id,journal_id,disbursement_id),
+  UNIQUE(shop_id,payroll_proposal_id,disbursement_id),
+  FOREIGN KEY(shop_id,disbursement_id) REFERENCES ars_gl_employee_advance_disbursements(shop_id,id),
+  FOREIGN KEY(shop_id,payroll_proposal_id) REFERENCES ars_gl_payroll_proposals(shop_id,id),
+  FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id),
+  CHECK((recovery_kind='DirectRepayment' AND financial_account_id IS NOT NULL AND payroll_proposal_id IS NULL)
+     OR (recovery_kind='PayrollRecovery' AND financial_account_id IS NULL AND payroll_proposal_id IS NOT NULL))
+ );
+ DROP TRIGGER IF EXISTS ars_gl_employee_advance_recovery_immutable ON ars_gl_employee_advance_recoveries;
+ CREATE TRIGGER ars_gl_employee_advance_recovery_immutable BEFORE UPDATE OR DELETE ON ars_gl_employee_advance_recoveries
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE OR REPLACE FUNCTION ars_gl_guard_employee_advance_recovery() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ DECLARE original_amount NUMERIC; original_day DATE; original_employee TEXT; recovered NUMERIC;
+ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('employee-advance:'||NEW.shop_id,0));
+  SELECT amount,posting_date,employee_id INTO original_amount,original_day,original_employee
+   FROM ars_gl_employee_advance_disbursements WHERE shop_id=NEW.shop_id AND id=NEW.disbursement_id FOR UPDATE;
+  IF NOT FOUND OR original_employee<>NEW.employee_id OR NEW.posting_date<original_day
+  THEN RAISE EXCEPTION 'Recovery requires matching disbursed employee advance' USING ERRCODE='23514'; END IF;
+  SELECT COALESCE(SUM(amount),0) INTO recovered FROM ars_gl_employee_advance_recoveries
+   WHERE shop_id=NEW.shop_id AND disbursement_id=NEW.disbursement_id;
+  IF recovered+NEW.amount>original_amount
+  THEN RAISE EXCEPTION 'Employee advance recovery exceeds outstanding amount' USING ERRCODE='23514'; END IF;
+  IF EXISTS(SELECT 1 FROM ars_gl_employee_advance_recoveries WHERE shop_id=NEW.shop_id AND disbursement_id=NEW.disbursement_id AND posting_date>NEW.posting_date)
+  THEN RAISE EXCEPTION 'Recovery date precedes recorded recovery' USING ERRCODE='23514'; END IF;
+  IF NEW.recovery_kind='PayrollRecovery' AND NOT EXISTS(
+   SELECT 1 FROM ars_gl_payroll_proposals p JOIN ars_gl_payroll_reviews r ON r.shop_id=p.shop_id AND r.proposal_id=p.id
+    WHERE p.shop_id=NEW.shop_id AND p.id=NEW.payroll_proposal_id AND p.employee_id=NEW.employee_id AND r.decision='Approved')
+  THEN RAISE EXCEPTION 'Payroll recovery requires matching approved payroll' USING ERRCODE='23514'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=NEW.shop_id AND j.id=NEW.journal_id
+   AND j.posting_date=NEW.posting_date AND j.recorded_by=NEW.recorded_by
+   AND ((NEW.recovery_kind='DirectRepayment' AND j.source_kind='EmployeeAdvanceRepayment' AND j.source_id=NEW.id)
+    OR (NEW.recovery_kind='PayrollRecovery' AND j.source_kind='PayrollAccrual' AND j.source_id=NEW.payroll_proposal_id))
+   AND j.xmin::text::bigint=mod(txid_current(),4294967296))
+  THEN RAISE EXCEPTION 'Advance recovery requires same-transaction journal' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_employee_advance_recovery_guard ON ars_gl_employee_advance_recoveries;
+ CREATE TRIGGER ars_gl_employee_advance_recovery_guard BEFORE INSERT ON ars_gl_employee_advance_recoveries
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_employee_advance_recovery();
+ CREATE INDEX IF NOT EXISTS ars_gl_employee_advance_recovery_lookup ON ars_gl_employee_advance_recoveries(shop_id,disbursement_id,posting_date);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
