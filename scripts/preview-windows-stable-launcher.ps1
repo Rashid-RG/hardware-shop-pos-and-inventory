@@ -26,6 +26,10 @@ try {
   foreach ($name in @('maintenance.json','activation.json','instance.json')) {
     if (Test-Path -LiteralPath (Join-Path $control $name)) { throw 'Existing maintenance, activation or instance evidence blocks launcher preflight.' }
   }
+  $inspectionHelper=Assert-PlainFile (Join-Path $PSScriptRoot 'windows-switch-inspection.ps1')
+  . $inspectionHelper.FullName
+  $inspection=Get-ArsSwitchInspection $control
+  if ($inspection.state -cne 'no-switch-evidence' -or $inspection.startupAllowed -ne $false) { throw 'Interrupted or unresolved runtime switch evidence blocks launcher preview.' }
   # Separate proposed pointer; no live pointer is created or consumed.
   $pointer=Assert-PlainFile (Join-Path $control 'launcher-preview.json')
   if ($pointer.Length -gt 4096) { throw 'Launcher preview is too large.' }
@@ -46,7 +50,7 @@ try {
   $bindingRaw=@(& $bindingHelper.FullName)
   $binding=($bindingRaw -join "`n") | ConvertFrom-Json
   if ($binding.schema -ne 1 -or $binding.bindingMatched -isnot [bool] -or -not $binding.bindingMatched -or $binding.activationAllowed -isnot [bool] -or $binding.activationAllowed) { throw 'Saved database binding did not pass verification.' }
-  [ordered]@{schema=1;version=$p.version;release=$release;fingerprintMatched=$true;databaseBindingMatched=$true;activationAllowed=$false;startupAllowed=$false;schedulingAllowed=$false} | ConvertTo-Json
+  [ordered]@{schema=1;version=$p.version;release=$release;fingerprintMatched=$true;switchEvidenceClear=$true;databaseBindingMatched=$true;activationAllowed=$false;startupAllowed=$false;schedulingAllowed=$false} | ConvertTo-Json
 } finally {
   if ($owns) { $mutex.ReleaseMutex() }
   $mutex.Dispose()
