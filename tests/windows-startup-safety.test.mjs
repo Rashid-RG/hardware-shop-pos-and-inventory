@@ -65,3 +65,13 @@ test('Windows shutdown entry points refuse indiscriminate process or database te
  assert.match(bat,/scripts\/stop-local\.ps1/);
  assert.match(vbs,/scripts\/stop-local\.ps1 -DesktopLaunch/);
 });
+
+test('Windows release inspection verifies independent trust and archive checksum without installation',()=>{
+ const s=readFileSync(new URL('../scripts/inspect-windows-release.ps1',import.meta.url),'utf8');
+ assert.match(s,/release-signing-public\.pem/);
+ assert.match(s,/dgst -sha256 -verify/);
+ assert.match(s,/Get-FileHash/);
+ assert.match(s,/platform -cne 'windows'/);
+ assert.match(s,/Release archive checksum mismatch/);
+ assert.doesNotMatch(s,/Expand-Archive|npm\.cmd|docker compose|Invoke-Expression/);
+});

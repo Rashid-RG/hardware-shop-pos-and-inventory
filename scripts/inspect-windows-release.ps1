@@ -1,0 +1,52 @@
+# Inspect signed release inputs only. No extraction, installation or database access.
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+function Select-ReleaseFile([string]$Title,[string]$Filter) {
+  $dialog = New-Object System.Windows.Forms.OpenFileDialog
+  try {
+    $dialog.Title = $Title
+    $dialog.Filter = $Filter
+    $dialog.CheckFileExists = $true
+    if ($dialog.ShowDialog() -ne 'OK') { return $null }
+    return $dialog.FileName
+  } finally { $dialog.Dispose() }
+}
+$temp = $null
+try {
+  $root = Split-Path -Parent $PSScriptRoot
+  $installed = (Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
+  $trust = Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\release-signing-public.pem'
+  if (-not (Test-Path -LiteralPath $trust -PathType Leaf)) { throw 'No trusted RS Nextward release signing key is configured. Contact support. Never trust a key supplied with an update.' }
+  $openssl = Get-Command openssl.exe -ErrorAction SilentlyContinue
+  if (-not $openssl) { throw 'OpenSSL is required to verify releases. Contact RS Nextward support.' }
+  $manifest = Select-ReleaseFile 'Select signed Windows release manifest' 'JSON manifest (*.json)|*.json'
+  if (-not $manifest) { return }
+  $signature = Select-ReleaseFile 'Select manifest signature' 'Signature (*.sig)|*.sig'
+  if (-not $signature) { return }
+  $archive = Select-ReleaseFile 'Select Windows release archive' 'ZIP archive (*.zip)|*.zip'
+  if (-not $archive) { return }
+  $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('ars-inspect-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $temp | Out-Null
+  foreach ($entry in @(@{source=$manifest;name='manifest.json';limit=65536},@{source=$signature;name='manifest.sig';limit=16384},@{source=$archive;name='release.zip';limit=536870912})) {
+    if ((Get-Item -LiteralPath $entry.source).Length -gt $entry.limit) { throw 'Release input exceeds size limit.' }
+    $dest = Join-Path $temp $entry.name
+    Copy-Item -LiteralPath $entry.source -Destination $dest
+    if ((Get-Item -LiteralPath $dest).Length -gt $entry.limit) { throw 'Copied release input exceeds size limit.' }
+  }
+  $m = Join-Path $temp 'manifest.json'
+  $sig = Join-Path $temp 'manifest.sig'
+  & $openssl.Source dgst -sha256 -verify $trust -signature $sig $m
+  if ($LASTEXITCODE -ne 0) { throw 'Release signature verification failed.' }
+  $data = Get-Content -LiteralPath $m -Raw | ConvertFrom-Json
+  if ($data.product -cne 'ARS Distributor' -or $data.platform -cne 'windows' -or $data.version -isnot [string] -or $data.version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$' -or $data.sha256 -isnot [string] -or $data.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Manifest is not a valid ARS Distributor Windows release.' }
+  $hash = (Get-FileHash -LiteralPath (Join-Path $temp 'release.zip') -Algorithm SHA256).Hash
+  if ($hash -ine $data.sha256) { throw 'Release archive checksum mismatch.' }
+  $notes = if ($data.notes -is [string]) { $data.notes.Substring(0,[Math]::Min(1200,$data.notes.Length)) } else { 'No release notes supplied.' }
+  $message = "Checkout package version: $installed`nVerified release: $($data.version)`nSignature and archive SHA-256 verified.`n`n$notes`n`nInspection only. Nothing was installed or authorized for installation."
+  [void][System.Windows.Forms.MessageBox]::Show($message,'RS Nextward Update Center','OK','Information')
+} catch {
+  [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'RS Nextward Update Center','OK','Error')
+  exit 1
+} finally {
+  if ($temp -and (Test-Path -LiteralPath $temp)) { Remove-Item -LiteralPath $temp -Recurse -Force }
+}
