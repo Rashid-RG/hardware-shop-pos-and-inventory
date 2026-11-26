@@ -54,4 +54,5 @@ for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
 PY
 gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
+python3 scripts/mint/install-recovery-shortcut.py
 echo "Setup complete. Open ARS Distributors POS on the desktop."

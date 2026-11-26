@@ -124,7 +124,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -217,6 +217,9 @@ def main():
                 name=selected.stdout.strip()
                 if selected.returncode==0 and name in names and dialog("--question","--no-markup","--text=Download and verify a separate recovery copy? The live database will not be replaced.").returncode==0:
                     execute(project,"download-drive-backup.py","--download",name)
+            elif action in ("Open Recovery Center","Register healthy database identity"):
+                script={"Open Recovery Center":"recovery-center.py","Register healthy database identity":"database-binding.py"}[action]
+                subprocess.run(["python3",str(project/"scripts/mint"/script)],cwd=project,check=False)
             elif action=="Open local recovery archive folder":
                 folder=STATE/"update-recovery"
                 if folder.is_dir() and not folder.is_symlink():
