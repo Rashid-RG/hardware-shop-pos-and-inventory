@@ -1,5 +1,5 @@
 # Retain a non-authorizing activation proposal. Never switch runtime or start POS.
-param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify)
+param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[string]$Confirmation)
 $ErrorActionPreference='Stop'
 if ($RecoveryId -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') { throw 'Invalid recovery identifier.' }
 $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
@@ -60,7 +60,8 @@ try {
   $snapshot=Get-Snapshot
   if ($Verify) { Assert-MatchingProposal $snapshot; return }
   if (Test-Path -LiteralPath $target) { throw 'Existing proposal must be retained.' }
-  if ((Read-Host 'Type PREPARE RUNTIME ACTIVATION to retain a proposal only') -cne 'PREPARE RUNTIME ACTIVATION') { throw 'Explicit confirmation required.' }
+  if (-not $Confirmation) { $Confirmation=Read-Host 'Type PREPARE RUNTIME ACTIVATION to retain a proposal only' }
+  if ($Confirmation -cne 'PREPARE RUNTIME ACTIVATION') { throw 'Explicit confirmation required.' }
   $again=Get-Snapshot
   if (($again | ConvertTo-Json -Depth 6 -Compress) -cne ($snapshot | ConvertTo-Json -Depth 6 -Compress)) { throw 'Activation evidence changed.' }
   $record=[ordered]@{schema=1;kind='runtime-activation-proposal';preparedAt=[DateTime]::UtcNow.ToString('o');observationOnly=$true;snapshot=$again}

@@ -39,6 +39,14 @@ $close=New-Object Windows.Forms.Button
 $close.Text='Close'
 $close.SetBounds(554,570,120,36)
 $form.Controls.Add($close)
+$activation=New-Object Windows.Forms.Button
+$activation.Text='Activation review'
+$activation.SetBounds(208,570,180,36)
+$form.Controls.Add($activation)
+$activation.Add_Click({
+ try { & (Join-Path $PSScriptRoot 'show-windows-activation-review.ps1') }
+ catch { [void][Windows.Forms.MessageBox]::Show('Activation review unavailable.','ARS Distributor') }
+})
 $close.Add_Click({$form.Close()})
 $refresh.Add_Click({
  $refresh.Enabled=$false
