@@ -1,4 +1,4 @@
-import {rsNextwardLogoDataUrl,rsNextwardHtmlWidth} from '../utils/rsNextwardPrintLogo';
+import {printQuotation} from '../utils/quotationDocument';
 import { arsDisplayName } from '../utils/arsPrintLogo';
 import { reportDay } from '../utils/reporting';
 import { ReportExportMenu } from './ReportExportMenu';
@@ -197,47 +197,8 @@ export default function QuotationView({
     } catch(error) { notify.warning(error instanceof Error ? error.message : 'Could not delete quotation.'); }
   };
 
-  const printQuote = (q: Quotation) => {
-    const win = window.open('', '_blank', 'width=800,height=700');
-    if (!win) return;
-    const html = `<!DOCTYPE html><html><head><title>${q.quoteNumber}</title>
-    <style>
-      body { font-family: Arial, sans-serif; padding: 30px; color: #1e293b; font-size: 13px; }
-      h1 { font-size: 22px; margin: 0; } .meta { color: #64748b; font-size: 11px; margin-top: 4px; }
-      table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-      th { background: #f1f5f9; padding: 8px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
-      td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; }
-      .totals { margin-top: 20px; text-align: right; }
-      .totals div { margin-bottom: 4px; }
-      .total-line { font-size: 16px; font-weight: bold; }
-      @media print { body { padding: 12mm; } }
-    </style></head><body>
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-      <div><h1>${shopName}</h1><div class="meta">${shopAddress} | ${shopPhone}</div></div>
-      <div style="text-align:right;"><div style="font-size:20px;font-weight:bold;color:#6366f1">QUOTATION</div>
-        <div class="meta">${q.quoteNumber}</div>
-        <div class="meta">Date: ${reportDay(q.date)}</div>
-        ${q.validUntil ? `<div class="meta">Valid Until: ${q.validUntil}</div>` : ''}
-      </div>
-    </div>
-    <div style="margin-top:16px;"><strong>To:</strong> ${q.customerName}${q.customerPhone ? ` | ${q.customerPhone}` : ''}</div>
-    <table><thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Disc%</th><th style="text-align:right">Total</th></tr></thead>
-    <tbody>${q.items.map((item) => {
-      const line = item.sellingPrice * item.quantity * (1 - item.discount / 100);
-      return `<tr><td>${item.productName}</td><td>${item.quantity}${item.sellingUnitLabel ? ' '+item.sellingUnitLabel.replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch] || ch)) : ''}</td><td>Rs.${item.sellingPrice.toFixed(2)}</td><td>${item.discount}%</td><td style="text-align:right">Rs.${line.toFixed(2)}</td></tr>`;
-    }).join('')}</tbody></table>
-    <div class="totals">
-      <div>Subtotal: Rs.${q.subtotal.toFixed(2)}</div>
-      ${q.discountAmount > 0 ? `<div>Discount: -Rs.${q.discountAmount.toFixed(2)}</div>` : ''}
-      <div>Tax: Rs.${q.tax.toFixed(2)}</div>
-      <div class="total-line">TOTAL: Rs.${q.total.toFixed(2)}</div>
-    </div>
-    ${q.notes ? `<div style="margin-top:20px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;"><strong>Notes:</strong> ${q.notes}</div>` : ''}
-    <div style="margin-top:30px;font-size:11px;color:#94a3b8;text-align:center;">This is a quotation only — not a tax invoice. Prices valid until ${q.validUntil || 'further notice'}.</div>
-    <div style="margin-top:16px;border-top:1px solid #222;padding-top:8px;text-align:right;color:#111;font-size:10px;break-inside:avoid;">Powered by RS Nextward<br><img alt="RS Nextward logo" src="${rsNextwardLogoDataUrl}" style="width:${rsNextwardHtmlWidth};height:auto;"></div>
-    <script>window.onload=()=>{window.print();}</script></body></html>`;
-    win.document.write(html);
-    win.document.close();
+  const printQuote = (q:Quotation) => {
+    try{printQuotation(q,taxConfig);}catch(error){notify.warning(error instanceof Error?error.message:'Unable to print quotation.');}
   };
 
   const displayed = quotations.filter((q) => {

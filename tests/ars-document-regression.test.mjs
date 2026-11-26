@@ -7,6 +7,7 @@ test('purchase orders, delivery notes and GRNs preserve scoped saved quantities 
  import assert from 'node:assert/strict';
  import {purchaseOrderDocument} from './src/utils/purchaseOrderDocument.ts';
  import {buildDeliveryNoteHtml} from './src/utils/deliveryNote.ts';
+ import {buildQuotationHtml} from './src/utils/quotationDocument.ts';
  import {buildGrnHtml} from './src/utils/grnDocument.ts';
  const settings={storeName:'ARS Distributor',activeShopId:'shop-a',taxRate:0,currency:'LKR',invoicePrefix:'ARS'};
  const po={shopId:'shop-a',poNumber:'PO/123',date:'2026-11-25',supplierName:'Supplier A',status:'Partially Received',total:250,items:[{productName:'Lock',sellingUnitLabel:'Box',baseUnitsPerPurchaseUnit:10,quantity:2,costPrice:125}]};
@@ -26,6 +27,13 @@ test('purchase orders, delivery notes and GRNs preserve scoped saved quantities 
  assert.ok(dn.includes('Powered by RS Nextward'));
  assert.throws(()=>buildDeliveryNoteHtml({...tx,status:'Refunded'},settings,''),/completed invoice/);
  assert.throws(()=>buildDeliveryNoteHtml({...tx,shopId:'shop-b'},settings,''),/active shop/);
+ const quote={shopId:'shop-a',quoteNumber:'QT-1',date:'2026-11-25',customerName:'<script>bad()</script>',items:[{productName:'Lock & handle',sellingUnitLabel:'Box',quantity:2,sellingPrice:100,discount:10,discountAmount:5}],subtotal:175,discountAmount:5,tax:0,total:170,status:'Sent',notes:'<img onerror=bad()>'};
+ const qt=buildQuotationHtml(quote,settings,'');
+ assert.ok(qt.includes('A4 portrait')&&qt.includes('175.00')&&qt.includes('170.00'));
+ assert.ok(qt.includes('&lt;script&gt;bad()&lt;/script&gt;')&&!qt.includes('<script>bad()'));
+ assert.ok(qt.includes('&lt;img onerror=bad()&gt;'));
+ assert.ok(qt.includes('<td>Box</td>')&&qt.includes('Powered by RS Nextward'));
+ assert.throws(()=>buildQuotationHtml({...quote,shopId:'shop-b'},settings,''),/active shop/);
  const grn={id:'grn-a',shopId:'shop-a',po_number:'PO/123',supplier_name:'Supplier A',received_by:'Warehouse',created_at:'2026-11-25T20:00:00Z',note:'<img onerror=bad()>',recorded_count:2,company:{name:'ARS Distributor',address:'Test address',phone:''},items:[{productName:'Lock',unit:'Box',quantity:2,baseUnitsPerUnit:10},{productName:'Bolt',unit:'Piece',quantity:3,baseUnitsPerUnit:1}]};
  const html=buildGrnHtml(grn,'shop-a','grn-a');
  assert.ok(html.includes('<td>Lock</td><td>Box</td><td>2</td><td>20</td>'));
