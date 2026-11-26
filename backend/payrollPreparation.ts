@@ -3,6 +3,8 @@ import {createHash} from 'node:crypto';
 import {calculatePayroll,calculateStatutoryPayroll,type PayrollCalculationInput} from './payrollCalculation';
 import {moneyCents} from './generalLedger';
 import {decimal} from './supplierAdvance';
+import {postJournal} from './ledgerPosting';
+import {planDetailedPayrollJournal} from './payrollJournalPlan';
 import {effectivePayrollPolicy} from './payrollPolicies';
 import {effectivePayrollEligibility} from './payrollEligibility';
 
@@ -146,4 +148,56 @@ export async function listPayrollProposals(db:Pool,shopId:string,period:string){
  LEFT JOIN ars_gl_payroll_details d ON d.shop_id=p.shop_id AND d.proposal_id=p.id
  LEFT JOIN ars_gl_payroll_statutory_snapshots s ON s.shop_id=p.shop_id AND s.proposal_id=p.id
  WHERE p.shop_id=$1 AND p.period_key=$2 ORDER BY p.submitted_at DESC,p.id DESC`,[shopId,period])).rows;
+}
+
+/** Internal restricted accrual. Operational routes must remain locked until legal and accounting acceptance. */
+export async function accrueDetailedPayroll(db:Pool,shopId:string,proposalId:string,actor:string,currentBusinessDate:string){
+ if(![shopId,proposalId,actor].every(identity)||!validDay(currentBusinessDate))throw Error('Valid payroll posting identity required.');
+ const c=await db.connect(),journalId='payroll-accrual:'+proposalId;
+ try{
+  await c.query('BEGIN');
+  for(const lock of ['payroll-request:'+shopId+':'+proposalId,'payroll-policy:'+shopId,'payroll-eligibility:'+shopId,'employee-advance:'+shopId])await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[lock]);
+  const p=(await c.query(`SELECT p.*,p.posting_date::text AS day,r.reviewed_by FROM ars_gl_payroll_proposals p JOIN ars_gl_payroll_reviews r ON r.shop_id=p.shop_id AND r.proposal_id=p.id AND r.decision='Approved' WHERE p.shop_id=$1 AND p.id=$2 FOR UPDATE OF p`,[shopId,proposalId])).rows[0];
+  if(!p||p.day>currentBusinessDate||p.submitted_by.trim().toLowerCase()===p.reviewed_by.trim().toLowerCase())throw Error('Independently approved payroll required.');
+  const detail=(await c.query('SELECT * FROM ars_gl_payroll_details WHERE shop_id=$1 AND proposal_id=$2',[shopId,proposalId])).rows[0];
+  const bound=(await c.query('SELECT * FROM ars_gl_payroll_statutory_snapshots WHERE shop_id=$1 AND proposal_id=$2',[shopId,proposalId])).rows[0];
+  if(!detail||!bound||bound.snapshot_version!==1||detail.calculation_version!==1||bound.recorded_by!==p.submitted_by||detail.recorded_by!==p.submitted_by)throw Error('Bound statutory payroll required for detailed posting.');
+  const verified=snapshot(detail.inputs),d=verified.results;
+  const hash=createHash('sha256').update(canonical({version:1,shopId,proposalId:p.id,employeeId:p.employee_id,period:p.period_key,policyId:bound.policy_id,eligibilityId:bound.eligibility_id,eligibilityEvidence:bound.eligibility_evidence,sourceInputs:bound.source_inputs,expectedResults:d,detailHash:verified.hash})).digest('hex');
+  if(hash!==bound.binding_hash||verified.hash!==detail.snapshot_hash||canonical(d)!==canonical(detail.results)||moneyCents(d.baseSalary)!==moneyCents(p.base_salary)||moneyCents(d.grossSalary)!==moneyCents(detail.gross_salary)||moneyCents(d.totalDeductions)!==moneyCents(detail.total_deductions)||moneyCents(d.netSalary)!==moneyCents(detail.net_salary)||moneyCents(d.employerContributions)!==moneyCents(detail.employer_contributions)||moneyCents(d.employerCost)!==moneyCents(detail.employer_cost))throw Error('Payroll calculation integrity verification failed.');
+  const plan=planDetailedPayrollJournal(verified.inputs);
+  const prior=(await c.query('SELECT *,posting_date::text AS day FROM ars_gl_payroll_accruals WHERE shop_id=$1 AND id=$2',[shopId,proposalId])).rows[0];
+  if(prior){
+   if(prior.employee_id!==p.employee_id||prior.period_key!==p.period_key||moneyCents(prior.base_salary)!==moneyCents(p.base_salary)||moneyCents(prior.gross_amount)!==moneyCents(d.grossSalary)||prior.day!==p.day||prior.evidence!==p.evidence||prior.recorded_by!==actor||prior.journal_id!==journalId)throw Error('Payroll accrual requires reconciliation.');
+   const recoveries=(await c.query('SELECT disbursement_id,amount::text, journal_id FROM ars_gl_employee_advance_recoveries WHERE shop_id=$1 AND payroll_proposal_id=$2',[shopId,proposalId])).rows;
+   if(recoveries.length!==plan.recoveries.length||plan.recoveries.some(r=>!recoveries.some(x=>x.disbursement_id===r.disbursementId&&x.amount===r.amount&&x.journal_id===journalId)))throw Error('Payroll recovery records require reconciliation.');
+   await c.query('COMMIT');return {id:proposalId,journalId,replayed:true};
+  }
+  const policy=await effectivePayrollPolicy(c as unknown as Pool,shopId,p.period_key),eligibility=await effectivePayrollEligibility(c as unknown as Pool,shopId,p.employee_id,p.period_key);
+  if(policy.id!==bound.policy_id||eligibility.id!==bound.eligibility_id)throw Error('Statutory policy or eligibility changed. Payroll requires reconciliation.');
+  const derived=calculateStatutoryPayroll(bound.source_inputs,policy);
+  if(canonical(derived.inputs)!==canonical(detail.inputs)||canonical(derived.results)!==canonical(d))throw Error('Statutory payroll snapshot integrity verification failed.');
+  const cut=(await c.query('SELECT posting_enabled,cutover_date::text AS day FROM ars_gl_cutover WHERE shop_id=$1 FOR SHARE',[shopId])).rows[0];
+  if(!cut?.posting_enabled||p.day<cut.day)throw Error('Verified accounting required for payroll posting.');
+  await verifyAdvanceDeductions(c,shopId,p.employee_id,p.day,verified.inputs);
+  const emp=(await c.query('SELECT salary::text AS salary FROM employees WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,p.employee_id])).rows[0];
+  if(!emp||moneyCents(emp.salary)!==moneyCents(p.base_salary))throw Error('Employee or base salary changed. Payroll requires reconciliation.');
+  if((await c.query('SELECT 1 FROM ars_gl_payroll_accruals WHERE shop_id=$1 AND employee_id=$2 AND period_key=$3',[shopId,p.employee_id,p.period_key])).rowCount)throw Error('Employee payroll already accrued for this month.');
+  const lines=[];
+  for(const l of plan.lines){
+   const kind=l.control==='employeeAdvances'?'Asset':l.control==='salary'||l.control==='employerContributions'?'Expense':'Liability';
+   const a=(await c.query("SELECT a.code FROM ars_gl_account_mappings m JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code WHERE m.shop_id=$1 AND m.mapping_kind=$2 AND m.source_id='control' AND a.kind=$3 AND a.active FOR SHARE OF a",[shopId,l.control,kind])).rows[0];
+   if(!a)throw Error('Missing active accounting mapping: '+l.control);
+   lines.push({accountCode:a.code as string,debit:l.debit,credit:l.credit});
+  }
+  if(new Set(lines.map(l=>l.accountCode)).size!==lines.length)throw Error('Distinct payroll accounting mappings required.');
+  const journal=await postJournal(c,{id:journalId,shopId,postingDate:p.day,sourceKind:'PayrollAccrual',sourceId:proposalId,description:'Detailed salary accrual '+p.period_key,actor,lines});
+  if(journal.replayed)throw Error('Existing payroll journal requires reconciliation.');
+  await c.query('INSERT INTO ars_gl_payroll_accruals(shop_id,id,employee_id,employee_name,period_key,base_salary,gross_amount,posting_date,evidence,journal_id,recorded_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[shopId,proposalId,p.employee_id,p.employee_name,p.period_key,d.baseSalary,d.grossSalary,p.day,p.evidence,journalId,actor]);
+  for(const recovery of plan.recoveries){
+   const id='payroll-recovery:'+createHash('sha256').update(canonical([proposalId,recovery.disbursementId])).digest('hex');
+   await c.query("INSERT INTO ars_gl_employee_advance_recoveries(shop_id,id,disbursement_id,employee_id,recovery_kind,payroll_proposal_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,$2,$3,$4,'PayrollRecovery',$5,$6,$7,$8,$9,$10)",[shopId,id,recovery.disbursementId,p.employee_id,proposalId,recovery.amount,p.day,journalId,recovery.evidence,actor]);
+  }
+  await c.query('COMMIT');return {id:proposalId,journalId,replayed:false};
+ }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
 }
