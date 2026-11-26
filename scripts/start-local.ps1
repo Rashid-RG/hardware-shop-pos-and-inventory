@@ -246,7 +246,34 @@ if ($DesktopLaunch) {
   $env:ARS_LISTEN_HOST = '127.0.0.1'
   $env:PORT = '3000'
   $env:CORS_ALLOWED_ORIGINS = 'http://localhost:3000'
+  $controlDir=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
+  New-Item -ItemType Directory -Path $controlDir -Force | Out-Null
+  if ((Get-Item -LiteralPath $controlDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected desktop control directory.' }
+  $recordPath=Join-Path $controlDir 'instance.json'
+  if (Test-Path -LiteralPath $recordPath) { throw 'Previous desktop control record exists. Verify previous shutdown with RS Nextward support before restarting.' }
+  $pipeName='ars-pos-'+[guid]::NewGuid().ToString('N')
+  $bytes=New-Object byte[] 32
+  $rng=[Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+  $secret=[BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
+  # DPAPI protects the stored token for the current Windows account.
+  $secure=ConvertTo-SecureString $secret -AsPlainText -Force
+  $encrypted=ConvertFrom-SecureString $secure
+  $env:ARS_DESKTOP_SHUTDOWN_PIPE='\\.\pipe\'+$pipeName
+  $env:ARS_DESKTOP_SHUTDOWN_SECRET=$secret
+  try {
   $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList 'dist/server.cjs' -WindowStyle Hidden -PassThru
+  } finally {
+    Remove-Item Env:ARS_DESKTOP_SHUTDOWN_PIPE -ErrorAction SilentlyContinue
+    Remove-Item Env:ARS_DESKTOP_SHUTDOWN_SECRET -ErrorAction SilentlyContinue
+  }
+  $record=[ordered]@{schema=1;project=(Get-Location).Path;pid=$process.Id;startedUtc=$process.StartTime.ToUniversalTime().Ticks.ToString();pipe=$pipeName;protectedSecret=$encrypted}
+  $stream=[IO.File]::Open($recordPath,[IO.FileMode]::CreateNew)
+  try {
+    $encoded=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json))
+    $stream.Write($encoded,0,$encoded.Length)
+  } finally { $stream.Dispose() }
+
   $deadline = (Get-Date).AddSeconds(150)
   while ((Get-Date) -lt $deadline) {
     $process.Refresh()

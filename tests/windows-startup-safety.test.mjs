@@ -224,3 +224,14 @@ test('Windows desktop control channel is opt-in, loopback-bound and secret authe
  assert.match(s,/REVIEW_REQUIRED/);
  assert.match(s,/shutdown\('Desktop maintenance'\)/);
 });
+
+test('Windows managed desktop shutdown uses DPAPI, process identity and bounded graceful wait',()=>{
+ const stop=readFileSync(new URL('../scripts/stop-local.ps1',import.meta.url),'utf8');
+ assert.match(launcher,/ConvertFrom-SecureString/);
+ assert.match(launcher,/FileMode\]::CreateNew/);
+ assert.match(stop,/StartTime\.ToUniversalTime\(\)\.Ticks/);
+ assert.match(stop,/NamedPipeClientStream/);
+ assert.match(stop,/WaitForExit\(120000\)/);
+ assert.match(stop,/ExitCode -ne 0/);
+ assert.match(stop,/SHUTDOWN_REQUESTED/);
+});
