@@ -1,3 +1,4 @@
+import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import {arsPrintLogoPath,isArsPrintBrand,arsDisplayName} from './arsPrintLogo.ts';
 import {invoiceFooter} from './invoiceFooter.ts';
@@ -24,6 +25,8 @@ export function renderArsDisbursementVoucherPdf(v:DisbursementVoucher,shopName:s
   rule();doc.font('Helvetica').fontSize(10).text('Prepared by: __________________    Authorized by: __________________',40,doc.y,{width:w}).moveDown(1.5);
   doc.text(refund?'Received by: __________________':'Recipient acknowledgement: __________________',40,doc.y,{width:w}).moveDown(1.5);
   doc.fontSize(9).text(recovery?'Recorded import charge recovery. Signature fields are for physical acknowledgement.':refund?'Recorded supplier refund. Signature fields are for physical acknowledgement.':'Recorded disbursement. Signature fields are for physical acknowledgement.',40,doc.y,{width:w,align:'center'}).moveDown(.5);
-  doc.font('Helvetica-Bold').text(invoiceFooter.credit,40,doc.y,{width:w,align:'center'});doc.end();
+  if(doc.y+42>doc.page.height-40)doc.addPage();
+    doc.font('Helvetica-Bold').fontSize(8).text(invoiceFooter.credit,40,doc.y,{width:w,align:'right'});
+    doc.image(rsNextwardLogoBuffer(),doc.page.width-150,doc.y+4,{width:110});doc.end();
  });
 }

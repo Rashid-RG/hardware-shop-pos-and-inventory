@@ -1,3 +1,4 @@
+import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { arsPrintLogoPath,isArsPrintBrand,arsDisplayName } from './arsPrintLogo.ts';
 import { invoiceFooter } from './invoiceFooter.ts';
@@ -23,6 +24,8 @@ export function renderArsHandoverVoucherPdf(v:HandoverVoucher,shopName:string,lo
   rule();doc.font('Helvetica').fontSize(10).text('Representative signature: __________________',40,doc.y,{width:w}).moveDown(1.5);
   doc.text('Receiving officer signature: __________________',40,doc.y,{width:w}).moveDown(1.5);
   doc.fontSize(9).text('Internal transfer only. Not a customer payment or sales invoice.',40,doc.y,{width:w,align:'center'}).moveDown(.5);
-  doc.font('Helvetica-Bold').text(invoiceFooter.credit,40,doc.y,{width:w,align:'center'});doc.end();
+  if(doc.y+42>doc.page.height-40)doc.addPage();
+    doc.font('Helvetica-Bold').fontSize(8).text(invoiceFooter.credit,40,doc.y,{width:w,align:'right'});
+    doc.image(rsNextwardLogoBuffer(),doc.page.width-150,doc.y+4,{width:110});doc.end();
  });
 }

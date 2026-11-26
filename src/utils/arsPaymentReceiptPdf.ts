@@ -1,3 +1,4 @@
+import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo.ts';
 import { invoiceFooter } from './invoiceFooter.ts';
@@ -40,7 +41,9 @@ export function renderArsPaymentReceiptPdf(payment:CustomerCreditPayment,shopNam
     rule();
     doc.font('Helvetica').fontSize(10).text('Received by: __________________     Customer: __________________',40,doc.y,{width}).moveDown(2);
     doc.text('Thank you for your payment.',40,doc.y,{width,align:'center'}).moveDown(0.5);
-    doc.font('Helvetica-Bold').text(invoiceFooter.credit,40,doc.y,{width,align:'center'});
+    if(doc.y+42>doc.page.height-40)doc.addPage();
+    doc.font('Helvetica-Bold').fontSize(8).text(invoiceFooter.credit,40,doc.y,{width:width,align:'right'});
+    doc.image(rsNextwardLogoBuffer(),doc.page.width-150,doc.y+4,{width:110});
     doc.end();
   });
 }

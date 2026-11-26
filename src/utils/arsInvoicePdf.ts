@@ -1,3 +1,4 @@
+import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
 import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { invoiceFooter } from './invoiceFooter.ts';
@@ -229,11 +230,7 @@ export const renderArsInvoicePdf = async (
     text(`Page ${page+1} of ${range.count}`, left, footerY+44, 110, 7);
     line(400, footerY+8, 400, footerY+50);
     text('Powered by', 411, footerY+6, 158, 8, false, 'right');
-    doc.font('Helvetica-BoldOblique').fontSize(16).fillColor(ink)
-      .text(invoiceFooter.credit.replace(/^Powered by /, ''), px(411), footerY+18, {width:pw(158),align:'right',lineBreak:false});
-    doc.moveTo(px(right-67), footerY+38).quadraticCurveTo(px(right-37), footerY+30, px(right), footerY+34)
-      .quadraticCurveTo(px(right-35), footerY+32, px(right-67), footerY+39).fill(ink);
-    text('Smart systems for business.', 411, footerY+43, 158, 9, false, 'right');
+    doc.image(rsNextwardLogoBuffer(),px(411),footerY+21,{fit:[pw(158),27],align:'right'});
   }
   doc.end();
 });
