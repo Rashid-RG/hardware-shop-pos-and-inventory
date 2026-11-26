@@ -308,6 +308,50 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     const {supplierReconciliation}=await import('../backend/supplierReconciliation.ts');
     const reconciliation=await supplierReconciliation(pool,chequeShop,payableOrder);
     assert.ok(reconciliation);
+    // Partner capital uses a separate shop and real PostgreSQL journal constraints.
+    const capitalShop='capital-gl-'+id(),capitalBank=id(),partner=id(),capitalSupplier=id();
+    const {postPartnerCapital}=await import('../backend/partnerCapitalPosting.ts');
+    const {reviewHistoricalCapital,listHistoricalCapitalReviews}=await import('../backend/partnerCapitalReview.ts');
+    const {createLedgerMapping}=await import('../backend/ledgerMappings.ts');
+    await createFinancialAccount(pool,{id:capitalBank,shopId:capitalShop,name:'Capital bank',kind:'Bank',recordedBy});
+    await pool.query("INSERT INTO ars_business_partners(id,shop_id,name,created_by) VALUES($1,$2,'CI partner',$3)",[partner,capitalShop,recordedBy]);
+    await pool.query("INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES($1,'1000','Bank','Asset'),($1,'3100','Partner capital','Equity'),($1,'3200','Partner drawings','Equity')",[capitalShop]);
+    for(const [kind,sourceId,accountCode] of [['financialAccount',capitalBank,'1000'],['partnerCapital',partner,'3100'],['partnerDrawings',partner,'3200']]){
+      assert.equal((await createLedgerMapping(pool,capitalShop,recordedBy,{kind,sourceId,accountCode,evidence:'CI mapping'})).replayed,false);
+    }
+    const capital={id:'capital-'+id(),shopId:capitalShop,partnerId:partner,accountId:capitalBank,entryType:'Contribution',amount:'500.00',date:day,reference:'CI capital deposit',note:'CI evidence',actor:recordedBy,currentBusinessDate:day};
+    await assert.rejects(postPartnerCapital(pool,capital),/Verified accounting required/);
+    await pool.query("INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES($1,$2,'CI','CI',true)",[capitalShop,day]);
+    const capResults=await Promise.all([postPartnerCapital(pool,capital),postPartnerCapital(pool,capital)]);
+    assert.deepEqual(capResults.map(x=>x.replayed).sort(),[false,true]);
+    await assert.rejects(postPartnerCapital(pool,{...capital,amount:'501.00'}),/already used/);
+    await assert.rejects(postPartnerCapital(pool,{...capital,id:'capital-'+id(),accountId:foreign}),/Active bank or office cash/);
+    await assert.rejects(postPartnerCapital(pool,{...capital,id:'capital-'+id(),date:'2026-11-25'}),/Invalid partner capital/);
+    const capitalBalance=async()=> (await listFinancialAccounts(pool,capitalShop))[0].balance;
+    assert.equal(await capitalBalance(),500);
+    await insertSupplier({id:capitalSupplier,shopId:capitalShop,name:'Capital CI supplier',companyName:'Capital CI supplier',phone:'',email:'',address:'',taxNumber:''});
+    await registerSupplierCheque(pool,{id:'supplier-cheque-'+id(),shopId:capitalShop,supplierId:capitalSupplier,bankAccountId:capitalBank,chequeNumber:'CAP-CI',amount:350,issuedDate:day,dueDate:day,recordedBy});
+    const drawing={...capital,id:'capital-'+id(),entryType:'Drawing',amount:'151.00',reference:'CI drawing'};
+    await assert.rejects(postPartnerCapital(pool,drawing),/Insufficient uncommitted funds/);
+    assert.equal(await capitalBalance(),500);
+    assert.equal((await pool.query('SELECT id FROM ars_partner_capital_entries WHERE id=$1',[drawing.id])).rowCount,0);
+    await postPartnerCapital(pool,{...drawing,amount:'150.00'});
+    assert.equal(await capitalBalance(),350);
+    const capitalLines=(await pool.query("SELECT l.account_code,l.debit::text,l.credit::text FROM ars_gl_journals j JOIN ars_gl_lines l ON l.shop_id=j.shop_id AND l.journal_id=j.id WHERE j.shop_id=$1 AND j.source_kind='PartnerCapital' AND j.source_id=$2 ORDER BY l.account_code",[capitalShop,drawing.id])).rows;
+    assert.deepEqual(capitalLines,[{account_code:'1000',debit:'0.00',credit:'150.00'},{account_code:'3200',debit:'150.00',credit:'0.00'}]);
+    const historical='capital-'+id();
+    await pool.query("INSERT INTO ars_partner_capital_entries(id,shop_id,partner_id,entry_type,amount_lkr,entry_date,reference,created_by) VALUES($1,$2,$3,'Contribution',50,'2026-11-23','CI historical evidence',$4)",[historical,capitalShop,partner,recordedBy]);
+    const review={requestId:id(),entryId:historical,decision:'Discrepancy identified',evidence:'CI evidence requires reconciliation'};
+    const reviews=await Promise.all([reviewHistoricalCapital(pool,capitalShop,recordedBy,review),reviewHistoricalCapital(pool,capitalShop,recordedBy,review)]);
+    assert.deepEqual(reviews.map(x=>x.replayed).sort(),[false,true]);
+    await assert.rejects(reviewHistoricalCapital(pool,capitalShop,recordedBy,{...review,evidence:'Different evidence'}),/already used/);
+    await assert.rejects(reviewHistoricalCapital(pool,otherShop,recordedBy,review),/not found/);
+    await assert.rejects(reviewHistoricalCapital(pool,capitalShop,recordedBy,{...review,requestId:id(),entryId:capital.id}),/Linked financial posting/);
+    await assert.rejects(reviewHistoricalCapital(pool,capitalShop,recordedBy,{...review,requestId:id(),decision:'Included in opening balances',openingJournalId:'missing-opening'}),/Approved opening journal/);
+    assert.equal((await listHistoricalCapitalReviews(pool,capitalShop,historical)).length,1);
+    assert.equal((await listHistoricalCapitalReviews(pool,otherShop,historical)).length,0);
+    assert.equal(await capitalBalance(),350);
+    assert.equal((await pool.query("SELECT id FROM ars_gl_journals WHERE shop_id=$1",[capitalShop])).rowCount,2);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
