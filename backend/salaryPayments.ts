@@ -69,3 +69,14 @@ export async function payAccruedSalary(db:Pool,shopId:string,actor:string,i:Paym
   await c.query('COMMIT');return {id:i.id,journalId,replayed:false};
  }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
 }
+
+/** Immutable payment history, scoped to the selected shop and optional accrual. */
+export async function listSalaryPayments(db:Pool,shopId:string,accrualId?:string){
+ if(!identity(shopId)||(accrualId!==undefined&&!identity(accrualId)))throw Error('Valid salary shop and accrual required.');
+ return (await db.query(`SELECT s.id,s.accrual_id,a.employee_id,a.employee_name,a.period_key,s.financial_account_id,
+ s.amount::text,s.posting_date::text,s.journal_id,s.evidence,s.recorded_by,s.recorded_at,
+ EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=s.shop_id AND j.source_kind='Reversal' AND j.source_id=s.journal_id) AS reconciliation_required
+ FROM ars_gl_salary_payments s JOIN ars_gl_payroll_accruals a ON a.shop_id=s.shop_id AND a.id=s.accrual_id
+ WHERE s.shop_id=$1 AND ($2::text IS NULL OR s.accrual_id=$2)
+ ORDER BY s.posting_date DESC,s.recorded_at DESC,s.id`,[shopId,accrualId??null])).rows;
+}
