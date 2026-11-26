@@ -23,6 +23,9 @@ def resume(confirmation):
             fcntl.flock(update,fcntl.LOCK_EX|fcntl.LOCK_NB)
             hold=STATE/"maintenance-hold.json"
             journal=STATE/"switch-journal.json"
+            intent=STATE/"runtime-switch-intent.json"
+            if intent.exists() or intent.is_symlink():
+                raise ValueError("Retained switch intent requires manual review before resume.")
             if hold.is_symlink() or not hold.is_file() or journal.exists() or journal.is_symlink():
                 raise ValueError("Missing maintenance hold or software switch journal present. Manual review required.")
             record=json.loads(hold.read_text())
