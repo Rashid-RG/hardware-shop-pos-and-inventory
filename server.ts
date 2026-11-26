@@ -2860,7 +2860,7 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/ready', async (_req, res) => {
   if (shutdownRequested) return res.status(503).json({ ok: false, status: 'maintenance' });
-  if (!databaseWriteHealthy) {
+  if (!databaseWriteHealthy || interruptedWriteRequiresReview || !singleWriterLease) {
     return res.status(503).json({
       ok: false,
       status: 'degraded',
@@ -2868,7 +2868,10 @@ app.get('/api/ready', async (_req, res) => {
     });
   }
   try {
+    await assertWriterBeforeCommit();
     await pool.query('SELECT 1');
+    await assertWriterBeforeCommit();
+    if (shutdownRequested) return res.status(503).json({ ok: false, status: 'maintenance' });
     res.json({
       ok: true,
       status: 'ready',
@@ -8325,6 +8328,10 @@ async function startServer() {
   }
 
   if (interruptedWriteRequiresReview || !singleWriterLease) throw new Error('Writer lease unavailable before listener startup.');
+  // Recheck actual PostgreSQL ownership after schema initialization and hydration.
+  await assertWriterBeforeCommit();
+  assertOrdinaryStartupAllowed();
+  assertNoWriterLoss(runtimePaths.root);
   const listenHost = process.env.ARS_LISTEN_HOST || '0.0.0.0';
   const server = app.listen(PORT, listenHost, () => {
     const address = server.address();
