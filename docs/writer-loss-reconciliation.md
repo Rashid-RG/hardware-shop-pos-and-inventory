@@ -15,3 +15,7 @@ Retain seven JSON evidence documents in writer-loss-evidence/<incident SHA-256>/
 ## Incident backup verification
 
 The recoverableBackup artifact must additionally include archive (an ARS .dump basename) and archiveSha256. The inspector checks the matching archive in runtime/backups, rejects linked paths and validates existing backup checksums and applicable companion files. Archive integrity is not an isolated restore test or proof that the archive is the correct recovery point. No restore or startup clearance is granted.
+
+## Isolated restore receipt contract
+
+The incident receipt inspector expects isolated-restore-receipt.json in the incident evidence directory. It matches the incident and actual verified dump SHA-256, requires a separate PostgreSQL instance without a published port or live volume, checks reported counts for eight core tables and requires an upload archive check when applicable. A matching receipt is not independent proof that a restore executed. Existing Mint isolated restore tooling is the basis for a future receipt producer; the older Windows same-cluster restore utility does not qualify. No receipt producer, restore execution or startup clearance is enabled by this inspector.

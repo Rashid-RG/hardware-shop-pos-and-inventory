@@ -62,6 +62,6 @@ export async function verifyIncidentBackup(runtimeRoot){
   if((await digest(archive)).sha256!==e.archiveSha256)throw Error('Archive fingerprint mismatch.');
   await verifyBackup(archive);
   if((await digest(archive)).sha256!==e.archiveSha256||(await digest(evidence,4*1024*1024)).sha256!==evidenceFile.sha256||(await digest(review,8192)).sha256!==reviewFile.sha256||(await inspectWriterLoss(root)).incidentDigest!==incident.incidentDigest)throw Error('Evidence changed.');
-  return {state:'archive-integrity-matched',archive:e.archive,uploadsIncluded:assets,...blocked};
+  return {state:'archive-integrity-matched',archive:e.archive,archiveSha256:e.archiveSha256,incidentDigest:incident.incidentDigest,uploadsIncluded:assets,...blocked};
  }catch{return {state:'archive-unverified',...blocked};}
 }
