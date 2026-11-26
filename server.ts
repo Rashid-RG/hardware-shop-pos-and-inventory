@@ -301,8 +301,10 @@ const acquireSingleWriterLease = async () => {
       throw new Error('Another Hardware POS server already owns this database. Stop the duplicate instance before starting.');
     }
     client.on('error', (error) => {
+      if (singleWriterLease !== client) return;
       databaseWriteHealthy = false;
-      console.error('Hardware POS single-writer lease connection lost; writes disabled.', error);
+      interruptedWriteRequiresReview = true;
+      console.error('Hardware POS single-writer lease connection lost; requests blocked and operator reconciliation required.', error);
     });
     const released = await client.query<{ released: boolean }>(
       'SELECT pg_advisory_unlock($1::integer, $2::integer) AS released',
@@ -322,11 +324,13 @@ const releaseSingleWriterLease = async () => {
   const client = singleWriterLease;
   singleWriterLease = null;
   try {
-    await client.query('SELECT pg_advisory_unlock($1::integer, $2::integer)', [
+    const result = await client.query<{ released: boolean }>('SELECT pg_advisory_unlock($1::integer, $2::integer) AS released', [
       SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID,
     ]);
+    if (result.rows[0]?.released !== true) throw new Error('Database writer lease release not verified.');
   } finally {
-    client.release();
+    // Never return an ambiguously locked or broken lease session to the pool.
+    client.release(true);
   }
 };
 const LOGIN_ATTEMPT_LIMIT = 5;
@@ -2744,6 +2748,14 @@ const requireRole = (roles: Role[]): express.RequestHandler => {
 let writeQueue: Promise<void> = Promise.resolve();
 // A disconnected client is not evidence that its asynchronous mutation finished.
 let interruptedWriteRequiresReview = false;
+// A lost writer session invalidates the process's in-memory business state.
+// Health/readiness remain accessible for diagnosis; all other API methods stop.
+app.use('/api', (req, res, next) => {
+  if (interruptedWriteRequiresReview && req.path !== '/health' && req.path !== '/ready') {
+    return res.status(503).json({ error: 'Database recovery required. Reconcile interrupted operations before restarting.' });
+  }
+  next();
+});
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     return next();
