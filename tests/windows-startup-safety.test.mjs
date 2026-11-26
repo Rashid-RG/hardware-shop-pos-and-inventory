@@ -289,3 +289,14 @@ test('Windows switch preflight binds final backup to maintenance and rollback re
  assert.match(s,/rollbackAllowed=\$false/);
  assert.doesNotMatch(s,/Move-Item|Remove-Item|Start-Process|pg_restore|docker compose/);
 });
+
+test('Windows runtime preparation verifies copies and preserves the existing installation',()=>{
+ const s=readFileSync(new URL('../scripts/prepare-windows-runtime-storage.ps1',import.meta.url),'utf8');
+ assert.match(s,/Matching verified pre-activation maintenance required/);
+ assert.match(s,/SetAccessRuleProtection\(\$true,\$false\)/);
+ assert.match(s,/Get-RuntimeInventory \$pending/);
+ assert.match(s,/Get-RuntimeInventory \$root/);
+ assert.match(s,/sourcePreserved=\$true/);
+ assert.match(s,/runtimeActivated=\$false/);
+ assert.doesNotMatch(s,/Remove-Item|New-Item -ItemType Junction|Start-Process|pg_restore/);
+});
