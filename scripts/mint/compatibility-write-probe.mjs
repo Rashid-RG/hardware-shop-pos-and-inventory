@@ -1,7 +1,9 @@
 // Synthetic write probe. Invoke only in disconnected disposable update-test containers.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
+import { createRequire } from 'node:module';
+// Resolve dependencies from the isolated application root even when invoked via a data URL.
+const pg = createRequire('/app/package.json')('pg');
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 assert.equal(url.hostname,'127.0.0.1');
 assert.equal(url.pathname,'/ars_update_test');

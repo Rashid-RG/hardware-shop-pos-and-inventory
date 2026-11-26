@@ -74,6 +74,7 @@ $appCreated=$false
 $appName=$name+'-app'
 $startupPassed=$false
 $authenticatedReadsPassed=$false
+$authenticatedWritesPassed=$false
 $historicalRowsCompared=$false
 $historicalTableCount=0
 $imageId=$null
@@ -150,6 +151,22 @@ try {
     }
     $historicalRowsCompared=$true
     $historicalTableCount=$schema.Count
+    # Write probes must follow the historical comparison, never contaminate its baseline.
+    $null=Invoke-DockerChecked @('start',$appName)
+    $writeReady=$false
+    for ($i=0;$i -lt 90;$i++) {
+      & docker exec $appName node -e $probe | Out-Null
+      if ($LASTEXITCODE -eq 0) { $writeReady=$true;break }
+      Start-Sleep -Seconds 2
+    }
+    if (-not $writeReady) { throw 'Candidate failed readiness before transaction tests.' }
+    $writePath=Join-Path $PSScriptRoot 'mint/compatibility-write-probe.mjs'
+    $writeEncoded=[Convert]::ToBase64String([IO.File]::ReadAllBytes($writePath))
+    $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main','-e','ARS_TEST_ALLOW_WRITES=isolated-disposable',$appName,'node','-e',$runner,$writeEncoded)
+    $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+    $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+    $authenticatedWritesPassed=$true
+
   }
   if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $before) { throw 'Recovery archive changed during test.' }
   if ((Assert-ArsPreparedFingerprint $prepared).digest -cne $fingerprint.digest) { throw 'Prepared release changed during test.' }
@@ -157,14 +174,14 @@ try {
   try {
     if ($appCreated) { $null=Invoke-DockerChecked @('rm','-f','-v',$appName) }
   } finally {
-    if ($copyRoot -and (Test-Path -LiteralPath $copyRoot)) { Remove-Item -LiteralPath $copyRoot -Recurse -Force }
-  }
-  if ($created) {
-    # Remove only the uniquely named disposable container created by this invocation.
-    $null=Invoke-DockerChecked @('rm','-f','-v',$name)
+    try {
+      if ($copyRoot -and (Test-Path -LiteralPath $copyRoot)) { Remove-Item -LiteralPath $copyRoot -Recurse -Force }
+    } finally {
+      if ($created) { $null=Invoke-DockerChecked @('rm','-f','-v',$name) }
+    }
   }
 }
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
+$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;authenticatedWritesPassed=$authenticatedWritesPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 $bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
 $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
 try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }

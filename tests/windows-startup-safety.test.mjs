@@ -170,3 +170,14 @@ test('Windows candidate executes the trusted authenticated read probe only insid
  assert.match(s,/activationApproved=\$false/);
  assert.ok(s.indexOf('INSERT INTO users')<s.indexOf('$historicalBefore='));
 });
+
+test('Windows candidate transaction probe runs after preservation comparison and only with disposable write opt-in',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ const probe=readFileSync(new URL('../scripts/mint/compatibility-write-probe.mjs',import.meta.url),'utf8');
+ assert.ok(s.indexOf('$historicalRowsCompared=$true')<s.indexOf('mint/compatibility-write-probe.mjs'));
+ assert.match(s,/ARS_TEST_ALLOW_WRITES=isolated-disposable/);
+ assert.match(s,/authenticatedWritesPassed=\$authenticatedWritesPassed/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.match(probe,/createRequire\('\/app\/package\.json'\)/);
+ assert.match(probe,/assert\.equal\(url\.pathname,'\/ars_update_test'\)/);
+});
