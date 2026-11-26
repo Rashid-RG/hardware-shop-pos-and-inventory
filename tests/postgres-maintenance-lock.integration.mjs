@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {acquireRehearsalWriter} from '../scripts/database-handoff-writer-rehearsal.mjs';
 import {assertGateOwner} from '../scripts/database-handoff-gate.mjs';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 assert.ok(['127.0.0.1','localhost'].includes(url.hostname));
@@ -148,4 +149,28 @@ test('observer verifies exact coordinator session and rejects released or replac
   assert.equal((await observer.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',keys)).rows[0].acquired,true);
   await assert.rejects(assertGateOwner(observer,identity,options),/ownership not verified/);
  }finally{await owner.end().catch(()=>{});await observer.end().catch(()=>{});}
+});
+
+test('protected candidate lease acquisition rejects competing writers and lost coordinator',{timeout:30000},async()=>{
+ const clients=Array.from({length:4},()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000}));
+ const [coordinator,old,candidate,rival]=clients;
+ const writerId=Math.floor(Math.random()*900000000)*2+10;
+ const gateId=writerId+1,lockClass=1642958133;
+ const keys={writerId,gateId,lockClass};
+ const acquire=async(c,id)=>(await c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[lockClass,id])).rows[0].acquired;
+ try{
+  for(const c of clients)await c.connect();
+  const identity=(await coordinator.query('SELECT pg_backend_pid() AS pid, backend_start::text AS started FROM pg_stat_activity WHERE pid=pg_backend_pid()')).rows[0];
+  await assert.rejects(acquireRehearsalWriter(candidate,identity,keys),/ownership not verified/);
+  assert.equal(await acquire(coordinator,gateId),true);
+  assert.equal(await acquire(old,writerId),true);
+  await assert.rejects(acquireRehearsalWriter(candidate,identity,keys),/lease unavailable/);
+  await old.end();
+  assert.deepEqual(await acquireRehearsalWriter(candidate,identity,keys),{writerLeaseAcquired:true,liveStartupAllowed:false});
+  assert.equal(await acquire(rival,gateId),false);
+  assert.equal(await acquire(rival,writerId),false);
+  await candidate.end();
+  await coordinator.end();
+  await assert.rejects(acquireRehearsalWriter(rival,identity,keys),/ownership not verified/);
+ }finally{for(const c of clients)await c.end().catch(()=>{});}
 });
