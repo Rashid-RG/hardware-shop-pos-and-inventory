@@ -11,3 +11,7 @@ The inspection primitive is not a graphical recovery wizard or an authorization 
 ## Artifact integrity inspection
 
 Retain seven JSON evidence documents in writer-loss-evidence/<incident SHA-256>/<category>.json, where category is databaseIdentity, previousSession, recoverableBackup, invoices, payments, inventory or accounting. Each document must include schema: 1, incidentDigest and category, and its exact bytes must match the operator review fingerprint. The inspector rejects linked, missing, oversized, malformed or mismatched artifacts. Integrity is not proof of accounting correctness, database identity, backup recoverability or operator authority. No startup clearance is granted.
+
+## Incident backup verification
+
+The recoverableBackup artifact must additionally include archive (an ARS .dump basename) and archiveSha256. The inspector checks the matching archive in runtime/backups, rejects linked paths and validates existing backup checksums and applicable companion files. Archive integrity is not an isolated restore test or proof that the archive is the correct recovery point. No restore or startup clearance is granted.
