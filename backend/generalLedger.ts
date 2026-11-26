@@ -463,6 +463,59 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_salary_payment_guard BEFORE INSERT ON ars_gl_salary_payments
  FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_salary_payment();
  CREATE INDEX IF NOT EXISTS ars_gl_salary_payment_lookup ON ars_gl_salary_payments(shop_id,accrual_id,posting_date);
+ -- Statutory remittances settle posted liabilities, not provisional salary calculations.
+ CREATE TABLE IF NOT EXISTS ars_gl_statutory_settlements(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,accrual_id TEXT NOT NULL,
+  fund TEXT NOT NULL CHECK(fund IN ('EPF','ETF')),
+  financial_account_id TEXT NOT NULL,amount NUMERIC(16,2) NOT NULL CHECK(amount>0),
+  posting_date DATE NOT NULL,journal_id TEXT NOT NULL,
+  receipt_reference TEXT NOT NULL CHECK(length(trim(receipt_reference)) BETWEEN 1 AND 160),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),UNIQUE(shop_id,journal_id),
+  FOREIGN KEY(shop_id,accrual_id) REFERENCES ars_gl_payroll_accruals(shop_id,id),
+  FOREIGN KEY(shop_id,accrual_id) REFERENCES ars_gl_payroll_statutory_snapshots(shop_id,proposal_id),
+  FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_statutory_settlement_immutable ON ars_gl_statutory_settlements;
+ CREATE TRIGGER ars_gl_statutory_settlement_immutable BEFORE UPDATE OR DELETE ON ars_gl_statutory_settlements
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE OR REPLACE FUNCTION ars_gl_guard_statutory_settlement() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ DECLARE accrued_day DATE; accrued_journal TEXT; liability NUMERIC; settled NUMERIC; control_code TEXT;
+ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('statutory-settlement:'||NEW.shop_id,0));
+  SELECT a.posting_date,a.journal_id INTO accrued_day,accrued_journal
+   FROM ars_gl_payroll_accruals a JOIN ars_gl_payroll_statutory_snapshots s ON s.shop_id=a.shop_id AND s.proposal_id=a.id
+   WHERE a.shop_id=NEW.shop_id AND a.id=NEW.accrual_id FOR UPDATE OF a;
+  IF NOT FOUND OR NEW.posting_date<accrued_day
+  THEN RAISE EXCEPTION 'Settlement requires matching statutory payroll accrual' USING ERRCODE='23514'; END IF;
+  SELECT m.account_code INTO control_code FROM ars_gl_account_mappings m JOIN ars_gl_accounts a ON a.shop_id=m.shop_id AND a.code=m.account_code
+   WHERE m.shop_id=NEW.shop_id AND m.source_id='control' AND m.mapping_kind=CASE WHEN NEW.fund='EPF' THEN 'epfPayable' ELSE 'etfPayable' END
+   AND a.kind='Liability' AND a.active;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Active statutory liability mapping required' USING ERRCODE='23514'; END IF;
+  SELECT COALESCE(SUM(credit-debit),0) INTO liability FROM ars_gl_lines
+   WHERE shop_id=NEW.shop_id AND journal_id=accrued_journal AND account_code=control_code;
+  IF EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=NEW.shop_id AND j.source_kind='Reversal'
+    AND (j.source_id=accrued_journal OR EXISTS(SELECT 1 FROM ars_gl_statutory_settlements s WHERE s.shop_id=NEW.shop_id AND s.accrual_id=NEW.accrual_id AND s.fund=NEW.fund AND s.journal_id=j.source_id)))
+  THEN RAISE EXCEPTION 'Reversed statutory accounting requires reconciliation' USING ERRCODE='23514'; END IF;
+  SELECT COALESCE(SUM(amount),0) INTO settled FROM ars_gl_statutory_settlements
+   WHERE shop_id=NEW.shop_id AND accrual_id=NEW.accrual_id AND fund=NEW.fund;
+  IF settled+NEW.amount>liability
+  THEN RAISE EXCEPTION 'Settlement exceeds outstanding statutory liability' USING ERRCODE='23514'; END IF;
+  IF EXISTS(SELECT 1 FROM ars_gl_statutory_settlements WHERE shop_id=NEW.shop_id AND accrual_id=NEW.accrual_id AND fund=NEW.fund AND posting_date>NEW.posting_date)
+  THEN RAISE EXCEPTION 'Settlement date precedes recorded settlement' USING ERRCODE='23514'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=NEW.shop_id AND j.id=NEW.journal_id
+   AND j.source_kind='StatutorySettlement' AND j.source_id=NEW.id AND j.posting_date=NEW.posting_date
+   AND j.recorded_by=NEW.recorded_by AND j.xmin::text::bigint=mod(txid_current(),4294967296))
+  OR (SELECT COALESCE(SUM(debit-credit),0) FROM ars_gl_lines WHERE shop_id=NEW.shop_id AND journal_id=NEW.journal_id AND account_code=control_code)<>NEW.amount
+  THEN RAISE EXCEPTION 'Settlement requires matching same-transaction liability journal' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_statutory_settlement_guard ON ars_gl_statutory_settlements;
+ CREATE TRIGGER ars_gl_statutory_settlement_guard BEFORE INSERT ON ars_gl_statutory_settlements
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_statutory_settlement();
+ CREATE INDEX IF NOT EXISTS ars_gl_statutory_settlement_lookup ON ars_gl_statutory_settlements(shop_id,accrual_id,fund,posting_date);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
