@@ -19,6 +19,7 @@ test('purchase orders, delivery notes and GRNs preserve scoped saved quantities 
  const tx={shopId:'shop-a',status:'Completed',invoiceNumber:'INV-1',date:'2026-11-25',customerName:'<script>bad()</script>',cashierName:'INTERNAL-OPERATOR',total:987654.32,items:[{productName:'Lock & handle',sellingUnitLabel:'Box',quantity:2,sellingPrice:493827.16,costPrice:123456.78},{productName:'Bolt',sellingUnitLabel:'Piece',quantity:3}]};
  const dn=buildDeliveryNoteHtml(tx,settings,'');
  assert.ok(dn.includes('A4 portrait'));
+ assert.ok(dn.includes('Print / Save PDF')&&dn.includes('@media print{button{display:none}}'));
  assert.ok(dn.includes('&lt;script&gt;bad()&lt;/script&gt;'));
  assert.ok(!dn.includes('<script>bad()'));
  assert.ok(dn.includes('<td>Lock &amp; handle</td><td>Box</td><td>2</td><td></td>'));
@@ -41,6 +42,7 @@ test('purchase orders, delivery notes and GRNs preserve scoped saved quantities 
  assert.ok(html.includes('&lt;img onerror=bad()&gt;'));
  assert.ok(!html.includes('<img onerror=bad()>'));
  assert.ok(html.includes('Powered by RS Nextward'));
+ assert.ok(html.includes('Print / Save PDF')&&html.includes('@media print{button{display:none}}'));
  assert.throws(()=>buildGrnHtml(grn,'shop-b','grn-a'),/Invalid receiving document/);
  assert.throws(()=>buildGrnHtml(grn,'shop-a','grn-b'),/Invalid receiving document/);
  assert.throws(()=>buildGrnHtml({...grn,recorded_count:3},'shop-a','grn-a'),/Invalid receiving document/);

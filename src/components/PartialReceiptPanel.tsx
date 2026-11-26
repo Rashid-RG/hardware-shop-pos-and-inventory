@@ -45,6 +45,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
       const data=await response.json();if(!response.ok)throw Error(data.error||'Unable to load GRN');
       const html=buildGrnHtml(data,shopId,batchId);
       popup.document.open();popup.document.write(html);popup.document.close();
+      popup.document.getElementById('print')?.addEventListener('click',()=>popup.print());
     }catch(e){popup.close();setError(e instanceof Error?e.message:'Unable to open receiving document.');}
   };
   const refresh = async () => {
