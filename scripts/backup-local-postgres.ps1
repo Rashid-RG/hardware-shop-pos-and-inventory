@@ -21,12 +21,29 @@ $lockItem=Get-Item -LiteralPath $lockDirectory -Force
 if (-not $lockItem.PSIsContainer -or ($lockItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid local backup lock directory.' }
 $lockPath=Join-Path $lockDirectory '.ars-local-backup.lock'
 $localLock=$null
+function Assert-NoBackupRecovery {
+  if (@(Get-ChildItem -LiteralPath $lockDirectory -Force | Where-Object { $_.Name -ieq '.ars-drive-recovery.lock' }).Count -gt 0) { throw 'Backup recovery is active or interrupted.' }
+}
+function Get-LocalBackupBootEvidence {
+  try {
+    $os=Get-CimInstance -ClassName Win32_OperatingSystem
+    $id=(Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Cryptography' -Name MachineGuid).MachineGuid
+    if ([string]::IsNullOrWhiteSpace($id)) { return $null }
+    $event=Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Microsoft-Windows-Kernel-General';Id=12} -MaxEvents 1 -ErrorAction Stop
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try { $digest=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($id.ToLowerInvariant()))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [ordered]@{schema=1;hostDigest=$digest;bootUtc=$os.LastBootUpTime.ToUniversalTime().ToString('o');eventRecord=[string]$event.RecordId;eventUtc=$event.TimeCreated.ToUniversalTime().ToString('o')}
+  } catch { return $null }
+}
 try {
+  Assert-NoBackupRecovery
   try { $localLock=[IO.File]::Open($lockPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None) }
   catch [IO.IOException] { throw 'Local backup already running or interrupted. Review retained evidence before retrying.' }
-  $lockBytes=[Text.Encoding]::UTF8.GetBytes(([ordered]@{schema=1;pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress))
+  $lockBytes=[Text.Encoding]::UTF8.GetBytes(([ordered]@{schema=1;pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o');bootId=$null;windowsBoot=(Get-LocalBackupBootEvidence)} | ConvertTo-Json -Compress))
   $localLock.Write($lockBytes,0,$lockBytes.Length)
   $localLock.Flush($true)
+  Assert-NoBackupRecovery
   $envFile = Join-Path $runtimeRoot '.env.local'
 if (-not (Test-Path -LiteralPath $envFile)) { throw 'Missing .env.local; refusing to guess the active database.' }
 $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1

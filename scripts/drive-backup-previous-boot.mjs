@@ -81,3 +81,28 @@ export async function recoverWindowsPreviousBootLock(directory,confirmation) {
     await unlink(guard);
   }
 }
+
+// Recover only the local archive lock. The cloud lock and all archives stay untouched.
+export async function recoverWindowsLocalPreviousBootLock(directory,confirmation) {
+  if(confirmation!=='RECOVER WINDOWS LOCAL PREVIOUS BOOT') throw new Error('Explicit local recovery confirmation required.');
+  if(process.platform!=='win32') throw new Error('Windows recovery requires a Windows host.');
+  const root=await realpath(directory);
+  const guard=join(root,'.ars-drive-recovery.lock');
+  const lock=join(root,'.ars-local-backup.lock');
+  const handle=await open(guard,'wx',0o600);
+  try {
+    const before=await readLock(lock);
+    const boot=await windowsBootEvidence();
+    if(!windowsRecoveryEligible(before,boot)) throw new Error('Corroborated previous Windows boot required.');
+    const evidence=join(root,'.ars-local-recovered-'+randomUUID());
+    await mkdir(evidence,{mode:0o700});
+    const again=await windowsBootEvidence();
+    const after=await readLock(lock);
+    if(JSON.stringify(before)!==JSON.stringify(after)||JSON.stringify(boot)!==JSON.stringify(again)||!windowsRecoveryEligible(after,again)) throw new Error('Recovery evidence changed.');
+    await rename(lock,join(evidence,'previous-boot.lock'));
+    return {schema:1,localLockRecovered:true,evidenceRetained:true,retryStarted:false,uploadStarted:false};
+  } finally {
+    await handle.close();
+    await unlink(guard);
+  }
+}
