@@ -232,3 +232,23 @@ test('transaction fence survives loss of writer and blocks replacement until rol
   assert.equal(await exclusive(replacement,fenceId),true);
  }finally{for(const c of clients)await c.end().catch(()=>{});}
 });
+
+test('real pg pool checkout discards unfinished transaction and preserves query callbacks',{timeout:30000},async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const {transformSync}=await import('esbuild');
+ const source=await readFile(new URL('../backend/transactionFence.ts',import.meta.url),'utf8');
+ const {installTransactionFence}=await import('data:text/javascript;base64,'+Buffer.from(transformSync(source,{loader:'ts',format:'esm'}).code).toString('base64'));
+ const pool=new pg.Pool({connectionString:url.toString(),max:1,connectionTimeoutMillis:5000});
+ installTransactionFence(pool,async()=>{},async()=>{});
+ try{
+  const first=await pool.connect();
+  const pid=(await first.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+  await first.query('BEGIN');
+  first.release();
+  const result=await pool.query('SELECT pg_backend_pid() AS pid');
+  assert.notEqual(result.rows[0].pid,pid);
+  const second=await pool.connect();
+  await second.query('BEGIN');await second.query('COMMIT');second.release();
+  assert.equal((await pool.query('SELECT pg_backend_pid() AS pid')).rows[0].pid,result.rows[0].pid);
+ }finally{await pool.end();}
+});

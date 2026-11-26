@@ -52,14 +52,30 @@ export function installTransactionFence(pool: import('pg').Pool, beforeWrite: ()
       })();
     }) as typeof client.query;
   });
-  // pg-pool assigns a new release callback for each checkout before 'acquire'.
-  // Destroy rather than recycle a session with an active or ambiguous transaction.
-  pool.on('acquire', (client) => {
+  // pg-pool emits acquire before assigning release. Wrap the completed checkout,
+  // not the event. Preserve both promise and callback forms used by pool.query.
+  const connect = pool.connect.bind(pool);
+  const protectRelease = (client: import('pg').PoolClient) => {
     const state = states.get(client);
-    if (!state) throw new Error('Untracked database pool session.');
+    if (!state) {
+      client.release(true);
+      throw new Error('Untracked database pool session.');
+    }
     const release = client.release.bind(client);
     client.release = (error?: Error | boolean) => {
       release(error || state.active || state.uncertain || undefined);
     };
-  });
+    return client;
+  };
+  pool.connect = ((callback?: (err: Error | undefined, client: import('pg').PoolClient | undefined, release: ((error?: Error | boolean) => void) | undefined) => void) => {
+    if (callback) {
+      return connect((err, client) => {
+        if (err || !client) return callback(err || new Error('Database checkout failed.'), undefined, undefined);
+        try { protectRelease(client); }
+        catch (error) { return callback(error as Error, undefined, undefined); }
+        callback(undefined, client, client.release);
+      });
+    }
+    return connect().then(protectRelease);
+  }) as typeof pool.connect;
 }
