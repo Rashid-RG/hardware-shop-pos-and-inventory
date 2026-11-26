@@ -21,6 +21,8 @@ export async function accrueBaseSalary(db:Pool,i:Input){
    FROM ars_gl_payroll_proposals p JOIN ars_gl_payroll_reviews r ON r.shop_id=p.shop_id AND r.proposal_id=p.id AND r.decision='Approved'
    WHERE p.shop_id=$1 AND p.id=$2`,[i.shopId,i.id])).rows[0];
   if(!approved)throw Error('Approved payroll proposal required.');
+  if((await c.query('SELECT 1 FROM ars_gl_payroll_details WHERE shop_id=$1 AND proposal_id=$2',[i.shopId,i.id])).rowCount)throw Error('Detailed payroll requires the advanced payroll posting workflow.');
+
   if(approved.employee_id!==i.employeeId||approved.period_key!==i.period||moneyCents(approved.salary)!==cents||approved.day!==i.postingDate||approved.evidence!==evidence)throw Error('Payroll posting must match the approved proposal.');
   const prior=(await c.query('SELECT *,posting_date::text AS day FROM ars_gl_payroll_accruals WHERE shop_id=$1 AND id=$2',[i.shopId,i.id])).rows[0];
   if(prior){
