@@ -389,6 +389,34 @@ test('real PostgreSQL payroll controls: isolated schema, partial payment and ten
  assert.equal((await reconcileSalaryPayable(pool,other)).verifiedOutstanding,'0.00');
  const monthly=await reconcilePayroll(pool,shop,'2026-11');assert.equal(monthly.checksPassed,true);
  const advance=await reconcileEmployeeAdvances(pool,shop);assert.equal(advance.checksPassed,true);
+ // Real approved employee advance and direct recovery, with same-transaction journal guards.
+ await pool.query("INSERT INTO ars_gl_employee_advance_requests(shop_id,id,employee_id,employee_name,amount,requested_date,evidence,submitted_by) VALUES($1,'req1','e1','Synthetic employee',12500.03,$2,'CI','submitter')",[shop,day]);
+ await pool.query("INSERT INTO ars_gl_employee_advance_reviews(shop_id,request_id,decision,evidence,reviewed_by) VALUES($1,'req1','Approved','CI','reviewer')",[shop]);
+ await tx(async c=>{
+ await journal(c,'advance:d1','EmployeeAdvanceDisbursement','d1',[{accountCode:'1200',debit:'12500.03',credit:'0.00'},{accountCode:'1000',debit:'0.00',credit:'12500.03'}]);
+ await c.query("INSERT INTO ars_financial_movements VALUES('advance:d1',$1,'bank',-12500.03,'Employee Advance','d1','CI',$2,'CI')",[shop,day]);
+ await c.query("INSERT INTO ars_gl_employee_advance_disbursements(shop_id,id,request_id,employee_id,financial_account_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,'d1','req1','e1','bank',12500.03,$2,'advance:d1','CI','CI')",[shop,day]);
+ });
+ const issued=await reconcileEmployeeAdvances(pool,shop);
+ assert.equal(issued.checksPassed,true);assert.equal(issued.advances[0].outstanding,'12500.03');
+ const repay=(id,value)=>tx(async c=>{
+ const j='advance-repayment:'+id;
+ await journal(c,j,'EmployeeAdvanceRepayment',id,[{accountCode:'1000',debit:value,credit:'0.00'},{accountCode:'1200',debit:'0.00',credit:value}]);
+ await c.query("INSERT INTO ars_financial_movements VALUES($1,$2,'bank',$3::numeric,'Employee Advance',$1,'CI',$4,'CI')",[j,shop,value,day]);
+ await c.query("INSERT INTO ars_gl_employee_advance_recoveries(shop_id,id,disbursement_id,employee_id,recovery_kind,financial_account_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,$2,'d1','e1','DirectRepayment','bank',$3,$4,$5,'CI','CI')",[shop,id,value,day,j]);
+ });
+ await repay('r1','2500.01');
+ const partial=await reconcileEmployeeAdvances(pool,shop);
+ assert.equal(partial.checksPassed,true);assert.equal(partial.advances[0].outstanding,'10000.02');assert.equal(partial.ledgerBalance,'10000.02');
+ assert.equal((await payrollAccountingOverview(pool,shop)).controls.find(c=>c.id==='advances').recordedBalance,'10000.02');
+ assert.equal((await reconcileEmployeeAdvances(pool,other)).advances.length,0);
+ await assert.rejects(()=>repay('over','10000.03'),/exceeds outstanding amount/);
+ assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_gl_journals WHERE id='advance-repayment:over'")).rows[0].n,0);
+ assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_financial_movements WHERE id='advance-repayment:over'")).rows[0].n,0);
+ await repay('r2','10000.02');
+ const recovered=await reconcileEmployeeAdvances(pool,shop);
+ assert.equal(recovered.checksPassed,true);assert.equal(recovered.advances[0].outstanding,'0.00');assert.equal(recovered.ledgerBalance,'0.00');
+
  const stat=await reconcileStatutoryControls(pool,shop);assert.equal(stat.checksPassed,false);assert.ok(stat.exceptions.some(e=>e.issues.includes('STATUTORY_COVERAGE_UNVERIFIED')));
  const combined=await payrollAccountingOverview(pool,shop);assert.equal(combined.checksPassed,false);assert.equal(combined.controls.find(c=>c.id==='salary').checksPassed,true);
  await assert.rejects(()=>pay('over','30000.00'),/exceeds outstanding net salary/);
