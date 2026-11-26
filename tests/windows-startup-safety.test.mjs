@@ -137,5 +137,15 @@ test('Windows offline rehearsal uses disconnected disposable PostgreSQL without 
  assert.match(s,/'--tmpfs'/);
  assert.match(s,/compatibilityTestPassed=\$false/);
  assert.match(s,/activationApproved=\$false/);
- assert.doesNotMatch(s,/'--publish'|'--mount'|docker compose/);
+ assert.doesNotMatch(s,/'--publish'|docker compose/);
+});
+
+test('Windows candidate readiness requires pinned Linux dependencies and disconnected test network',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ assert.match(s,/Dependency image identity mismatch/);
+ assert.match(s,/ars-lock-sha256/);
+ assert.match(s,/'--network',\('container:'\+\$name\)/);
+ assert.match(s,/target=\/app\/dist,readonly/);
+ assert.match(s,/candidateStartupPassed=\$startupPassed/);
+ assert.match(s,/compatibilityTestPassed=\$false/);
 });
