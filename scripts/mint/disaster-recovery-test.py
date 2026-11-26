@@ -16,7 +16,7 @@ import uuid
 import zipfile
 
 STATE=Path.home()/".local/share/ars-hardware"
-TABLES=("products","customers","sales_transactions","sales_transaction_items","purchase_orders","supplier_payments","customer_credit_payments")
+TABLES=("products","customers","sales_transactions","sales_transaction_items","purchase_orders","purchase_order_items","supplier_payments","customer_credit_payments")
 
 def run(*args,**kwargs):
     return subprocess.run(args,check=True,timeout=900,**kwargs)
@@ -60,10 +60,12 @@ def rehearse(source):
     run(str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(source))
     with source.open("rb") as stream:
         digest=hashlib.file_digest(stream,"sha256").hexdigest()
-    if source.name.endswith("-with-uploads.dump"):
+    upload_checked=False
+    if source.name.endswith("-with-uploads.dump") or source.with_name(source.stem+"-uploads.zip").exists():
         with zipfile.ZipFile(source.with_name(source.stem+"-uploads.zip")) as archive:
             if archive.testzip() is not None:
                 raise ValueError("Uploaded documents failed CRC verification.")
+        upload_checked=True
     name="ars-recovery-test-"+uuid.uuid4().hex
     image="postgres:16-alpine"
     run("docker","image","inspect",image,stdout=subprocess.DEVNULL)
@@ -107,17 +109,22 @@ def rehearse(source):
     reports=STATE/"recovery-reports"
     reports.mkdir(mode=0o700,exist_ok=True)
     if reports.is_symlink(): raise ValueError("Unexpected report directory.")
-    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"sourceComparison":comparison,"financialChecks":finance,"liveRestoreApproved":False}
+    report={"backup":source.name,"sha256":digest,"testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"restoreTestPassed":True,"counts":counts,"sourceComparison":comparison,"financialChecks":finance,"liveRestoreApproved":False,"isolation":"separate-postgres-instance","liveVolumeMounted":False,"publishedPort":False,"uploadArchiveChecked":upload_checked}
     with tempfile.NamedTemporaryFile(mode="w",prefix="rehearsal-",suffix=".json",dir=reports,delete=False) as stream:
         json.dump(report,stream,indent=2)
         print("Recovery rehearsal report:",stream.name)
     print("Isolated restoration completed. Live data was not changed.")
+    return report
 
 if __name__=="__main__":
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path)
+    parser.add_argument("--receipt-json",action="store_true")
     args=parser.parse_args()
-    try: rehearse(args.archive)
+    try:
+        result=rehearse(args.archive)
+        if args.receipt_json:
+            print("ARS_RESTORE_REPORT="+json.dumps(result,separators=(",",":")))
     except (OSError,ValueError,RuntimeError,subprocess.SubprocessError,zipfile.BadZipFile) as error:
         sys.exit("Recovery rehearsal failed: "+str(error))
