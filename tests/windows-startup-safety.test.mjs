@@ -300,3 +300,13 @@ test('Windows runtime preparation verifies copies and preserves the existing ins
  assert.match(s,/runtimeActivated=\$false/);
  assert.doesNotMatch(s,/Remove-Item|New-Item -ItemType Junction|Start-Process|pg_restore/);
 });
+
+test('Windows runtime integration plan rejects stale prepared copies and never changes active runtime',()=>{
+ const s=readFileSync(new URL('../scripts/plan-windows-runtime-integration.ps1',import.meta.url),'utf8');
+ assert.match(s,/Runtime copy belongs to a different maintenance session/);
+ assert.match(s,/Runtime contents changed/);
+ assert.match(s,/runtime-active\.json/);
+ assert.match(s,/Docker Compose project identity/);
+ assert.match(s,/activationAllowed=\$false/);
+ assert.doesNotMatch(s,/Remove-Item|Move-Item|Start-Process|docker compose up|Set-Content/);
+});
