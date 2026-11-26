@@ -38,7 +38,11 @@ try {
   $sql="SELECT system_identifier::text || ':' || (SELECT oid::text FROM pg_database WHERE datname=current_database()) FROM pg_control_system()"
   $inside=@(& docker exec $c.Id psql -X -w -U postgres -d hardware_pos -v ON_ERROR_STOP=1 -Atc $sql 2>$null)
   if ($LASTEXITCODE -ne 0 -or $inside.Count -ne 1 -or $inside[0] -cnotmatch '^[0-9]{1,20}:[0-9]{1,10}$') { throw 'Container PostgreSQL identity query failed.' }
-  $outside=@(& node (Join-Path $PSScriptRoot 'probe-postgres-identity.mjs') $config 2>$null)
+  $probe=Join-Path $PSScriptRoot 'probe-postgres-identity.mjs'
+  if (-not (Test-Path -LiteralPath $probe -PathType Leaf)) { $probe=Join-Path $PSScriptRoot 'probe-postgres-identity.cjs' }
+  $probeItem=Get-Item -LiteralPath $probe -Force
+  if ($probeItem.PSIsContainer -or ($probeItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid identity probe.' }
+  $outside=@(& node $probe $config 2>$null)
   if ($LASTEXITCODE -ne 0 -or $outside.Count -ne 1 -or $outside[0] -cne $inside[0]) { throw 'Configured database identity does not match the existing Docker PostgreSQL cluster.' }
   $identity=$inside[0].Split(':')
   $after=@(Read-DockerJson @('container','inspect','hardware-pos-postgres'))
