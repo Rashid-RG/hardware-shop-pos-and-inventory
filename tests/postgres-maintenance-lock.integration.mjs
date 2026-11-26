@@ -90,3 +90,42 @@ test('handoff gate remains held while writer lease changes owners',{timeout:3000
   assert.equal((await acquire(rival,key)).rows[0].acquired,false);
  }finally{for(const c of [gate,old,next,rival])await c.end().catch(()=>{});}
 });
+
+test('failed candidate handoff retains transition gate until previous writer reacquires lease',{timeout:30000},async()=>{
+ const clients=Array.from({length:5},()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000}));
+ const [gate,old,candidate,rollback,rival]=clients;
+ const key=Math.floor(Math.random()*900000000)*2+10;
+ const acquire=async(c,id)=>(await c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,id])).rows[0].acquired;
+ const release=async(c,id)=>(await c.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[1642958133,id])).rows[0].released;
+ try{
+  for(const c of clients)await c.connect();
+  assert.equal(await acquire(old,key),true);
+  assert.equal(await acquire(gate,key+1),true);
+  assert.equal(await release(old,key),true);
+  assert.equal(await acquire(candidate,key),true);
+  assert.equal(await acquire(rival,key+1),false);
+  // Simulate failed replacement before readiness: its session closes.
+  await candidate.end();
+  assert.equal(await acquire(rival,key+1),false);
+  assert.equal(await acquire(rollback,key),true);
+  assert.equal(await acquire(rival,key+1),false);
+  assert.equal(await release(gate,key+1),true);
+  assert.equal(await acquire(rival,key+1),true);
+  assert.equal(await acquire(rival,key),false);
+ }finally{for(const c of clients)await c.end().catch(()=>{});}
+});
+test('coordinator connection loss releases gate; writer lease alone does not protect a vacant transition',{timeout:30000},async()=>{
+ const gate=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const rival=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const key=Math.floor(Math.random()*900000000)*2+10;
+ const acquire=async c=>(await c.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,key])).rows[0].acquired;
+ try{
+  await gate.connect();await rival.connect();
+  assert.equal(await acquire(gate),true);
+  assert.equal(await acquire(rival),false);
+  await gate.end();
+  // Explicitly document the failure boundary: a durable maintenance marker
+  // and authenticated startup authorization must survive coordinator loss.
+  assert.equal(await acquire(rival),true);
+ }finally{await gate.end().catch(()=>{});await rival.end().catch(()=>{});}
+});
