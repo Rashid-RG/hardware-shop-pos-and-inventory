@@ -8,7 +8,8 @@ test('backup diagnostics are fixed read-only admin endpoints and integrated into
   assert.ok(server.includes("app.get('/api/backup/"+endpoint+"', requireRole(['Super Admin'])"));
   assert.ok(ui.includes("'/api/backup/"+endpoint+"'"));
  }
- assert.match(server,/\['?scripts\/drive-backup\.mjs/); 
+ assert.ok(server.includes("'--health'"));
+ assert.ok(server.includes("'--inspect-recovery'"));
  assert.match(ui,/health\.lockPresent/);
  assert.match(ui,/Inspect recovery evidence/);
  assert.match(ui,/No lock removal, retry, upload or restoration authorized/);
