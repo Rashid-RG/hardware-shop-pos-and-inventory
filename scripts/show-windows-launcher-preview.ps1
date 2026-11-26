@@ -32,6 +32,14 @@ $close=New-Object Windows.Forms.Button
 $close.Text='Close'
 $close.SetBounds(374,232,120,40)
 $form.Controls.Add($close)
+$schedule=New-Object Windows.Forms.Button
+$schedule.Text='Backup schedule'
+$schedule.SetBounds(202,232,166,40)
+$form.Controls.Add($schedule)
+$schedule.Add_Click({
+  try { & (Join-Path $PSScriptRoot 'show-windows-backup-schedule.ps1') }
+  catch { [void][Windows.Forms.MessageBox]::Show('Schedule readiness unavailable.','ARS Distributor') }
+})
 $close.Add_Click({$form.Close()})
 $check.Add_Click({
   $check.Enabled=$false
