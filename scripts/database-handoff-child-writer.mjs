@@ -15,7 +15,11 @@ export async function rehearseChildWriter(coordinator,connection,keys,binding){
  await assertGateOwner(coordinator,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
  const child=fork(fixture,[],{execArgv:[],stdio:['ignore','ignore','ignore','ipc'],env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??''}});
  let grant,timer;
- const exited=new Promise(resolve=>child.once('exit',resolve));
+ const exited=new Promise(resolve=>child.once('close',resolve));
+ let closed=false;
+ child.once('close',()=>{closed=true;});
+ // Register immediately: fork can fail before a challenge is issued.
+ child.on('error',()=>{});
  try{
   grant=createHandoffAuthorization({...binding,candidatePid:child.pid},{ttlMs:10000});
   return await new Promise((resolve,reject)=>{
@@ -45,6 +49,11 @@ export async function rehearseChildWriter(coordinator,connection,keys,binding){
   });
  }finally{
   clearTimeout(timer);grant?.revoke();
-  if(child.exitCode===null&&child.signalCode===null){child.kill();await exited;}
+  if(!closed){
+   if(child.pid&&child.exitCode===null&&child.signalCode===null)child.kill();
+   let cleanupTimer;
+   try{await Promise.race([exited,new Promise((_,reject)=>{cleanupTimer=setTimeout(()=>reject(Error('Writer fixture termination unconfirmed.')),5000);})]);}
+   finally{clearTimeout(cleanupTimer);}
+  }
  }
 }
