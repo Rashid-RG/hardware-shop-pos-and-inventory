@@ -1,3 +1,4 @@
+import {payrollAccountingOverview} from './backend/payrollAccountingOverview';
 import {reconcileSalaryPayable} from './backend/salaryPayableReconciliation';
 import {reconcileStatutoryControls} from './backend/statutoryControlReconciliation';
 import {reconcileEmployeeAdvances} from './backend/employeeAdvanceReconciliation';
@@ -7781,6 +7782,10 @@ app.get('/api/ars/payroll/statutory-settlements/controls',requireRole(['Super Ad
 app.get('/api/ars/payroll/salary-payable/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
  try{return res.json(await reconcileSalaryPayable(pool,scope.shopId));}catch(e){console.error('Salary payable reconciliation failed',e);return res.status(503).json({error:'Unable to verify salary payable balance.'});}
+});
+app.get('/api/ars/payroll/accounting-overview',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json(await payrollAccountingOverview(pool,scope.shopId));}catch(e){console.error('Payroll accounting overview failed',e);return res.status(503).json({error:'Unable to verify payroll accounting overview.'});}
 });
 app.get('/api/ars/payroll/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
