@@ -13,7 +13,21 @@ if ($Keep -lt 7 -or $Keep -gt 3650) { throw 'Keep must be between 7 and 3650 suc
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'windows-runtime-paths.ps1')
 $runtimeRoot = Get-ArsWindowsRuntimeRoot $projectRoot
-$envFile = Join-Path $runtimeRoot '.env.local'
+# All Windows callers (manual, scheduled and encrypted backup) share this runtime lock,
+# even when a caller selects a different archive destination.
+$lockDirectory=Join-Path $runtimeRoot 'backups'
+New-Item -ItemType Directory -Path $lockDirectory -Force | Out-Null
+$lockItem=Get-Item -LiteralPath $lockDirectory -Force
+if (-not $lockItem.PSIsContainer -or ($lockItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid local backup lock directory.' }
+$lockPath=Join-Path $lockDirectory '.ars-local-backup.lock'
+$localLock=$null
+try {
+  try { $localLock=[IO.File]::Open($lockPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None) }
+  catch [IO.IOException] { throw 'Local backup already running or interrupted. Review retained evidence before retrying.' }
+  $lockBytes=[Text.Encoding]::UTF8.GetBytes(([ordered]@{schema=1;pid=$PID;startedAt=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress))
+  $localLock.Write($lockBytes,0,$lockBytes.Length)
+  $localLock.Flush($true)
+  $envFile = Join-Path $runtimeRoot '.env.local'
 if (-not (Test-Path -LiteralPath $envFile)) { throw 'Missing .env.local; refusing to guess the active database.' }
 $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
 if (-not $line) { throw 'DATABASE_URL is missing.' }
@@ -118,3 +132,11 @@ try {
   & docker exec $Container rm -f $remoteFile *> $null
 }
 if ($OutputArchive) { Write-Output "ARS_ARCHIVE=$backupFile" }
+
+} finally {
+  if ($null -ne $localLock) {
+    $localLock.Dispose()
+    # Never delete a lock we did not acquire. Abrupt termination retains evidence.
+    Remove-Item -LiteralPath $lockPath -ErrorAction Stop
+  }
+}
