@@ -100,6 +100,10 @@ For normal business use, create and safely copy backups **every operating day**;
 
 Double-click `Inspect-ARS-Update.vbs` to inspect a signed manifest, detached signature and ZIP archive. OpenSSL must be available on PATH. The independently provisioned RS Nextward public key must be located at `%LOCALAPPDATA%\\RS Nextward\\ARS Distributor\\release-signing-public.pem`. Never obtain the trust key from the update archive itself. Windows manifests use product `ARS Distributor`, platform `windows`, version and SHA-256 of the ZIP. Inspection verifies private temporary copies, then removes them. It does not extract, stage, install, download, approve, compare release ordering, or change data. The package version displayed is the checkout version, not proof of the running build. Applying an update requires a separate approved procedure.
 
+## Stage verified Windows source
+
+Use `Stage-ARS-Update.vbs` to repeat signature and checksum verification and, after explicit confirmation, extract the ZIP into a new version directory under the current user's local application data. The staging utility rejects unsafe paths, duplicate names, links, private/runtime files, oversized archives and missing required source files. It does not build, execute, switch or install the release. A staged directory is not authorization to apply an update; revalidation and separate backup/activation safeguards are required.
+
 ## Opening decision
 
 Do not label the system commercial-ready until physical Windows startup, actual A4 printing, user permissions, backup/restore, and end-to-end sales reconciliation have been checked and signed off. All automated CI tests passing is necessary but not sufficient.

@@ -75,3 +75,15 @@ test('Windows release inspection verifies independent trust and archive checksum
  assert.match(s,/Release archive checksum mismatch/);
  assert.doesNotMatch(s,/Expand-Archive|npm\.cmd|docker compose|Invoke-Expression/);
 });
+
+test('Windows staging rejects unsafe ZIP members and publishes only to a new release directory',()=>{
+ const s=readFileSync(new URL('../scripts/expand-windows-release.ps1',import.meta.url),'utf8');
+ assert.match(s,/Unsafe or prohibited release path/);
+ assert.match(s,/OrdinalIgnoreCase/);
+ assert.match(s,/Duplicate release path/);
+ assert.match(s,/Archive expanded beyond declared size/);
+ assert.match(s,/FileMode\]::CreateNew/);
+ const inspector=readFileSync(new URL('../scripts/inspect-windows-release.ps1',import.meta.url),'utf8');
+ assert.match(inspector,/\[IO.Directory\]::Move\(\$pending,\$target\)/);
+ assert.match(inspector,/No build, database connection or installation/);
+});

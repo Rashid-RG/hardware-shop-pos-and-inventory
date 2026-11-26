@@ -1,5 +1,7 @@
 # Inspect signed release inputs only. No extraction, installation or database access.
+param([switch]$Stage)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'expand-windows-release.ps1')
 Add-Type -AssemblyName System.Windows.Forms
 function Select-ReleaseFile([string]$Title,[string]$Filter) {
   $dialog = New-Object System.Windows.Forms.OpenFileDialog
@@ -41,6 +43,31 @@ try {
   if ($data.product -cne 'ARS Distributor' -or $data.platform -cne 'windows' -or $data.version -isnot [string] -or $data.version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$' -or $data.sha256 -isnot [string] -or $data.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Manifest is not a valid ARS Distributor Windows release.' }
   $hash = (Get-FileHash -LiteralPath (Join-Path $temp 'release.zip') -Algorithm SHA256).Hash
   if ($hash -ine $data.sha256) { throw 'Release archive checksum mismatch.' }
+  if ($Stage) {
+    $answer = [System.Windows.Forms.MessageBox]::Show("Stage verified release $($data.version) without installing it?",'RS Nextward Update Center','YesNo','Question')
+    if ($answer -ne 'Yes') { return }
+    $staging = Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\staged-releases'
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    $target = Join-Path $staging $data.version
+    if (Test-Path -LiteralPath $target) { throw 'This release is already staged.' }
+    $source = Join-Path $temp 'source'
+    Expand-ArsRelease (Join-Path $temp 'release.zip') $source
+    foreach ($required in @('package.json','package-lock.json','server.ts','scripts/start-local.ps1')) {
+      if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) { throw 'Required release file missing.' }
+    }
+    Copy-Item -LiteralPath $m -Destination (Join-Path $source '.ars-release-manifest.json')
+    Copy-Item -LiteralPath $sig -Destination (Join-Path $source '.ars-release-manifest.sig')
+    # Publish to a unique pending directory on the same volume before final rename.
+    $pending = Join-Path $staging ('.pending-' + [guid]::NewGuid().ToString('N'))
+    try {
+      Copy-Item -LiteralPath $source -Destination $pending -Recurse
+      [IO.Directory]::Move($pending,$target)
+    } finally {
+      if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Recurse -Force }
+    }
+    [void][System.Windows.Forms.MessageBox]::Show("Verified source staged at $target. No build, database connection or installation was performed.",'RS Nextward Update Center','OK','Information')
+    return
+  }
   $notes = if ($data.notes -is [string]) { $data.notes.Substring(0,[Math]::Min(1200,$data.notes.Length)) } else { 'No release notes supplied.' }
   $message = "Checkout package version: $installed`nVerified release: $($data.version)`nSignature and archive SHA-256 verified.`n`n$notes`n`nInspection only. Nothing was installed or authorized for installation."
   [void][System.Windows.Forms.MessageBox]::Show($message,'RS Nextward Update Center','OK','Information')
