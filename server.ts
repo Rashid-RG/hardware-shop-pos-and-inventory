@@ -1,3 +1,4 @@
+import {renderMonthlyPayrollPdf} from './backend/monthlyPayrollPdf';
 import {monthlyPayrollReport} from './backend/monthlyPayrollReport';
 import { initGeneralLedger } from './backend/generalLedger';
 import {recordImportChargeRecovery,importRecoveryAvailability} from './backend/importChargeRecoveries';
@@ -7764,6 +7765,17 @@ app.post('/api/ars/payroll/statutory-settlements',requireRole(['Super Admin']),(
  res.setHeader('Cache-Control','no-store');
  if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
  return res.status(409).json({error:'Statutory payment posting is disabled pending accounting verification.'});
+});
+app.get('/api/ars/payroll/monthly-report/pdf',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{
+ const {activeShopId,activeShopName}=getActiveShopContext(db,req);if(activeShopId!==scope.shopId)return res.status(403).json({error:'Accounting access denied.'});
+ const profile=db.settings.shopProfiles?.find(s=>s.id===activeShopId);
+ const report=await monthlyPayrollReport(pool,scope.shopId,period);
+ const pdf=await renderMonthlyPayrollPdf(report,{name:profile?.name||activeShopName,address:profile?.address||'',phone:profile?.phone||''});
+ return res.type('application/pdf').attachment('ars-payroll-'+period+'.pdf').send(pdf);
+ }catch(error){console.error('Payroll PDF export failed',error);return res.status(503).json({error:'Unable to verify or render payroll PDF. Try Advanced Excel.'});}
 });
 app.get('/api/ars/payroll/monthly-report',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});

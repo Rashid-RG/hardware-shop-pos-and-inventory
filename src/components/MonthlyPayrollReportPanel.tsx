@@ -29,6 +29,18 @@ export default function MonthlyPayrollReportPanel({shopId,authToken}:{shopId:str
  }).catch(e=>{if(!c.signal.aborted)setFailure({key,message:e.message});});return()=>c.abort();},[key,shopId,authToken,period]);
  const rows=(report?.rows||[]).filter(r=>(r.employeeName+' '+r.employeeId).toLowerCase().includes(search.trim().toLowerCase())&&(filter==='all'||(filter==='exceptions'?r.issue!==null:filter==='base'?!r.statutoryBound:r.issue===null&&!!r.amounts&&BigInt(r.amounts.outstanding.replace('.',''))>0n)));
  const detail=report?.rows.find(r=>r.id===selected);
+ async function exportPdf(){
+  if(!report||exportLock.current)return;
+  const c=new AbortController();activeExport.current=c;exportLock.current=true;setExporting(true);setExportFailure(null);
+  try{
+   const response=await fetch('/api/ars/payroll/monthly-report/pdf?'+new URLSearchParams({period:report.period}),{headers:{Authorization:'Bearer '+authToken,'X-Shop-Id':shopId},cache:'no-store',signal:c.signal});
+   if(!response.ok){const d=await response.json().catch(()=>null);throw Error(typeof d?.error==='string'?d.error:'Payroll PDF unavailable.');}
+   if(!response.headers.get('content-type')?.startsWith('application/pdf'))throw Error('Invalid PDF response.');
+   const blob=await response.blob();if(await blob.slice(0,5).text()!=='%PDF-')throw Error('Invalid payroll PDF.');
+   if(!c.signal.aborted)downloadReport(blob,'ars-payroll-'+report.period+'.pdf');
+  }catch(e){if(!c.signal.aborted)setExportFailure({key,message:e instanceof Error?e.message:'Unable to export PDF.'});}
+  finally{exportLock.current=false;setExporting(false);}
+ }
  async function exportExcel(){
   if(!report||exportLock.current)return;
   const c=new AbortController();activeExport.current=c;exportLock.current=true;setExporting(true);setExportFailure(null);
@@ -45,10 +57,10 @@ export default function MonthlyPayrollReportPanel({shopId,authToken}:{shopId:str
  }
 
  return <section className="rounded-xl border bg-white p-3 space-y-3" aria-label="Monthly payroll reports">
- <header className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold">Payroll reports</h3><p className="text-xs text-slate-500">Posted payroll only · confidential · LKR</p></div><div className="flex gap-2 flex-wrap"><button className={button} onClick={()=>setRevision(v=>v+1)}>Refresh</button><button className={button+' bg-slate-900 text-white'} disabled={!report||exporting} onClick={()=>void exportExcel()}>{exporting?'Preparing…':'Advanced Excel'}</button></div></header>
+ <header className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold">Payroll reports</h3><p className="text-xs text-slate-500">Posted payroll only · confidential · LKR</p></div><div className="flex gap-2 flex-wrap"><button className={button} onClick={()=>setRevision(v=>v+1)}>Refresh</button><button className={button+' bg-slate-900 text-white'} disabled={!report||exporting} onClick={()=>void exportExcel()}>{exporting?'Preparing…':'Advanced Excel'}</button><button className={button} disabled={!report||exporting} onClick={()=>void exportPdf()}>A4 PDF</button></div></header>
  <div className="grid gap-2 sm:grid-cols-3"><label className="text-xs font-semibold">Payroll month<input type="month" className={field} value={period} onChange={e=>setPeriod(e.target.value)}/></label><label className="text-xs font-semibold">Employee<input className={field} value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}/></label><label className="text-xs font-semibold">Filter<select className={field} value={filter} onChange={e=>{setFilter(e.target.value);setPage(0);}}><option value="all">All records</option><option value="exceptions">Requires review</option><option value="base">Base salary only</option><option value="outstanding">Outstanding salary</option></select></label></div>
  {exportFailure?.key===key&&<p role="alert" className="rounded-lg bg-rose-50 p-2 text-xs">{exportFailure.message}</p>}
- {report&&<p className="text-xs text-slate-500">Excel exports the entire selected payroll month, including exception records; search filters affect the screen only.</p>}
+ {report&&<p className="text-xs text-slate-500">Exports include the entire selected payroll month, including exception records; search filters affect the screen only.</p>}
  {error?<p role="alert" className="rounded-lg bg-rose-50 p-2 text-xs text-rose-800">{error}</p>:!report?<p role="status" className="text-xs">Loading posted payroll report…</p>:<>
  <p className="text-xs text-slate-600">Selected payroll month; recorded payments to date, not calendar-month cash flow. {report.recordCount} records · {report.exceptionCount} exceptions.</p>
  {!report.totalsComplete&&<p role="alert" className="rounded-lg bg-amber-50 p-2 text-xs text-amber-900">Partial verified totals only. {report.exceptionCount} records excluded pending reconciliation.</p>}
