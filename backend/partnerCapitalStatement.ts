@@ -35,3 +35,22 @@ export async function partnerCapitalStatement(db:Pool|PoolClient,i:{shopId:strin
  if(!r)throw Error('Partner not found in this shop.');
  return {partner:{id:r.id,name:r.name,active:r.is_active},fromDate,toDate,limit,offset,total:Number(r.count),opening:r.opening,contributions:r.contributions,drawings:r.drawings,closing:r.closing,posted:Number(r.posted),historical:Number(r.historical),review:Number(r.review),rows:r.rows,basis:'Recorded capital entries only; not a reconciled equity balance or profit entitlement.'};
 }
+
+/** Export all rows from one read-only snapshot; never silently truncate. */
+export async function exportPartnerCapitalStatement(db:Pool,i:{shopId:string;partnerId:string;fromDate:string;toDate:string}){
+ const c=await db.connect();
+ try{
+  await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  const first=await partnerCapitalStatement(c,{...i,offset:0,limit:200});
+  if(first.total>2500)throw Error('Partner statement exceeds 2500 export rows. Select a shorter date range.');
+  const rows=[...first.rows];
+  for(let offset=200;offset<first.total;offset+=200){
+   const page=await partnerCapitalStatement(c,{...i,offset,limit:200});
+   if(page.total!==first.total||page.opening!==first.opening||page.closing!==first.closing)throw Error('Partner statement snapshot could not be verified.');
+   rows.push(...page.rows);
+  }
+  if(rows.length!==first.total||new Set(rows.map(r=>r.id)).size!==first.total)throw Error('Partner statement snapshot could not be verified.');
+  await c.query('COMMIT');
+  return {...first,offset:0,limit:first.total,rows};
+ }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e;}finally{c.release();}
+}
