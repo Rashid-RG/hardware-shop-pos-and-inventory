@@ -3,6 +3,8 @@ import { ReportExportMenu } from './ReportExportMenu';
 import type { BusinessReport } from '../utils/businessReport';
 import React,{useEffect,useState,useRef} from 'react';
 import {Landmark,ShieldCheck,RefreshCcw,Plus,Users,Wallet,History,ChartNoAxesColumn,ArrowRight} from 'lucide-react';
+type HistoricalReview={request_id:string;decision:string;evidence:string;opening_journal_id:string|null;reviewed_by:string;reviewed_at:string};
+type ReviewRequest={entryId:string;requestId:string;decision:'Included in opening balances'|'Discrepancy identified';evidence:string;openingJournalId?:string};
 type CapitalRequest={requestId:string;partnerId:string;accountId:string;entryType:'Contribution'|'Drawing';amountLkr:string;entryDate:string;reference:string;note:string};
 type CapitalAccount={id:string;name:string;kind:string;active:boolean;balance:number;balanceAfterChequeCommitments?:number};
 type Partner={id:string;name:string;ownership_percent:string|null;is_active:boolean;};
@@ -19,6 +21,9 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
  const [workspace,setWorkspace]=useState<PartnerWorkspace>('overview');
  const [entries,setEntries]=useState<Capital[]>([]);
  const [capitalSearch,setCapitalSearch]=useState(''),[capitalStatus,setCapitalStatus]=useState('all'),[capitalPartner,setCapitalPartner]=useState('all'),[capitalDetail,setCapitalDetail]=useState<Capital|null>(null);
+ const [reviewHistory,setReviewHistory]=useState<HistoricalReview[]|null>(null),[reviewError,setReviewError]=useState(''),[reviewDecision,setReviewDecision]=useState<ReviewRequest['decision']>('Discrepancy identified'),[reviewEvidence,setReviewEvidence]=useState(''),[openingJournal,setOpeningJournal]=useState(''),[reviewPending,setReviewPending]=useState<ReviewRequest|null>(null),[reviewReady,setReviewReady]=useState(false),[reviewBusy,setReviewBusy]=useState(false);
+ const reviewLock=useRef(false);
+ const reviewKey='ars:pending-capital-review:'+JSON.stringify([shopId,owner||'']);
  const [profits,setProfits]=useState<ProfitAllocation[]>([]);
  const [audits,setAudits]=useState<OwnershipAudit[]>([]);
  const [agreements,setAgreements]=useState<Agreement[]>([]);
@@ -49,6 +54,24 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
    const data=await response.json();
    if(!response.ok)throw Error(data.error||'Unable to complete partner ledger request');
    return data;
+ };
+ useEffect(()=>{try{if(!owner)throw Error('Staff identity required.');const raw=localStorage.getItem(reviewKey);if(raw){const p=JSON.parse(raw);if(!p||typeof p.entryId!=='string'||typeof p.requestId!=='string'||typeof p.evidence!=='string'||!['Included in opening balances','Discrepancy identified'].includes(p.decision))throw Error('Invalid saved review.');setReviewPending(p);}setReviewReady(true);}catch{setReviewError('Saved review requires administrator assistance.');}},[reviewKey]);
+ useEffect(()=>{setReviewHistory(null);setReviewEvidence('');setOpeningJournal('');setReviewDecision('Discrepancy identified');if(!capitalDetail)return;const c=new AbortController();call('/api/ars/partner-capital/'+encodeURIComponent(capitalDetail.id)+'/reviews',{cache:'no-store',signal:c.signal}).then(rows=>{if(!c.signal.aborted){if(!Array.isArray(rows))throw Error('Invalid review history.');setReviewHistory(rows);}}).catch(e=>{if(!c.signal.aborted)setReviewError(e.message);});return()=>c.abort();},[capitalDetail?.id]);
+ const sendReview=async(p:ReviewRequest)=>{
+   if(reviewLock.current||!reviewReady||!owner)return;reviewLock.current=true;setReviewBusy(true);setReviewError('');
+   try{const result=await call('/api/ars/partner-capital/'+encodeURIComponent(p.entryId)+'/reviews',{method:'POST',body:JSON.stringify(p)});
+    if(result.requestId!==p.requestId||typeof result.replayed!=='boolean')throw Error('Review not confirmed.');
+    if(localStorage.getItem(reviewKey)!==JSON.stringify(p))throw Error('Saved review changed; administrator review required.');
+    localStorage.removeItem(reviewKey);setReviewPending(null);setReviewEvidence('');setOpeningJournal('');
+    const rows=await call('/api/ars/partner-capital/'+encodeURIComponent(p.entryId)+'/reviews',{cache:'no-store'});if(!Array.isArray(rows))throw Error('Review saved; history could not be loaded.');setReviewHistory(rows);
+   }catch(e:any){setReviewError(e.message);}finally{reviewLock.current=false;setReviewBusy(false);}
+ };
+ const saveReview=async(e:React.FormEvent)=>{
+  e.preventDefault();if(!capitalDetail||capitalDetail.posting_status!=='Historical'||!reviewHistory||reviewPending||reviewBusy||reviewLock.current||!reviewReady||!reviewEvidence.trim()||(reviewDecision==='Included in opening balances'&&!openingJournal.trim()))return;
+  if(!window.confirm('Save permanent documentary review? This does not post money or alter the original capital entry.'))return;
+  const p:ReviewRequest={entryId:capitalDetail.id,requestId:crypto.randomUUID(),decision:reviewDecision,evidence:reviewEvidence.trim(),...(reviewDecision==='Included in opening balances'?{openingJournalId:openingJournal.trim()}:{})};
+  try{if(localStorage.getItem(reviewKey)!==null)throw Error('Another saved review requires recovery.');localStorage.setItem(reviewKey,JSON.stringify(p));}catch(e:any){setReviewError(e.message||'Cannot preserve review request.');return;}
+  setReviewPending(p);await sendReview(p);
  };
  const refresh=async()=>{try{
    const [data,allocations,history,agreementHistory,financialAccounts]=await Promise.all([
@@ -314,9 +337,17 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
       <thead className="sticky top-0 bg-slate-50 text-slate-600"><tr>{['Date','Partner','Type','Amount · LKR','Status','Financial account','Reference','Details'].map(h=><th className="p-2" key={h}>{h}</th>)}</tr></thead>
       <tbody>{capitalFiltered.map(e=><tr key={e.id} className="border-b border-slate-100"><td className="p-2 whitespace-nowrap">{reportDay(e.entry_date)}</td><td>{partnerName(e)}</td><td>{e.entry_type}</td><td className="font-semibold whitespace-nowrap">{e.entry_type==='Drawing'?'-':'+'}{n(e.amount_lkr)}</td><td><span className={statusOf(e)==='Posted'?'text-emerald-700':statusOf(e)==='Historical'?'text-amber-800':'text-rose-700'}>{statusOf(e)}</span></td><td>{e.financial_account_name||'—'}</td><td>{e.reference}</td><td><button type="button" className="rounded border px-2 py-1" onClick={()=>setCapitalDetail(e)}>View</button></td></tr>)}</tbody>
     </table>{!capitalFiltered.length&&<p className="py-6 text-center text-xs text-slate-500">No matching capital records.</p>}</div>
-    {capitalDetail&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3"><section role="dialog" aria-modal="true" aria-label="Capital transaction details" className="w-full max-w-lg max-h-[85vh] overflow-auto rounded-xl bg-white p-4"><div className="flex items-center justify-between"><h3 className="font-bold">Capital transaction details</h3><button type="button" className="rounded border px-3 py-1" onClick={()=>setCapitalDetail(null)}>Close</button></div><dl className="mt-3 grid gap-2 text-sm">{[
+    {capitalDetail&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3"><section role="dialog" aria-modal="true" aria-label="Capital transaction details" className="w-full max-w-lg max-h-[85vh] overflow-auto rounded-xl bg-white p-4"><div className="flex items-center justify-between"><h3 className="font-bold">Capital transaction details</h3><button type="button" className="rounded border px-3 py-1" disabled={reviewBusy} onClick={()=>setCapitalDetail(null)}>Close</button></div><dl className="mt-3 grid gap-2 text-sm">{[
     ['Partner',partnerName(capitalDetail)],['Status',statusOf(capitalDetail)],['Type',capitalDetail.entry_type],['Amount','Rs. '+n(capitalDetail.amount_lkr)],['Date',reportDay(capitalDetail.entry_date)],['Financial account',capitalDetail.financial_account_name||'—'],['Movement reference',capitalDetail.movement_id||'—'],['Journal reference',capitalDetail.journal_id||'—'],['Reference',capitalDetail.reference],['Note',capitalDetail.note||'—'],['Recorded by',capitalDetail.created_by]
-    ].map(([label,value])=><div key={label} className="border-b pb-2 break-all"><dt className="text-xs text-slate-500">{label}</dt><dd>{value}</dd></div>)}</dl></section></div>}
+    ].map(([label,value])=><div key={label} className="border-b pb-2 break-all"><dt className="text-xs text-slate-500">{label}</dt><dd>{value}</dd></div>)}</dl>
+    <div className="mt-4 border-t pt-3 space-y-2"><h4 className="font-bold text-sm">Documentary reconciliation history</h4>
+    {reviewError&&<p role="alert" className="text-xs text-rose-700">{reviewError}</p>}
+    {!reviewHistory?<p className="text-xs text-slate-500">Review history not loaded.</p>:reviewHistory.length===0?<p className="text-xs text-slate-500">No reviews recorded.</p>:reviewHistory.map(v=><div key={v.request_id} className="rounded border p-2 text-xs"><p className="font-semibold">{v.decision}</p><p>{v.evidence}</p>{v.opening_journal_id&&<p>Opening journal: {v.opening_journal_id}</p>}<p className="text-slate-500">{v.reviewed_by} · {reportTime(v.reviewed_at)}</p></div>)}
+    {reviewPending&&<div className="rounded bg-amber-50 p-2 text-xs">Saved review awaiting confirmation. {reviewPending.entryId===capitalDetail.id?<button type="button" disabled={reviewBusy} className="rounded border px-2 py-1" onClick={()=>void sendReview(reviewPending)}>Retry exact review</button>:<p>Open original entry {reviewPending.entryId} to recover.</p>}</div>}
+    {capitalDetail.posting_status==='Historical'&&<form onSubmit={saveReview} className="space-y-2"><p className="text-xs text-slate-600">Documentary review only. No cash movement or journal is created. Verify evidence before confirming.</p><label className="block text-xs font-semibold">Decision<select className={formField} disabled={reviewBusy||!!reviewPending} value={reviewDecision} onChange={e=>setReviewDecision(e.target.value as ReviewRequest['decision'])}><option>Discrepancy identified</option><option>Included in opening balances</option></select></label>
+    {reviewDecision==='Included in opening balances'&&<label className="block text-xs font-semibold">Approved opening journal reference<input className={formField} required maxLength={200} value={openingJournal} onChange={e=>setOpeningJournal(e.target.value)}/></label>}
+    <label className="block text-xs font-semibold">Supporting evidence<textarea className={formField} required maxLength={500} rows={2} value={reviewEvidence} onChange={e=>setReviewEvidence(e.target.value)}/></label><button type="submit" disabled={!reviewReady||!reviewHistory||!!reviewPending||reviewBusy||!reviewEvidence.trim()||(reviewDecision==='Included in opening balances'&&!openingJournal.trim())} className="w-full rounded-lg bg-[#172a47] p-2 text-xs font-bold text-white disabled:opacity-50">Save permanent review</button></form>}
+    </div></section></div>}
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>New posted capital entries include cash or bank movements. Historical entries require separate reconciliation. Profit allocations remain separate.</p>
   </section>}
   {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
