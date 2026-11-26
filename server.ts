@@ -1,3 +1,4 @@
+import {reconcileEmployeeAdvances} from './backend/employeeAdvanceReconciliation';
 import {reconcilePayroll} from './backend/payrollReconciliation';
 import {renderMonthlyPayrollPdf} from './backend/monthlyPayrollPdf';
 import {monthlyPayrollReport} from './backend/monthlyPayrollReport';
@@ -7766,6 +7767,10 @@ app.post('/api/ars/payroll/statutory-settlements',requireRole(['Super Admin']),(
  res.setHeader('Cache-Control','no-store');
  if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
  return res.status(409).json({error:'Statutory payment posting is disabled pending accounting verification.'});
+});
+app.get('/api/ars/payroll/advances/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json(await reconcileEmployeeAdvances(pool,scope.shopId));}catch(e){console.error('Employee advance reconciliation failed',e);return res.status(503).json({error:'Unable to verify employee advance reconciliation.'});}
 });
 app.get('/api/ars/payroll/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
