@@ -1,3 +1,4 @@
+import {rsNextwardLogoBuffer} from '../src/utils/rsNextwardPrintLogo';
 import type {Pool} from 'pg';
 import PDFDocument from 'pdfkit';
 import {arsPrintLogoPath,isArsPrintBrand,arsDisplayName} from '../src/utils/arsPrintLogo';
@@ -47,7 +48,7 @@ export function renderPostedPayslip(p:NonNullable<Awaited<ReturnType<typeof read
  section('Employer contributions (not deducted from net salary)');if(p.statutoryBound){for(const c of p.calculated.contributions.filter(c=>c.party==='Employer'))field(c.id.endsWith('-epf')?'Employer EPF':'Employer ETF',money(c.amount));}else field('Statutory breakdown','Not available — base salary only');
  section('Salary payment status');field('Recorded payments',money(p.paid));field('Outstanding salary',money(p.outstanding),true);field('Status',moneyCents(p.outstanding)===0n?'Settled':moneyCents(p.paid)>0n?'Partially paid':'Unpaid',true);
  space();doc.font('Helvetica').fontSize(9).text('This payslip records posted payroll and recorded payments; it is not proof of bank transfer or statutory remittance.',40,doc.y+8,{width:w});
- const pages=doc.bufferedPageRange();for(let i=0;i<pages.count;i++){doc.switchToPage(pages.start+i);const y=doc.page.height-55;doc.font('Helvetica').fontSize(8).fillColor('#000000').text('Confidential | Powered by RS Nextward',40,y,{width:w-80,lineBreak:false});doc.text('Page '+(i+1)+' of '+pages.count,40,y,{width:w,align:'right',lineBreak:false});}
+ const pages=doc.bufferedPageRange();for(let i=0;i<pages.count;i++){doc.switchToPage(pages.start+i);const y=doc.page.height-55;doc.font('Helvetica').fontSize(8).fillColor('#000000').text('Confidential | Powered by RS Nextward',40,y,{width:w-80,lineBreak:false});doc.image(rsNextwardLogoBuffer(),doc.page.width-145,y-21,{width:105});doc.text('Page '+(i+1)+' of '+pages.count,40,y,{width:w,align:'right',lineBreak:false});}
  doc.end();
  });
 }
