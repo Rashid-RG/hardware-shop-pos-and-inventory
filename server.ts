@@ -28,6 +28,7 @@ import { listDocumentaryReviews, submitDocumentaryReview } from './backend/docum
 import { createLedgerMapping, listLedgerMappings } from './backend/ledgerMappings';
 import { postPartnerCapital } from './backend/partnerCapitalPosting';
 import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend/partnerCapitalReview';
+import { partnerCapitalStatement } from './backend/partnerCapitalStatement';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7676,6 +7677,20 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
+app.get('/api/ars/partners/:partnerId/capital-statement',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ res.setHeader('Cache-Control','no-store');
+ const {fromDate,toDate,offset='0',limit='100'}=req.query,partnerId=req.params.partnerId;
+ if(typeof partnerId!=='string'||!partnerId.trim()||partnerId.length>200||typeof fromDate!=='string'||typeof toDate!=='string'||typeof offset!=='string'||typeof limit!=='string'||!/^\d+$/.test(offset)||!/^\d+$/.test(limit))return res.status(400).json({error:'Invalid partner statement filters.'});
+ try{return res.json(await partnerCapitalStatement(pool,{shopId:scope.shopId,partnerId,fromDate,toDate,offset:Number(offset),limit:Number(limit)}));}
+ catch(error){
+  const message=error instanceof Error?error.message:'';
+  if(message==='Invalid partner statement filters.')return res.status(400).json({error:message});
+  if(message==='Partner not found in this shop.')return res.status(404).json({error:message});
+  console.error('Partner capital statement failed',error);return res.status(503).json({error:'Unable to load partner capital statement.'});
+ }
+});
 app.get('/api/ars/partner-capital/:entryId/reviews',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
