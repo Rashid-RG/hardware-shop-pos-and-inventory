@@ -2721,6 +2721,8 @@ const requireRole = (roles: Role[]): express.RequestHandler => {
 // either one persists its result. This is NOT a replacement for row-level
 // PostgreSQL transactions and must not be used as a multi-server locking scheme.
 let writeQueue: Promise<void> = Promise.resolve();
+// A disconnected client is not evidence that its asynchronous mutation finished.
+let interruptedWriteRequiresReview = false;
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     return next();
@@ -2741,9 +2743,17 @@ app.use('/api', (req, res, next) => {
       released = true;
       releaseWrite();
     };
-    res.once('finish', release);
-    res.once('close', release);
+    // A request abandoned before admission never executed a mutation.
     if (res.destroyed) return release();
+    res.once('finish', release);
+    res.once('close', () => {
+      if (!res.writableFinished) {
+        interruptedWriteRequiresReview = true;
+        databaseWriteHealthy = false;
+        console.error('A write connection closed before its response completed. Further writes disabled; reconcile the original operation before restarting.');
+      }
+      release();
+    });
     // A prior queued request may have failed while this request was waiting.
     if (!databaseWriteHealthy) {
       res.status(503).json({ error: 'Database recovery required. Writes are temporarily disabled.' });
@@ -8216,6 +8226,13 @@ async function startServer() {
       }
       try {
         await writeQueue;
+        if (interruptedWriteRequiresReview) {
+          // Keep the writer lease and pool alive; a closed socket is not proof
+          // that the transaction settled. No successful maintenance handoff.
+          console.error('Shutdown blocked: an interrupted write requires operator reconciliation. Do not stop PostgreSQL or activate an update.');
+          process.exitCode = 1;
+          return;
+        }
         await releaseSingleWriterLease();
         await pool.end();
         console.log('Application listener and PostgreSQL pool closed.');

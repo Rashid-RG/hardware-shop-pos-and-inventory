@@ -203,3 +203,15 @@ test('server shutdown refuses new requests and does not force exit on warning ti
  assert.doesNotMatch(shutdown,/process\.exit\(1\)|Forcing exit/);
  assert.match(shutdown,/process\.on\('SIGTERM'/);
 });
+
+test('interrupted admitted writes fail closed and block successful maintenance handoff',()=>{
+ const s=readFileSync(new URL('../server.ts',import.meta.url),'utf8');
+ const queue=s.slice(s.indexOf('let writeQueue:'),s.indexOf('// --- API Implementation ---'));
+ const shutdown=s.slice(s.indexOf('  const shutdown = (signal: string) => {'),s.indexOf("process.on('unhandledRejection'"));
+ assert.ok(queue.indexOf('if (res.destroyed) return release()')<queue.indexOf("res.once('close'"));
+ assert.match(queue,/if \(!res\.writableFinished\)/);
+ assert.match(queue,/interruptedWriteRequiresReview = true/);
+ assert.match(queue,/databaseWriteHealthy = false/);
+ assert.ok(shutdown.indexOf('if (interruptedWriteRequiresReview)')<shutdown.indexOf('await releaseSingleWriterLease()'));
+ assert.match(shutdown,/Shutdown blocked: an interrupted write/);
+});
