@@ -352,7 +352,7 @@ function PartnerCapitalWorkspace({taxConfig,authToken,shopId,owner}:Props){
     </div></section></div>}
     <p className="mt-4 flex items-center gap-2 text-xs text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600"/>New posted capital entries include cash or bank movements. Historical entries require separate reconciliation. Profit allocations remain separate.</p>
   </section>}
-  {workspace==='statement'&&<PartnerStatementPanel authToken={authToken} shopId={shopId} partners={partners}/>}
+  {workspace==='statement'&&<PartnerStatementPanel settings={taxConfig} authToken={authToken} shopId={shopId} partners={partners}/>}
   {workspace==='history'&&<section aria-label="Partner ownership audit" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
     <h3 className="font-bold">Ownership and partner status history ({audits.length})</h3>
     <p className="mt-2 text-xs text-slate-500">Historical allocations keep the percentages used at approval time. Changes here affect future allocations only.</p>
