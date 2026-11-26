@@ -1,4 +1,4 @@
-import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo';
+import {rsNextwardLogoBuffer,rsNextwardPrintWidth} from './rsNextwardPrintLogo';
 import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo';
 import PDFDocument from 'pdfkit';
 import type { BusinessReport } from './businessReport';
@@ -62,7 +62,7 @@ export function renderBusinessReportPdf(report:BusinessReport, brand:{name:strin
     const fy=doc.page.height-36;
     doc.rect(left,fy-6,width,1).fill(gold);
     text(brand.name+' | Confidential | '+report.rows.length+' records',left,fy,width/2,8);
-    doc.image(rsNextwardLogoBuffer(),right-95,fy-3,{width:95});
+    doc.image(rsNextwardLogoBuffer(),right-rsNextwardPrintWidth,fy-3,{width:rsNextwardPrintWidth});
     text('Powered by RS Nextward | Page '+(i+1)+' of '+range.count,left,fy+18,width-105,8,false,ink,'right');
    }
    doc.end();

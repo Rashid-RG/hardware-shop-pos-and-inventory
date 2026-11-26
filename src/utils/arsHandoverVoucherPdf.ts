@@ -1,4 +1,4 @@
-import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
+import {rsNextwardLogoBuffer,rsNextwardPrintWidth} from './rsNextwardPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { arsPrintLogoPath,isArsPrintBrand,arsDisplayName } from './arsPrintLogo.ts';
 import { invoiceFooter } from './invoiceFooter.ts';
@@ -26,6 +26,6 @@ export function renderArsHandoverVoucherPdf(v:HandoverVoucher,shopName:string,lo
   doc.fontSize(9).text('Internal transfer only. Not a customer payment or sales invoice.',40,doc.y,{width:w,align:'center'}).moveDown(.5);
   if(doc.y+42>doc.page.height-40)doc.addPage();
     doc.font('Helvetica-Bold').fontSize(8).text(invoiceFooter.credit,40,doc.y,{width:w,align:'right'});
-    doc.image(rsNextwardLogoBuffer(),doc.page.width-150,doc.y+4,{width:110});doc.end();
+    doc.image(rsNextwardLogoBuffer(),doc.page.width-40-rsNextwardPrintWidth,doc.y+4,{width:rsNextwardPrintWidth});doc.end();
  });
 }
