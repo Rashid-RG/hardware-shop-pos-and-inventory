@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import pg from 'pg';
 import {inspectRecoveryPreflight} from './writer-loss-recovery-preflight.mjs';
 import {inspectWriterLoss} from './writer-loss-inspection.mjs';
+import {inspectRecoveryReconciliation} from './writer-loss-reconciliation-summary.mjs';
 export function localConnectionConfig(value){
  const u=new URL(value);
  const port=Number(u.port);
@@ -37,7 +38,12 @@ export async function offlineRecoveryDiagnostics(runtimeRoot,expected){
   client=new pg.Client(options);
   client.on('error',()=>{});
   await client.connect();
-  return await inspectRecoveryPreflight(root,client,expected);
+  const preflight=await inspectRecoveryPreflight(root,client,expected);
+  if(preflight.checks?.databaseIdentityMatched!==true)return preflight;
+  const reconciliation=await inspectRecoveryReconciliation(client,expected);
+  const final=await inspectWriterLoss(root);
+  if(final.incidentDigest!==incident.incidentDigest)return {state:'incident-invalid',...blocked};
+  return {...preflight,reconciliation};
  }catch{return {state:'offline-diagnostics-unavailable',...blocked};}
  finally{if(client)await client.end().catch(()=>{});}
 }

@@ -25,7 +25,13 @@ def format_status(data):
     if data.get("state") not in ("preflight-matched-review-required","preflight-blocked"):
         return "Diagnostics unavailable. Contact RS Nextward support."
     checks=data.get("checks",{})
-    return "\n".join(label+": "+("Matched" if checks.get(key) is True else "Review required") for key,label in LABELS.items())+"\n\nAccounting reconciliation, writer exclusion and operator approval remain required."
+    base="\n".join(label+": "+("Matched" if checks.get(key) is True else "Review required") for key,label in LABELS.items())
+
+    sections=data.get("reconciliation",{}).get("sections",{})
+    labels={"business":"Invoices and stock integrity","financial":"Cash and customer balances","stockPayables":"Stock and supplier estimates","partnerPayroll":"Partner and payroll links","partner":"Partner capital and drawings","imports":"Import creditor balances"}
+    states={"selected-checks-match":"Selected checks match","estimate-review":"Estimate review","no-coverage":"No coverage","review-required":"Review required","unavailable":"Unavailable"}
+    lines=[label+": "+states.get(sections.get(key),"Not inspected") for key,label in labels.items()]
+    return base+"\n\nBusiness reconciliation (separate read-only snapshots):\n"+"\n".join(lines)+"\n\nFull payroll and variant valuation integration pending. External evidence and operator approval required."
 
 def notice(message):
     subprocess.run(["zenity","--info","--no-markup","--title="+TITLE,"--width=580","--text="+message],check=False)
