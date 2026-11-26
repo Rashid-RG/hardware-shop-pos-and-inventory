@@ -15,3 +15,10 @@ test('launcher preparation uses fingerprinted source, independent bundle and new
  assert.match(s,/shortcutInstalled=\$false;startupAllowed=\$false;schedulingAllowed=\$false/);
  assert.doesNotMatch(s,/CreateShortcut|Register-ScheduledTask|Start-Process|docker compose|npm\.cmd|Remove-Item/);
 });
+
+test('Windows bundle builder and executable test select exactly one Node executable',()=>{
+ for(const path of ['../scripts/windows-identity-probe-bundle.ps1','../scripts/test-windows-identity-probe-bundle.ps1']){
+  const content=readFileSync(new URL(path,import.meta.url),'utf8');
+  assert.match(content,/Get-Command node\.exe -CommandType Application -ErrorAction Stop \| Select-Object -First 1/);
+ }
+});

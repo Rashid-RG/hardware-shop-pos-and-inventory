@@ -1,6 +1,6 @@
 # Build and syntax-check the self-contained identity probe using installed dependencies.
 function New-ArsIdentityProbeBundle([string]$Source,[string]$Destination) {
-  $node=(Get-Command node.exe -CommandType Application).Source
+  $node=(Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
   $esbuild=Join-Path $Source 'node_modules\esbuild\bin\esbuild'
   if (Test-Path -LiteralPath $Destination) { throw 'Probe bundle already exists.' }
   Push-Location -LiteralPath $Source

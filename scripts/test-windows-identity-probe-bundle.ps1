@@ -4,7 +4,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 . (Join-Path $PSScriptRoot 'windows-identity-probe-bundle.ps1')
 $root=Split-Path -Parent $PSScriptRoot
 $work=Join-Path $env:RUNNER_TEMP ('ars-probe-'+[guid]::NewGuid().ToString('N'))
-$node=(Get-Command node.exe -CommandType Application).Source
+$node=(Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $previousNodePath=$env:NODE_PATH
 try {
   New-Item -ItemType Directory -Path $work | Out-Null
