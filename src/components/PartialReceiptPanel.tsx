@@ -1,3 +1,4 @@
+import {buildGrnHtml} from '../utils/grnDocument';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { PackageCheck, RefreshCcw, ShieldCheck, X } from 'lucide-react';
 
@@ -35,6 +36,17 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const headers = { Authorization: `Bearer ${authToken}`, 'X-Shop-Id': shopId, 'Content-Type': 'application/json' };
+  const printBatch=async(batchId:string)=>{
+    const popup=window.open('','_blank','width=850,height=800');
+    if(!popup){setError('Allow the print popup in your browser.');return;}
+    popup.opener=null;popup.document.body.textContent='Loading confirmed receiving document…';
+    try{
+      const response=await fetch('/api/ars/purchases/'+encodeURIComponent(poId)+'/receipts/'+encodeURIComponent(batchId)+'/document',{headers,cache:'no-store'});
+      const data=await response.json();if(!response.ok)throw Error(data.error||'Unable to load GRN');
+      const html=buildGrnHtml(data,shopId,batchId);
+      popup.document.open();popup.document.write(html);popup.document.close();
+    }catch(e){popup.close();setError(e instanceof Error?e.message:'Unable to open receiving document.');}
+  };
   const refresh = async () => {
     setLoading(true);
     try {
@@ -150,7 +162,7 @@ export default function PartialReceiptPanel({ poId, poNumber, authToken, shopId,
             </label>
             <div className="rounded-xl bg-slate-50 p-3"><h4 className="mb-2 text-xs font-bold uppercase text-slate-600">Complete receiving batch history ({overview.batches.length})</h4>
               {overview.batches.length === 0 ? <p className="text-sm text-slate-500">No goods received yet.</p> :
-                <ul className="space-y-2">{overview.batches.map(batch => <li key={batch.id} className="text-xs text-slate-600"><strong>{new Date(batch.created_at).toLocaleString()}</strong> · {batch.received_by}{batch.note ? ' · ' + batch.note : ''}</li>)}</ul>}
+                <ul className="space-y-2">{overview.batches.map(batch => <li key={batch.id} className="text-xs text-slate-600"><strong>{new Date(batch.created_at).toLocaleString()}</strong> · {batch.received_by}{batch.note ? ' · ' + batch.note : ''} <button type="button" disabled={saving||loading||!!pendingReceipt} onClick={()=>void printBatch(batch.id)} className="ml-2 rounded border border-slate-300 px-2 py-1 font-semibold disabled:opacity-50">Print GRN</button></li>)}</ul>}
             </div>
           </>}
         </div>

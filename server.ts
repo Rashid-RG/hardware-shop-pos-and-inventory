@@ -7409,6 +7409,25 @@ app.get('/api/ars/purchases/:id/receipts',requireRole(['Super Admin','Store Mana
     })),batches:batches.rows});
   }catch(error){res.status(503).json({error:'Unable to load goods receipts.'});}
 });
+// Read-only GRN evidence: one committed batch, never cumulative quantities.
+app.get('/api/ars/purchases/:id/receipts/:batchId/document',requireRole(['Super Admin','Store Manager','Inventory Staff']),async(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ const scope=chequeShopAccess(req);if(!scope)return res.status(403).json({error:'Receiving document access denied.'});
+ try{
+ const result=await pool.query(`SELECT b.id,b.received_by,b.note,b.created_at,p.po_number,p.supplier_name,
+ COALESCE(jsonb_agg(jsonb_build_object('productName',i.product_name,'unit',i.selling_unit_label,'quantity',r.quantity,'baseUnitsPerUnit',i.base_units_per_purchase_unit) ORDER BY i.id) FILTER(WHERE i.id IS NOT NULL),'[]'::jsonb) AS items,
+ COUNT(r.purchase_order_item_id)::integer AS recorded_count
+ FROM ars_receipt_batches b JOIN purchase_orders p ON p.id=b.purchase_order_id AND p.shop_id=b.shop_id
+ LEFT JOIN ars_receipt_batch_items r ON r.batch_id=b.id
+ LEFT JOIN purchase_order_items i ON i.id=r.purchase_order_item_id AND i.purchase_order_id=p.id
+ WHERE b.shop_id=$1 AND p.id=$2 AND b.id=$3
+ GROUP BY b.id,p.id`,[scope.shopId,req.params.id,req.params.batchId]);
+ const batch=result.rows[0];if(!batch)return res.status(404).json({error:'Receiving batch not found.'});
+ if(!batch.items.length||batch.items.length!==batch.recorded_count)return res.status(409).json({error:'Receiving batch requires reconciliation.'});
+ const profile=db.settings.shopProfiles?.find(p=>p.id===scope.shopId);
+ return res.json({...batch,shopId:scope.shopId,company:{name:profile?.name||'',address:profile?.address||'',phone:profile?.phone||''}});
+ }catch(e){console.error('GRN document read failed',e);return res.status(503).json({error:'Unable to load receiving document.'});}
+});
 app.post('/api/ars/purchases/:id/receipts',requireRole(['Super Admin','Store Manager','Inventory Staff']),async(req,res)=>{
   if(!databaseWriteHealthy)return res.status(503).json({error:'Database writes are disabled until recovery.'});
   const {activeShopId}=getActiveShopContext(db,req);
