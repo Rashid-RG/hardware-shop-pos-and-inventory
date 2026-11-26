@@ -7782,16 +7782,17 @@ app.post('/api/ars/payroll/calculate',requireRole(['Super Admin']),(req,res)=>{
  try{return res.json({calculation:calculatePayroll(req.body),postingEnabled:false,statutoryVerified:false});}
  catch(error){const message=error instanceof Error?error.message:'';return res.status(400).json({error:payrollErrors.has(message)?message:'Invalid payroll calculation inputs.'});}
 });
+const statutorySnapshotErrors=new Set(["Valid statutory snapshot request required.","Statutory calculations require verified source bindings.","Statutory policy or eligibility changed. Recalculate payroll.","Statutory calculation changed. Recalculate payroll.","Independent statutory payroll review and intact snapshot required.","Statutory policy or eligibility changed. Reject and prepare a new proposal.","Statutory payroll snapshot integrity verification failed.","Approved policy terms and payroll without manual contributions required.","Executable statutory eligibility rules required.","Explicit statutory earnings and unpaid leave treatment required.","Statutory contribution basis cannot be negative."]);
 app.post('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
- const {requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,calculation}=req.body||{};
+ const {requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,calculation,statutory}=req.body||{};
  if(!validChequeRequestId(requestId)||typeof employeeId!=='string'||typeof period!=='string'||typeof expectedBaseSalary!=='string'||typeof postingDate!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll proposal and evidence required.'});
  try{
-  const result=await preparePayroll(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,currentBusinessDate:reportDay(new Date()),calculation});
+  const result=await preparePayroll(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,currentBusinessDate:reportDay(new Date()),calculation,statutory});
   return res.status(result.replayed?200:201).json(result);
- }catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message))return res.status(409).json({error:message});console.error('Payroll preparation failed',error);return res.status(503).json({error:'Unable to confirm payroll preparation. Retry identical request.'});}
+ }catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message)||payrollPolicyErrors.has(message)||payrollEligibilityErrors.has(message)||statutorySnapshotErrors.has(message))return res.status(409).json({error:message});console.error('Payroll preparation failed',error);return res.status(503).json({error:'Unable to confirm payroll preparation. Retry identical request.'});}
 });
 app.post('/api/ars/payroll/proposals/:id/review',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
@@ -7800,7 +7801,7 @@ app.post('/api/ars/payroll/proposals/:id/review',requireRole(['Super Admin']),as
  const {decision,evidence}=req.body||{},proposalId=req.params.id;
  if(!validChequeRequestId(proposalId)||!['Approved','Rejected'].includes(decision)||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll decision and evidence required.'});
  try{const result=await reviewPayroll(pool,scope.shopId,scope.recordedBy,{proposalId,decision,evidence});return res.status(result.replayed?200:201).json(result);}
- catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message))return res.status(409).json({error:message});console.error('Payroll review failed',error);return res.status(503).json({error:'Unable to confirm payroll review. Retry identical decision.'});}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message)||payrollPolicyErrors.has(message)||payrollEligibilityErrors.has(message)||statutorySnapshotErrors.has(message))return res.status(409).json({error:message});console.error('Payroll review failed',error);return res.status(503).json({error:'Unable to confirm payroll review. Retry identical decision.'});}
 });
 app.post('/api/ars/payroll/proposals/:id/post',requireRole(['Super Admin']),(req,res)=>{
  res.setHeader('Cache-Control','no-store');
