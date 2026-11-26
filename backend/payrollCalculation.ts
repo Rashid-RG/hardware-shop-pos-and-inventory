@@ -35,3 +35,31 @@ export function calculatePayroll(i:PayrollCalculationInput){
  if(total>gross)throw Error('Payroll deductions exceed gross earnings.');
  return {baseSalary:money(base),additionalEarnings:money(sum(earnings)),grossSalary:money(gross),ordinaryDeductions:money(ordinary),employeeContributions:money(employee),employerContributions:money(employer),totalDeductions:money(total),netSalary:money(gross-total),employerCost:money(gross+employer),contributions,policyReference:i.policyReference};
 }
+
+/** Restricted executable policy v1: only expressly classified earnings and leave treatment.
+ * Employee eligibility, exceptions and legal compliance must be verified outside this arithmetic helper.
+ */
+export type StatutoryPolicyTerms={id:string;employee_epf_bp:number;employer_epf_bp:number;employer_etf_bp:number;eligibility_rules:unknown;authority_reference:string};
+export function calculateStatutoryPayroll(i:PayrollCalculationInput,p:StatutoryPolicyTerms){
+ if(!p||!validText(p.id,200)||!validText(p.authority_reference,500)||!i||!Array.isArray(i.contributions)||i.contributions.length)throw Error('Approved policy terms and payroll without manual contributions required.');
+ const rules=p.eligibility_rules as Record<string,unknown>;
+ const kinds=['Base','Overtime','Bonus','Allowance'];
+ if(!rules||rules.version!==1||rules.employeeEligibility!=='StandardCoveredEmployee'||rules.exceptions!=='None')throw Error('Executable statutory eligibility rules required.');
+ const basis=(key:string)=>{
+  const rule=rules[key] as {included?:unknown;subtractUnpaidLeave?:unknown}|undefined;
+  if(!rule||!Array.isArray(rule.included)||rule.included.some(k=>!kinds.includes(k))||new Set(rule.included).size!==rule.included.length||!rule.included.includes('Base')||typeof rule.subtractUnpaidLeave!=='boolean')throw Error('Explicit statutory earnings and unpaid leave treatment required.');
+  let n=moneyCents(i.baseSalary);
+  for(const e of i.earnings)if(rule.included.includes(e.kind))n+=moneyCents(e.amount);
+  if(rule.subtractUnpaidLeave)for(const d of i.deductions)if(d.kind==='UnpaidLeave')n-=moneyCents(d.amount);
+  if(n<0n)throw Error('Statutory contribution basis cannot be negative.');
+  return money(n);
+ };
+ calculatePayroll(i);
+ const epf=basis('epf'),etf=basis('etf');
+ const inputs:PayrollCalculationInput={...i,policyReference:'statutory-policy:'+p.id,contributions:[
+  {id:'statutory-employee-epf',party:'Employee',basis:epf,rateBasisPoints:p.employee_epf_bp,evidence:p.authority_reference},
+  {id:'statutory-employer-epf',party:'Employer',basis:epf,rateBasisPoints:p.employer_epf_bp,evidence:p.authority_reference},
+  {id:'statutory-employer-etf',party:'Employer',basis:etf,rateBasisPoints:p.employer_etf_bp,evidence:p.authority_reference}
+ ]};
+ return {inputs,results:calculatePayroll(inputs),policyId:p.id,statutoryVerified:false,postingEnabled:false};
+}
