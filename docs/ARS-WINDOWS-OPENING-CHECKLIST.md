@@ -56,6 +56,10 @@ If Docker is used, the database is exposed on Windows port **5433**, not 5432. P
 
 After successful manual startup and backup verification, double-click `Configure-ARS-Startup.vbs` and confirm. This creates a shortcut in the current Windows user's Startup folder. At sign-in, the normal production launcher checks readiness and opens the browser. Run the utility again to disable startup. It refuses to replace or remove a shortcut belonging to a different installation. No database or Windows service settings are changed.
 
+## Safe closing procedure
+
+Finish pending transactions, reconcile the shift, complete the daily backup and sign out. For normal business use, shut down Windows normally. The legacy Stop-Hardware-POS shortcuts now perform a safety check only: they refuse to terminate a listening application or stop PostgreSQL. A development server can be stopped from its own terminal. A dedicated graceful production shutdown controller is not yet implemented. Do not force-kill arbitrary processes or remove database containers or volumes.
+
 ## Verify before entering real sales
 
 - Confirm the login works for each intended role and the role cannot use another shop's records.

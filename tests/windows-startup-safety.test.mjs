@@ -53,3 +53,15 @@ test('Windows autostart requires consent and protects other installation shortcu
  assert.match(s,/Remove-Item -LiteralPath \$path/);
  assert.doesNotMatch(s,/Register-ScheduledTask|docker compose|Set-Content/);
 });
+
+test('Windows shutdown entry points refuse indiscriminate process or database termination',()=>{
+ const stop=readFileSync(new URL('../scripts/stop-local.ps1',import.meta.url),'utf8');
+ const bat=readFileSync(new URL('../Stop-Hardware-POS.bat',import.meta.url),'utf8');
+ const vbs=readFileSync(new URL('../Stop-Hardware-POS.vbs',import.meta.url),'utf8');
+ assert.match(stop,/Port 3000 is still listening/);
+ assert.match(stop,/PostgreSQL was left running/);
+ assert.match(stop,/ARSDistributorPOSLauncher/);
+ for(const source of [stop,bat,vbs])assert.doesNotMatch(source,/taskkill|Stop-Process|docker compose (down|stop)/i);
+ assert.match(bat,/scripts\/stop-local\.ps1/);
+ assert.match(vbs,/scripts\/stop-local\.ps1 -DesktopLaunch/);
+});
