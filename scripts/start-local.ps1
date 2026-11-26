@@ -18,6 +18,15 @@ if (Test-Path -LiteralPath $maintenancePath) {
   throw 'ARS is in retained maintenance mode. Do not restart until recovery or update preparation has been reviewed.'
 }
 
+# Resolve external configuration explicitly, but keep external startup gated until
+# the existing Docker volume identity and activation protocol are verified.
+. (Join-Path $scriptDir 'windows-runtime-paths.ps1')
+$runtimeRoot=Get-ArsWindowsRuntimeRoot (Get-Location).Path
+$configPath=Join-Path $runtimeRoot '.env.local'
+$externalRuntime=$null -ne [Environment]::GetEnvironmentVariable('ARS_RUNTIME_ROOT','Process')
+if ($externalRuntime) {
+  throw 'External runtime startup is disabled until stable database binding and activation are verified.'
+}
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
   Copy-Item '.env.example' '.env.local'
@@ -25,7 +34,7 @@ if (-not (Test-Path '.env.local')) {
 }
 
 function Get-DatabaseUrlFromEnvFile {
-  $dbLine = Get-Content '.env.local' | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
+  $dbLine = Get-Content -LiteralPath $configPath | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
   if (-not $dbLine) {
     return ''
   }
@@ -85,6 +94,7 @@ function Wait-ForDockerCompose([int]$timeoutSeconds = 180) {
 }
 
 function Try-StartDockerCompose {
+  if ($externalRuntime) { throw 'Release-relative Docker startup is prohibited with external runtime.' }
   try {
     cmd /c "docker compose up -d" *> $null
     return ($LASTEXITCODE -eq 0)
@@ -125,7 +135,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 if (-not (Test-Path 'node_modules')) {
   throw 'Node dependencies are missing. Run npm ci from the project folder first.'
 }
-$envLines = Get-Content '.env.local'
+$envLines = Get-Content -LiteralPath $configPath
 $jwtLine = $envLines | Where-Object { $_ -match '^\s*JWT_SECRET\s*=' } | Select-Object -First 1
 $jwtValue = if ($jwtLine) { (($jwtLine -replace '^\s*JWT_SECRET\s*=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
 if ($jwtValue.Length -lt 32 -or $jwtValue -match '(?i)replace.with|change.?me|example|password') {
