@@ -76,6 +76,9 @@ export async function reviewPayroll(db:Pool,shopId:string,actor:string,i:Review)
  const evidence=i.evidence.trim(),c=await db.connect();
  try{
   await c.query('BEGIN');
+  // Same lock order as statutory preparation; serialize all approvals against source changes.
+  await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['payroll-policy:'+shopId]);
+  await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['payroll-eligibility:'+shopId]);
   const p=(await c.query('SELECT * FROM ars_gl_payroll_proposals WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,i.proposalId])).rows[0];
   if(!p)throw Error('Payroll proposal not found in this shop.');
   const old=(await c.query('SELECT * FROM ars_gl_payroll_reviews WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.proposalId])).rows[0];
@@ -85,6 +88,17 @@ export async function reviewPayroll(db:Pool,shopId:string,actor:string,i:Review)
   }
   if(i.decision==='Approved'){
    const detail=(await c.query('SELECT * FROM ars_gl_payroll_details WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.proposalId])).rows[0];
+   const bound=(await c.query('SELECT * FROM ars_gl_payroll_statutory_snapshots WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.proposalId])).rows[0];
+   if(bound){
+    if(!detail||bound.snapshot_version!==1||bound.recorded_by!==p.submitted_by||p.submitted_by.trim().toLowerCase()===actor.trim().toLowerCase())throw Error('Independent statutory payroll review and intact snapshot required.');
+    const policy=await effectivePayrollPolicy(c as unknown as Pool,shopId,p.period_key);
+    const eligibility=await effectivePayrollEligibility(c as unknown as Pool,shopId,p.employee_id,p.period_key);
+    if(policy.id!==bound.policy_id||eligibility.id!==bound.eligibility_id)throw Error('Statutory policy or eligibility changed. Reject and prepare a new proposal.');
+    const derived=calculateStatutoryPayroll(bound.source_inputs,policy);
+    const verified=snapshot(derived.inputs);
+    const hash=createHash('sha256').update(canonical({version:1,shopId,proposalId:p.id,employeeId:p.employee_id,period:p.period_key,policyId:bound.policy_id,eligibilityId:bound.eligibility_id,eligibilityEvidence:bound.eligibility_evidence,sourceInputs:bound.source_inputs,expectedResults:derived.results,detailHash:verified.hash})).digest('hex');
+    if(hash!==bound.binding_hash||verified.hash!==detail.snapshot_hash||canonical(derived.inputs)!==canonical(detail.inputs)||canonical(derived.results)!==canonical(detail.results))throw Error('Statutory payroll snapshot integrity verification failed.');
+   }else if(detail?.inputs?.policyReference?.startsWith('statutory-policy:'))throw Error('Statutory calculations require verified source bindings.');
    if(detail){
     const verified=snapshot(detail.inputs);
     const d=verified.results;
@@ -104,9 +118,10 @@ export async function listPayrollProposals(db:Pool,shopId:string,period:string){
  if(!identity(shopId)||typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))throw Error('Valid payroll month required.');
  return (await db.query(`SELECT p.id,p.employee_id,p.employee_name,p.period_key,p.base_salary::text,p.posting_date::text,p.evidence,p.submitted_by,p.submitted_at,
  r.decision,r.evidence AS review_evidence,r.reviewed_by,r.reviewed_at,
- a.id AS accrual_id,a.journal_id,d.snapshot_hash,d.gross_salary::text,d.total_deductions::text,d.net_salary::text,d.employer_contributions::text,d.employer_cost::text,d.inputs AS calculation_inputs,d.results AS calculation_results
+ a.id AS accrual_id,a.journal_id,d.snapshot_hash,d.gross_salary::text,d.total_deductions::text,d.net_salary::text,d.employer_contributions::text,d.employer_cost::text,d.inputs AS calculation_inputs,d.results AS calculation_results,s.policy_id AS statutory_policy_id,s.eligibility_id AS statutory_eligibility_id,s.binding_hash AS statutory_binding_hash
  FROM ars_gl_payroll_proposals p LEFT JOIN ars_gl_payroll_reviews r ON r.shop_id=p.shop_id AND r.proposal_id=p.id
  LEFT JOIN ars_gl_payroll_accruals a ON a.shop_id=p.shop_id AND a.id=p.id
  LEFT JOIN ars_gl_payroll_details d ON d.shop_id=p.shop_id AND d.proposal_id=p.id
+ LEFT JOIN ars_gl_payroll_statutory_snapshots s ON s.shop_id=p.shop_id AND s.proposal_id=p.id
  WHERE p.shop_id=$1 AND p.period_key=$2 ORDER BY p.submitted_at DESC,p.id DESC`,[shopId,period])).rows;
 }
