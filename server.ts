@@ -30,6 +30,7 @@ import { postPartnerCapital } from './backend/partnerCapitalPosting';
 import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend/partnerCapitalReview';
 import { partnerCapitalStatement, exportPartnerCapitalStatement } from './backend/partnerCapitalStatement';
 import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/payrollPreparation';
+import { calculatePayroll } from './backend/payrollCalculation';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7678,7 +7679,7 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
   }catch{res.status(503).json({error:'Could not load ownership audit history.'});}
 });
 
-const payrollErrors=new Set(['Valid payroll proposal and evidence required.','Positive base salary required.','Use a non-negative decimal amount with at most two decimal places.','Payroll proposal identifier already used with different details.','Employee not found in this shop.','Base salary changed. Refresh and review payroll.','Employee payroll already accrued for this month.','An unresolved or approved payroll proposal already exists for this month.','Valid payroll decision and evidence required.','Payroll proposal not found in this shop.','Payroll proposal already reviewed.','Employee or base salary changed. Reject and prepare a new proposal.','Valid payroll month required.']);
+const payrollErrors=new Set(['Payroll calculation base salary must match the proposal.','Payroll proposal identifier already used with different calculation.','Payroll calculation integrity verification failed.','Explicit payroll policy and component lists required.','Unique component identifier and supporting evidence required.','Invalid earnings component.','Positive earnings required.','Invalid deduction component.','Positive deduction required.','Invalid contribution party or rate.','Contribution basis exceeds gross earnings.','Payroll deductions exceed gross earnings.','Payroll amount outside supported range.','Invalid payroll snapshot data.','Valid payroll proposal and evidence required.','Positive base salary required.','Use a non-negative decimal amount with at most two decimal places.','Payroll proposal identifier already used with different details.','Employee not found in this shop.','Base salary changed. Refresh and review payroll.','Employee payroll already accrued for this month.','An unresolved or approved payroll proposal already exists for this month.','Valid payroll decision and evidence required.','Payroll proposal not found in this shop.','Payroll proposal already reviewed.','Employee or base salary changed. Reject and prepare a new proposal.','Valid payroll month required.']);
 app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
@@ -7687,14 +7688,20 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
 });
+app.post('/api/ars/payroll/calculate',requireRole(['Super Admin']),(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json({calculation:calculatePayroll(req.body),postingEnabled:false,statutoryVerified:false});}
+ catch(error){const message=error instanceof Error?error.message:'';return res.status(400).json({error:payrollErrors.has(message)?message:'Invalid payroll calculation inputs.'});}
+});
 app.post('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
  if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
- const {requestId,employeeId,period,expectedBaseSalary,postingDate,evidence}=req.body||{};
+ const {requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,calculation}=req.body||{};
  if(!validChequeRequestId(requestId)||typeof employeeId!=='string'||typeof period!=='string'||typeof expectedBaseSalary!=='string'||typeof postingDate!=='string'||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll proposal and evidence required.'});
  try{
-  const result=await preparePayroll(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,currentBusinessDate:reportDay(new Date())});
+  const result=await preparePayroll(pool,scope.shopId,scope.recordedBy,{id:requestId,employeeId,period,expectedBaseSalary,postingDate,evidence,currentBusinessDate:reportDay(new Date()),calculation});
   return res.status(result.replayed?200:201).json(result);
  }catch(error){const message=error instanceof Error?error.message:'';if(payrollErrors.has(message))return res.status(409).json({error:message});console.error('Payroll preparation failed',error);return res.status(503).json({error:'Unable to confirm payroll preparation. Retry identical request.'});}
 });
