@@ -36,6 +36,7 @@ import { proposePayrollEligibility, reviewPayrollEligibility, listPayrollEligibi
 import { prepareEmployeeAdvance, reviewEmployeeAdvance, listEmployeeAdvanceRequests, listEmployeeAdvanceBalances } from './backend/employeeAdvances';
 import { listSalaryBalances, listSalaryPayments } from './backend/salaryPayments';
 import { listMonthlyStatutoryLiabilities, listStatutorySettlementHistory } from './backend/statutoryRegister';
+import { listStatutoryBankAvailability } from './backend/statutoryBankAvailability';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7725,6 +7726,12 @@ app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)
  if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
  try{return res.json(await listPayrollProposals(pool,scope.shopId,period));}
  catch(error){console.error('Payroll listing failed',error);return res.status(503).json({error:'Unable to load payroll proposals.'});}
+});
+app.get('/api/ars/payroll/statutory-settlements/banks',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{const day=reportDay(new Date());return res.json({day,accounts:await listStatutoryBankAvailability(pool,scope.shopId,day),postingEnabled:false});}
+ catch(error){console.error('Statutory bank availability failed',error);return res.status(503).json({error:'Unable to confirm bank availability.'});}
 });
 app.get('/api/ars/payroll/statutory-settlements/balances',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
