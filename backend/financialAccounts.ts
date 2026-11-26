@@ -38,7 +38,7 @@ export async function initFinancialAccounts(db:Pool|PoolClient){
     -- Replace the original automatically named CHECK without altering existing movements.
     ALTER TABLE ars_financial_movements DROP CONSTRAINT IF EXISTS ars_financial_movements_movement_kind_check;
     ALTER TABLE ars_financial_movements ADD CONSTRAINT ars_financial_movements_movement_kind_check
-      CHECK(movement_kind IN ('Opening Balance','Customer Collection','Transfer In','Transfer Out','Supplier Payment','Expense','Adjustment','Invoice Payment','Invoice Refund','Import Creditor Payment','Supplier Return Refund','Import Charge Recovery','Partner Capital','Employee Advance'));
+      CHECK(movement_kind IN ('Opening Balance','Customer Collection','Transfer In','Transfer Out','Supplier Payment','Expense','Adjustment','Invoice Payment','Invoice Refund','Import Creditor Payment','Supplier Return Refund','Import Charge Recovery','Partner Capital','Employee Advance','Salary Payment'));
     CREATE UNIQUE INDEX IF NOT EXISTS ars_financial_invoice_movement_once ON ars_financial_movements(shop_id,movement_kind,source_id)
       WHERE movement_kind IN ('Invoice Payment','Invoice Refund');
     CREATE TABLE IF NOT EXISTS ars_representative_accounts (
