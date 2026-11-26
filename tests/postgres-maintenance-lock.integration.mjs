@@ -45,3 +45,24 @@ test('maintenance SHARE lock allows reads, blocks writes and releases on rollbac
     await other.end().catch(()=>{});
   }
 });
+
+test('maintenance writer lease excludes application startup until connection ends',{timeout:30000},async()=>{
+ const owner=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ const candidate=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+ // A disposable random key isolates this test from parallel application CI.
+ const key=[1642958133,Math.floor(Math.random()*2000000000)+2];
+ const acquire=client=>client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',key);
+ try{
+  await owner.connect();await candidate.connect();
+  assert.equal((await acquire(owner)).rows[0].acquired,true);
+  assert.equal((await acquire(candidate)).rows[0].acquired,false);
+  await owner.query('BEGIN');
+  await owner.query('ROLLBACK');
+  assert.equal((await acquire(candidate)).rows[0].acquired,false);
+  await owner.end();
+  assert.equal((await acquire(candidate)).rows[0].acquired,true);
+ }finally{
+  await owner.end().catch(()=>{});
+  await candidate.end().catch(()=>{});
+ }
+});
