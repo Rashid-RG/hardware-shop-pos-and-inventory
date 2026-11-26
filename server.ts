@@ -57,6 +57,7 @@ import { invoiceTotals, roundMoney } from './src/utils/invoiceTotals';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
+import { resolveRuntimePaths } from './backend/runtimePaths';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -111,8 +112,10 @@ interface DBState {
   invoicePrintLogs: InvoicePrintLog[];
 }
 
-dotenv.config({ path: '.env.local' });
-dotenv.config();
+const runtimePaths = resolveRuntimePaths(process.cwd(), process.env.ARS_RUNTIME_ROOT);
+const runtimeConfig = dotenv.config({ path: runtimePaths.config });
+if (runtimePaths.external && runtimeConfig.error) throw new Error('External runtime configuration could not be loaded.');
+if (!runtimePaths.external) dotenv.config();
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
@@ -229,7 +232,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const UPLOADS_ROOT_DIR = path.join(process.cwd(), 'uploads');
+const UPLOADS_ROOT_DIR = runtimePaths.uploads;
 const PRODUCT_UPLOADS_DIR = path.join(UPLOADS_ROOT_DIR, 'products');
 const SHOP_UPLOADS_DIR = path.join(UPLOADS_ROOT_DIR, 'shops');
 const ALLOWED_UPLOAD_IMAGE_TYPES = new Map([
@@ -376,7 +379,10 @@ const resolvePrintableLogoBuffer = (logoUrl?: string): Buffer | null => {
   }
 
   if (normalized.startsWith('/')) {
-    const filePath = path.join(process.cwd(), normalized.replace(/^\/+/, ''));
+    // Only managed uploaded logos can be read from external runtime storage.
+    if (runtimePaths.external && !/^\/uploads\/shops\/[a-zA-Z0-9_.-]+$/.test(normalized)) return null;
+    const filePath = runtimePaths.external ? path.join(runtimePaths.uploads, 'shops', path.basename(normalized)) : path.join(process.cwd(), normalized.replace(/^\/+/, ''));
+    if (runtimePaths.external && (!fs.existsSync(filePath) || !fs.lstatSync(filePath).isFile() || fs.lstatSync(filePath).isSymbolicLink())) return null;
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath);
     }
@@ -3411,7 +3417,8 @@ const requireLocalDatabaseDiagnostics: express.RequestHandler = (_req, res, next
 // Explicit host opt-in: these fixed commands are never supplied by the browser.
 let manualBackupRunning = false;
 const manualBackupAvailable = () => {
-  if (process.env.ENABLE_LOCAL_BACKUP_UI !== 'true') return false;
+  // Host backup scripts still need external-runtime integration. Fail closed until then.
+  if (runtimePaths.external || process.env.ENABLE_LOCAL_BACKUP_UI !== 'true') return false;
   try {
     const url = new URL(process.env.DATABASE_URL || '');
     return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) &&
@@ -3452,7 +3459,7 @@ app.post('/api/backup/local-run', requireRole(['Super Admin']), async (_req, res
 
 // Only managed archives and their exact companions can be accessed.
 const managedBackupName = /^ars-[a-z0-9_-]+-(?:with-uploads|database-only)\.dump$/i;
-const backupRoot = path.resolve('backups');
+const backupRoot = runtimePaths.backups;
 async function managedBackupFile(name: string) {
   if (!managedBackupName.test(name)) throw new Error('Invalid archive');
   const file = path.join(backupRoot, name);
@@ -3650,7 +3657,7 @@ app.post('/api/backup/recovery-test', requireRole(['Super Admin']), async (req, 
 app.get('/api/backup/drive-status', requireRole(['Super Admin']), async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
-    const raw = await fs.promises.readFile(path.resolve('backups', 'drive-status.json'), 'utf8');
+    const raw = await fs.promises.readFile(path.join(backupRoot, 'drive-status.json'), 'utf8');
     const { phase, attemptedAt, verifiedAt } = JSON.parse(raw);
     if (!['local', 'upload', 'verified', 'local-failed', 'upload-failed'].includes(phase) ||
         !Number.isFinite(Date.parse(attemptedAt)) || (verifiedAt !== null && !Number.isFinite(Date.parse(verifiedAt)))) {
@@ -3760,9 +3767,9 @@ app.post('/api/reports/render-pdf', requireRole(['Super Admin','Store Manager','
   try {
     if(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(logo)&&logo.length<2000000) logoBuffer=resolvePrintableLogoBuffer(logo);
     else if(/^\/uploads\/shops\/[a-zA-Z0-9_.-]+$/.test(logo)){
-      const file=path.resolve(process.cwd(),'.'+logo);
+      const file=path.join(UPLOADS_ROOT_DIR,'shops',path.basename(logo));
       const info=await fs.promises.lstat(file);
-      if(info.isFile()&&!info.isSymbolicLink()&&info.size<2000000&&path.dirname(await fs.promises.realpath(file))===path.resolve(process.cwd(),'uploads','shops')) logoBuffer=await fs.promises.readFile(file);
+      if(info.isFile()&&!info.isSymbolicLink()&&info.size<2000000&&path.dirname(await fs.promises.realpath(file))===path.join(UPLOADS_ROOT_DIR,'shops')) logoBuffer=await fs.promises.readFile(file);
     }
   } catch { /* fall back to company text */ }
   try {
