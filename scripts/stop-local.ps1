@@ -1,4 +1,4 @@
-param([switch]$DesktopLaunch)
+param([switch]$DesktopLaunch,[switch]$Maintenance)
 $ErrorActionPreference = 'Stop'
 try {
   $mutex = New-Object System.Threading.Mutex($false, 'Local\ARSDistributorPOSLauncher')
@@ -24,6 +24,16 @@ try {
       $answer=[System.Windows.Forms.MessageBox]::Show('Finish all sales, payments and shift operations before stopping ARS. Request graceful shutdown now?','ARS Distributor POS','YesNo','Question')
       if ($answer -ne 'Yes') { return }
     } elseif ((Read-Host 'Type SHUTDOWN after completing all operations') -cne 'SHUTDOWN') { return }
+    if ($Maintenance) {
+      $maintenancePath=Join-Path (Split-Path -Parent $recordPath) 'maintenance.json'
+      $maintenance=[ordered]@{schema=1;project=$root;pid=$process.Id;startedUtc=$record.startedUtc;requestedAt=[DateTime]::UtcNow.ToString('o');shutdownVerified=$false;activationApproved=$false}
+      $stream=[IO.File]::Open($maintenancePath,[IO.FileMode]::CreateNew)
+      try {
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($maintenance | ConvertTo-Json))
+        $stream.Write($bytes,0,$bytes.Length)
+        $stream.Flush($true)
+      } finally { $stream.Dispose() }
+    }
     $secure=ConvertTo-SecureString $record.protectedSecret
     $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
     try { $secret=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
@@ -41,6 +51,18 @@ try {
     if (-not $process.WaitForExit(120000)) { throw 'Graceful shutdown remains pending. No process was forcibly terminated.' }
     if ($process.ExitCode -ne 0) { throw 'Application did not exit successfully; maintenance remains unverified.' }
     if (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue) { throw 'Another application listener exists. Maintenance remains unverified.' }
+    if ($Maintenance) {
+      # Publish completion separately. A failed or interrupted write leaves the original block in place.
+      $verifiedPath=Join-Path (Split-Path -Parent $recordPath) 'maintenance-shutdown.json'
+      $maintenance.shutdownVerified=$true
+      $maintenance.completedAt=[DateTime]::UtcNow.ToString('o')
+      $stream=[IO.File]::Open($verifiedPath,[IO.FileMode]::CreateNew)
+      try {
+        $bytes=[Text.Encoding]::UTF8.GetBytes(($maintenance | ConvertTo-Json))
+        $stream.Write($bytes,0,$bytes.Length)
+        $stream.Flush($true)
+      } finally { $stream.Dispose() }
+    }
     Remove-Item -LiteralPath $recordPath
     $message='Managed ARS application exited successfully. PostgreSQL was left running.'
     Write-Host $message

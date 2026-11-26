@@ -235,3 +235,12 @@ test('Windows managed desktop shutdown uses DPAPI, process identity and bounded 
  assert.match(stop,/ExitCode -ne 0/);
  assert.match(stop,/SHUTDOWN_REQUESTED/);
 });
+
+test('retained Windows maintenance marker blocks launcher restart and precedes shutdown request',()=>{
+ const stop=readFileSync(new URL('../scripts/stop-local.ps1',import.meta.url),'utf8');
+ assert.match(launcher,/maintenance\.json/);
+ assert.ok(launcher.indexOf('if (Test-Path -LiteralPath $maintenancePath)')<launcher.indexOf("if (-not (Test-Path '.env.local'))"));
+ assert.ok(stop.indexOf("'maintenance.json'")<stop.indexOf('$pipe.Connect(3000)'));
+ assert.ok(stop.indexOf('$process.WaitForExit(120000)')<stop.indexOf("'maintenance-shutdown.json'"));
+ assert.match(stop,/activationApproved=\$false/);
+});

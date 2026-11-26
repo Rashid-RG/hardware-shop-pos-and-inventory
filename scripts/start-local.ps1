@@ -12,6 +12,12 @@ if ($DesktopLaunch) {
   if (-not $ownsLaunch) { return }
 }
 
+# Block both desktop and development launcher paths during retained maintenance.
+$maintenancePath=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control\maintenance.json'
+if (Test-Path -LiteralPath $maintenancePath) {
+  throw 'ARS is in retained maintenance mode. Do not restart until recovery or update preparation has been reviewed.'
+}
+
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
   Copy-Item '.env.example' '.env.local'
