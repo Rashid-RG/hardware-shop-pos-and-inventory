@@ -340,6 +340,38 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  CREATE TRIGGER ars_gl_employee_advance_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_employee_advance_reviews
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
  CREATE INDEX IF NOT EXISTS ars_gl_employee_advance_employee ON ars_gl_employee_advance_requests(shop_id,employee_id,requested_date);
+ -- A disbursement is a separate, journal-backed event, never implied by request approval.
+ CREATE TABLE IF NOT EXISTS ars_gl_employee_advance_disbursements(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,request_id TEXT NOT NULL,
+  employee_id TEXT NOT NULL,financial_account_id TEXT NOT NULL,
+  amount NUMERIC(16,2) NOT NULL CHECK(amount>0),posting_date DATE NOT NULL,
+  journal_id TEXT NOT NULL,evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  recorded_by TEXT NOT NULL,recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id),UNIQUE(shop_id,request_id),UNIQUE(shop_id,journal_id),
+  FOREIGN KEY(shop_id,request_id) REFERENCES ars_gl_employee_advance_reviews(shop_id,request_id),
+  FOREIGN KEY(shop_id,journal_id) REFERENCES ars_gl_journals(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_employee_advance_disbursement_immutable ON ars_gl_employee_advance_disbursements;
+ CREATE TRIGGER ars_gl_employee_advance_disbursement_immutable BEFORE UPDATE OR DELETE ON ars_gl_employee_advance_disbursements
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE OR REPLACE FUNCTION ars_gl_guard_employee_advance_disbursement() RETURNS trigger LANGUAGE plpgsql AS $fn$
+ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_employee_advance_requests a
+   JOIN ars_gl_employee_advance_reviews r ON r.shop_id=a.shop_id AND r.request_id=a.id
+   WHERE a.shop_id=NEW.shop_id AND a.id=NEW.request_id AND r.decision='Approved'
+    AND a.employee_id=NEW.employee_id AND a.amount=NEW.amount AND a.requested_date<=NEW.posting_date)
+  THEN RAISE EXCEPTION 'Employee advance requires matching approved request' USING ERRCODE='23514'; END IF;
+  IF NOT EXISTS(SELECT 1 FROM ars_gl_journals j WHERE j.shop_id=NEW.shop_id AND j.id=NEW.journal_id
+   AND j.source_kind='EmployeeAdvanceDisbursement' AND j.source_id=NEW.id AND j.posting_date=NEW.posting_date
+   AND j.recorded_by=NEW.recorded_by AND j.xmin::text::bigint=mod(txid_current(),4294967296))
+  THEN RAISE EXCEPTION 'Employee advance requires same-transaction journal' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END;
+ $fn$;
+ DROP TRIGGER IF EXISTS ars_gl_employee_advance_disbursement_guard ON ars_gl_employee_advance_disbursements;
+ CREATE TRIGGER ars_gl_employee_advance_disbursement_guard BEFORE INSERT ON ars_gl_employee_advance_disbursements
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_guard_employee_advance_disbursement();
+ CREATE INDEX IF NOT EXISTS ars_gl_employee_advance_disbursement_employee ON ars_gl_employee_advance_disbursements(shop_id,employee_id,posting_date);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
