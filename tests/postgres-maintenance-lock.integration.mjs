@@ -309,3 +309,21 @@ test('protected recovery rejects an outstanding shared transaction fence',{timeo
   assert.equal((await observer.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,fenceId])).rows[0].acquired,true);
  }finally{for(const c of [tx,recovery,observer])await c.end().catch(()=>{});}
 });
+
+test('recovery structural checks report real exceptions using disposable temporary tables',{timeout:30000},async()=>{
+ const {inspectRecoveryBusinessRecords}=await import('../scripts/writer-loss-business-reconciliation.mjs');
+ const client=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
+ try{
+  await client.connect();
+  const expected=(await client.query("SELECT current_database() AS database,system_identifier::text AS \"systemIdentifier\",(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS \"databaseOid\" FROM pg_control_system()")).rows[0];
+  await client.query("CREATE TEMP TABLE sales_transactions(id text,shop_id text,status text,subtotal numeric,tax numeric,discount_amount numeric,total numeric,customer_id text); CREATE TEMP TABLE sales_transaction_items(transaction_id text,quantity int,selling_price numeric,discount_amount numeric); CREATE TEMP TABLE customers(id text,shop_id text); CREATE TEMP TABLE suppliers(id text,shop_id text); CREATE TEMP TABLE customer_credit_payments(amount numeric,customer_id text,shop_id text,invoice_id text); CREATE TEMP TABLE supplier_payments(amount numeric,supplier_id text,shop_id text,purchase_order_id text); CREATE TEMP TABLE purchase_orders(id text,shop_id text,supplier_id text); CREATE TEMP TABLE products(id text,shop_id text,quantity int); CREATE TEMP TABLE stock_logs(product_id text,shop_id text); CREATE TEMP TABLE ars_gl_journals(shop_id text,id text); CREATE TEMP TABLE ars_gl_lines(shop_id text,journal_id text,line_no int,debit numeric,credit numeric,account_code text); CREATE TEMP TABLE ars_gl_accounts(shop_id text,code text)");
+  assert.equal((await inspectRecoveryBusinessRecords(client,expected)).state,'structural-checks-matched');
+  await client.query("INSERT INTO products VALUES ('p','s',-1); INSERT INTO ars_gl_journals VALUES ('s','j'); INSERT INTO sales_transactions VALUES ('i','s','Completed',10,0,0,10,'c')");
+  const result=await inspectRecoveryBusinessRecords(client,expected);
+  assert.equal(result.state,'exceptions-detected');
+  assert.equal(result.checks.negativeProductStock,'1');
+  assert.equal(result.checks.unbalancedJournals,'1');
+  assert.equal(result.checks.emptyCompletedInvoices,'1');
+  assert.equal(result.recoveryAllowed,false);
+ }finally{await client.end();}
+});
