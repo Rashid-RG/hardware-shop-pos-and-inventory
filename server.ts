@@ -58,7 +58,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { resolveRuntimePaths } from './backend/runtimePaths';
-import { assertOrdinaryStartupAllowed } from './backend/maintenanceStartupGuard';
+import { assertOrdinaryStartupAllowed, assertNoWriterLoss, recordWriterLoss } from './backend/maintenanceStartupGuard';
 import { execFile } from 'node:child_process';
 import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -293,6 +293,7 @@ const acquireSingleWriterLease = async () => {
     if (gate.rows[0]?.acquired !== true) throw new Error('Database maintenance handoff is active. Startup blocked.');
     // Inspect durable local evidence while holding the startup transition gate.
     assertOrdinaryStartupAllowed();
+    assertNoWriterLoss(runtimePaths.root);
     const result = await client.query<{ acquired: boolean }>(
       'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
       [SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID]
@@ -304,6 +305,8 @@ const acquireSingleWriterLease = async () => {
       if (singleWriterLease !== client) return;
       databaseWriteHealthy = false;
       interruptedWriteRequiresReview = true;
+      try { recordWriterLoss(runtimePaths.root); }
+      catch (recordError) { console.error('Writer loss recovery evidence could not be persisted. Do not restart before reconciliation.', recordError); }
       console.error('Hardware POS single-writer lease connection lost; requests blocked and operator reconciliation required.', error);
     });
     const released = await client.query<{ released: boolean }>(

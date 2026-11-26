@@ -28,3 +28,26 @@ export function assertOrdinaryStartupAllowed() {
     ]);
   }
 }
+
+// Runtime-local incident evidence follows the business storage, not the release.
+// Existing or partial evidence is never overwritten.
+export function assertNoWriterLoss(runtimeRoot: string) {
+  assertNoMaintenanceEvidence(runtimeRoot, ['.ars-writer-loss.json']);
+}
+export function recordWriterLoss(runtimeRoot: string) {
+  const target = path.join(runtimeRoot, '.ars-writer-loss.json');
+  let fd: number;
+  try { fd = fs.openSync(target, 'wx', 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+    throw error;
+  }
+  try {
+    fs.writeFileSync(fd, JSON.stringify({schema:1,reason:'writer-lease-lost',recordedAt:new Date().toISOString(),pid:process.pid,reconciliationRequired:true})+'\n');
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  if (process.platform !== 'win32') {
+    const dir = fs.openSync(runtimeRoot, 'r');
+    try { fs.fsyncSync(dir); } finally { fs.closeSync(dir); }
+  }
+}

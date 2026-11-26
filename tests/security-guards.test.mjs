@@ -43,7 +43,7 @@ test('legacy database enforces single server writer with PostgreSQL advisory lea
   const startup = server.split('async function startServer() {')[1] || '';
   assert.ok(startup.indexOf('await acquireSingleWriterLease()') < startup.indexOf('await initPostgres()'));
   assert.match(startup, /await releaseSingleWriterLease\(\)/);
-  assert.match(server, /single-writer lease connection lost; writes disabled/);
+  assert.match(server, /single-writer lease connection lost; requests blocked and operator reconciliation required/);
 });
 
 test('cash shift closing is scoped to the authenticated active shop', () => {
