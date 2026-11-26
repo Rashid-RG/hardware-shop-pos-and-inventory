@@ -279,11 +279,17 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // Session-level advisory lock stays held on this dedicated pooled connection.
 const SINGLE_WRITER_LOCK_CLASS = 1642958133;
 const SINGLE_WRITER_LOCK_ID = 1;
+const DATABASE_HANDOFF_GATE_ID = 2;
 let singleWriterLease: PoolClient | null = null;
 
 const acquireSingleWriterLease = async () => {
   const client = await pool.connect();
   try {
+    const gate = await client.query<{ acquired: boolean }>(
+      'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
+      [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
+    );
+    if (gate.rows[0]?.acquired !== true) throw new Error('Database maintenance handoff is active. Startup blocked.');
     const result = await client.query<{ acquired: boolean }>(
       'SELECT pg_try_advisory_lock($1::integer, $2::integer) AS acquired',
       [SINGLE_WRITER_LOCK_CLASS, SINGLE_WRITER_LOCK_ID]
@@ -295,9 +301,15 @@ const acquireSingleWriterLease = async () => {
       databaseWriteHealthy = false;
       console.error('Hardware POS single-writer lease connection lost; writes disabled.', error);
     });
+    const released = await client.query<{ released: boolean }>(
+      'SELECT pg_advisory_unlock($1::integer, $2::integer) AS released',
+      [SINGLE_WRITER_LOCK_CLASS, DATABASE_HANDOFF_GATE_ID]
+    );
+    if (released.rows[0]?.released !== true) throw new Error('Database handoff gate release not verified.');
     singleWriterLease = client;
   } catch (error) {
-    client.release();
+    // Destroy the physical session on failure; never return a locked session to the pool.
+    client.release(true);
     throw error;
   }
 };

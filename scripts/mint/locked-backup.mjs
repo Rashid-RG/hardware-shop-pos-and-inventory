@@ -1,5 +1,6 @@
 // Maintenance-only helper. Does not change database configuration or terminate clients.
 import pg from 'pg';
+import { acquireHandoffGate } from '../database-handoff-gate.mjs';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -20,6 +21,7 @@ process.on('SIGINT',()=>{failure=Error('Backup interrupted');stopChild();});
 client.on('error',err=>{failure=err;stopChild();});
 try{
   await client.connect();
+  await acquireHandoffGate(client);
   // Same session advisory key as server.ts: exclude cooperating server startups
   // before enumerating tables and retain the lease through the entire backup.
   const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);

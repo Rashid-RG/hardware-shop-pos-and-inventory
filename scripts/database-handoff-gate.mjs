@@ -1,6 +1,4 @@
-// Readiness-only protocol: a separate gate excludes maintenance and startup
-// transitions while the application writer lease is exchanged. No production
-// caller is enabled until the complete lifecycle has been validated.
+// Shared startup/maintenance gate. Full release-switch handoff remains disabled.
 export const HANDOFF_CLASS=1642958133;
 export const HANDOFF_ID=2;
 export const WRITER_ID=1;
