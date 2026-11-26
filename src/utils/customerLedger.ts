@@ -134,3 +134,21 @@ export function filterCustomerLedger(
     isFiltered: Boolean(options.from || options.to || search || (options.kind && options.kind !== 'all')),
   };
 }
+
+/** Date-window balances use every movement, independently of search/type filters. */
+export function customerStatementPeriod(ledger:CustomerLedger,from='',to=''){
+ const valid=(v:string)=>!v||(/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v);
+ if(!valid(from)||!valid(to)||(from&&to&&from>to))throw Error('Select a valid statement date range.');
+ let opening=toCents(ledger.openingBalance),debit=0,credit=0;
+ for(const row of ledger.entries){
+ const day=reportDay(row.date);
+ if(!day||!valid(day))throw Error('A recorded credit movement has an invalid date.');
+ const d=toCents(row.debit),c=toCents(row.credit);
+ if(from&&day<from){opening+=d-c;continue;}
+ if(to&&day>to)continue;
+ debit+=d;credit+=c;
+ }
+ const closing=opening+debit-credit;
+ if(![opening,debit,credit,closing].every(Number.isSafeInteger))throw Error('Statement exceeds supported amount range.');
+ return {opening:opening/100,debit:debit/100,credit:credit/100,closing:closing/100,hasOpeningDifference:ledger.hasOpeningDifference};
+}
