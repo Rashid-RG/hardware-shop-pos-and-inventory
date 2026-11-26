@@ -1,7 +1,7 @@
 // Windows final archive wrapper: holds the application lease and table SHARE locks
 // while the fixed local backup script executes. Never starts a POS or switches a database.
 import pg from 'pg';
-import { acquireHandoffGate } from './database-handoff-gate.mjs';
+import { acquireHandoffGate, acquireMaintenanceTransactionFence } from './database-handoff-gate.mjs';
 import dotenv from 'dotenv';
 import {readFileSync,realpathSync} from 'node:fs';
 import {join,dirname,resolve} from 'node:path';
@@ -24,7 +24,8 @@ async function main(){
   await acquireHandoffGate(client);
   const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);
   if(lease.rows[0]?.acquired!==true) throw Error('Application writer still owns database.');
-  await client.query('BEGIN');
+  await acquireMaintenanceTransactionFence(client);
+ await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
   const tables=()=>client.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
   const {rows}=await tables();

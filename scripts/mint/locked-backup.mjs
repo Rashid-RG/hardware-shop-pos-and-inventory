@@ -1,6 +1,6 @@
 // Maintenance-only helper. Does not change database configuration or terminate clients.
 import pg from 'pg';
-import { acquireHandoffGate } from '../database-handoff-gate.mjs';
+import { acquireHandoffGate, acquireMaintenanceTransactionFence } from '../database-handoff-gate.mjs';
 import { readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -26,6 +26,7 @@ try{
   // before enumerating tables and retain the lease through the entire backup.
   const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);
   if(lease.rows[0]?.acquired!==true) throw Error('Application writer still owns the database.');
+  await acquireMaintenanceTransactionFence(client);
   await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
   await client.query("SET LOCAL idle_in_transaction_session_timeout='0'");

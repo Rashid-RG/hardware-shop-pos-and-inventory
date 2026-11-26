@@ -29,3 +29,11 @@ export async function assertGateOwner(client,owner,{lockClass=HANDOFF_CLASS,lock
  );
  if(result.rows[0]?.owned!==true)throw Error('Coordinator gate ownership not verified.');
 }
+
+export const TRANSACTION_FENCE_ID=3;
+// Called only after the caller holds the handoff gate and application writer
+// lease. Retain the exclusive fence until the dedicated session closes.
+export async function acquireMaintenanceTransactionFence(client){
+ const result=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[HANDOFF_CLASS,TRANSACTION_FENCE_ID]);
+ if(result.rows[0]?.acquired!==true)throw Error('Outstanding fenced transaction blocks maintenance.');
+}

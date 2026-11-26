@@ -276,3 +276,19 @@ test('standalone pool SQL is fenced and a rejected commit rolls back its write',
   await assert.rejects(pool.query('BEGIN'),/Unsupported standalone/);
  }finally{await pool.end();}
 });
+
+test('maintenance fence excludes shared transaction locks until maintenance session closes',{timeout:30000},async()=>{
+ const clients=Array.from({length:2},()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000}));
+ const [maintenance,tx]=clients;
+ const keys=[1642958133,Math.floor(Math.random()*900000000)+10];
+ try{
+  for(const c of clients)await c.connect();
+  assert.equal((await maintenance.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',keys)).rows[0].acquired,true);
+  await tx.query('BEGIN');
+  const shared=async()=> (await tx.query('SELECT pg_try_advisory_xact_lock_shared($1::integer,$2::integer) AS acquired',keys)).rows[0].acquired;
+  assert.equal(await shared(),false);
+  await maintenance.end();
+  assert.equal(await shared(),true);
+  await tx.query('ROLLBACK');
+ }finally{for(const c of clients)await c.end().catch(()=>{});}
+});
