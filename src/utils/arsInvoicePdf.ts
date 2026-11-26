@@ -1,4 +1,4 @@
-import {rsNextwardLogoBuffer} from './rsNextwardPrintLogo.ts';
+import {rsNextwardLogoBuffer,rsNextwardPrintWidth} from './rsNextwardPrintLogo.ts';
 import { arsPrintLogoPath, isArsPrintBrand, arsDisplayName } from './arsPrintLogo.ts';
 import PDFDocument from 'pdfkit';
 import { invoiceFooter } from './invoiceFooter.ts';
@@ -229,8 +229,8 @@ export const renderArsInvoicePdf = async (
       px(left), footerY+20, {width: pw(355)});
     text(`Page ${page+1} of ${range.count}`, left, footerY+44, 110, 7);
     line(400, footerY+8, 400, footerY+50);
-    text('Powered by', 411, footerY+6, 158, 8, false, 'right');
-    doc.image(rsNextwardLogoBuffer(),px(411),footerY+21,{fit:[pw(158),27],align:'right'});
+    text('Powered by RS Nextward', 411, footerY+6, 158, 8, false, 'right');
+    doc.image(rsNextwardLogoBuffer(),px(right)-rsNextwardPrintWidth,footerY+21,{width:rsNextwardPrintWidth});
   }
   doc.end();
 });

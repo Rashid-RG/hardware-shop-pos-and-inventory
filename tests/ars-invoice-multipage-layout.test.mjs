@@ -6,11 +6,12 @@ import { renderArsInvoicePdf } from '../src/utils/arsInvoicePdf.ts';
 // PDFKit uses standard Helvetica fonts and hexadecimal text runs for this invoice.
 function pageTexts(pdf) {
   return Array.from(pdf.toString('latin1').matchAll(/\bstream\r?\n([\s\S]*?)\r?\nendstream/g), stream => {
-    const instructions = inflateSync(Buffer.from(stream[1], 'latin1')).toString('latin1');
+    let instructions; try { instructions = inflateSync(Buffer.from(stream[1], 'latin1')).toString('latin1'); } catch { return null; }
+    if(!/\bBT\b/.test(instructions)||! /\bTJ\b/.test(instructions))return null;
     return Array.from(instructions.matchAll(/\[([^\]]*)\]\s*TJ/g), row =>
       Array.from(row[1].matchAll(/<([\da-f]+)>/gi), run => Buffer.from(run[1], 'hex').toString('latin1')).join('')
     ).join(' ');
-  });
+  }).filter(v=>v!==null);
 }
 
 for (const count of [4, 48]) {
@@ -30,7 +31,7 @@ for (const count of [4, 48]) {
     else assert.ok(pages.length > 1);
     pages.forEach((page, i) => {
       for (const label of ['ARS Distributor', 'CUSTOMER INVOICE', 'ARS-TEST', 'Test buyer', 'Sales rep',
-        'RS Nextward', 'Smart systems for business.', 'Page ' + (i+1) + ' of ' + pages.length]) assert.ok(page.includes(label), label);
+        'Powered by RS Nextward', 'Page ' + (i+1) + ' of ' + pages.length]) assert.ok(page.includes(label), label);
       for (const label of ['Prepared By', 'Received By', 'Authorized By']) {
         assert.equal(page.includes(label), i === pages.length-1, label);
       }
@@ -90,6 +91,8 @@ for(const count of [21,48]){
   const media=Array.from(pdf.toString('latin1').matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g));
   const pages=pageTexts(pdf);
   assert.equal(media.length,pages.length);
+  assert.match(pdf.toString('latin1'),/\/Subtype \/Image/);
+  assert.doesNotMatch(pages.join(' '),/Smart systems for business/);
   for(const box of media){
    assert.ok(Math.abs(Number(box[1])-240*72/25.4)<0.01);
    assert.ok(Math.abs(Number(box[2])-270*72/25.4)<0.01);
@@ -97,7 +100,7 @@ for(const count of [21,48]){
   if(count===21)assert.equal(pages.length,1);else assert.ok(pages.length>1);
   assert.deepEqual(pages.join(' ').match(/CF-\d+/g),items.map(i=>i.variantSku));
   pages.forEach((page,i)=>{
-   for(const label of ['RS Nextward','Smart systems for business.','Page '+(i+1)+' of '+pages.length])assert.ok(page.includes(label),label);
+   for(const label of ['Powered by RS Nextward','Page '+(i+1)+' of '+pages.length])assert.ok(page.includes(label),label);
    assert.equal(page.includes('Prepared By'),i===pages.length-1);
   });
  });
