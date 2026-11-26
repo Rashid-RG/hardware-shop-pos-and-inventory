@@ -1,4 +1,4 @@
-import {rsNextwardLogoBase64} from './rsNextwardPrintLogo';
+import {rsNextwardLogoBase64,rsNextwardWorkbookWidth,rsNextwardWorkbookHeight} from './rsNextwardPrintLogo';
 import { buildReportChart, nativeChartXml } from './reportChart';
 import { BusinessReport, reportBrand, downloadReport, safeReportLogo } from './businessReport';
 import type { StoreSettings } from '../types';
@@ -62,7 +62,7 @@ export async function buildBusinessWorkbook(report:BusinessReport,settings:Store
  const relRoot='<Relationships xmlns="'+pkg+'">';
  const sheetDrawing=(n:number)=>relRoot+'<Relationship Id="rId1" Type="'+rel+'/drawing" Target="../drawings/drawing'+n+'.xml"/></Relationships>';
  const imageRel='<Relationship Id="rId3" Type="'+rel+'/image" Target="../media/rs-nextward.png"/>';
- const imageAnchor=(column:number,offset:number)=>'<xdr:oneCellAnchor><xdr:from><xdr:col>'+column+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>'+offset+'</xdr:rowOff></xdr:from><xdr:ext cx="1143000" cy="235000"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="3" name="RS Nextward logo"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>';
+ const imageAnchor=(column:number,offset:number)=>'<xdr:oneCellAnchor><xdr:from><xdr:col>'+column+'</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>'+offset+'</xdr:rowOff></xdr:from><xdr:ext cx="'+rsNextwardWorkbookWidth+'" cy="'+rsNextwardWorkbookHeight+'"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="3" name="RS Nextward logo"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId3"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>';
  entries['xl/media/rs-nextward.png']=Uint8Array.from(atob(rsNextwardLogoBase64),c=>c.charCodeAt(0));
  entries['xl/worksheets/_rels/sheet1.xml.rels']=sheetDrawing(1);
  entries[drawing]=String(entries[drawing]||drawingRoot+'</xdr:wsDr>').replace('</xdr:wsDr>',imageAnchor(4,0)+'</xdr:wsDr>');

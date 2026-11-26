@@ -4,3 +4,7 @@ export const rsNextwardLogoDataUrl='data:image/png;base64,'+rsNextwardLogoBase64
 export const rsNextwardLogoBuffer=()=>Buffer.from(rsNextwardLogoBase64,'base64');
 
 export const rsNextwardPrintWidth=72; // 25.4 mm
+
+export const rsNextwardHtmlWidth='25mm';
+export const rsNextwardWorkbookWidth=900000; // 25 mm in EMUs
+export const rsNextwardWorkbookHeight=185143; // preserve 350:72 artwork ratio
