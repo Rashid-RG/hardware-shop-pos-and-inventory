@@ -73,6 +73,7 @@ $created=$false
 $appCreated=$false
 $appName=$name+'-app'
 $startupPassed=$false
+$authenticatedReadsPassed=$false
 $historicalRowsCompared=$false
 $historicalTableCount=0
 $imageId=$null
@@ -112,6 +113,15 @@ try {
     $counts[$table]=[long]$rows[0]
   }
   if ($CandidateStartup) {
+    # Create a synthetic administrator exclusively in the disconnected database.
+    $testId='update-test-'+[guid]::NewGuid().ToString('N')
+    $testEmail=$testId+'@example.invalid'
+    $testPassword=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
+    $hashCode="console.log(require('bcryptjs').hashSync(process.argv[1],10))"
+    $passwordHash=@(Invoke-DockerChecked @('run','--rm','--pull=never','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','-w','/app','--entrypoint','node',$DependencyImage,'-e',$hashCode,$testPassword))
+    if ($passwordHash.Count -ne 1 -or $passwordHash[0] -cnotmatch '^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$') { throw 'Synthetic password hashing failed.' }
+    $sql="INSERT INTO users(id,email,name,role,password_hash) VALUES ('$testId','$testEmail','Update Test Admin','Super Admin','"+$passwordHash[0]+"')"
+    $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',$sql)
     $schema=Get-TestSchema $name
     $historicalBefore=Get-TestRowFingerprints $name $schema
     $jwt=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
@@ -124,6 +134,15 @@ try {
       Start-Sleep -Seconds 2
     }
     if (-not $startupPassed) { throw 'Candidate failed disconnected readiness check.' }
+    # Send trusted probe source as a single base64 argument to avoid PowerShell native quoting.
+    $probePath=Join-Path $PSScriptRoot 'mint/compatibility-api-probe.mjs'
+    $encoded=[Convert]::ToBase64String([IO.File]::ReadAllBytes($probePath))
+    $runner="import('data:text/javascript;base64,'+process.argv[1]).catch(()=>process.exit(1))"
+    $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main',$appName,'node','-e',$runner,$encoded)
+    # Delete only synthetic user's sessions before historical comparison.
+    $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+    $authenticatedReadsPassed=$true
+
     $null=Invoke-DockerChecked @('stop','-t','15',$appName)
     $historicalAfter=Get-TestRowFingerprints $name $schema
     foreach ($table in $schema.Keys) {
@@ -145,7 +164,7 @@ try {
     $null=Invoke-DockerChecked @('rm','-f','-v',$name)
   }
 }
-$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
+$evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 $bytes=[Text.Encoding]::UTF8.GetBytes(($evidence | ConvertTo-Json -Depth 5))
 $stream=[IO.File]::Open($receipt,[IO.FileMode]::CreateNew)
 try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }

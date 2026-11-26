@@ -160,3 +160,13 @@ test('Windows candidate startup preserves existing table projections and row fin
  assert.match(s,/historicalRowsCompared=\$historicalRowsCompared/);
  assert.match(s,/activationApproved=\$false/);
 });
+
+test('Windows candidate executes the trusted authenticated read probe only inside disposable containers',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ assert.match(s,/@example\.invalid/);
+ assert.match(s,/compatibility-api-probe\.mjs/);
+ assert.match(s,/DELETE FROM auth_sessions WHERE user_id=/);
+ assert.match(s,/authenticatedReadsPassed=\$authenticatedReadsPassed/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.ok(s.indexOf('INSERT INTO users')<s.indexOf('$historicalBefore='));
+});
