@@ -14,6 +14,7 @@ admin_url='postgresql://postgres:ci-test-only-password@127.0.0.1:5432/postgres'
 name="ars-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 volume="ars-smoke-uploads-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
 port=39741
+owned_container=false
 created_db=false
 created_volume=false
 created_restore_volume=false
@@ -22,7 +23,7 @@ backup_dir="$(mktemp -d)"
 chmod 700 "$backup_dir"
 
 cleanup() {
-  docker rm -f "$name" >/dev/null 2>&1 || true
+  if [[ "$owned_container" == "true" ]]; then docker rm -f "$name" >/dev/null 2>&1 || true; fi
   if [[ "$created_volume" == "true" ]]; then docker volume rm "$volume" >/dev/null 2>&1 || true; fi
   if [[ "$created_restore_volume" == "true" ]]; then docker volume rm "$restore_volume" >/dev/null 2>&1 || true; fi
   rm -rf -- "$backup_dir"
@@ -63,7 +64,10 @@ fi
 docker volume create "$volume" >/dev/null
 created_volume=true
 start_container() {
-  docker run --rm -d --name "$name" --network host \
+  if docker container inspect "$name" >/dev/null 2>&1; then
+    echo "Refusing to reuse existing smoke container." >&2; return 1
+  fi
+  docker run -d --name "$name" --network host \
     --mount "type=volume,source=$volume,target=/app/uploads" \
     -e NODE_ENV=production -e PORT="$port" \
     -e ARS_DISABLE_HTTP_FIRST_ADMIN_SETUP=true \
@@ -72,6 +76,13 @@ start_container() {
     -e JWT_SECRET='ci-ars-smoke-authentication-key-2026-abcdef1234' \
     -e DATABASE_URL="$db_url" \
     ars-hardware-pos:ci >/dev/null
+  owned_container=true
+}
+
+stop_container() {
+  docker stop -t 15 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  owned_container=false
 }
 
 wait_ready() {
@@ -102,7 +113,7 @@ echo 'Hosted readiness and HTTP first-admin lockdown verified.'
 # Simulate a logo upload on the persistent disk without touching business APIs.
 docker exec "$name" sh -c "printf 'ars-ci-upload-preservation' > /app/uploads/shops/ci-smoke-file.txt"
 curl -fsS --max-time 5 "http://127.0.0.1:$port/uploads/shops/ci-smoke-file.txt" | grep -qx 'ars-ci-upload-preservation'
-docker stop -t 15 "$name" >/dev/null
+stop_container
 start_container
 wait_ready
 curl -fsS --max-time 5 "http://127.0.0.1:$port/uploads/shops/ci-smoke-file.txt" | grep -qx 'ars-ci-upload-preservation'
@@ -111,7 +122,7 @@ echo 'Mounted uploads survive full container replacement.'
 # Verify an independently usable uploads backup, not only the live volume.
 # Stop the app before taking this sample archive so the file set is stable.
 docker exec "$name" sh -c "printf 'ars-ci-product-image' > /app/uploads/products/ci-product-file.txt"
-docker stop -t 15 "$name" >/dev/null
+stop_container
 # Archive content comes exclusively from the isolated CI-owned volume.
 docker run --rm --mount "type=volume,source=$volume,target=/source,readonly" \
   node:22-bookworm-slim tar -C /source -cf - shops products > "$backup_dir/uploads.tar"
