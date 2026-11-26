@@ -394,6 +394,23 @@ test('financial accounts, collections, handovers, cheque clearance, reconciliati
     const inactive=await partnerCapitalStatement(pool,filters);
     assert.equal(inactive.partner.active,false);
     assert.equal(Number(inactive.closing),400);
+    // Export must include more than one database page from a single snapshot.
+    const {exportPartnerCapitalStatement}=await import('../backend/partnerCapitalStatement.ts');
+    const exportPartner=id();
+    await pool.query("INSERT INTO ars_business_partners(id,shop_id,name,created_by) VALUES($1,$2,'CI export partner',$3)",[exportPartner,capitalShop,recordedBy]);
+    await pool.query(`INSERT INTO ars_partner_capital_entries(id,shop_id,partner_id,entry_type,amount_lkr,entry_date,reference,created_by)
+      SELECT $1||'-'||g::text,$2,$3,'Contribution',1.25,$4::date,'CI export row',$5 FROM generate_series(1,205) g`,['export-capital-'+id(),capitalShop,exportPartner,day,recordedBy]);
+    const complete=await exportPartnerCapitalStatement(pool,{shopId:capitalShop,partnerId:exportPartner,fromDate:day,toDate:day});
+    assert.equal(complete.total,205);
+    assert.equal(complete.rows.length,205);
+    assert.equal(new Set(complete.rows.map(r=>r.id)).size,205);
+    assert.equal(Number(complete.opening),0);
+    assert.equal(Number(complete.contributions),256.25);
+    assert.equal(Number(complete.closing),256.25);
+    assert.equal(Number(complete.rows[200].running_balance),251.25);
+    assert.equal(Number(complete.rows[204].running_balance),256.25);
+    assert.equal(complete.historical,205);
+    await assert.rejects(exportPartnerCapitalStatement(pool,{shopId:otherShop,partnerId:exportPartner,fromDate:day,toDate:day}),/Partner not found/);
     // Deliberately retain isolated fixtures for subsequent full-row pg_dump/pg_restore verification.
   }finally{await pool.end();}
 });
