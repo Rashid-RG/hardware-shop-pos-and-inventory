@@ -8,7 +8,7 @@ $control=Join-Path $state 'desktop-control'
 $recovery=Join-Path $state 'update-recovery'
 $form=New-Object Windows.Forms.Form
 $form.Text='ARS Distributor | RS Nextward'
-$form.ClientSize=New-Object Drawing.Size(670,345)
+$form.ClientSize=New-Object Drawing.Size(670,410)
 $form.StartPosition='CenterScreen'
 $form.FormBorderStyle='FixedDialog'
 $form.MaximizeBox=$false
@@ -41,8 +41,20 @@ $verify.SetBounds(216,284,180,38)
 $form.Controls.Add($verify)
 $close=New-Object Windows.Forms.Button
 $close.Text='Close'
-$close.SetBounds(522,284,120,38)
+$close.SetBounds(522,350,120,38)
 $form.Controls.Add($close)
+$intent=New-Object Windows.Forms.Button
+$intent.Text='Retain intent'
+$intent.SetBounds(26,350,150,38)
+$form.Controls.Add($intent)
+$intentVerify=New-Object Windows.Forms.Button
+$intentVerify.Text='Verify intent'
+$intentVerify.SetBounds(186,350,150,38)
+$form.Controls.Add($intentVerify)
+$intentCancel=New-Object Windows.Forms.Button
+$intentCancel.Text='Cancel intent'
+$intentCancel.SetBounds(346,350,166,38)
+$form.Controls.Add($intentCancel)
 $close.Add_Click({$form.Close()})
 function Refresh-Choices {
  $select.Items.Clear()
@@ -64,6 +76,10 @@ function Update-Buttons {
  $exists=Test-Path -LiteralPath (Join-Path $control 'runtime-activation-proposal.json')
  $prepare.Enabled=($select.SelectedIndex -ge 0 -and -not $exists)
  $verify.Enabled=($select.SelectedIndex -ge 0 -and $exists)
+ $hasIntent=Test-Path -LiteralPath (Join-Path $control 'runtime-switch-intent.json')
+ $intent.Enabled=($select.SelectedIndex -ge 0 -and $exists -and -not $hasIntent)
+ $intentVerify.Enabled=($select.SelectedIndex -ge 0 -and $hasIntent)
+ $intentCancel.Enabled=$intentVerify.Enabled
 }
 function Invoke-Review([bool]$Verification) {
  $id=[string]$select.SelectedItem
@@ -75,6 +91,9 @@ function Invoke-Review([bool]$Verification) {
  $prepare.Enabled=$false
  $verify.Enabled=$false
  $select.Enabled=$false
+ $intent.Enabled=$false
+ $intentVerify.Enabled=$false
+ $intentCancel.Enabled=$false
  $close.Enabled=$false
  $status.Text='Checking maintenance, database binding, runtime inventory and recovery evidence...'
  $form.Refresh()
@@ -95,6 +114,46 @@ function Invoke-Review([bool]$Verification) {
   Update-Buttons
  }
 }
+function Invoke-Intent([string]$Mode) {
+ $id=[string]$select.SelectedItem
+ if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$' -or $Mode -cnotin @('retain','verify','cancel')) { return }
+ if ($Mode -ne 'verify') {
+  $message=if ($Mode -eq 'cancel') {'Cancel intent and retain original evidence? Maintenance remains active; billing will not resume.'} else {'Retain switch intent? Ordinary startup remains blocked until resolved. This does not install an update.'}
+  $answer=[Windows.Forms.MessageBox]::Show($message,'ARS Distributor',[Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Question,[Windows.Forms.MessageBoxDefaultButton]::Button2)
+  if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+ }
+ foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$close,$select)) {$button.Enabled=$false}
+ $status.Text='Verifying switch intent and retained update evidence...'
+ $form.Refresh()
+ try {
+  $helper=Join-Path $PSScriptRoot 'prepare-windows-switch-intent.ps1'
+  $raw=switch ($Mode) {
+   'retain' { & $helper -RecoveryId $id -Confirmation 'RETAIN SWITCH INTENT' }
+   'verify' { & $helper -RecoveryId $id -Verify }
+   'cancel' { & $helper -RecoveryId $id -Cancel -Confirmation 'CANCEL SWITCH INTENT' }
+  }
+  $data=($raw -join [Environment]::NewLine) | ConvertFrom-Json
+  if ($data.schema -ne 1 -or $data.intentDigest -notmatch '^[a-fA-F0-9]{64}$' -or $data.activationAllowed -ne $false -or $data.startupAllowed -ne $false -or $data.rollbackAllowed -ne $false) {throw 'Unexpected result.'}
+  if ($Mode -eq 'cancel') {
+   if ($data.intentCancelled -ne $true -or $data.maintenanceRetained -ne $true) {throw 'Cancellation not verified.'}
+   $status.Text='Intent cancelled. Original evidence retained. Maintenance remains active.'
+  } else {
+   if ($data.intentMatched -ne $true) {throw 'Intent not verified.'}
+   $status.Text='Switch intent verified. Live installation remains locked.'
+  }
+  $status.ForeColor=[Drawing.Color]::DarkGreen
+ } catch {
+  $status.Text='Switch intent operation blocked or unverified. Contact RS Nextward before resuming billing.'
+  $status.ForeColor=[Drawing.Color]::DarkRed
+ } finally {
+  $select.Enabled=$true
+  $close.Enabled=$true
+  Update-Buttons
+ }
+}
+$intent.Add_Click({Invoke-Intent 'retain'})
+$intentVerify.Add_Click({Invoke-Intent 'verify'})
+$intentCancel.Add_Click({Invoke-Intent 'cancel'})
 $select.Add_SelectedIndexChanged({Update-Buttons})
 $prepare.Add_Click({Invoke-Review $false})
 $verify.Add_Click({Invoke-Review $true})

@@ -57,6 +57,41 @@ def execute(project,script,*args):
     else:
         notice("Preparation failed. Existing data was not deliberately removed.\nContact RS Nextward with local log: "+log.name,True)
 
+def switch_intent_review(project):
+    """Review or cancel intent without changing the installed release."""
+    while True:
+        target=STATE/"runtime-switch-intent.json"
+        exists=target.exists() or target.is_symlink()
+        actions=["Verify switch intent","Cancel switch intent"] if exists else ["Retain switch intent"]
+        answer=dialog("--list","--no-markup","--text=Live installation remains locked. Cancellation does not resume billing.","--column=Action","--width=620","--height=300",*actions,"Return")
+        action=answer.stdout.strip()
+        if answer.returncode!=0 or action=="Return": return
+        if action not in actions: continue
+        folder=select_recovery()
+        if not folder: continue
+        extra=["--verify"]
+        if action=="Retain switch intent":
+            if dialog("--question","--no-markup","--text=Retain switch intent? Normal startup remains blocked until resolved. This does not install an update.").returncode!=0: continue
+            extra=["--confirmation","RETAIN MINT SWITCH INTENT"]
+        elif action=="Cancel switch intent":
+            if dialog("--question","--no-markup","--text=Cancel the retained intent and preserve its original evidence? Maintenance remains active. Billing will not resume.").returncode!=0: continue
+            extra=["--cancel","--confirmation","CANCEL MINT SWITCH INTENT"]
+        progress=subprocess.Popen(["zenity","--progress","--pulsate","--no-cancel","--title="+TITLE,"--text=Verifying retained update evidence."],stdin=subprocess.PIPE)
+        try:
+            result=subprocess.run(["python3",str(project/"scripts/mint/prepare-switch-intent.py"),str(folder),*extra],cwd=project,capture_output=True,text=True,timeout=900)
+            data=json.loads(result.stdout.strip().splitlines()[-1]) if result.returncode==0 else {}
+            cancelled=action=="Cancel switch intent"
+            matched=isinstance(data,dict) and data.get("schema")==1 and all(data.get(k) is False for k in ("activationAllowed","startupAllowed","rollbackAllowed","runtimeActivated")) and isinstance(data.get("intentDigest"),str) and re.fullmatch(r"[a-f0-9]{64}",data["intentDigest"]) and ((data.get("intentCancelled") is True and data.get("maintenanceRetained") is True) if cancelled else data.get("intentMatched") is True)
+        except (OSError,ValueError,IndexError,subprocess.SubprocessError):
+            matched=False
+        finally:
+            if progress.poll() is None: progress.terminate()
+            progress.wait()
+        if matched:
+            notice("Intent cancelled; original evidence retained. Maintenance remains active." if cancelled else "Switch intent verified. Live installation remains locked.")
+        else:
+            notice("Switch intent operation blocked or unverified. Contact RS Nextward before resuming billing.",True)
+
 def activation_review(project):
     """Dedicated graphical proposal review; no activation or resume operation."""
     while True:
@@ -67,9 +102,12 @@ def activation_review(project):
                  "\nRetained proposal: "+("Present (not yet verified)" if exists else "Not prepared")+
                  "\nLive installation: Locked")
         choice=dialog("--list","--no-markup","--text="+summary,"--column=Action","--width=620","--height=300",
-                      "Prepare activation proposal","Verify retained proposal","Return")
+                      "Prepare activation proposal","Verify retained proposal","Switch intent review","Return")
         if choice.returncode!=0 or choice.stdout.strip()=="Return": return
         action=choice.stdout.strip()
+        if action=="Switch intent review":
+            switch_intent_review(project)
+            continue
         if action not in ("Prepare activation proposal","Verify retained proposal"): continue
         if not held:
             notice("A protected maintenance backup is required. No change was made.",True)
