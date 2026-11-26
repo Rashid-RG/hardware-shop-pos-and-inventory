@@ -402,9 +402,9 @@ test('fenced writer transfer and rollback retain the disposable coordinator gate
   const base=100+Math.floor(Math.random()*1000000000);
   try{
    for(const c of clients)await c.connect();
-   const r=await rehearseFencedTransfer(...clients,{gateId:base,writerId:base+1,fenceId:base+2,failCandidate});
+   const r=await rehearseFencedTransfer(...clients,{gateId:base,writerId:base+1,fenceId:base+2,failCandidate,binding:{releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64)}});
    assert.equal(r.state,failCandidate?'rollback-rehearsed':'candidate-rehearsed');
-   assert.equal(r.writerAndFenceVerified,true);assert.equal(r.liveStartupAllowed,false);
+   assert.equal(r.writerAndFenceVerified,true);assert.equal(r.privateFixtureAuthorizationVerified,true);assert.equal(r.fixtureIsDatabaseWriter,false);assert.equal(r.liveStartupAllowed,false);
    const probe=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
    try{
     await probe.connect();

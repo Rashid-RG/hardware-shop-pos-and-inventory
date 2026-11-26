@@ -1,7 +1,9 @@
 // Disposable CI only: transfer writer and fence while coordinator retains gate.
 import {assertGateOwner,HANDOFF_CLASS} from './database-handoff-gate.mjs';
 import {acquireRehearsalWriter} from './database-handoff-writer-rehearsal.mjs';
-export async function rehearseFencedTransfer(coordinator,candidate,rollback,rival,{gateId,writerId,fenceId,failCandidate=false}){
+import {rehearsePrivateHandoff} from './database-handoff-ipc.mjs';
+export async function rehearseFencedTransfer(coordinator,candidate,rollback,rival,{gateId,writerId,fenceId,binding,failCandidate=false}){
+ if(!['releaseDigest','runtimeDigest','maintenanceDigest'].every(k=>typeof binding?.[k]==='string'&&/^[a-f0-9]{64}$/.test(binding[k])))throw Error('Rehearsal binding required.');
  const ids=[gateId,writerId,fenceId];
  if(!ids.every(n=>Number.isInteger(n)&&n>=10&&n<=2147483647)||new Set(ids).size!==3||new Set([coordinator,candidate,rollback,rival]).size!==4)throw Error('Distinct disposable sessions and keys required.');
  const clients=[coordinator,candidate,rollback,rival];
@@ -29,6 +31,13 @@ export async function rehearseFencedTransfer(coordinator,candidate,rollback,riva
   };
   for(const id of ids)if(!await lock(coordinator,id))throw Error('Initial exclusion unavailable.');
   await verifyGate();
+  const authorize=async purpose=>{
+   await verifyGate();
+   const proof=await rehearsePrivateHandoff({...binding,purpose});
+   if(proof.authorizationVerified!==true||proof.liveStartupAllowed!==false)throw Error('Private startup proof unavailable.');
+   await verifyGate();
+  };
+  await authorize('candidate');
   await unlock(coordinator,writerId);
   await acquireRehearsalWriter(candidate,owners[0],{lockClass:HANDOFF_CLASS,gateId,writerId});
   if(await lock(candidate,fenceId))throw Error('Fence released prematurely.');
@@ -40,13 +49,14 @@ export async function rehearseFencedTransfer(coordinator,candidate,rollback,riva
   if(failCandidate){
    await candidate.end();
    await verifyGate();
+   await authorize('rollback');
    await acquireRehearsalWriter(rollback,owners[0],{lockClass:HANDOFF_CLASS,gateId,writerId});
    if(!await lock(rollback,fenceId))throw Error('Rollback fence unavailable.');
    await assertGateOwner(coordinator,owners[2],{lockClass:HANDOFF_CLASS,lockId:writerId});
    await assertGateOwner(coordinator,owners[2],{lockClass:HANDOFF_CLASS,lockId:fenceId});
    await verifyGate();
   }
-  return {state:failCandidate?'rollback-rehearsed':'candidate-rehearsed',gateObservedThroughoutChecks:true,writerAndFenceVerified:true,liveStartupAllowed:false,recoveryAllowed:false,continuousExclusionVerified:false};
+  return {state:failCandidate?'rollback-rehearsed':'candidate-rehearsed',gateObservedThroughoutChecks:true,writerAndFenceVerified:true,privateFixtureAuthorizationVerified:true,fixtureIsDatabaseWriter:false,liveStartupAllowed:false,recoveryAllowed:false,continuousExclusionVerified:false};
  }finally{
   for(const c of [candidate,rollback,rival,coordinator]){try{await c.end();}catch{}finally{c.off('error',onError);}}
  }
