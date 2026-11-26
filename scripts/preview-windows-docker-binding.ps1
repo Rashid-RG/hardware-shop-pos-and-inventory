@@ -37,18 +37,13 @@ try {
   if (-not $c.State.Running) { throw 'Existing PostgreSQL container is not running. Identity cannot be verified.' }
   $sql="SELECT system_identifier::text || ':' || (SELECT oid::text FROM pg_database WHERE datname=current_database()) FROM pg_control_system()"
   $inside=@(& docker exec $c.Id psql -X -w -U postgres -d hardware_pos -v ON_ERROR_STOP=1 -Atc $sql 2>$null)
-  if ($LASTEXITCODE -ne 0 -or $inside.Count -ne 1 -or $inside[0] -cnotmatch '^[0-9]{1,20}:[0-9]{1,10}$context;endpoint=$ctx[0].Endpoints.docker.Host;project=$project;containerId=$c.Id;volume=$volumes[0].Name;database='hardware_pos';port=5433;running=[bool]$c.State.Running;systemIdentifier=$identity[0];databaseOid=$identity[1];activationAllowed=$false;databaseIdentityVerified=$true} | ConvertTo-Json
-} finally {
-  if ($owns) { $mutex.ReleaseMutex() }
-  $mutex.Dispose()
-}
-) { throw 'Container PostgreSQL identity query failed.' }
+  if ($LASTEXITCODE -ne 0 -or $inside.Count -ne 1 -or $inside[0] -cnotmatch '^[0-9]{1,20}:[0-9]{1,10}$') { throw 'Container PostgreSQL identity query failed.' }
   $outside=@(& node (Join-Path $PSScriptRoot 'probe-postgres-identity.mjs') $config 2>$null)
   if ($LASTEXITCODE -ne 0 -or $outside.Count -ne 1 -or $outside[0] -cne $inside[0]) { throw 'Configured database identity does not match the existing Docker PostgreSQL cluster.' }
   $identity=$inside[0].Split(':')
   $after=@(Read-DockerJson @('container','inspect','hardware-pos-postgres'))
   if ($after.Count -ne 1 -or $after[0].Id -cne $c.Id -or -not $after[0].State.Running -or $after[0].State.StartedAt -cne $c.State.StartedAt) { throw 'Container changed during identity discovery.' }
-  [ordered]@{schema=1;context=$context;endpoint=$ctx[0].Endpoints.docker.Host;project=$project;containerId=$c.Id;volume=$volumes[0].Name;database='hardware_pos';port=5433;running=[bool]$c.State.Running;activationAllowed=$false;databaseIdentityVerified=$false} | ConvertTo-Json
+  [ordered]@{schema=1;context=$context;endpoint=$ctx[0].Endpoints.docker.Host;project=$project;containerId=$c.Id;volume=$volumes[0].Name;database='hardware_pos';port=5433;running=[bool]$c.State.Running;systemIdentifier=$identity[0];databaseOid=$identity[1];activationAllowed=$false;databaseIdentityVerified=$true} | ConvertTo-Json
 } finally {
   if ($owns) { $mutex.ReleaseMutex() }
   $mutex.Dispose()
