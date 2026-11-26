@@ -1,3 +1,4 @@
+import {reconcilePayroll} from './backend/payrollReconciliation';
 import {renderMonthlyPayrollPdf} from './backend/monthlyPayrollPdf';
 import {monthlyPayrollReport} from './backend/monthlyPayrollReport';
 import { initGeneralLedger } from './backend/generalLedger';
@@ -7765,6 +7766,11 @@ app.post('/api/ars/payroll/statutory-settlements',requireRole(['Super Admin']),(
  res.setHeader('Cache-Control','no-store');
  if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
  return res.status(409).json({error:'Statutory payment posting is disabled pending accounting verification.'});
+});
+app.get('/api/ars/payroll/reconciliation',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{return res.json(await reconcilePayroll(pool,scope.shopId,period));}catch(e){console.error('Payroll reconciliation failed',e);return res.status(503).json({error:'Unable to verify payroll reconciliation.'});}
 });
 app.get('/api/ars/payroll/monthly-report/pdf',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');if(!scope)return res.status(403).json({error:'Accounting access denied.'});
