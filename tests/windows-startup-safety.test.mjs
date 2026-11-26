@@ -129,3 +129,13 @@ test('Windows update rehearsal uses unique isolated restore database and records
  assert.match(s,/FileMode\]::CreateNew/);
  assert.doesNotMatch(s,/DROP DATABASE|docker compose|Stop-Process/);
 });
+
+test('Windows offline rehearsal uses disconnected disposable PostgreSQL without host port or production mounts',()=>{
+ const s=readFileSync(new URL('../scripts/rehearse-windows-update-container.ps1',import.meta.url),'utf8');
+ assert.match(s,/'--network','none'/);
+ assert.match(s,/'--pull=never'/);
+ assert.match(s,/'--tmpfs'/);
+ assert.match(s,/compatibilityTestPassed=\$false/);
+ assert.match(s,/activationApproved=\$false/);
+ assert.doesNotMatch(s,/'--publish'|'--mount'|docker compose/);
+});
