@@ -2,6 +2,7 @@ import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { inspectDriveBackupHealth } from './drive-backup-health.mjs';
 import { verifyBackup } from './verify-backup.mjs';
+import { windowsBootEvidence, compareWindowsBoot } from './drive-backup-windows-boot.mjs';
 
 async function record(path) {
   try {
@@ -50,6 +51,7 @@ export async function inspectInterruptedDriveBackup(directory) {
   }
   return {schema:1,health:health.health,lockPresent:health.lockPresent,lockRecordValid:!!lockRecordValid,
     historyMatches,archiveState,lastVerifiedAt:health.lastVerifiedAt,
+    windowsBootObservation:compareWindowsBoot(lock?.windowsBoot,await windowsBootEvidence(),lock?.startedAt),
     lockRemovalAllowed:false,retryAllowed:false,restoreAllowed:false,uploadAllowed:false,
     requiresOperatorReview:true};
 }
