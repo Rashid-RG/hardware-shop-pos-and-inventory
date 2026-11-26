@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {assertGateOwner} from '../scripts/database-handoff-gate.mjs';
 const url=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
 assert.ok(['127.0.0.1','localhost'].includes(url.hostname));
 assert.equal(url.pathname,'/hardware_pos_ci','Refuse non-CI database');
@@ -128,4 +129,23 @@ test('coordinator connection loss releases gate; writer lease alone does not pro
   // and authenticated startup authorization must survive coordinator loss.
   assert.equal(await acquire(rival),true);
  }finally{await gate.end().catch(()=>{});await rival.end().catch(()=>{});}
+});
+
+test('observer verifies exact coordinator session and rejects released or replaced gate',{timeout:30000},async()=>{
+ const owner=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const observer=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const lockClass=1642958133,lockId=Math.floor(Math.random()*900000000)+10;
+ const keys=[lockClass,lockId],options={lockClass,lockId};
+ try{
+  await owner.connect();await observer.connect();
+  const identity=(await owner.query('SELECT pg_backend_pid() AS pid, backend_start::text AS started FROM pg_stat_activity WHERE pid=pg_backend_pid()')).rows[0];
+  await assert.rejects(assertGateOwner(observer,identity,options),/ownership not verified/);
+  assert.equal((await owner.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',keys)).rows[0].acquired,true);
+  await assertGateOwner(observer,identity,options);
+  await assert.rejects(assertGateOwner(observer,{...identity,started:'2000-01-01T00:00:00Z'},options),/ownership not verified/);
+  await owner.end();
+  // Acquire from another session before asserting the old identity no longer matches.
+  assert.equal((await observer.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',keys)).rows[0].acquired,true);
+  await assert.rejects(assertGateOwner(observer,identity,options),/ownership not verified/);
+ }finally{await owner.end().catch(()=>{});await observer.end().catch(()=>{});}
 });
