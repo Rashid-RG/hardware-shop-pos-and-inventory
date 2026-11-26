@@ -3918,7 +3918,11 @@ app.put('/api/settings', requireRole(['Super Admin', 'Store Manager']), async (r
   if (!databaseWriteHealthy) return res.status(503).json({error:'Database recovery required before settings can be saved.'});
   const payload = req.body || {};
   const {activeShopId} = getActiveShopContext(db, req);
-  const isAdmin = (req as AppRequest).authUser?.role === 'Super Admin';
+  const auth=(req as AppRequest).authUser;
+  const scope=chequeShopAccess(req);
+  if(!scope)return res.status(403).json({error:'Company settings shop access denied.'});
+  // A role alone does not grant global configuration privileges.
+  const isAdmin=auth?.role==='Super Admin'&&!auth.scopedShopId&&!auth.fixedShopId&&!(auth.allowedShopIds||[]).length;
   const oldProfiles = db.settings.shopProfiles || [];
   if (!isAdmin && payload.shopProfiles !== undefined) {
     // A branch manager may update only their own existing branch, never create
@@ -3926,13 +3930,18 @@ app.put('/api/settings', requireRole(['Super Admin', 'Store Manager']), async (r
     const incoming = payload.shopProfiles;
     if (!Array.isArray(incoming) || incoming.length !== oldProfiles.length ||
         incoming.some((profile:any) => !profile || typeof profile.id !== 'string') ||
+        new Set(incoming.map((profile:any)=>profile.id)).size!==oldProfiles.length ||
+        oldProfiles.some(profile=>!incoming.some((candidate:any)=>candidate.id===profile.id)) ||
         incoming.some((profile:any) => profile.id !== activeShopId &&
           JSON.stringify(profile) !== JSON.stringify(oldProfiles.find(old => old.id === profile.id)))) {
-      return res.status(403).json({error:'Managers may only modify their assigned company profile.'});
+      return res.status(403).json({error:'Shop-scoped administrators and managers may only modify their assigned company profile.'});
     }
   }
   if (!isAdmin && payload.shopProfiles === undefined) {
     return res.status(400).json({error:'Choose your ARS branch profile to save changes.'});
+  }
+  if(!isAdmin&&['taxRate','storeName','invoicePrefix','logoUrl','address','phone','shopQRData','productCategories'].some(key=>payload[key]!==undefined&&JSON.stringify(payload[key])!==JSON.stringify((db.settings as any)[key]))) {
+    return res.status(403).json({error:'Global settings changes require an unrestricted administrator session.'});
   }
   const managerProfiles = !isAdmin && Array.isArray(payload.shopProfiles)
     ? oldProfiles.map(profile => profile.id === activeShopId

@@ -149,6 +149,35 @@ test('real login, logout and password rotation revoke previous session tokens', 
     assert.equal((await fetch(endpoint,{headers:{...adminHeaders,'X-Shop-Id':'ci-unauthorized-shop-'+suffix}})).status,403);
     assert.deepEqual((await pool.query('SELECT quantity FROM products WHERE id=$1',[product])).rows,beforeStock.rows);
     assert.equal(Number((await pool.query('SELECT COUNT(*) AS n FROM ars_receipt_batches WHERE purchase_order_id=$1',[poId])).rows[0].n),2);
+    // Register a second real shop using an unrestricted administrator session.
+    const globalLogin=await fetch(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:adminEmail,password})});
+    assert.equal(globalLogin.status,200);
+    const globalSession=await globalLogin.json();
+    assert.ok(!globalSession.user.scopedShopId);
+    const globalHeaders={...withToken(globalSession.token),'Content-Type':'application/json'};
+    const settingsResponse=await fetch(origin+'/api/settings',{headers:globalHeaders});
+    assert.equal(settingsResponse.status,200);
+    const settings=await settingsResponse.json();
+    const secondShop='ci-second-shop-'+suffix;
+    const secondProfile={id:secondShop,name:'CI Second Shop',taxRate:0,invoicePrefix:'CI-SECOND',address:'',phone:'',logoUrl:'',printFormat:'a4'};
+    const profiles=[...settings.shopProfiles,secondProfile];
+    const saveSettings=(headers,payload)=>fetch(origin+'/api/settings',{method:'PUT',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    assert.equal((await saveSettings(adminHeaders,{shopProfiles:profiles})).status,403,'Scoped admin cannot create a shop');
+    const registered=await saveSettings(globalHeaders,{shopProfiles:profiles});
+    assert.equal(registered.status,200,await registered.clone().text());
+    const otherLogin=await fetch(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:adminEmail,password,shopId:secondShop})});
+    assert.equal(otherLogin.status,200);
+    const otherSession=await otherLogin.json();assert.equal(otherSession.user.scopedShopId,secondShop);
+    const otherHeaders={...withToken(otherSession.token),'X-Shop-Id':secondShop};
+    assert.equal((await fetch(endpoint,{headers:otherHeaders})).status,404,'Registered second shop cannot read first shop GRN');
+    assert.equal((await fetch(endpoint,{headers:{...otherHeaders,'X-Shop-Id':'shop-main'}})).status,403);
+    assert.equal((await fetch(endpoint,{headers:{...adminHeaders,'X-Shop-Id':secondShop}})).status,403);
+    const currentSettings=await (await fetch(origin+'/api/settings',{headers:globalHeaders})).json();
+    const tampered=currentSettings.shopProfiles.map(p=>p.id===secondShop?{...p,name:'Unauthorized rename'}:p);
+    assert.equal((await saveSettings(adminHeaders,{shopProfiles:tampered})).status,403);
+    assert.equal((await saveSettings(adminHeaders,{shopProfiles:currentSettings.shopProfiles,storeName:'Unauthorized global rename'})).status,403);
+    const ownUpdate=currentSettings.shopProfiles.map(p=>p.id==='shop-main'?{...p,phone:'0700000001'}:p);
+    assert.equal((await saveSettings(adminHeaders,{shopProfiles:ownUpdate})).status,200);
     const adminLogout=await fetch(origin+'/api/auth/logout',{method:'POST',headers:adminHeaders});assert.equal(adminLogout.status,200);
     const revoked=await fetch(origin+'/api/ars/payroll/accounting-overview',{headers:adminHeaders});assert.equal(revoked.status,401);await revoked.text();
     const logout = await fetch(origin + '/api/auth/logout', {
