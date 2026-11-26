@@ -345,3 +345,56 @@ test('import return posts carrying variance once, not historical freight twice',
  assert.equal(result.lines.find(l=>l.accountCode==='1250').debit,'20000.00');
  assert.equal(validateJournal(result.lines).totalCents,'13000000');
 });
+
+import {payrollAccountingOverview} from '../backend/payrollAccountingOverview.ts';
+import {reconcilePayroll} from '../backend/payrollReconciliation.ts';
+import {reconcileSalaryPayable} from '../backend/salaryPayableReconciliation.ts';
+import {reconcileEmployeeAdvances} from '../backend/employeeAdvanceReconciliation.ts';
+import {reconcileStatutoryControls} from '../backend/statutoryControlReconciliation.ts';
+test('real PostgreSQL payroll controls: isolated schema, partial payment and tenant isolation',{timeout:60000},async()=>{
+ const schema='payroll_ci_'+randomUUID().replaceAll('-',''),shop='shop-a',other='shop-b',day='2026-11-01';
+ const admin=new pg.Client({connectionString:url.toString()});
+ await admin.connect();let pool;
+ try{
+ await admin.query('CREATE SCHEMA '+schema);
+ pool=new pg.Pool({connectionString:url.toString(),options:'-c search_path='+schema});
+ await initGeneralLedger(pool);
+ await pool.query(`
+ CREATE TABLE ars_financial_accounts(id text,shop_id text,kind text,active boolean,PRIMARY KEY(shop_id,id));
+ CREATE TABLE ars_financial_movements(id text PRIMARY KEY,shop_id text,account_id text,amount numeric(14,2),movement_kind text,source_id text,recorded_by text,effective_date date,note text);
+ `);
+ for(const id of [shop,other]){
+ await pool.query("INSERT INTO ars_gl_accounts(shop_id,code,name,kind) VALUES($1,'1000','Bank','Asset'),($1,'1200','Employee advances','Asset'),($1,'2100','Salary payable','Liability'),($1,'2110','EPF','Liability'),($1,'2120','ETF','Liability'),($1,'5000','Salary','Expense')",[id]);
+ await pool.query("INSERT INTO ars_gl_account_mappings(shop_id,mapping_kind,source_id,account_code,evidence,recorded_by) VALUES($1,'financialAccount','bank','1000','CI','CI'),($1,'employeeAdvances','control','1200','CI','CI'),($1,'salaryPayable','control','2100','CI','CI'),($1,'epfPayable','control','2110','CI','CI'),($1,'etfPayable','control','2120','CI','CI'),($1,'salary','control','5000','CI','CI')",[id]);
+ await pool.query("INSERT INTO ars_gl_cutover(shop_id,cutover_date,evidence,approved_by,posting_enabled) VALUES($1,$2,'CI','CI',true)",[id,day]);
+ await pool.query("INSERT INTO ars_financial_accounts VALUES('bank',$1,'Bank',true)",[id]);
+ }
+ const empty=await payrollAccountingOverview(pool,shop);
+ assert.equal(empty.checksPassed,true);assert.equal(empty.controls.length,4);assert.equal(empty.postingEnabled,false);
+ const journal=(c,id,sourceKind,sourceId,lines)=>postJournal(c,{id,shopId:shop,postingDate:day,sourceKind,sourceId,description:'Synthetic payroll CI',actor:'CI',lines});
+ const tx=async(fn)=>{const c=await pool.connect();try{await c.query('BEGIN');await fn(c);await c.query('COMMIT');}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}};
+ await tx(async c=>{
+ await journal(c,'payroll-accrual:p1','PayrollAccrual','p1',[{accountCode:'5000',debit:'50000.01',credit:'0.00'},{accountCode:'2100',debit:'0.00',credit:'50000.01'}]);
+ await c.query("INSERT INTO ars_gl_payroll_accruals(shop_id,id,employee_id,employee_name,period_key,base_salary,gross_amount,posting_date,evidence,journal_id,recorded_by) VALUES($1,'p1','e1','Synthetic employee','2026-11',50000.01,50000.01,$2,'CI','payroll-accrual:p1','CI')",[shop,day]);
+ });
+ const pay=async(id,value)=>tx(async c=>{
+ const j='salary-payment:'+id;
+ await journal(c,j,'SalaryPayment',id,[{accountCode:'2100',debit:value,credit:'0.00'},{accountCode:'1000',debit:'0.00',credit:value}]);
+ await c.query("INSERT INTO ars_financial_movements VALUES($1,$2,'bank',-$3::numeric,'Salary Payment',$4,'CI',$5,'CI')",[j,shop,value,id,day]);
+ await c.query("INSERT INTO ars_gl_salary_payments(shop_id,id,accrual_id,financial_account_id,amount,posting_date,journal_id,evidence,recorded_by) VALUES($1,$2,'p1','bank',$3,$4,$5,'CI','CI')",[shop,id,value,day,j]);
+ });
+ await pay('pay1','20000.02');
+ const salary=await reconcileSalaryPayable(pool,shop);
+ assert.equal(salary.checksPassed,true);assert.equal(salary.verifiedOutstanding,'29999.99');
+ assert.equal((await reconcileSalaryPayable(pool,other)).verifiedOutstanding,'0.00');
+ const monthly=await reconcilePayroll(pool,shop,'2026-11');assert.equal(monthly.checksPassed,true);
+ const advance=await reconcileEmployeeAdvances(pool,shop);assert.equal(advance.checksPassed,true);
+ const stat=await reconcileStatutoryControls(pool,shop);assert.equal(stat.checksPassed,false);assert.ok(stat.exceptions.some(e=>e.issues.includes('STATUTORY_COVERAGE_UNVERIFIED')));
+ const combined=await payrollAccountingOverview(pool,shop);assert.equal(combined.checksPassed,false);assert.equal(combined.controls.find(c=>c.id==='salary').checksPassed,true);
+ await assert.rejects(()=>pay('over','30000.00'),/exceeds outstanding net salary/);
+ assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_gl_journals WHERE shop_id=$1 AND id='salary-payment:over'",[shop])).rows[0].n,0);
+ assert.equal((await pool.query("SELECT count(*)::int AS n FROM ars_financial_movements WHERE id='salary-payment:over'")).rows[0].n,0);
+ await pay('pay2','29999.99');assert.equal((await reconcileSalaryPayable(pool,shop)).verifiedOutstanding,'0.00');
+ assert.equal((await payrollAccountingOverview(pool,other)).checksPassed,true);
+ }finally{if(pool)await pool.end();await admin.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await admin.end();}
+});
