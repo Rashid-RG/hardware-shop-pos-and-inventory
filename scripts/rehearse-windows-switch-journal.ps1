@@ -57,7 +57,7 @@ try {
   Record-Phase 'rolled-back'
  } else {Record-Phase 'completed'}
  $final=Get-ArsSwitchInspection $root
- if ($final.state -cne 'switch-review-required' -or $final.startupAllowed -ne $false) {throw 'Final review state invalid.'}
+ if ($final.state -cne 'switch-review-required' -or $final.startupAllowed -ne $false -or $final.historyVerified -ne $true) {throw 'Final review state invalid.'}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))
