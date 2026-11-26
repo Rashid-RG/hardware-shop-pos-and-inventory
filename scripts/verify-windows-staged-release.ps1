@@ -2,6 +2,7 @@
 param([Parameter(Mandatory=$true)][string]$Version,[switch]$PrepareBuild)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'expand-windows-release.ps1')
+. (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
 if ($Version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') { throw 'Invalid release version.' }
 $state = Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
 $source = Join-Path (Join-Path $state 'staged-releases') $Version
@@ -110,6 +111,10 @@ try {
       Copy-Item -LiteralPath $manifest -Destination (Join-Path $pending '.ars-release-manifest.json')
       Copy-Item -LiteralPath $signature -Destination (Join-Path $pending '.ars-release-manifest.sig')
       Copy-Item -LiteralPath $archive -Destination (Join-Path $pending '.ars-release.zip')
+      $fingerprintPath = Join-Path $pending '.ars-prepared-fingerprint.json'
+      if (Test-Path -LiteralPath $fingerprintPath) { throw 'Reserved fingerprint path already exists.' }
+      Get-ArsPreparedFingerprint $pending | ConvertTo-Json -Compress | Set-Content -LiteralPath $fingerprintPath -Encoding UTF8
+      $null = Assert-ArsPreparedFingerprint $pending
       [IO.Directory]::Move($pending,$target)
       Write-Host "Prepared release: $target. Not activated. No database startup requested."
     } finally {

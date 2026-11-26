@@ -13,6 +13,7 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
   [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
   if ($parseErrors) { throw "$($_.Name): $($parseErrors.Message)" }
 }
+& (Join-Path $PSScriptRoot 'test-windows-prepared-fingerprint.ps1')
 $postgresRoot = Join-Path $env:ProgramFiles 'PostgreSQL'
 $bin = Get-ChildItem $postgresRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'bin/initdb.exe') } |
   Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1
