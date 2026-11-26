@@ -57,6 +57,56 @@ def execute(project,script,*args):
     else:
         notice("Preparation failed. Existing data was not deliberately removed.\nContact RS Nextward with local log: "+log.name,True)
 
+def activation_review(project):
+    """Dedicated graphical proposal review; no activation or resume operation."""
+    while True:
+        target=STATE/"runtime-activation-proposal.json"
+        exists=target.exists() or target.is_symlink()
+        held=(STATE/"maintenance-hold.json").exists() or (STATE/"maintenance-hold.json").is_symlink()
+        summary=("Maintenance: "+("Active" if held else "Not active")+
+                 "\nRetained proposal: "+("Present (not yet verified)" if exists else "Not prepared")+
+                 "\nLive installation: Locked")
+        choice=dialog("--list","--no-markup","--text="+summary,"--column=Action","--width=620","--height=300",
+                      "Prepare activation proposal","Verify retained proposal","Return")
+        if choice.returncode!=0 or choice.stdout.strip()=="Return": return
+        action=choice.stdout.strip()
+        if action not in ("Prepare activation proposal","Verify retained proposal"): continue
+        if not held:
+            notice("A protected maintenance backup is required. No change was made.",True)
+            continue
+        if action=="Prepare activation proposal" and exists:
+            notice("An existing proposal must be retained. Verify it or contact RS Nextward support.",True)
+            continue
+        if action=="Verify retained proposal" and not exists:
+            notice("No retained activation proposal exists.",True)
+            continue
+        folder=select_recovery()
+        if not folder: continue
+        if action=="Prepare activation proposal":
+            answer=dialog("--question","--no-markup","--text=Retain a fingerprinted activation proposal for this protected backup? This does not install an update, resume billing or restore any live data.")
+            if answer.returncode!=0: continue
+            extra=["--confirmation","PREPARE MINT ACTIVATION"]
+        else:
+            extra=["--verify"]
+        progress=subprocess.Popen(["zenity","--progress","--pulsate","--no-cancel","--title="+TITLE,"--text=Checking maintenance, database identity, backup and compatibility evidence."],stdin=subprocess.PIPE)
+        try:
+            result=subprocess.run(["python3",str(project/"scripts/mint/prepare-runtime-activation.py"),str(folder),*extra],cwd=project,capture_output=True,text=True,timeout=900)
+            data=None
+            if result.returncode==0:
+                try:
+                    data=json.loads(result.stdout.strip().splitlines()[-1])
+                except (ValueError,IndexError): pass
+            matched=isinstance(data,dict) and data.get("proposalMatched") is True and data.get("backupHoldBindingVerified") is True and all(data.get(k) is False for k in ("activationAllowed","runtimeActivated","startupAllowed","rollbackAllowed","continuousExclusionVerified")) and isinstance(data.get("proposalDigest"),str) and re.fullmatch(r"[a-f0-9]{64}",data["proposalDigest"])
+        except (OSError,subprocess.SubprocessError):
+            matched=False
+        finally:
+            if progress.poll() is None: progress.terminate()
+            progress.wait()
+        if matched:
+            notice("Activation proposal verified.\nMaintenance backup and database identity matched.\nContinuous writer exclusion is not certified.\nLive installation and rollback remain locked.")
+        else:
+            notice("Proposal preparation or verification blocked. Check protected backup and compatibility evidence or contact RS Nextward. No live activation was requested.",True)
+
 def status(project):
     version="Unknown"
     try:
@@ -124,7 +174,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -155,6 +205,8 @@ def main():
                     elif dialog("--question","--no-markup","--text=Run an isolated recovery test? This may use considerable memory and disk space. The live database will not be restored or replaced.").returncode==0:
                         extra=["--compatibility"] if action=="Test software compatibility" else []
                         execute(project,"test-update-restore.py",str(folder),*extra)
+            elif action=="Activation Review Center":
+                activation_review(project)
             elif action=="Stop POS and prepare protected backup":
                 if (STATE/"maintenance-hold.json").exists():
                     notice("Maintenance is already active. Review the existing backup or resume the current POS.",True)
