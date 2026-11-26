@@ -34,6 +34,9 @@ test('real login, logout and password rotation revoke previous session tokens', 
       [userId, email, 'CI Login Worker', 'Cashier', bcrypt.hashSync(password, 10)]
     );
 
+    const adminEmail='ci-payroll-admin-'+suffix+'@example.invalid';
+    await pool.query('INSERT INTO users(id,email,name,role,password_hash) VALUES($1,$2,$3,$4,$5)', ['ci-payroll-admin-'+suffix,adminEmail,'CI Payroll Administrator','Super Admin',bcrypt.hashSync(password,10)]);
+
     child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
       cwd: process.cwd(),
       env: {
@@ -101,6 +104,24 @@ test('real login, logout and password rotation revoke previous session tokens', 
       const anonymous=await fetch(endpoint,{method});assert.equal(anonymous.status,401,path+' requires authentication');await anonymous.text();
       const forbidden=await fetch(endpoint,{method,headers:{...withToken(firstJson.token),'X-Shop-Id':'shop-main'}});assert.equal(forbidden.status,403,path+' must reject cashier access');await forbidden.text();
     }
+    const adminLogin=await fetch(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:adminEmail,password,shopId:'shop-main'})});
+    assert.equal(adminLogin.status,200,'Administrator login failed');
+    const adminSession=await adminLogin.json();assert.equal(adminSession.user.scopedShopId,'shop-main');
+    const adminHeaders={...withToken(adminSession.token),'X-Shop-Id':'shop-main'};
+    for(const path of ['accounting-overview','salary-payable/reconciliation','advances/reconciliation','statutory-settlements/controls','monthly-report?period=1901-01','reconciliation?period=1901-01']){
+      const response=await fetch(origin+'/api/ars/payroll/'+path,{headers:adminHeaders});
+      assert.equal(response.status,200,path+' administrator read failed');
+      assert.match(response.headers.get('cache-control')||'',/no-store/);
+      const data=await response.json();assert.equal(data.postingEnabled,false,path+' must not enable posting');
+      const denied=await fetch(origin+'/api/ars/payroll/'+path,{headers:{...adminHeaders,'X-Shop-Id':'ci-unauthorized-shop-'+suffix}});
+      assert.equal(denied.status,403,path+' must reject unauthorized shop header');await denied.text();
+    }
+    for(const path of ['salary-payments','statutory-settlements','advances/ci-missing/disburse','advances/ci-missing/repay','proposals/ci-missing/post']){
+      const response=await fetch(origin+'/api/ars/payroll/'+path,{method:'POST',headers:adminHeaders});
+      assert.equal(response.status,409,path+' posting must remain locked');await response.text();
+    }
+    const adminLogout=await fetch(origin+'/api/auth/logout',{method:'POST',headers:adminHeaders});assert.equal(adminLogout.status,200);
+    const revoked=await fetch(origin+'/api/ars/payroll/accounting-overview',{headers:adminHeaders});assert.equal(revoked.status,401);await revoked.text();
     const logout = await fetch(origin + '/api/auth/logout', {
       method: 'POST', headers: withToken(firstJson.token),
     });
