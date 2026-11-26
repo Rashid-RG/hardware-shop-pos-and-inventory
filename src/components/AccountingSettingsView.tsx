@@ -53,6 +53,7 @@ interface AccountingSettingsViewProps {
   transactions: SalesTransaction[];
   purchaseOrders: PurchaseOrder[];
   currentRole: Role;
+  canManageGlobalSettings?: boolean;
   taxConfig: StoreSettings;
   manualExpenses: ManualExpense[];
   authToken: string;
@@ -69,6 +70,7 @@ export default function AccountingSettingsView({
   transactions,
   purchaseOrders,
   currentRole,
+  canManageGlobalSettings=false,
   taxConfig,
   manualExpenses,
   authToken,
@@ -149,7 +151,7 @@ export default function AccountingSettingsView({
         logoUrl: config.logoUrl || '',
         address: config.address || '',
         phone: config.phone || '',
-        taxRate: config.taxRate || 18,
+        taxRate: config.taxRate ?? 0,
         invoicePrefix: config.invoicePrefix || 'SL-INV',
         printFormat: 'a4',
         invoiceCompanyMeta: {
@@ -219,10 +221,10 @@ export default function AccountingSettingsView({
 
     setShopProfiles(profiles);
     setActiveShopId(selectedShopId);
-    setStoreName(taxConfig.storeName);
-    setTaxRate(taxConfig.taxRate);
+    setStoreName(arsDisplayName(activeShop.name || taxConfig.storeName));
+    setTaxRate(activeShop.taxRate ?? taxConfig.taxRate);
     setCurrency(taxConfig.currency);
-    setInvoicePrefix(taxConfig.invoicePrefix);
+    setInvoicePrefix(activeShop.invoicePrefix ?? taxConfig.invoicePrefix);
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || taxConfig.logoUrl || '') || '');
     setShopAddress(activeShop.address || '');
     setShopPhone(activeShop.phone || '');
@@ -239,6 +241,7 @@ export default function AccountingSettingsView({
   }, [taxConfig]);
 
   const addShopProfile = () => {
+    if(!canManageGlobalSettings)return;
     const newShopId = `shop-${Date.now()}`;
     const newShop = {
       id: newShopId,
@@ -258,7 +261,7 @@ export default function AccountingSettingsView({
     setActiveShopId(newShopId);
     setStoreName(newShop.name);
     setInvoicePrefix(newShop.invoicePrefix || 'SL-INV');
-    setTaxRate(Number(newShop.taxRate || 18));
+    setTaxRate(Number(newShop.taxRate ?? 0));
     setLogoUrl('');
     setShopAddress(newShop.address || '');
     setShopPhone(newShop.phone || '');
@@ -275,6 +278,7 @@ export default function AccountingSettingsView({
   };
 
   const handleShopChange = (shopId: string) => {
+    if(!canManageGlobalSettings&&shopId!==financialShopId)return;
     const activeShop = shopProfiles.find((shop) => shop.id === shopId);
     if (!activeShop) {
       return;
@@ -282,7 +286,7 @@ export default function AccountingSettingsView({
     setActiveShopId(shopId);
     setStoreName(arsDisplayName(activeShop.name || 'ARS Distributor'));
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
-    setTaxRate(Number(activeShop.taxRate || 18));
+    setTaxRate(Number(activeShop.taxRate ?? 0));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
     setShopAddress(activeShop.address || '');
     setShopPhone(activeShop.phone || '');
@@ -333,7 +337,9 @@ export default function AccountingSettingsView({
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const nextProfiles = shopProfiles.map((shop) => {
+    if(!canManageGlobalSettings&&(!financialShopId||activeShopId!==financialShopId)){notify.warning('Select your authorized branch.');return;}
+    const sourceProfiles=canManageGlobalSettings?shopProfiles:(taxConfig.shopProfiles||[]);
+    const nextProfiles = sourceProfiles.map((shop) => {
       if (shop.id !== activeShopId) {
         return shop;
       }
@@ -364,7 +370,7 @@ export default function AccountingSettingsView({
     const activeShop = nextProfiles.find((shop) => shop.id === activeShopId) || nextProfiles[0];
 
     try {
-      await onUpdateTaxConfig({
+      await onUpdateTaxConfig(canManageGlobalSettings?{
         storeName: activeShop?.name || storeName,
         taxRate: Number(activeShop?.taxRate ?? taxRate),
         currency,
@@ -374,7 +380,7 @@ export default function AccountingSettingsView({
         phone: String(activeShop?.phone || shopPhone || ''),
         activeShopId: activeShop?.id,
         shopProfiles: nextProfiles,
-      });
+      }:{...taxConfig,shopProfiles:nextProfiles});
       setIsSettingsSaved(true);
       setTimeout(() => setIsSettingsSaved(false), 3000);
     } catch (err: any) {
@@ -600,6 +606,7 @@ export default function AccountingSettingsView({
             <Settings className="w-5 h-5 text-amber-500" /> Company Profile · Legal & Billing Details
           </h3>
 
+          <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">{canManageGlobalSettings?'Global administrator · manage company branches':'Branch access · only your assigned company profile can be changed'}</p>
           <form onSubmit={handleSaveSettings} onInvalidCapture={event=>{const target=event.target as HTMLElement;if(target.closest('section[hidden]'))setSettingsWorkspace('legal');else setSettingsWorkspace('profile');}} className="space-y-3 text-xs font-sans">
             <div hidden={settingsWorkspace!=='profile'}><div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-3">
@@ -609,23 +616,24 @@ export default function AccountingSettingsView({
                 <select
                   id="settings-active-shop"
                   value={activeShopId}
+                  disabled={!canManageGlobalSettings}
                   onChange={(e) => handleShopChange(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded focus:outline-none text-xs"
                 >
-                  {shopProfiles.map((shop) => (
+                  {shopProfiles.filter(shop=>canManageGlobalSettings||shop.id===financialShopId).map((shop) => (
                     <option key={shop.id} value={shop.id}>
                       {shop.name}
                     </option>
                   ))}
                 </select>
               </div>
-              <button
+              {canManageGlobalSettings&&<button
                 type="button"
                 onClick={addShopProfile}
                 className="h-10 px-3 bg-slate-900 hover:bg-slate-950 text-white rounded font-semibold"
               >
                 + Add Branch
-              </button>
+              </button>}
             </div>
 
             <div>

@@ -579,11 +579,11 @@ export default function App() {
   const handleUpdateSettings = async (payload: StoreSettings) => {
     const res = await apiRequest('/api/settings', {
       method: 'PUT',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(currentRole==='Super Admin'&&!authUser?.scopedShopId&&!authUser?.fixedShopId&&!(authUser?.allowedShopIds||[]).length?payload:{shopProfiles:payload.shopProfiles}),
     });
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.message || 'Failed to save settings');
+      throw new Error(err.error || err.message || 'Failed to save settings');
     }
     const data = await res.json();
     setTaxConfig(data);
@@ -1366,6 +1366,7 @@ export default function App() {
 
               {(activeTab === 'accounting' || activeTab === 'company-profile') && (
                 <AccountingSettingsView
+                  canManageGlobalSettings={currentRole==='Super Admin'&&!authUser.scopedShopId&&!authUser.fixedShopId&&!(authUser.allowedShopIds||[]).length}
                   financialOwner={authUser.email}
                   financialCustomers={customers}
                   onFinancialRefresh={handleRefreshDb}
