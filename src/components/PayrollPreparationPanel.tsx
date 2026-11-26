@@ -1,3 +1,4 @@
+import PayrollReconciliationPanel from './PayrollReconciliationPanel';
 import MonthlyPayrollReportPanel from './MonthlyPayrollReportPanel';
 import React,{useEffect,useRef,useState} from 'react';
 import {reportDay} from '../utils/reporting';
@@ -20,7 +21,7 @@ export default function PayrollPreparationPanel(props:Props){
  return <PayrollSections key={JSON.stringify([props.shopId,props.owner,props.authToken])} {...props}/>;
 }
 function PayrollSections(props:Props){
- const [section,setSection]=useState<'monthly'|'policies'|'eligibility'|'advances'|'payments'|'statutory'|'reports'>('monthly');
+ const [section,setSection]=useState<'monthly'|'policies'|'eligibility'|'advances'|'payments'|'statutory'|'reports'|'reconciliation'>('monthly');
  return <div className="space-y-3">
   <nav aria-label="Payroll sections" className="flex flex-wrap gap-2 rounded-xl border bg-white p-2">
    <button type="button" aria-pressed={section==='monthly'} className={button+' '+(section==='monthly'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('monthly')}>Monthly payroll</button>
@@ -30,8 +31,9 @@ function PayrollSections(props:Props){
    <button type="button" aria-pressed={section==='payments'} className={button+' '+(section==='payments'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('payments')}>Salary payments</button>
    <button type="button" aria-pressed={section==='statutory'} className={button+' '+(section==='statutory'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('statutory')}>EPF / ETF settlements</button>
    <button type="button" aria-pressed={section==='reports'} className={button+' '+(section==='reports'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('reports')}>Payroll reports</button>
+   <button type="button" aria-pressed={section==='reconciliation'} className={button+' '+(section==='reconciliation'?'bg-slate-900 text-white':'bg-white text-slate-700')} onClick={()=>setSection('reconciliation')}>Reconciliation</button>
   </nav>
-  {section==='reports'?<MonthlyPayrollReportPanel shopId={props.shopId} authToken={props.authToken}/>:section==='monthly'?<PayrollWorkspace {...props}/>:section==='policies'?<PayrollPolicyPanel shopId={props.shopId} authToken={props.authToken} owner={props.owner}/>:section==='eligibility'?<PayrollEligibilityPanel {...props}/>:section==='advances'?<EmployeeAdvancePanel {...props}/>:section==='payments'?<SalaryPaymentPanel shopId={props.shopId} authToken={props.authToken}/>:<StatutorySettlementPanel shopId={props.shopId} authToken={props.authToken}/>}
+  {section==='reconciliation'?<PayrollReconciliationPanel shopId={props.shopId} authToken={props.authToken}/>:section==='reports'?<MonthlyPayrollReportPanel shopId={props.shopId} authToken={props.authToken}/>:section==='monthly'?<PayrollWorkspace {...props}/>:section==='policies'?<PayrollPolicyPanel shopId={props.shopId} authToken={props.authToken} owner={props.owner}/>:section==='eligibility'?<PayrollEligibilityPanel {...props}/>:section==='advances'?<EmployeeAdvancePanel {...props}/>:section==='payments'?<SalaryPaymentPanel shopId={props.shopId} authToken={props.authToken}/>:<StatutorySettlementPanel shopId={props.shopId} authToken={props.authToken}/>}
  </div>;
 }
 function PayrollWorkspace({shopId,authToken,owner,employees}:Props){
