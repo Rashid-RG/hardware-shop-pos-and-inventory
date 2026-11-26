@@ -66,6 +66,13 @@ export async function reviewPayroll(db:Pool,shopId:string,actor:string,i:Review)
    await c.query('COMMIT');return {id:i.proposalId,replayed:true};
   }
   if(i.decision==='Approved'){
+   const detail=(await c.query('SELECT * FROM ars_gl_payroll_details WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.proposalId])).rows[0];
+   if(detail){
+    const verified=snapshot(detail.inputs);
+    const d=verified.results;
+    if(detail.calculation_version!==1||verified.hash!==detail.snapshot_hash||canonical(d)!==canonical(detail.results)||moneyCents(d.baseSalary)!==moneyCents(p.base_salary)||moneyCents(d.grossSalary)!==moneyCents(detail.gross_salary)||moneyCents(d.totalDeductions)!==moneyCents(detail.total_deductions)||moneyCents(d.netSalary)!==moneyCents(detail.net_salary)||moneyCents(d.employerContributions)!==moneyCents(detail.employer_contributions)||moneyCents(d.employerCost)!==moneyCents(detail.employer_cost))throw Error('Payroll calculation integrity verification failed.');
+   }
+
    const employee=(await c.query('SELECT salary::text AS salary FROM employees WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,p.employee_id])).rows[0];
    if(!employee||moneyCents(employee.salary)!==moneyCents(p.base_salary))throw Error('Employee or base salary changed. Reject and prepare a new proposal.');
    if((await c.query('SELECT 1 FROM ars_gl_payroll_accruals WHERE shop_id=$1 AND employee_id=$2 AND period_key=$3',[shopId,p.employee_id,p.period_key])).rowCount)throw Error('Employee payroll already accrued for this month.');
