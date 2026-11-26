@@ -47,6 +47,14 @@ def read(path, maximum=65536):
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
+def matches_backup_receipt(receipt,raw,meta,binding):
+    return (receipt.get("schema")==1 and receipt.get("kind")=="mint-maintenance-backup-observation"
+            and receipt.get("holdDigest")==sha(raw["hold"]) and receipt.get("recoveryDigest")==sha(raw["recovery"])
+            and receipt.get("archive")==meta.get("archive") and receipt.get("version")==meta.get("version")
+            and all(receipt.get(k)==binding.get(k) for k in ("database","systemIdentifier","databaseOid"))
+            and receipt.get("locksObserved") is True and receipt.get("activationAllowed") is False
+            and receipt.get("continuousExclusionVerified") is False)
+
 def snapshot(folder):
     plain(STATE,True)
     plain(folder,True)
@@ -68,7 +76,7 @@ def snapshot(folder):
     for p in [runtime/".ars-writer-loss.json",*(runtime/"backups"/n for n in (".ars-drive-backup.lock",".ars-local-backup.lock",".ars-drive-recovery.lock"))]:
         if p.exists() or p.is_symlink():
             raise ValueError("Unresolved recovery or backup incident.")
-    files={"hold":STATE/"maintenance-hold.json","binding":STATE/"database-binding.json","configuration":runtime/".env.local","recovery":folder/"recovery.json","restore":folder/"restore-test.json"}
+    files={"hold":STATE/"maintenance-hold.json","binding":STATE/"database-binding.json","configuration":runtime/".env.local","recovery":folder/"recovery.json","restore":folder/"restore-test.json","protectedBackup":folder/"maintenance-backup-receipt.json"}
     raw={k:read(p) for k,p in files.items()}
     hold,meta,binding=(json.loads(raw[k]) for k in ("hold","recovery","binding"))
     version=meta.get("version")
@@ -76,6 +84,8 @@ def snapshot(folder):
         raise ValueError("Invalid release.")
     if hold.get("purpose")!="pre-update backup" or hold.get("previousProject")!=str(current) or hold.get("version")!=version or meta.get("previousProject")!=str(current) or meta.get("activationApproved") is not False:
         raise ValueError("Maintenance evidence mismatch.")
+    if not matches_backup_receipt(json.loads(raw["protectedBackup"]),raw,meta,binding):
+        raise ValueError("Protected backup belongs to another maintenance session.")
     stopped()
     db=load("database-binding.py").inspect()
     for key in ("schema","database","systemIdentifier","databaseOid","volume","port","activationAllowed"):
@@ -89,7 +99,7 @@ def snapshot(folder):
     check_database_clients(current)
     if any(read(p)!=raw[k] for k,p in files.items()) or (STATE/"project").resolve(strict=True)!=current:
         raise ValueError("Evidence changed during observation.")
-    return {"schema":1,"recoveryFolder":str(folder),"candidateVersion":version,"previousProject":str(current),"desktopUid":os.getuid(),"evidence":{k:sha(v) for k,v in raw.items()},"backupHoldBindingVerified":False,"continuousExclusionVerified":False,**FLAGS}
+    return {"schema":1,"recoveryFolder":str(folder),"candidateVersion":version,"previousProject":str(current),"desktopUid":os.getuid(),"evidence":{k:sha(v) for k,v in raw.items()},"backupHoldBindingVerified":True,"continuousExclusionVerified":False,**FLAGS}
 
 def matches(record, observed):
     return record.get("schema")==1 and record.get("kind")=="mint-runtime-activation-proposal" and record.get("observationOnly") is True and record.get("snapshot")==observed
@@ -125,7 +135,7 @@ def prepare(folder, verify=False, confirmation=""):
         raw=read(target)
         if not matches(json.loads(raw),snapshot(folder)) or read(target)!=raw:
             raise ValueError("Activation proposal invalid or stale.")
-        return {"proposalMatched":True,"proposalDigest":sha(raw),"backupHoldBindingVerified":False,"continuousExclusionVerified":False,**FLAGS}
+        return {"proposalMatched":True,"proposalDigest":sha(raw),"backupHoldBindingVerified":True,"continuousExclusionVerified":False,**FLAGS}
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)

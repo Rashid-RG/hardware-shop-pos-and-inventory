@@ -1,12 +1,25 @@
 // Maintenance-only helper. Does not change database configuration or terminate clients.
 import pg from 'pg';
 import { acquireHandoffGate, acquireMaintenanceTransactionFence } from '../database-handoff-gate.mjs';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, lstatSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { dirname } from 'node:path';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 const project=realpathSync(process.cwd());
 const state=resolve(process.env.HOME,'.local/share/ars-hardware');
-const hold=JSON.parse(readFileSync(resolve(state,'maintenance-hold.json'),'utf8'));
+const sha=b=>createHash('sha256').update(b).digest('hex');
+function evidence(path){
+  const s=lstatSync(path);
+  if(!s.isFile()||s.size<1||s.size>65536||realpathSync(path)!==path)throw Error('Invalid maintenance evidence.');
+  const raw=readFileSync(path);
+  const z=lstatSync(path);
+  if(raw.length!==s.size||z.ino!==s.ino||z.dev!==s.dev||z.mtimeMs!==s.mtimeMs||z.ctimeMs!==s.ctimeMs)throw Error('Evidence changed.');
+  return raw;
+}
+const holdPath=resolve(state,'maintenance-hold.json');
+const holdRaw=evidence(holdPath);
+const hold=JSON.parse(holdRaw);
 if(hold.purpose!=='pre-update backup'||hold.previousProject!==project||hold.version!==process.argv[2])throw Error('Matching maintenance hold required.');
 const lines=readFileSync(resolve(project,'.env.local'),'utf8').split(/\r?\n/);
 const urls=lines.filter(x=>x.startsWith('DATABASE_URL='));
@@ -48,9 +61,23 @@ try{
   if(failure)throw failure;
   const after=await client.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
   if(JSON.stringify(rows)!==JSON.stringify(after.rows))throw Error('Database table set changed during backup.');
-  await client.query('ROLLBACK');
   const matches=output.split(/\r?\n/).filter(x=>x.startsWith('Pinned recovery archive: '));
   if(matches.length!==1)throw Error('Missing unique recovery archive');
+  const folder=matches[0].slice('Pinned recovery archive: '.length);
+  if(realpathSync(folder)!==folder||dirname(folder)!==resolve(state,'update-recovery')||!lstatSync(folder).isDirectory())throw Error('Unexpected recovery folder.');
+  const metaPath=resolve(folder,'recovery.json'),metaRaw=evidence(metaPath),meta=JSON.parse(metaRaw);
+  if(meta.version!==hold.version||meta.previousProject!==project||meta.activationApproved!==false||!/^ars-mint-[A-Za-z0-9_-]+\.dump$/.test(meta.archive))throw Error('Recovery metadata mismatch.');
+  const identity=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid FROM pg_control_system()");
+  const db=identity.rows[0];
+  if(identity.rows.length!==1||db.database!=='hardware_pos_ars'||!/^\d{1,20}$/.test(db.system_identifier)||!/^\d{1,10}$/.test(db.database_oid))throw Error('Database identity unavailable.');
+  const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
+  if(locks.rows[0]?.count!==3||failure||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
+  const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.system_identifier,databaseOid:db.database_oid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
+  const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);
+  try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
+  const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
+  await client.query('ROLLBACK');
+  if(failure)throw failure;
   console.log(matches[0]);
   console.log('Application writer lease and existing public table SHARE locks were held during backup.');
 }finally{
