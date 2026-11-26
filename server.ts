@@ -31,6 +31,7 @@ import { reviewHistoricalCapital, listHistoricalCapitalReviews } from './backend
 import { partnerCapitalStatement, exportPartnerCapitalStatement } from './backend/partnerCapitalStatement';
 import { preparePayroll, reviewPayroll, listPayrollProposals } from './backend/payrollPreparation';
 import { calculatePayroll } from './backend/payrollCalculation';
+import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effectivePayrollPolicy } from './backend/payrollPolicies';
 import { submitOpeningProposal, listOpeningProposals, reviewOpeningProposal } from './backend/openingBalances';
 import { listLedgerAccounts, createLedgerAccount, updateLedgerAccount, seedWholesaleAccounts, ledgerAccountAudit } from './backend/chartOfAccounts';
 import { initPositionRegisters, listPositionRegisters, recordPositionBalance, positionKinds, type PositionKind } from './backend/positionRegisters';
@@ -7680,6 +7681,39 @@ app.get('/api/ars/partner-ownership-audit',requireRole(['Super Admin']),async(re
 });
 
 const payrollErrors=new Set(['Payroll calculation base salary must match the proposal.','Payroll proposal identifier already used with different calculation.','Payroll calculation integrity verification failed.','Explicit payroll policy and component lists required.','Unique component identifier and supporting evidence required.','Invalid earnings component.','Positive earnings required.','Invalid deduction component.','Positive deduction required.','Invalid contribution party or rate.','Contribution basis exceeds gross earnings.','Payroll deductions exceed gross earnings.','Payroll amount outside supported range.','Invalid payroll snapshot data.','Valid payroll proposal and evidence required.','Positive base salary required.','Use a non-negative decimal amount with at most two decimal places.','Payroll proposal identifier already used with different details.','Employee not found in this shop.','Base salary changed. Refresh and review payroll.','Employee payroll already accrued for this month.','An unresolved or approved payroll proposal already exists for this month.','Valid payroll decision and evidence required.','Payroll proposal not found in this shop.','Payroll proposal already reviewed.','Employee or base salary changed. Reject and prepare a new proposal.','Valid payroll month required.']);
+const payrollPolicyErrors=new Set(['Valid payroll policy and documentary evidence required.','Documented eligibility rules required.','Payroll policy identifier already used with different details.','A pending or approved policy already exists for this effective month.','Valid payroll policy review required.','Payroll policy not found in this shop.','Payroll policy already reviewed.','Independent payroll policy reviewer required.','Approved policy already exists for this effective month.','Existing approved detailed payroll requires policy reconciliation before retrospective approval.','Valid payroll month required.','No approved payroll policy for this month.','Conflicting approved payroll policies require reconciliation.']);
+app.get('/api/ars/payroll/policies',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ try{return res.json(await listPayrollPolicies(pool,scope.shopId));}
+ catch(error){console.error('Payroll policy listing failed',error);return res.status(503).json({error:'Unable to load payroll policies.'});}
+});
+app.get('/api/ars/payroll/policies/effective',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const period=req.query.period;
+ if(typeof period!=='string'||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))return res.status(400).json({error:'Valid payroll month required.'});
+ try{return res.json({policy:await effectivePayrollPolicy(pool,scope.shopId,period),statutoryVerified:false,postingEnabled:false});}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollPolicyErrors.has(message))return res.status(409).json({error:message});console.error('Effective payroll policy read failed',error);return res.status(503).json({error:'Unable to confirm effective payroll policy.'});}
+});
+app.post('/api/ars/payroll/policies',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const {requestId,effectiveMonth,employeeEpfBp,employerEpfBp,employerEtfBp,eligibilityRules,authorityReference,evidence}=req.body||{};
+ if(!validChequeRequestId(requestId))return res.status(400).json({error:'Valid payroll policy request identifier required.'});
+ try{const result=await proposePayrollPolicy(pool,scope.shopId,scope.recordedBy,{id:requestId,effectiveMonth,employeeEpfBp,employerEpfBp,employerEtfBp,eligibilityRules,authorityReference,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollPolicyErrors.has(message))return res.status(409).json({error:message});console.error('Payroll policy preparation failed',error);return res.status(503).json({error:'Unable to confirm policy preparation. Retry identical request.'});}
+});
+app.post('/api/ars/payroll/policies/:id/review',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ if(!databaseWriteHealthy)return res.status(503).json({error:'Database recovery required.'});
+ const id=req.params.id,{decision,evidence}=req.body||{};
+ if(!validChequeRequestId(id)||!['Approved','Rejected'].includes(decision)||typeof evidence!=='string')return res.status(400).json({error:'Valid payroll policy review required.'});
+ try{const result=await reviewPayrollPolicy(pool,scope.shopId,scope.recordedBy,{id,decision,evidence});return res.status(result.replayed?200:201).json(result);}
+ catch(error){const message=error instanceof Error?error.message:'';if(payrollPolicyErrors.has(message))return res.status(409).json({error:message});console.error('Payroll policy review failed',error);return res.status(503).json({error:'Unable to confirm policy review. Retry identical decision.'});}
+});
 app.get('/api/ars/payroll/proposals',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
  if(!scope)return res.status(403).json({error:'Accounting access denied.'});
