@@ -35,6 +35,7 @@ import { proposePayrollPolicy, reviewPayrollPolicy, listPayrollPolicies, effecti
 import { proposePayrollEligibility, reviewPayrollEligibility, listPayrollEligibility, effectivePayrollEligibility } from './backend/payrollEligibility';
 import { prepareEmployeeAdvance, reviewEmployeeAdvance, listEmployeeAdvanceRequests, listEmployeeAdvanceBalances } from './backend/employeeAdvances';
 import { listSalaryBalances, listSalaryPayments } from './backend/salaryPayments';
+import { readPostedPayslip, renderPostedPayslip } from './backend/payslip';
 import { listMonthlyStatutoryLiabilities, listStatutorySettlementHistory } from './backend/statutoryRegister';
 import { listStatutoryBankAvailability } from './backend/statutoryBankAvailability';
 import { reconcileStatutoryContributions } from './backend/statutoryReconciliation';
@@ -7762,6 +7763,19 @@ app.post('/api/ars/payroll/statutory-settlements',requireRole(['Super Admin']),(
  res.setHeader('Cache-Control','no-store');
  if(!chequeShopAccess(req))return res.status(403).json({error:'Accounting access denied.'});
  return res.status(409).json({error:'Statutory payment posting is disabled pending accounting verification.'});
+});
+app.get('/api/ars/payroll/payslips/:id/pdf',requireRole(['Super Admin']),async(req,res)=>{
+ const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
+ if(!scope)return res.status(403).json({error:'Accounting access denied.'});
+ const id=req.params.id;if(typeof id!=='string'||!id.trim()||id.length>200)return res.status(400).json({error:'Valid payroll accrual identifier required.'});
+ try{
+  const slip=await readPostedPayslip(pool,scope.shopId,id);
+  if(!slip)return res.status(404).json({error:'Posted payroll not found.'});
+  const {activeShopId,activeShopName}=getActiveShopContext(db,req);
+  if(activeShopId!==scope.shopId)return res.status(403).json({error:'Accounting access denied.'});
+  const pdf=await renderPostedPayslip(slip,activeShopName);
+  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition','attachment; filename="payslip-'+slip.period+'.pdf"');return res.send(pdf);
+ }catch(error){if(error instanceof Error&&error.message==='Payroll requires reconciliation before payslip export.')return res.status(409).json({error:error.message});console.error('Payslip export failed',error);return res.status(503).json({error:'Unable to verify posted payroll for payslip.'});}
 });
 app.get('/api/ars/payroll/salary-payments/balances',requireRole(['Super Admin']),async(req,res)=>{
  const scope=chequeShopAccess(req);res.setHeader('Cache-Control','no-store');
