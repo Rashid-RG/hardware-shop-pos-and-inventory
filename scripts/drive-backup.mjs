@@ -9,7 +9,7 @@ import { verifyBackup } from './verify-backup.mjs';
 import { withDriveBackupLock } from './drive-backup-lock.mjs';
 import { inspectDriveBackupHealth } from './drive-backup-health.mjs';
 import { inspectInterruptedDriveBackup } from './drive-backup-recovery.mjs';
-import { recoverPreviousBootLock } from './drive-backup-previous-boot.mjs';
+import { recoverPreviousBootLock, recoverWindowsPreviousBootLock } from './drive-backup-previous-boot.mjs';
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -122,6 +122,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     ? async()=>{console.log(JSON.stringify(await inspectInterruptedDriveBackup(await resolveBackupDirectory())));}
     : args.length===2 && args[0]==='--recover-previous-boot'
     ? async()=>{console.log(JSON.stringify(await recoverPreviousBootLock(await resolveBackupDirectory(),args[1])));}
+    : args.length===2 && args[0]==='--recover-windows-previous-boot'
+    ? async()=>{console.log(JSON.stringify(await recoverWindowsPreviousBootLock(await resolveBackupDirectory(),args[1])));}
     : async()=>{throw new Error('Unsupported backup command');};
   run().catch(() => { console.error('Backup operation failed or blocked. Review local backup health and history.'); process.exitCode = 1; });
 }

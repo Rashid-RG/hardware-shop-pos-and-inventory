@@ -1,6 +1,7 @@
 import { readFile, lstat, open, realpath, mkdir, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { windowsBootEvidence, corroborateWindowsBoot } from './drive-backup-windows-boot.mjs';
 
 const bootPattern=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 export async function currentLinuxBootId() {
@@ -38,6 +39,41 @@ export async function recoverPreviousBootLock(directory,confirmation) {
     const second=await readLock(lock);
     if(JSON.stringify(first)!==JSON.stringify(second)) throw new Error('Retained lock changed.');
     // Atomic move retains original bytes; destination is private and newly created.
+    await rename(lock,join(evidence,'previous-boot.lock'));
+    return {schema:1,lockRecovered:true,evidenceRetained:true,retryStarted:false,uploadStarted:false};
+  } finally {
+    await handle.close();
+    await unlink(guard);
+  }
+}
+
+// Windows recovery remains a local, explicitly confirmed operation. No retry or restore.
+export function windowsRecoveryEligible(record,current) {
+  return !!(record?.schema===1 && Number.isSafeInteger(record.pid) && record.pid>0 &&
+    typeof record.startedAt==='string' && record.bootId===null &&
+    corroborateWindowsBoot(record.windowsBoot,current,record.startedAt));
+}
+export async function recoverWindowsPreviousBootLock(directory,confirmation) {
+  if(confirmation!=='RECOVER WINDOWS PREVIOUS BOOT') throw new Error('Explicit Windows recovery confirmation required.');
+  if(process.platform!=='win32') throw new Error('Windows recovery requires a Windows host.');
+  const root=await realpath(directory);
+  const guard=join(root,'.ars-drive-recovery.lock');
+  const lock=join(root,'.ars-drive-backup.lock');
+  const handle=await open(guard,'wx',0o600);
+  try {
+    const before=await readLock(lock);
+    const boot=await windowsBootEvidence();
+    if(!windowsRecoveryEligible(before,boot)) throw new Error('Corroborated previous Windows boot required.');
+    // Local backup lock is a separate recovery problem; never clear it here.
+    try {await lstat(join(root,'.ars-local-backup.lock'));throw new Error('Local backup lock requires separate review.');}
+    catch(error){if(error.code!=='ENOENT') throw error;}
+    const evidence=join(root,'.ars-drive-recovered-'+randomUUID());
+    await mkdir(evidence,{mode:0o700});
+    const again=await windowsBootEvidence();
+    const after=await readLock(lock);
+    if(JSON.stringify(before)!==JSON.stringify(after) || JSON.stringify(boot)!==JSON.stringify(again) || !windowsRecoveryEligible(after,again)) throw new Error('Recovery evidence changed.');
+    try {await lstat(join(root,'.ars-local-backup.lock'));throw new Error('Local backup lock requires separate review.');}
+    catch(error){if(error.code!=='ENOENT') throw error;}
     await rename(lock,join(evidence,'previous-boot.lock'));
     return {schema:1,lockRecovered:true,evidenceRetained:true,retryStarted:false,uploadStarted:false};
   } finally {
