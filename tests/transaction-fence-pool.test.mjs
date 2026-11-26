@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {transformSync} from 'esbuild';
+import {EventEmitter} from 'node:events';
+const source=readFileSync(new URL('../backend/transactionFence.ts',import.meta.url),'utf8');
+const {installTransactionFence}=await import('data:text/javascript;base64,'+Buffer.from(transformSync(source,{loader:'ts',format:'esm'}).code).toString('base64'));
+test('shared server pool fences module transactions and rolls back failed admission',async()=>{
+ const pool=new EventEmitter(), calls=[];
+ let fail=false;
+ const client={query:async sql=>{calls.push(sql);return {};}};
+ installTransactionFence(pool,async()=>{calls.push('check');if(fail)throw Error('lost');},async()=>{calls.push('fence');if(fail)throw Error('lost');});
+ pool.emit('connect',client);
+ await client.query('BEGIN');
+ await client.query('SELECT 1');
+ await client.query('COMMIT');
+ assert.deepEqual(calls,['BEGIN','fence','SELECT 1','check','COMMIT']);
+ fail=true;
+ await assert.rejects(client.query('BEGIN'),/lost/);
+ assert.deepEqual(calls.slice(-3),['BEGIN','fence','ROLLBACK']);
+ await assert.rejects(client.query('COMMIT'),/lost/);
+ assert.equal(calls.at(-1),'check');
+});

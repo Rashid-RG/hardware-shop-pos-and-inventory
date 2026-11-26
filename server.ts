@@ -1,3 +1,4 @@
+import { installTransactionFence } from './backend/transactionFence';
 import {payrollAccountingOverview} from './backend/payrollAccountingOverview';
 import {reconcileSalaryPayable} from './backend/salaryPayableReconciliation';
 import {reconcileStatutoryControls} from './backend/statutoryControlReconciliation';
@@ -376,6 +377,7 @@ const acquireTransactionFence = async (client: PoolClient) => {
   if (result.rows[0]?.acquired !== true) throw new Error('Database transaction fence unavailable.');
   await assertWriterBeforeCommit();
 };
+installTransactionFence(pool, assertWriterBeforeCommit, acquireTransactionFence);
 const LOGIN_ATTEMPT_LIMIT = 5;
 const LOGIN_LOCK_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map<string, { failedCount: number; lockUntil: number }>();
