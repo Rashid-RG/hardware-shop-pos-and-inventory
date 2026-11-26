@@ -394,3 +394,22 @@ test('import controls compare recognized liabilities less settlements on disposa
  assert.equal(r.counts['evidence-review'],1);assert.equal(r.recoveryAllowed,false);
  }finally{await c.end();}
 });
+
+test('fenced writer transfer and rollback retain the disposable coordinator gate',{timeout:30000},async()=>{
+ const {rehearseFencedTransfer}=await import('../scripts/database-fenced-transfer-rehearsal.mjs');
+ for(const failCandidate of [false,true]){
+  const clients=Array.from({length:4},()=>new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000}));
+  const base=100+Math.floor(Math.random()*1000000000);
+  try{
+   for(const c of clients)await c.connect();
+   const r=await rehearseFencedTransfer(...clients,{gateId:base,writerId:base+1,fenceId:base+2,failCandidate});
+   assert.equal(r.state,failCandidate?'rollback-rehearsed':'candidate-rehearsed');
+   assert.equal(r.writerAndFenceVerified,true);assert.equal(r.liveStartupAllowed,false);
+   const probe=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000});
+   try{
+    await probe.connect();
+    for(const id of [base,base+1,base+2])assert.equal((await probe.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,id])).rows[0].acquired,true);
+   }finally{await probe.end();}
+  }finally{for(const c of clients)await c.end().catch(()=>{});}
+ }
+});
