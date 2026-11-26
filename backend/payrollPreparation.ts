@@ -1,10 +1,12 @@
 import type {Pool} from 'pg';
 import {createHash} from 'node:crypto';
-import {calculatePayroll,type PayrollCalculationInput} from './payrollCalculation';
+import {calculatePayroll,calculateStatutoryPayroll,type PayrollCalculationInput} from './payrollCalculation';
 import {moneyCents} from './generalLedger';
 import {decimal} from './supplierAdvance';
+import {effectivePayrollPolicy} from './payrollPolicies';
+import {effectivePayrollEligibility} from './payrollEligibility';
 
-type Proposal={id:string;employeeId:string;period:string;expectedBaseSalary:string;postingDate:string;evidence:string;currentBusinessDate:string;calculation?:PayrollCalculationInput};
+type Proposal={id:string;employeeId:string;period:string;expectedBaseSalary:string;postingDate:string;evidence:string;currentBusinessDate:string;calculation?:PayrollCalculationInput;statutory?:{policyId:string;eligibilityId:string;eligibilityEvidence:string;sourceInputs:PayrollCalculationInput;expectedResults:ReturnType<typeof calculatePayroll>}};
 type Review={proposalId:string;decision:'Approved'|'Rejected';evidence:string};
 const identity=(v:unknown):v is string=>typeof v==='string'&&!!v.trim()&&v.length<=200;
 const evidenceValid=(v:unknown):v is string=>typeof v==='string'&&!!v.trim()&&v.trim().length<=500;
@@ -26,18 +28,33 @@ export async function preparePayroll(db:Pool,shopId:string,actor:string,i:Propos
  if(!i||![shopId,actor,i.id,i.employeeId].every(identity)||!validDay(i.postingDate)||!validDay(i.currentBusinessDate)||i.postingDate>i.currentBusinessDate||i.period!==i.postingDate.slice(0,7)||!evidenceValid(i.evidence))throw Error('Valid payroll proposal and evidence required.');
  const cents=moneyCents(i.expectedBaseSalary),evidence=i.evidence.trim();
  if(cents<=0n||cents>99999999999999n)throw Error('Positive base salary required.');
- const detail=i.calculation===undefined?null:snapshot(i.calculation);
+ const st=i.statutory;
+ if(st!==undefined&&(!st||i.calculation!==undefined||!identity(st.policyId)||!identity(st.eligibilityId)||!evidenceValid(st.eligibilityEvidence)||!st.sourceInputs||!st.expectedResults))throw Error('Valid statutory snapshot request required.');
+ if(!st&&i.calculation?.policyReference?.startsWith('statutory-policy:'))throw Error('Statutory calculations require verified source bindings.');
+ const binding=(hash:string)=>st?createHash('sha256').update(canonical({version:1,shopId,proposalId:i.id,employeeId:i.employeeId,period:i.period,policyId:st.policyId,eligibilityId:st.eligibilityId,eligibilityEvidence:st.eligibilityEvidence.trim(),sourceInputs:st.sourceInputs,expectedResults:st.expectedResults,detailHash:hash})).digest('hex'):null;
+ let detail=i.calculation===undefined?null:snapshot(i.calculation);
  if(detail&&moneyCents(detail.results.baseSalary)!==cents)throw Error('Payroll calculation base salary must match the proposal.');
  const c=await db.connect();
  try{
   await c.query('BEGIN');
   await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['payroll-proposal:'+shopId+':'+i.id]);
+  if(st){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['payroll-policy:'+shopId]);await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['payroll-eligibility:'+shopId]);}
   const prior=(await c.query('SELECT *,posting_date::text AS day FROM ars_gl_payroll_proposals WHERE shop_id=$1 AND id=$2',[shopId,i.id])).rows[0];
   if(prior){
    if(prior.employee_id!==i.employeeId||prior.period_key!==i.period||moneyCents(prior.base_salary)!==cents||prior.day!==i.postingDate||prior.evidence!==evidence||prior.submitted_by!==actor)throw Error('Payroll proposal identifier already used with different details.');
    const saved=(await c.query('SELECT snapshot_hash FROM ars_gl_payroll_details WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.id])).rows[0];
-   if((saved?.snapshot_hash??null)!==(detail?.hash??null))throw Error('Payroll proposal identifier already used with different calculation.');
+   const bound=(await c.query('SELECT binding_hash FROM ars_gl_payroll_statutory_snapshots WHERE shop_id=$1 AND proposal_id=$2',[shopId,i.id])).rows[0];
+   if(st?(!saved||!bound||bound.binding_hash!==binding(saved.snapshot_hash)):!!bound||(saved?.snapshot_hash??null)!==(detail?.hash??null))throw Error('Payroll proposal identifier already used with different calculation.');
    await c.query('COMMIT');return {id:i.id,replayed:true};
+  }
+  if(st){
+   const policy=await effectivePayrollPolicy(c as unknown as Pool,shopId,i.period);
+   const eligibility=await effectivePayrollEligibility(c as unknown as Pool,shopId,i.employeeId,i.period);
+   if(policy.id!==st.policyId||eligibility.id!==st.eligibilityId)throw Error('Statutory policy or eligibility changed. Recalculate payroll.');
+   const derived=calculateStatutoryPayroll(st.sourceInputs,policy);
+   if(canonical(derived.results)!==canonical(st.expectedResults))throw Error('Statutory calculation changed. Recalculate payroll.');
+   detail=snapshot(derived.inputs);
+   if(moneyCents(detail.results.baseSalary)!==cents)throw Error('Payroll calculation base salary must match the proposal.');
   }
   const employee=(await c.query('SELECT name,salary::text AS salary FROM employees WHERE shop_id=$1 AND id=$2 FOR UPDATE',[shopId,i.employeeId])).rows[0];
   if(!employee)throw Error('Employee not found in this shop.');
@@ -49,6 +66,7 @@ export async function preparePayroll(db:Pool,shopId:string,actor:string,i:Propos
    const d=detail.results;
    await c.query('INSERT INTO ars_gl_payroll_details(shop_id,proposal_id,calculation_version,inputs,results,snapshot_hash,gross_salary,total_deductions,net_salary,employer_contributions,employer_cost,recorded_by) VALUES($1,$2,1,$3::jsonb,$4::jsonb,$5,$6,$7,$8,$9,$10,$11)',[shopId,i.id,JSON.stringify(detail.inputs),JSON.stringify(d),detail.hash,d.grossSalary,d.totalDeductions,d.netSalary,d.employerContributions,d.employerCost,actor]);
   }
+  if(st&&detail)await c.query('INSERT INTO ars_gl_payroll_statutory_snapshots(shop_id,proposal_id,policy_id,eligibility_id,snapshot_version,source_inputs,eligibility_evidence,binding_hash,recorded_by) VALUES($1,$2,$3,$4,1,$5::jsonb,$6,$7,$8)',[shopId,i.id,st.policyId,st.eligibilityId,JSON.stringify(st.sourceInputs),st.eligibilityEvidence.trim(),binding(detail.hash),actor]);
   await c.query('COMMIT');return {id:i.id,replayed:false};
  }catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}
 }
