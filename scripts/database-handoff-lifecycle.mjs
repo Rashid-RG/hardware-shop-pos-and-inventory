@@ -53,3 +53,33 @@ export async function appendHandoffStage(path,phase,evidenceDigest,confirmation)
  if(process.platform!=='win32'){const dir=await open(current.root,'r');try{await dir.sync();}finally{await dir.close();}}
  return {recorded:true,phase,sequence,activationAllowed:false};
 }
+
+const terminal=phase=>phase==='aborted'||phase==='completed-rehearsal';
+async function readClosure(current){
+ const raw=await plainRead(join(current.root,'handoff-closure.json'));
+ const c=JSON.parse(raw);
+ if(c.schema!==1||c.id!==current.id||c.finalPhase!==current.phase||c.sequence!==current.sequence||c.finalDigest!==current.previous||!terminal(current.phase)||c.activationAllowed!==false||c.startupAllowed!==false||c.recoveryAllowed!==false||typeof c.closedAt!=='string'||!Number.isFinite(Date.parse(c.closedAt)))throw Error('Closure evidence differs from journal.');
+ return c;
+}
+export async function recordHandoffClosure(path,confirmation){
+ if(confirmation!=='RECORD REHEARSAL CLOSURE')throw Error('Explicit closure confirmation required.');
+ const current=await inspect(path);
+ if(!terminal(current.phase))throw Error('Lifecycle is not terminal.');
+ const receipt={schema:1,id:current.id,finalPhase:current.phase,sequence:current.sequence,finalDigest:current.previous,closedAt:new Date().toISOString(),activationAllowed:false,startupAllowed:false,recoveryAllowed:false};
+ const file=await open(join(current.root,'handoff-closure.json'),'wx',0o600);
+ try{await file.writeFile(JSON.stringify(receipt)+'\n');await file.sync();}finally{await file.close();}
+ if(process.platform!=='win32'){const dir=await open(current.root,'r');try{await dir.sync();}finally{await dir.close();}}
+ const verified=await inspect(path);
+ await readClosure(verified);
+ return {closureRecorded:true,maintenanceRetained:true,activationAllowed:false,startupAllowed:false,recoveryAllowed:false};
+}
+export async function inspectHandoffClosure(path){
+ const blocked={requiresReview:true,activationAllowed:false,startupAllowed:false,recoveryAllowed:false};
+ try{
+  const current=await inspect(path);
+  const entries=await readdir(current.root);
+  if(!entries.some(x=>x.toLowerCase()==='handoff-closure.json'))return {state:terminal(current.phase)?'closure-not-recorded':'incomplete',...blocked};
+  await readClosure(current);
+  return {state:'closure-matched',finalPhase:current.phase,...blocked};
+ }catch{return {state:'unreadable-or-invalid',...blocked};}
+}
