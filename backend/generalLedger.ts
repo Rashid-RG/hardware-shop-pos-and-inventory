@@ -248,6 +248,34 @@ export async function initGeneralLedger(db:Pool|PoolClient){
  DROP TRIGGER IF EXISTS ars_gl_payroll_detail_immutable ON ars_gl_payroll_details;
  CREATE TRIGGER ars_gl_payroll_detail_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_details
  FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ -- Effective-dated statutory policy proposals require documentary approval; no default rates.
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_policies(
+  shop_id TEXT NOT NULL,id TEXT NOT NULL,
+  effective_month TEXT NOT NULL CHECK(effective_month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  employee_epf_bp INTEGER NOT NULL CHECK(employee_epf_bp BETWEEN 0 AND 10000),
+  employer_epf_bp INTEGER NOT NULL CHECK(employer_epf_bp BETWEEN 0 AND 10000),
+  employer_etf_bp INTEGER NOT NULL CHECK(employer_etf_bp BETWEEN 0 AND 10000),
+  eligibility_rules JSONB NOT NULL CHECK(jsonb_typeof(eligibility_rules)='object'),
+  authority_reference TEXT NOT NULL CHECK(length(trim(authority_reference)) BETWEEN 1 AND 500),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  submitted_by TEXT NOT NULL,submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,id)
+ );
+ CREATE TABLE IF NOT EXISTS ars_gl_payroll_policy_reviews(
+  shop_id TEXT NOT NULL,policy_id TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK(decision IN ('Approved','Rejected')),
+  evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
+  reviewed_by TEXT NOT NULL,reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(shop_id,policy_id),
+  FOREIGN KEY(shop_id,policy_id) REFERENCES ars_gl_payroll_policies(shop_id,id)
+ );
+ DROP TRIGGER IF EXISTS ars_gl_payroll_policy_immutable ON ars_gl_payroll_policies;
+ CREATE TRIGGER ars_gl_payroll_policy_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_policies
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ DROP TRIGGER IF EXISTS ars_gl_payroll_policy_review_immutable ON ars_gl_payroll_policy_reviews;
+ CREATE TRIGGER ars_gl_payroll_policy_review_immutable BEFORE UPDATE OR DELETE ON ars_gl_payroll_policy_reviews
+ FOR EACH ROW EXECUTE FUNCTION ars_gl_reject_mutation();
+ CREATE INDEX IF NOT EXISTS ars_gl_payroll_policy_month ON ars_gl_payroll_policies(shop_id,effective_month);
  CREATE TABLE IF NOT EXISTS ars_gl_period_closures(
   shop_id TEXT NOT NULL,through_date DATE NOT NULL,
   evidence TEXT NOT NULL CHECK(length(trim(evidence)) BETWEEN 1 AND 500),
