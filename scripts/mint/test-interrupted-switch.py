@@ -505,6 +505,34 @@ class RecoveryTests(unittest.TestCase):
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
                 center.offline_release_center(candidate)
                 run.assert_called_once_with(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE")
+    def test_candidate_fingerprint_survives_only_verified_runtime_links(self):
+        from release_fingerprint import fingerprint
+        spec=importlib.util.spec_from_file_location("intent",Path(__file__).with_name("prepare-switch-intent.py"))
+        intent=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(intent)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            candidate=root/"candidate"
+            runtime=root/"runtime"
+            candidate.mkdir()
+            runtime.mkdir()
+            (candidate/"server.cjs").write_text("fixture")
+            (runtime/".env.local").write_text("private")
+            (runtime/"uploads").mkdir()
+            (runtime/"backups").mkdir()
+            digest=fingerprint(candidate)
+            intent.prepare_candidate_runtime(candidate,runtime)
+            self.assertEqual(fingerprint(candidate,runtime),digest)
+            (runtime/".env.local").write_text("updated private")
+            self.assertEqual(fingerprint(candidate,runtime),digest)
+            (candidate/"uploads").unlink()
+            (candidate/"uploads").symlink_to(root)
+            with self.assertRaises(ValueError):
+                fingerprint(candidate,runtime)
+            (candidate/"uploads").unlink()
+            (candidate/"uploads").symlink_to(runtime/"uploads")
+            (candidate/"server.cjs").write_text("modified")
+            self.assertNotEqual(fingerprint(candidate,runtime),digest)
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

@@ -103,7 +103,7 @@ def test(folder, compatibility=False):
                 manifest=json.loads((staged/".ars-release-manifest.json").read_text())
                 if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
                     raise ValueError("Release manifest mismatch.")
-                build_fingerprint=fingerprint(staged)
+                build_fingerprint=fingerprint(staged,STATE/"runtime")
                 node_image="node:22-bookworm-slim"
                 run(["docker","image","inspect",node_image],stdout=subprocess.DEVNULL)
                 def snapshot():
@@ -179,7 +179,7 @@ def test(folder, compatibility=False):
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if fingerprints(schema)!=before:
                     raise RuntimeError("Existing database rows changed during startup; automatic compatibility approval blocked.")
-                if fingerprint(staged)!=build_fingerprint:
+                if fingerprint(staged,STATE/"runtime")!=build_fingerprint:
                     raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
                 # Exercise writes only after the read-only preservation check. Restart the same test application.
