@@ -41,10 +41,13 @@ def run(repair):
             raise ValueError("Evidence changed; repair result is not approved.")
         test_raw=observer.read(repair/"repair-restore-test.json")
         result=json.loads(test_raw)
-        if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
+        if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed","repairSpecificBackwardTested","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
             raise ValueError("Incomplete repair rehearsal.")
         if result.get("testedBuildRetained") is not True:
             raise ValueError("Tested build retention required.")
+        prior=json.loads(observer.read(recovery/"restore-test.json"))
+        if result.get("previousBuildFingerprint")!=prior.get("previousBuildFingerprint") or result.get("archiveSha256")!=prior.get("archiveSha256"):
+            raise ValueError("Previous executable or recovery archive mismatch.")
         verify_retained_build(repair,result["buildFingerprint"])
         final={"schema":1,"kind":"mint-repair-rehearsal-observation","backupObservationDigest":observer.sha(raw),"testReceiptDigest":observer.sha(test_raw),"repairReceiptDigest":binding[0],"activationAllowed":False,"startupAllowed":False,"repairApplied":False}
         with (repair/"repair-rehearsal-observation.json").open("x") as stream:

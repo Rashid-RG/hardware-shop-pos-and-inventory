@@ -84,6 +84,8 @@ def test(folder, compatibility=False, repair=None):
         compatibility_result=False
         build_fingerprint=None
         backward_result=False
+        backward_reads=False
+        backward_writes=False
         previous_build=None
         authenticated_reads=False
         authenticated_writes=False
@@ -228,7 +230,8 @@ def test(folder, compatibility=False, repair=None):
                     authenticated_writes=True
                     if fingerprint(isolated)!=build_fingerprint:
                         raise ValueError("Repair build changed during testing.")
-                else:
+                # Repair and update rehearsals both exercise the previous executable on the same mutated database.
+                if compatibility:
                     # Preserve all rows, including the newly issued synthetic invoices, across rollback startup.
                     schema=snapshot()
                     before=fingerprints(schema)
@@ -239,8 +242,18 @@ def test(folder, compatibility=False, repair=None):
                     with tempfile.TemporaryDirectory(prefix="ars-old-build-") as temp:
                         old=Path(temp)
                         for part in ("dist","node_modules"):
-                            shutil.copytree(project/part,old/part,symlinks=True)
+                            source=project/part
+                            if source.resolve(strict=True)!=source or not source.is_dir():
+                                raise ValueError("Previous executable tree unavailable.")
+                            fingerprint(source)
+                            shutil.copytree(source,old/part,symlinks=True)
+                            if fingerprint(source)!=fingerprint(old/part):
+                                raise ValueError("Previous executable changed during copy.")
                         previous_build=fingerprint(old)
+                        if repair is not None:
+                            prior=json.loads((folder/"restore-test.json").read_text())
+                            if prior.get("previousBuildFingerprint")!=previous_build or prior.get("archiveSha256")!=checksum or prior.get("backwardStartupPassed") is not True:
+                                raise ValueError("Previous executable does not match existing recovery evidence.")
                         run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
                         app_created=False
                         run(["docker","run","-d","--pull=never","--name",app_name,
@@ -265,12 +278,16 @@ def test(folder, compatibility=False, repair=None):
                             if fingerprints(schema)!=before:
                                 raise RuntimeError("Previous release changed historical records on migrated database.")
                             backward_result=True
+                            backward_reads=True
                             authenticated_reads=True
                             run(["docker","start",app_name],stdout=subprocess.DEVNULL)
                             wait_ready()
                             write_probe()
                             run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                             authenticated_writes=True
+                            backward_writes=True
+                            if fingerprint(old)!=previous_build or any(fingerprint(project/part)!=fingerprint(old/part) for part in ("dist","node_modules")):
+                                raise ValueError("Previous executable changed during backward rehearsal.")
                         finally:
                             run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
                             app_created=False
@@ -291,13 +308,13 @@ def test(folder, compatibility=False, repair=None):
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
-                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"authenticatedReadsPassed":authenticated_reads,"authenticatedWritesPassed":authenticated_writes,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
+                "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"backwardReadsPassed":backward_reads,"backwardWritesPassed":backward_writes,"authenticatedReadsPassed":authenticated_reads,"authenticatedWritesPassed":authenticated_writes,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
         if repair is None:
             temporary=folder/(".restore-"+uuid.uuid4().hex)
             temporary.write_text(json.dumps(result,indent=2)+"\n")
             temporary.replace(receipt)
         else:
-            result.update({"kind":"isolated-repair-restore-test","testedBuildRetained":True,"repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
+            result.update({"kind":"isolated-repair-restore-test","repairSpecificBackwardTested":backward_result and backward_reads and backward_writes,"testedBuildRetained":True,"repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
             with receipt.open("x") as stream:
                 json.dump(result,stream,indent=2)
                 stream.flush()

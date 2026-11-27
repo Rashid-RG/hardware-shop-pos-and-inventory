@@ -18,7 +18,7 @@ class Tests(unittest.TestCase):
         flags={k:False for k in module.FLAGS}
         binding=("a"*64,"b"*64)
         backup=dict(schema=1,kind="repair-backup-observation",backupEvidenceMatched=True,repairCandidateRestoreTested=False,repairReceiptDigest=binding[0],manifestDigest=binding[1],**flags)
-        test=dict(kind="isolated-repair-restore-test",restoreTestPassed=True,authenticatedReadsPassed=True,authenticatedWritesPassed=True,migrationCompatibilityPassed=True,continuousExclusionVerified=False,activationApproved=False,buildFingerprint="c"*64,**flags)
+        test=dict(kind="isolated-repair-restore-test",restoreTestPassed=True,authenticatedReadsPassed=True,authenticatedWritesPassed=True,migrationCompatibilityPassed=True,continuousExclusionVerified=False,activationApproved=False,buildFingerprint="c"*64,previousBuildFingerprint="d"*64,repairSpecificBackwardTested=True,backwardStartupPassed=True,backwardReadsPassed=True,backwardWritesPassed=True,**flags)
         raw={k:json.dumps(v).encode() for k,v in (("backup",backup),("test",test))}
         final=dict(schema=1,kind="mint-repair-rehearsal-observation",backupObservationDigest=Observer.sha(raw["backup"]),testReceiptDigest=Observer.sha(raw["test"]),repairReceiptDigest=binding[0],**flags)
         raw["completion"]=json.dumps(final).encode()
@@ -26,6 +26,16 @@ class Tests(unittest.TestCase):
     def test_valid_receipts(self):
         binding,raw=self.fixture()
         module.validate_receipts(binding,raw,Observer)
+    def test_backward_required(self):
+        binding,raw=self.fixture()
+        record=json.loads(raw["test"])
+        record["backwardWritesPassed"]=False
+        raw["test"]=json.dumps(record).encode()
+        final=json.loads(raw["completion"])
+        final["testReceiptDigest"]=Observer.sha(raw["test"])
+        raw["completion"]=json.dumps(final).encode()
+        with self.assertRaises(ValueError):
+            module.validate_receipts(binding,raw,Observer)
     def test_tampered_test(self):
         binding,raw=self.fixture()
         raw["test"]+=b" "

@@ -81,6 +81,8 @@ def prepare(repair):
             raise ValueError("Retained repair build required.")
         verify_retained_build(repair,test["buildFingerprint"])
         old=validate_previous(previous,executable_fingerprint(project))
+        if test.get("previousBuildFingerprint")!=old:
+            raise ValueError("Repair-specific backward executable mismatch.")
         if observer.snapshot(recovery)!=evidence or observer.read(recovery/"restore-test.json")!=previous_raw or any(observer.read(p)!=raw[k] for k,p in paths.items()) or review.validate_repair(repair,project,observer)!=binding or executable_fingerprint(project)!=old:
             raise ValueError("Rollback prerequisites changed.")
         verify_retained_build(repair,test["buildFingerprint"])
@@ -88,7 +90,7 @@ def prepare(repair):
                 "previousBuildFingerprint":old,"repairBuildFingerprint":test["buildFingerprint"],
                 "archiveSha256":test["archiveSha256"],"previousRestoreDigest":observer.sha(previous_raw),
                 "repairEvidenceDigests":{k:observer.sha(v) for k,v in raw.items()},
-                "previousUpdateRollbackEvidenceMatched":True,"repairSpecificRollbackTested":False,
+                "previousUpdateRollbackEvidenceMatched":True,"repairSpecificRollbackTested":True,
                 "continuousExclusionVerified":False,**FLAGS}
         target=repair/"rollback-preparation.json"
         with os.fdopen(os.open(target,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600),"w") as stream:
@@ -109,7 +111,7 @@ def main():
         return
     try:
         prepare(Path(selection.stdout.strip()))
-        dialog("--info","--no-markup","--text=Previous application fingerprint and existing rollback evidence matched. Repair-specific backward testing is still required. No rollback or activation authorized.")
+        dialog("--info","--no-markup","--text=Previous application fingerprint and existing rollback evidence matched. Isolated repair-specific backward testing matched. No live rollback or activation authorized.")
     except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         dialog("--error","--no-markup","--text=Rollback preparation blocked. Previous application or protected backup evidence could not be verified. No repair applied.")
 
