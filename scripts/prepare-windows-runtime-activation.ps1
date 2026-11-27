@@ -1,6 +1,7 @@
 # Retain a non-authorizing activation proposal. Never switch runtime or start POS.
-param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[string]$Confirmation)
+param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[string]$Confirmation,[switch]$ReviewIncident)
 $ErrorActionPreference='Stop'
+if ($ReviewIncident -and ($Verify -or $Confirmation)) { throw 'Incident review must be requested separately.' }
 if ($RecoveryId -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') { throw 'Invalid recovery identifier.' }
 $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
 $control=Join-Path $state 'desktop-control'
@@ -59,6 +60,18 @@ function Get-Snapshot {
   if ((Get-PlainHash $helper) -cne $helperHash) { throw 'Preflight helper changed.' }
   [ordered]@{schema=1;recoveryId=$RecoveryId;candidateVersion=$plan.candidateVersion;userSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;helperHash=$helperHash;evidence=$hashes;runtimeActivated=$false;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false}
 }
+function Get-IncidentReview {
+  Assert-Chain $control
+  $item=Get-Item -LiteralPath $incident -Force
+  if ($item.PSIsContainer -or $item.Length -le 0 -or $item.Length -gt 16384 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid incident evidence.' }
+  $before=Get-PlainHash $incident
+  $record=Get-Content -LiteralPath $incident -Raw | ConvertFrom-Json
+  if ($record.schema -ne 1 -or $record.kind -cne 'windows-interrupted-activation' -or $record.recoveryId -cne $RecoveryId -or -not $record.detectedAt -or $record.activationAllowed -isnot [bool] -or $record.activationAllowed -or $record.startupAllowed -isnot [bool] -or $record.startupAllowed -or $record.rollbackAllowed -isnot [bool] -or $record.rollbackAllowed) { throw 'Invalid incident evidence or recovery identifier.' }
+  $snapshot=Get-Snapshot
+  $again=Get-Snapshot
+  if (($again | ConvertTo-Json -Depth 6 -Compress) -cne ($snapshot | ConvertTo-Json -Depth 6 -Compress) -or (Get-PlainHash $incident) -cne $before) { throw 'Incident review evidence changed.' }
+  [ordered]@{schema=1;kind='windows-activation-incident-review';incidentDigest=$before;snapshot=$again;incidentRetained=$true;administratorApprovalRequired=$true;continuousExclusionVerified=$false;recoveryAllowed=$false;runtimeActivated=$false;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false} | ConvertTo-Json -Depth 8
+}
 function Assert-MatchingProposal($snapshot) {
   $item=Get-Item -LiteralPath $target -Force
   if ($item.PSIsContainer -or $item.Length -gt 16384 -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid proposal.' }
@@ -79,6 +92,7 @@ try {
   }
   if (-not $owns) { throw 'Another maintenance operation is active.' }
   foreach ($dir in @($control,$runtime,$folder,$PSScriptRoot)) { Assert-Chain $dir }
+  if ($ReviewIncident) { Get-IncidentReview; return }
   Assert-NoActivationIncident
   $snapshot=Get-Snapshot
   if ($Verify) { Assert-MatchingProposal $snapshot; return }
