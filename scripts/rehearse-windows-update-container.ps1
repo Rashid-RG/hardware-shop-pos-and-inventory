@@ -100,6 +100,16 @@ try {
     $endpoint=(& docker context inspect --format '{{.Endpoints.docker.Host}}')
     if ($LASTEXITCODE -ne 0 -or $endpoint -notin @('npipe:////./pipe/docker_engine','npipe:////./pipe/dockerDesktopLinuxEngine')) { throw 'Local Docker engine required.' }
     $repairBinding=Get-ArsRepairReviewBinding $root $state $RepairFolder
+    $backupPath=Join-Path $RepairFolder 'backup-observation.json'
+    $backupHash=Get-ArsRepairMetadataHash $RepairFolder 'backup-observation.json'
+    $backup=Get-Content -LiteralPath $backupPath -Raw | ConvertFrom-Json
+    if ($backup.kind -cne 'windows-repair-backup-observation' -or $backup.recoveryId -cne $RecoveryId -or $backup.backupEvidenceMatched -ne $true -or ($backup.binding|ConvertTo-Json -Compress) -cne ($repairBinding|ConvertTo-Json -Compress)) { throw 'Matching repair backup evidence required.' }
+    foreach ($flag in @('repairCandidateRestoreTested','activationAllowed','startupAllowed','repairApplied','continuousExclusionVerified')) { if ($backup.$flag -isnot [bool] -or $backup.$flag) { throw 'Unexpected repair authorization.' } }
+    foreach ($n in @('recovery.json','rollback-compatibility-rehearsal.json')) { if ((Get-ArsRepairMetadataHash $folder $n) -cne $backup.evidence.$n) { throw 'Protected evidence changed.' } }
+    $prior=Get-Content -LiteralPath (Join-Path $folder 'rollback-compatibility-rehearsal.json') -Raw | ConvertFrom-Json
+    if ($prior.schema -ne 1 -or $prior.recoveryId -cne $RecoveryId -or $prior.archiveSha256 -cne $before -or $prior.activationApproved -isnot [bool] -or $prior.activationApproved -or $prior.previousDependencyImageId -cnotmatch '^sha256:[a-f0-9]{64}$' -or $prior.previousBuildDigest -cnotmatch '^[a-f0-9]{64}$') { throw 'Previous rollback evidence mismatch.' }
+    foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed')) { if ($prior.$flag -isnot [bool] -or -not $prior.$flag) { throw 'Previous rehearsal incomplete.' } }
+    $PreviousDependencyImage=$prior.previousDependencyImageId
     $repairBuildRoot=Join-Path ([IO.Path]::GetTempPath()) ('ars-repair-build-'+[guid]::NewGuid().ToString('N'))
     Copy-ArsPilotRelease (Join-Path $RepairFolder 'candidate') $repairBuildRoot
     $lockHash=(Get-FileHash -LiteralPath (Join-Path $repairBuildRoot 'package-lock.json')).Hash.ToLowerInvariant()
@@ -200,7 +210,7 @@ try {
     $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
     $null=Invoke-DockerChecked @('stop','-t','15',$appName)
     $authenticatedWritesPassed=$true
-    if ($PreviousVersion) {
+    if ($PreviousVersion -or $RepairFolder) {
       if ($PreviousDependencyImage -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Previous version requires its own pinned trusted dependency image.' }
       $oldImage=@(Invoke-DockerChecked @('image','inspect','--format','{{.Id}}',$PreviousDependencyImage))
       if ($oldImage.Count -ne 1 -or $oldImage[0] -cne $PreviousDependencyImage) { throw 'Previous dependency image mismatch.' }
@@ -210,6 +220,7 @@ try {
       # Only executable dist output is copied; never mount the operational project.
       $oldDist=Join-Path $root 'dist'
       $previousBuildDigest=(Get-ArsPreparedFingerprint $oldDist).digest
+      if ($RepairFolder -and $previousBuildDigest -cne $prior.previousBuildDigest) { throw 'Previous executable differs from protected rollback evidence.' }
       $oldCopy=Join-Path ([IO.Path]::GetTempPath()) ('ars-previous-'+[guid]::NewGuid().ToString('N'))
       Copy-Item -LiteralPath $oldDist -Destination $oldCopy -Recurse
       if ((Get-ArsPreparedFingerprint $oldCopy).digest -cne $previousBuildDigest) { throw 'Previous build copy differs.' }
@@ -253,6 +264,10 @@ try {
   }
   if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $before) { throw 'Recovery archive changed during test.' }
   if ((Assert-ArsPreparedFingerprint $prepared).digest -cne $fingerprint.digest) { throw 'Prepared release changed during test.' }
+  if ($RepairFolder) {
+    if ((Get-ArsRepairMetadataHash $RepairFolder 'backup-observation.json') -cne $backupHash -or ((Get-ArsRepairReviewBinding $root $state $RepairFolder)|ConvertTo-Json -Compress) -cne ($repairBinding|ConvertTo-Json -Compress)) { throw 'Repair evidence changed during rehearsal.' }
+    foreach ($n in @('recovery.json','rollback-compatibility-rehearsal.json')) { if ((Get-ArsRepairMetadataHash $folder $n) -cne $backup.evidence.$n) { throw 'Protected evidence changed during rehearsal.' } }
+  }
 } finally {
   try {
     if ($appCreated) { $null=Invoke-DockerChecked @('rm','-f','-v',$appName) }
@@ -270,6 +285,7 @@ try {
 $evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;authenticatedWritesPassed=$authenticatedWritesPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;previousBuildDigest=$previousBuildDigest;previousDependencyImageId=$PreviousDependencyImage;backwardStartupPassed=$backwardStartupPassed;backwardReadsPassed=$backwardReadsPassed;backwardWritesPassed=$backwardWritesPassed;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 if ($RepairFolder) {
  $evidence.kind='windows-isolated-repair-restore-test'
+ $evidence.repairSpecificBackwardTested=($backwardStartupPassed -and $backwardReadsPassed -and $backwardWritesPassed)
  $evidence.repairBinding=$repairBinding
  $evidence.repairApplied=$false
  $evidence.startupAllowed=$false

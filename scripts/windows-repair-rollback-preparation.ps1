@@ -33,6 +33,7 @@ function Prepare-ArsRepairRollback([string]$project,[string]$folder) {
   Assert-ArsPlainPath $dist
   $digest=(Get-ArsPreparedFingerprint $dist).digest
   Assert-ArsPreviousRepairBuild $previous $digest $test.archiveSha256 $id
+  if ($test.previousBuildDigest -cne $digest -or $test.previousDependencyImageId -cne $previous.previousDependencyImageId) { throw 'Repair-specific previous executable identity mismatch.' }
   $image=$previous.previousDependencyImageId
   $actual=@(& docker image inspect --format '{{.Id}}' $image)
   if ($LASTEXITCODE -ne 0 -or $actual.Count -ne 1 -or $actual[0] -cne $image) { throw 'Previous dependency image unavailable.' }
@@ -42,7 +43,7 @@ function Prepare-ArsRepairRollback([string]$project,[string]$folder) {
   $again=Get-ArsRepairReadiness $project $folder
   if (($again | ConvertTo-Json -Depth 8 -Compress) -cne ($ready | ConvertTo-Json -Depth 8 -Compress) -or (Get-ArsPreparedFingerprint $dist).digest -cne $digest -or (Get-ArsRepairMetadataHash $recovery $name) -cne $previousHash -or ((Get-ArsRepairReviewBinding $project $state $folder)|ConvertTo-Json -Compress) -cne ($binding|ConvertTo-Json -Compress)) { throw 'Rollback evidence changed.' }
   foreach ($key in $hashes.Keys) { if ((Get-ArsRepairMetadataHash $folder $key) -cne $hashes[$key]) { throw 'Repair evidence changed.' } }
-  $record=[ordered]@{schema=1;kind='windows-repair-rollback-preparation';recoveryId=$id;previousProject=$project;previousBuildDigest=$digest;previousDependencyImageId=$image;repairDependencyImageId=$test.dependencyImageId;archiveSha256=$test.archiveSha256;previousReceiptDigest=$previousHash;repairEvidenceDigests=$hashes;previousUpdateRollbackEvidenceMatched=$true;repairSpecificRollbackTested=$false;continuousExclusionVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false;rollbackAllowed=$false}
+  $record=[ordered]@{schema=1;kind='windows-repair-rollback-preparation';recoveryId=$id;previousProject=$project;previousBuildDigest=$digest;previousDependencyImageId=$image;repairDependencyImageId=$test.dependencyImageId;archiveSha256=$test.archiveSha256;previousReceiptDigest=$previousHash;repairEvidenceDigests=$hashes;previousUpdateRollbackEvidenceMatched=$true;repairSpecificRollbackTested=$true;continuousExclusionVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false;rollbackAllowed=$false}
   $target=Join-Path $folder 'rollback-preparation.json'
   $bytes=[Text.Encoding]::UTF8.GetBytes(($record|ConvertTo-Json -Depth 8))
   $stream=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)

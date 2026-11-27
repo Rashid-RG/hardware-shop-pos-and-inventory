@@ -56,7 +56,7 @@ try {
     $review=Get-ArsRepairReadiness $root $folder
     if ([Windows.Forms.MessageBox]::Show('Prepare rollback evidence for the previous tested application? This does not apply a rollback.',$title,'YesNo','Question') -eq 'Yes') {
      $null=Prepare-ArsRepairRollback $root $folder
-     [void][Windows.Forms.MessageBox]::Show('Previous executable and existing rollback evidence matched. Repair-specific backward testing is still required. Activation remains locked.',$title,'OK','Information')
+     [void][Windows.Forms.MessageBox]::Show('Previous executable and existing rollback evidence matched. Isolated repair-specific backward compatibility evidence matched. Live activation remains locked.',$title,'OK','Information')
     }
     [void][Windows.Forms.MessageBox]::Show('Repair evidence, tested container image, native Node version and server syntax matched. Native dependency loading, Windows startup, writer exclusion and rollback are not certified. Activation remains locked.',$title,'OK','Information')
    } catch {

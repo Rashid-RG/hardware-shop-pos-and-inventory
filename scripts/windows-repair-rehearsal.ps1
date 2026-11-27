@@ -36,9 +36,14 @@ function Invoke-ArsRepairRehearsal([string]$project,[string]$folder) {
   $plan=(@(& (Join-Path $project 'scripts/plan-windows-runtime-activation.ps1') -RecoveryId $id) -join [Environment]::NewLine) | ConvertFrom-Json
   Test-ArsRepairBackupPlan $plan $id
   $result=Get-Content -LiteralPath (Join-Path $folder 'repair-restore-test.json') -Raw | ConvertFrom-Json
-  foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared')) {
+  foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','repairSpecificBackwardTested')) {
    if ($result.$flag -isnot [bool] -or -not $result.$flag) { throw 'Repair rehearsal incomplete.' }
   }
+  foreach ($name in @('recovery.json','rollback-compatibility-rehearsal.json')) {
+   if ((Get-ArsRepairMetadataHash $recovery $name) -cne $obs.evidence.$name) { throw 'Backup evidence changed.' }
+  }
+  $prior=Get-Content -LiteralPath (Join-Path $recovery 'rollback-compatibility-rehearsal.json') -Raw | ConvertFrom-Json
+  if ($result.previousBuildDigest -cne $prior.previousBuildDigest -or $result.previousDependencyImageId -cne $prior.previousDependencyImageId -or $result.archiveSha256 -cne $prior.archiveSha256) { throw 'Previous executable or archive mismatch.' }
   # Separate completion receipt, only after post-rehearsal evidence checks.
   $final=[ordered]@{schema=1;kind='windows-repair-rehearsal-observation';backupObservationDigest=$hash;testReceiptDigest=(Get-ArsRepairMetadataHash $folder 'repair-restore-test.json');activationAllowed=$false;repairApplied=$false;startupAllowed=$false}
   $file=[IO.File]::Open((Join-Path $folder 'repair-rehearsal-observation.json'),[IO.FileMode]::CreateNew)

@@ -12,9 +12,10 @@ function Assert-ArsRepairReadinessReceipts($binding,$backup,$test,$completion,[s
   if ($backup.binding.$key -cne $binding[$key] -or $test.repairBinding.$key -cne $binding[$key]) { throw 'Repair identity mismatch.' }
  }
  if ($test.schema -ne 1 -or $test.kind -cne 'windows-isolated-repair-restore-test' -or $test.recoveryId -cne $backup.recoveryId -or $test.dependencyImageId -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Invalid repair test receipt.' }
- foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared')) {
+ foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','repairSpecificBackwardTested')) {
   if ($test.$flag -isnot [bool] -or -not $test.$flag) { throw 'Incomplete repair test.' }
  }
+ if ($test.previousBuildDigest -cnotmatch '^[a-f0-9]{64}$' -or $test.previousDependencyImageId -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Previous executable identity missing.' }
  foreach ($flag in @('activationApproved','continuousExclusionVerified')) {
   if ($test.$flag -isnot [bool] -or $test.$flag) { throw 'Unexpected test authorization.' }
  }
@@ -53,6 +54,8 @@ function Get-ArsRepairReadiness([string]$project,[string]$folder) {
   foreach ($name in @('recovery.json','rollback-compatibility-rehearsal.json')) {
    if ((Get-ArsRepairMetadataHash $recovery $name) -cne $backup.evidence.$name) { throw 'Backup evidence changed.' }
   }
+  $prior=Get-Content -LiteralPath (Join-Path $recovery 'rollback-compatibility-rehearsal.json') -Raw | ConvertFrom-Json
+  if ($test.previousBuildDigest -cne $prior.previousBuildDigest -or $test.previousDependencyImageId -cne $prior.previousDependencyImageId -or $test.archiveSha256 -cne $prior.archiveSha256) { throw 'Previous rollback identity mismatch.' }
   $meta=Get-Content -LiteralPath (Join-Path $recovery 'recovery.json') -Raw | ConvertFrom-Json
   if ($test.archiveSha256 -cne $meta.archiveSha256 -or $test.version -cne $meta.version) { throw 'Repair rehearsal archive mismatch.' }
   $plan=(@(& (Join-Path $project 'scripts/plan-windows-runtime-activation.ps1') -RecoveryId $id) -join [Environment]::NewLine) | ConvertFrom-Json
@@ -70,7 +73,7 @@ function Get-ArsRepairReadiness([string]$project,[string]$folder) {
   }
   if (((Get-ArsRepairReviewBinding $project $state $folder) | ConvertTo-Json -Compress) -cne ($binding | ConvertTo-Json -Compress)) { throw 'Repair identity changed.' }
   $native=Get-ArsNativeRepairProbe $test.dependencyImageId
-  [ordered]@{nativeProbe=$native;schema=1;repairEvidenceMatched=$true;testedContainerImageRetained=$true;nativeWindowsBuildTested=$false;continuousExclusionVerified=$false;rollbackVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false}
+  [ordered]@{nativeProbe=$native;schema=1;repairEvidenceMatched=$true;testedContainerImageRetained=$true;repairSpecificBackwardTested=$true;previousBuildDigest=$test.previousBuildDigest;previousDependencyImageId=$test.previousDependencyImageId;nativeWindowsBuildTested=$false;continuousExclusionVerified=$false;rollbackVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false}
  } finally {
   if ($owned) { $mutex.ReleaseMutex() }
   $mutex.Dispose()
