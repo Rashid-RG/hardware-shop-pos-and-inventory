@@ -39,6 +39,15 @@ def run(repair):
         # Result is not authoritative if any evidence changed during rehearsal.
         if review.validate_repair(repair,project,observer)!=binding or observer.read(repair/"backup-observation.json")!=raw or observer.snapshot(recovery)!=evidence:
             raise ValueError("Evidence changed; repair result is not approved.")
+        test_raw=observer.read(repair/"repair-restore-test.json")
+        result=json.loads(test_raw)
+        if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
+            raise ValueError("Incomplete repair rehearsal.")
+        final={"schema":1,"kind":"mint-repair-rehearsal-observation","backupObservationDigest":observer.sha(raw),"testReceiptDigest":observer.sha(test_raw),"repairReceiptDigest":binding[0],"activationAllowed":False,"startupAllowed":False,"repairApplied":False}
+        with (repair/"repair-rehearsal-observation.json").open("x") as stream:
+            json.dump(final,stream,sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
 
 def main():
     title="RS Nextward | Isolated repair restoration"
