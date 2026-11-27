@@ -29,6 +29,19 @@ def sha(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream,"sha256").hexdigest()
 
+def copy_isolated_candidate(staged, destination, runtime):
+    """Copy tested code without exposing permanent storage to test containers."""
+    import shutil
+    expected=fingerprint(staged,runtime)
+    def ignore(directory,names):
+        if Path(directory)==staged:
+            return [name for name in names if name in (".env.local","uploads","backups")]
+        return []
+    shutil.copytree(staged,destination,symlinks=True,ignore=ignore)
+    if fingerprint(destination)!=expected or fingerprint(staged,runtime)!=expected:
+        raise ValueError("Candidate changed during isolated copy.")
+    return expected
+
 def test(folder, compatibility=False):
     if os.geteuid()==0:
         raise ValueError("Run as the installed desktop user.")
@@ -57,6 +70,7 @@ def test(folder, compatibility=False):
         container="ars-update-test-"+uuid.uuid4().hex
         created=False
         app_created=False
+        candidate_temp=None
         app_name=container+'-app'
         password=secrets.token_hex(32)
         compatibility_result=False
@@ -103,7 +117,10 @@ def test(folder, compatibility=False):
                 manifest=json.loads((staged/".ars-release-manifest.json").read_text())
                 if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
                     raise ValueError("Release manifest mismatch.")
-                build_fingerprint=fingerprint(staged,STATE/"runtime")
+                import tempfile
+                candidate_temp=tempfile.TemporaryDirectory(prefix="ars-isolated-candidate-")
+                isolated=Path(candidate_temp.name)/"build"
+                build_fingerprint=copy_isolated_candidate(staged,isolated,STATE/"runtime")
                 node_image="node:22-bookworm-slim"
                 run(["docker","image","inspect",node_image],stdout=subprocess.DEVNULL)
                 def snapshot():
@@ -129,7 +146,7 @@ def test(folder, compatibility=False):
                 email="update-test-"+uuid.uuid4().hex+"@example.invalid"
                 test_password=secrets.token_hex(32)
                 hashed=run(["docker","run","--rm","--pull=never","--network","none",
-                            "-v",str(staged)+":/app:ro","-w","/app",node_image,
+                            "-v",str(isolated)+":/app:ro","-w","/app",node_image,
                             "node","-e","console.log(require('bcryptjs').hashSync(process.argv[1],10))",test_password],
                            stdout=subprocess.PIPE,text=True).stdout.strip()
                 if not re.fullmatch(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}",hashed):
@@ -162,7 +179,7 @@ def test(folder, compatibility=False):
                 run(["docker","run","-d","--pull=never","--name",app_name,
                      "--network","container:"+container,"--read-only","--tmpfs","/tmp",
                      "--tmpfs","/app/uploads","--cap-drop","ALL","--security-opt","no-new-privileges",
-                     "-v",str(staged)+":/app:ro","-w","/app",
+                     "-v",str(isolated)+":/app:ro","-w","/app",
                      "-e","NODE_ENV=production","-e","ARS_LISTEN_HOST=127.0.0.1",
                      "-e","PORT=3000","-e","JWT_SECRET="+secrets.token_hex(48),
                      "-e","DATABASE_URL=postgresql://restore_admin:"+password+"@127.0.0.1:5432/ars_update_test",
@@ -179,7 +196,7 @@ def test(folder, compatibility=False):
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if fingerprints(schema)!=before:
                     raise RuntimeError("Existing database rows changed during startup; automatic compatibility approval blocked.")
-                if fingerprint(staged,STATE/"runtime")!=build_fingerprint:
+                if fingerprint(isolated)!=build_fingerprint or fingerprint(staged,STATE/"runtime")!=build_fingerprint:
                     raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
                 # Exercise writes only after the read-only preservation check. Restart the same test application.
@@ -241,10 +258,14 @@ def test(folder, compatibility=False):
             if sha(dump)!=checksum:
                 raise ValueError("Backup changed during restoration test.")
         finally:
-            if app_created:
-                run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
-            if created:
-                run(["docker","rm","-f","-v",container],stdout=subprocess.DEVNULL)
+            try:
+                if app_created:
+                    run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
+                if created:
+                    run(["docker","rm","-f","-v",container],stdout=subprocess.DEVNULL)
+            finally:
+                if candidate_temp is not None:
+                    candidate_temp.cleanup()
         result={"version":metadata["version"],"archive":name,"archiveSha256":checksum,
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,

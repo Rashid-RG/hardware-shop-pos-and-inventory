@@ -533,6 +533,30 @@ class RecoveryTests(unittest.TestCase):
             (candidate/"uploads").symlink_to(runtime/"uploads")
             (candidate/"server.cjs").write_text("modified")
             self.assertNotEqual(fingerprint(candidate,runtime),digest)
+    def test_isolated_candidate_copy_excludes_live_runtime_links(self):
+        from release_fingerprint import fingerprint
+        spec=importlib.util.spec_from_file_location("restore_test",Path(__file__).with_name("test-update-restore.py"))
+        restore=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(restore)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            staged=root/"candidate"
+            runtime=root/"runtime"
+            staged.mkdir()
+            runtime.mkdir()
+            (staged/"server.cjs").write_text("fixture")
+            (runtime/".env.local").write_text("private fixture")
+            (runtime/"uploads").mkdir()
+            (runtime/"backups").mkdir()
+            for name in (".env.local","uploads","backups"):
+                (staged/name).symlink_to(runtime/name)
+            isolated=root/"isolated"
+            digest=restore.copy_isolated_candidate(staged,isolated,runtime)
+            self.assertEqual(fingerprint(isolated),digest)
+            for name in (".env.local","uploads","backups"):
+                self.assertFalse((isolated/name).exists())
+                self.assertFalse((isolated/name).is_symlink())
+                self.assertTrue((staged/name).is_symlink())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
