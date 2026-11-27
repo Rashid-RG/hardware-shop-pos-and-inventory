@@ -147,6 +147,29 @@ jobs:
           name: dependency-targeted-proposal
           path: security-targeted/
           retention-days: 14
+      - name: Test final build-tool upgrade in isolated checkout
+        run: |
+          set -euo pipefail
+          proposal="$(mktemp -d)"
+          git archive HEAD | tar -x -C "$proposal"
+          (
+            cd "$proposal"
+            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' 'dependencies.@vitejs/plugin-react=latest'
+            npm install --package-lock-only --ignore-scripts --no-fund
+            npm ci
+            npm run lint
+            npm run build
+            npm audit --json > final-audit.json || true
+            node -e 'const r=require("./final-audit.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Final proposal audit:",JSON.stringify(r.metadata.vulnerabilities));'
+            mkdir -p "$GITHUB_WORKSPACE/security-final"
+            cp package.json package-lock.json final-audit.json "$GITHUB_WORKSPACE/security-final/"
+          )
+      - name: Retain tested final dependency proposal
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-final-proposal
+          path: security-final/
+          retention-days: 14
       - name: Dependency security audit (production and development)
         run: |
           set -euo pipefail
