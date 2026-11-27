@@ -109,6 +109,27 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Dependency security audit (production and development)
+        run: |
+          set -euo pipefail
+          mkdir -p security-audit
+          # Collect both reports even when npm detects vulnerabilities.
+          for scope in production all; do
+            args=()
+            if [ "$scope" = production ]; then args+=(--omit=dev); fi
+            code=0
+            npm audit "${args[@]}" --json > "security-audit/$scope.json" || code=$?
+            node -e 'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(r.error || !r.metadata?.vulnerabilities || !r.vulnerabilities) process.exit(1); console.log(JSON.stringify(r.metadata.vulnerabilities)); for(const [name,v] of Object.entries(r.vulnerabilities)) console.log(name, v.severity, v.isDirect ? "direct" : "transitive", v.range, JSON.stringify(v.fixAvailable));' "security-audit/$scope.json"
+            if [ "$code" -gt 1 ]; then exit "$code"; fi
+          done
+      - name: Retain dependency audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-security-audit
+          path: security-audit/*.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: TypeScript checks
         run: npm run lint
       - name: Regression tests
