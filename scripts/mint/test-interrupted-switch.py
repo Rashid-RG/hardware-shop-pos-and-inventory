@@ -144,6 +144,16 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 layout.copy_legacy_storage(source,root/"rejected")
             self.assertFalse((root/"rejected").exists())
+    def test_migration_stage_requires_explicit_approval(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with patch.object(layout.os,"geteuid",return_value=1000):
+                with self.assertRaisesRegex(ValueError,"approval"):
+                    layout.stage_migration(root,root,"")
+            self.assertEqual(list(root.iterdir()),[])
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

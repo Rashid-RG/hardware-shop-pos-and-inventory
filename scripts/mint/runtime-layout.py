@@ -86,6 +86,75 @@ def copy_legacy_storage(source, destination):
     os.chmod(destination/".env.local",0o600)
     return {"verified":True,"files":sum(v[0]=="file" for v in copied.values()),"activationAllowed":False}
 
+def stage_migration(project, folder, confirmation):
+    """Retain a verified private copy under the maintenance hold; never activate."""
+    import json
+    import hashlib
+    import fcntl
+    import subprocess
+    from resume_maintenance import open_lock
+    from maintenance_backup import stopped, check_database_clients
+    from switch_journal import sync_dir
+    if os.geteuid()==0 or confirmation!="STAGE RUNTIME MIGRATION":
+        raise ValueError("Explicit desktop-user staging approval required.")
+    project=project.resolve(strict=True)
+    folder=Path(folder)
+    if not folder.is_absolute() or folder.resolve(strict=True)!=folder or folder.parent!=STATE/"update-recovery":
+        raise ValueError("Managed recovery folder required.")
+    def evidence(path):
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>65536:
+            raise ValueError("Invalid migration evidence.")
+        return path.read_bytes()
+    with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
+        for lock in (maintenance,update):
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        inventory=migration_inventory(project)
+        if any(e["status"]!="legacy-source" for e in inventory["entries"]) or os.path.lexists(RUNTIME):
+            raise ValueError("Migration requires three legacy sources and an absent runtime destination.")
+        for name in ("runtime-switch-intent.json","runtime-activation-interrupted.json","handoff-pending.json","switch-journal.json"):
+            if os.path.lexists(STATE/name):
+                raise ValueError("Unresolved update evidence.")
+        for name in (".ars-drive-backup.lock",".ars-local-backup.lock",".ars-drive-recovery.lock"):
+            if os.path.lexists(project/"backups"/name):
+                raise ValueError("Active or interrupted backup detected.")
+        hold=evidence(STATE/"maintenance-hold.json")
+        meta=evidence(folder/"recovery.json")
+        receipt=evidence(folder/"maintenance-backup-receipt.json")
+        restore=evidence(folder/"restore-test.json")
+        h,m,r,v=map(json.loads,(hold,meta,receipt,restore))
+        sha=lambda data:hashlib.sha256(data).hexdigest()
+        if h.get("purpose")!="pre-update backup" or h.get("previousProject")!=str(project) or m.get("previousProject")!=str(project) or h.get("version")!=m.get("version") or m.get("activationApproved") is not False:
+            raise ValueError("Maintenance hold mismatch.")
+        if r.get("kind")!="mint-maintenance-backup-observation" or r.get("holdDigest")!=sha(hold) or r.get("recoveryDigest")!=sha(meta) or r.get("locksObserved") is not True or r.get("activationAllowed") is not False or r.get("archive")!=m.get("archive"):
+            raise ValueError("Protected backup receipt mismatch.")
+        archive=m.get("archive")
+        if not isinstance(archive,str) or Path(archive).name!=archive or not archive.endswith(".dump"):
+            raise ValueError("Invalid archive name.")
+        dump=folder/archive
+        if dump.is_symlink() or not dump.is_file():
+            raise ValueError("Missing protected archive.")
+        with dump.open("rb") as stream:
+            digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        if v.get("archiveSha256")!=digest or v.get("archive")!=archive or v.get("version")!=m.get("version") or v.get("restoreTestPassed") is not True:
+            raise ValueError("Verified restoration required.")
+        stopped()
+        check_database_clients(project)
+        subprocess.run([str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(dump)],check=True,stdout=subprocess.DEVNULL,timeout=180)
+        destination=STATE/"runtime-migration-staged"
+        result=copy_legacy_storage(project,destination)
+        stopped()
+        check_database_clients(project)
+        if any(evidence(p)!=raw for p,raw in ((STATE/"maintenance-hold.json",hold),(folder/"recovery.json",meta),(folder/"maintenance-backup-receipt.json",receipt),(folder/"restore-test.json",restore))) or migration_inventory(project)!=inventory:
+            raise ValueError("Migration evidence changed.")
+        record={"schema":1,"kind":"mint-runtime-migration-staged","source":str(project),"archiveSha256":digest,"holdDigest":sha(hold),"files":result["files"],"activationAllowed":False}
+        with (destination/"migration-receipt.json").open("x") as stream:
+            json.dump(record,stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        sync_dir(destination)
+        sync_dir(STATE)
+        return record
+
 def prepare(project):
     if os.geteuid()==0:
         raise ValueError("Run setup as the desktop user.")
@@ -146,12 +215,18 @@ if __name__=="__main__":
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("project",type=Path)
-    parser.add_argument("--inventory",action="store_true")
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument("--inventory",action="store_true")
+    mode.add_argument("--stage",type=Path)
+    parser.add_argument("--confirmation",default="")
     args=parser.parse_args()
     try:
         if args.inventory:
             import json
             print(json.dumps(migration_inventory(args.project)))
+        elif args.stage:
+            import json
+            print(json.dumps(stage_migration(args.project,args.stage,args.confirmation)))
         else:
             prepare(args.project)
     except (OSError,ValueError) as error:
