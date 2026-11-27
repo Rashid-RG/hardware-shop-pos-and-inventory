@@ -1,11 +1,12 @@
 // Maintenance-only helper. Does not change database configuration or terminate clients.
 import pg from 'pg';
-import { acquireHandoffGate, acquireMaintenanceTransactionFence, assertMaintenanceOwner } from '../database-handoff-gate.mjs';
+import {withMaintenanceSession} from '../database-maintenance-session.mjs';
+import {withMaintenanceTableFence} from '../database-maintenance-table-fence.mjs';
+import {runMaintenanceChild} from '../database-maintenance-child.mjs';
 import { readFileSync, realpathSync, lstatSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { resolve } from 'node:path';
-import { spawn } from 'node:child_process';
 const project=realpathSync(process.cwd());
 const state=resolve(process.env.HOME,'.local/share/ars-hardware');
 const sha=b=>createHash('sha256').update(b).digest('hex');
@@ -35,41 +36,21 @@ if(urls.length!==1)throw Error('Unique local database configuration required.');
 const url=new URL(urls[0].slice(13));
 if(url.hostname!=='127.0.0.1'||url.port!=='5434'||url.pathname!=='/hardware_pos_ars'||url.username!=='ars')throw Error('Not the managed local database.');
 const client=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:15000});
-let child, failure;
-function stopChild(){if(child?.pid){try{process.kill(-child.pid,'SIGTERM');}catch{}}}
-process.on('SIGTERM',()=>{failure=Error('Backup interrupted');stopChild();});
-process.on('SIGINT',()=>{failure=Error('Backup interrupted');stopChild();});
-client.on('error',err=>{failure=err;stopChild();});
+const interruption=new AbortController();
+const interrupt=()=>interruption.abort();
+process.on('SIGTERM',interrupt);
+process.on('SIGINT',interrupt);
 try{
-  await client.connect();
-  await acquireHandoffGate(client);
-  // Same session advisory key as server.ts: exclude cooperating server startups
-  // before enumerating tables and retain the lease through the entire backup.
-  const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);
-  if(lease.rows[0]?.acquired!==true) throw Error('Application writer still owns the database.');
-  await acquireMaintenanceTransactionFence(client);
-  const maintenanceOwner=await assertMaintenanceOwner(client);
-  await client.query('BEGIN');
-  await client.query("SET LOCAL lock_timeout='5s'");
-  await client.query("SET LOCAL idle_in_transaction_session_timeout='0'");
-  const {rows}=await client.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
-  if(!rows.length)throw Error('No managed tables found.');
-  const ident=x=>'"'+x.replaceAll('"','""')+'"';
-  // SHARE conflicts with ordinary INSERT/UPDATE/DELETE and table DDL, but allows pg_dump reads.
-  await client.query('LOCK TABLE '+rows.map(r=>ident(r.schemaname)+'.'+ident(r.tablename)).join(',')+' IN SHARE MODE NOWAIT');
-  const before=await client.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'");
-  if(before.rows[0].count!==0|| (await client.query('SELECT count(*)::int AS count FROM pg_prepared_xacts WHERE database=current_database()')).rows[0].count!==0)throw Error('Other database clients detected.');
-  let output='';
-  await new Promise((ok,fail)=>{
-    child=spawn('python3',[uninstall?'scripts/mint/prepare-uninstall-backup.py':'scripts/mint/prepare-update-backup.py',process.argv[2]],{cwd:project,stdio:['ignore','pipe','inherit'],detached:true});
-    child.stdout.on('data',chunk=>{output+=chunk.toString();if(output.length>65536){failure=Error('Unexpected backup output');stopChild();}});
-    const timer=setTimeout(()=>{failure=Error('Maintenance backup timed out');stopChild();},900000);
-    child.once('error',err=>{clearTimeout(timer);fail(err);});
-    child.once('exit',code=>{clearTimeout(timer);failure||code!==0?fail(failure||Error('Backup failed')):ok();});
-  });
-  if(failure)throw failure;
-  const after=await client.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
-  if(JSON.stringify(rows)!==JSON.stringify(after.rows))throw Error('Database table set changed during backup.');
+ const message=await withMaintenanceSession(client,'hardware_pos_ars',session=>withMaintenanceTableFence(client,session,async fence=>{
+  const signal=AbortSignal.any([fence.signal,interruption.signal]);
+  const assertActive=async()=>{
+   if(signal.aborted)throw Error('Backup interrupted.');
+   await fence.assertActive();
+   if(signal.aborted)throw Error('Backup interrupted.');
+  };
+  const scope=Object.freeze({owner:fence.owner,signal,assertActive});
+  const output=await runMaintenanceChild(scope,'python3',[uninstall?'scripts/mint/prepare-uninstall-backup.py':'scripts/mint/prepare-update-backup.py',process.argv[2]],{cwd:project,timeoutMs:900000,maxOutput:65536});
+  await assertActive();
   const matches=output.split(/\r?\n/).filter(x=>x.startsWith('Pinned recovery archive: '));
   if(matches.length!==1)throw Error('Missing unique recovery archive');
   const folder=matches[0].slice('Pinned recovery archive: '.length);
@@ -81,19 +62,21 @@ try{
   const db=identity.rows[0];
   if(identity.rows.length!==1||db.database!=='hardware_pos_ars'||!/^\d{1,20}$/.test(db.system_identifier)||!/^\d{1,10}$/.test(db.database_oid))throw Error('Database identity unavailable.');
   const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
-  if(locks.rows[0]?.count!==3||failure||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
-  await assertMaintenanceOwner(client,maintenanceOwner);
+  if(locks.rows[0]?.count!==3||signal.aborted||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
+  await assertActive();
   const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.system_identifier,databaseOid:db.database_oid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
   if(uninstall&&sha(evidence(shutdownPath))!==sha(shutdownRaw))throw Error('Shutdown evidence changed.');
   if(uninstall)Object.assign(receipt,{kind:'mint-uninstall-backup-observation',shutdownDigest:sha(shutdownRaw),uninstallId:hold.uninstallId,applicationRemovalAllowed:false,finalUninstallBackupVerified:false});
   const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);
   try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
-  await assertMaintenanceOwner(client,maintenanceOwner);
-  await client.query('ROLLBACK');
-  if(failure)throw failure;
-  console.log(matches[0]);
-  console.log('Application writer lease and existing public table SHARE locks were held during backup.');
+  await assertActive();
+  return matches[0];
+ }));
+ if(interruption.signal.aborted)throw Error('Backup interrupted.');
+ console.log(message);
+ console.log('Application writer lease and existing public table SHARE locks were held during backup.');
 }finally{
-  await client.end().catch(()=>{});
+ process.off('SIGTERM',interrupt);
+ process.off('SIGINT',interrupt);
 }
