@@ -1,6 +1,6 @@
 // Maintenance-only helper. Does not change database configuration or terminate clients.
 import pg from 'pg';
-import { acquireHandoffGate, acquireMaintenanceTransactionFence } from '../database-handoff-gate.mjs';
+import { acquireHandoffGate, acquireMaintenanceTransactionFence, assertMaintenanceOwner } from '../database-handoff-gate.mjs';
 import { readFileSync, realpathSync, lstatSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
@@ -48,6 +48,7 @@ try{
   const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);
   if(lease.rows[0]?.acquired!==true) throw Error('Application writer still owns the database.');
   await acquireMaintenanceTransactionFence(client);
+  const maintenanceOwner=await assertMaintenanceOwner(client);
   await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
   await client.query("SET LOCAL idle_in_transaction_session_timeout='0'");
@@ -81,12 +82,14 @@ try{
   if(identity.rows.length!==1||db.database!=='hardware_pos_ars'||!/^\d{1,20}$/.test(db.system_identifier)||!/^\d{1,10}$/.test(db.database_oid))throw Error('Database identity unavailable.');
   const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
   if(locks.rows[0]?.count!==3||failure||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
+  await assertMaintenanceOwner(client,maintenanceOwner);
   const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.system_identifier,databaseOid:db.database_oid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
   if(uninstall&&sha(evidence(shutdownPath))!==sha(shutdownRaw))throw Error('Shutdown evidence changed.');
   if(uninstall)Object.assign(receipt,{kind:'mint-uninstall-backup-observation',shutdownDigest:sha(shutdownRaw),uninstallId:hold.uninstallId,applicationRemovalAllowed:false,finalUninstallBackupVerified:false});
   const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);
   try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
+  await assertMaintenanceOwner(client,maintenanceOwner);
   await client.query('ROLLBACK');
   if(failure)throw failure;
   console.log(matches[0]);
