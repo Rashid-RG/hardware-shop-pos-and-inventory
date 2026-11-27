@@ -339,6 +339,30 @@ class RecoveryTests(unittest.TestCase):
                     plan.plan(root/"unused")
                 run.assert_not_called()
             self.assertTrue(marker.is_symlink())
+    def test_candidate_mapping_preserves_existing_runtime_and_conflicts(self):
+        spec=importlib.util.spec_from_file_location("switch_intent",Path(__file__).with_name("prepare-switch-intent.py"))
+        intent=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(intent)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            candidate=root/"candidate"
+            runtime=root/"runtime"
+            candidate.mkdir()
+            runtime.mkdir()
+            (runtime/".env.local").write_text("fixture")
+            (runtime/"uploads").mkdir()
+            (runtime/"backups").mkdir()
+            (candidate/"backups").mkdir()
+            with self.assertRaisesRegex(ValueError,"conflict"):
+                intent.prepare_candidate_runtime(candidate,runtime)
+            self.assertFalse((candidate/".env.local").exists())
+            (candidate/"backups").rmdir()
+            intent.prepare_candidate_runtime(candidate,runtime)
+            intent.prepare_candidate_runtime(candidate,runtime)
+            for name in (".env.local","uploads","backups"):
+                self.assertTrue((candidate/name).is_symlink())
+                self.assertEqual((candidate/name).resolve(),runtime/name)
+            self.assertEqual((runtime/".env.local").read_text(),"fixture")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

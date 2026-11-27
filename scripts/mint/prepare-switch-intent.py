@@ -38,6 +38,29 @@ def verified_binding(folder, proposal):
         raise ValueError("Release fingerprints required.")
     return {"proposalDigest":proposal.sha(raw),"recoveryFolder":str(folder),"candidateVersion":observed["candidateVersion"],"previousProject":observed["previousProject"],"candidateDigest":candidate,"previousBuildDigest":previous,"maintenanceDigest":observed["evidence"]["hold"],"desktopUid":os.getuid()}
 
+def prepare_candidate_runtime(candidate, runtime):
+    """Attach the verified candidate to stable storage without selecting it."""
+    from switch_journal import sync_dir
+    for directory in (candidate,runtime):
+        if directory.resolve(strict=True)!=directory or not directory.is_dir():
+            raise ValueError("Unexpected candidate or runtime directory.")
+    names=(".env.local","uploads","backups")
+    # Check all destinations before writing any link. Never overwrite files.
+    for name in names:
+        target=runtime/name
+        link=candidate/name
+        if target.is_symlink() or not (target.is_file() if name==".env.local" else target.is_dir()):
+            raise ValueError("Invalid permanent runtime entry.")
+        if os.path.lexists(link) and (not link.is_symlink() or link.resolve(strict=True)!=target):
+            raise ValueError("Candidate runtime path conflict.")
+    for name in names:
+        link=candidate/name
+        if not os.path.lexists(link):
+            link.symlink_to(runtime/name,target_is_directory=name!=".env.local")
+    sync_dir(candidate)
+    if any(not (candidate/n).is_symlink() or (candidate/n).resolve(strict=True)!=runtime/n for n in names):
+        raise ValueError("Candidate runtime mapping verification failed.")
+
 def matches(record,binding):
     return (record.get("schema")==1 and record.get("kind")=="mint-runtime-switch-intent"
             and isinstance(record.get("switchId"),str) and re.fullmatch(r"[a-f0-9]{32}",record["switchId"]) is not None
@@ -79,6 +102,14 @@ def retain(folder,verify=False,confirmation="",cancel=False):
         record=json.loads(raw)
         if not matches(record,verified_binding(folder,proposal)) or proposal.read(target)!=raw:
             raise ValueError("Intent stale or invalid.")
+        if not verify and not cancel:
+            candidate=STATE/"staged-releases"/binding["candidateVersion"]
+            previous=Path(binding["previousProject"])
+            if candidate.resolve(strict=True)==previous:
+                raise ValueError("Candidate is already installed.")
+            prepare_candidate_runtime(candidate,STATE/"runtime")
+            if verified_binding(folder,proposal)!=binding or proposal.read(target)!=raw:
+                raise ValueError("Candidate preparation evidence changed.")
         if cancel:
             # Hard link preserves exact original bytes without overwriting evidence.
             # A crash before unlink leaves the live blocking marker in place.
