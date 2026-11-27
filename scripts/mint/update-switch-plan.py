@@ -48,7 +48,7 @@ def plan(folder, quiet=False):
     manifest=json.loads((staged/".ars-release-manifest.json").read_text())
     if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
         raise ValueError("Manifest mismatch.")
-    if receipt.get('buildFingerprint')!=fingerprint(staged):
+    if receipt.get('buildFingerprint')!=fingerprint(staged,STATE/"runtime"):
         raise ValueError('Exact staged build differs from compatibility-tested files. Repeat compatibility test.')
     if receipt.get("backwardStartupPassed") is not True:
         raise ValueError("Successful previous-version startup test required.")

@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 import json
 
-def fingerprint(root):
+def fingerprint(root, runtime=None):
     root=Path(root).resolve(strict=True)
     h=hashlib.sha256()
     for directory,dirs,files in os.walk(root,followlinks=False):
@@ -14,6 +14,11 @@ def fingerprint(root):
         for name in sorted(dirs+files):
             p=Path(directory)/name
             rel=p.relative_to(root).as_posix()
+            if runtime is not None and rel in (".env.local","uploads","backups"):
+                target=Path(runtime)/rel
+                if not p.is_symlink() or target.is_symlink() or p.resolve(strict=True)!=target.resolve(strict=True):
+                    raise ValueError("Unexpected runtime mapping: "+rel)
+                continue
             mode=p.lstat().st_mode
             if stat.S_ISLNK(mode):
                 target=os.readlink(p)

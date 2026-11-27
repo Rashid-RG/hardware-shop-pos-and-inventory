@@ -370,6 +370,9 @@ class RecoveryTests(unittest.TestCase):
         spec=importlib.util.spec_from_file_location("switch_intent",Path(__file__).with_name("prepare-switch-intent.py"))
         intent=importlib.util.module_from_spec(spec)
         spec.loader.exec_module(intent)
+        selector_spec=importlib.util.spec_from_file_location("offline_selector",Path(__file__).with_name("select-offline-release.py"))
+        selector=importlib.util.module_from_spec(selector_spec)
+        selector_spec.loader.exec_module(selector)
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             previous=root/"previous"
@@ -391,10 +394,10 @@ class RecoveryTests(unittest.TestCase):
             target.write_text(json.dumps({"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}))
             raw=target.read_bytes()
             proposal=SimpleNamespace(plain=lambda *args:None,read=lambda path:path.read_bytes(),sha=sha)
-            with patch.object(intent,"STATE",root), patch.object(intent.os,"geteuid",return_value=1000), patch.object(intent,"load",return_value=proposal), patch.object(intent,"verified_binding",return_value=binding), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+            with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"STATE",root), patch.object(intent.os,"geteuid",return_value=1000), patch.object(intent,"load",return_value=proposal), patch.object(intent,"verified_binding",return_value=binding), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
                 with self.assertRaisesRegex(ValueError,"approval"):
-                    intent.select_offline_release(root,"")
-                result=intent.select_offline_release(root,"SELECT OFFLINE RELEASE")
+                    selector.select_offline_release(root,"")
+                result=selector.select_offline_release(root,"SELECT OFFLINE RELEASE")
             self.assertTrue(result["selected"])
             self.assertFalse(result["startupAllowed"])
             self.assertEqual((root/"project").resolve(),candidate)
