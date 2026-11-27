@@ -68,6 +68,7 @@ jobs:
           python3 scripts/mint/test-uninstall-restore.py
           python3 scripts/mint/test-installation-identity.py
           python3 scripts/mint/test-desktop-registration.py
+          python3 scripts/mint/test-uninstall-shutdown.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py
