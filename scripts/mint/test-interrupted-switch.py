@@ -154,6 +154,29 @@ class RecoveryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,"approval"):
                     layout.stage_migration(root,root,"")
             self.assertEqual(list(root.iterdir()),[])
+    def test_staged_runtime_detects_changed_source_and_copy(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            source=root/"legacy"
+            source.mkdir()
+            (source/".env.local").write_text("fixture")
+            (source/"uploads").mkdir()
+            (source/"uploads"/"photo").write_text("original")
+            (source/"backups").mkdir()
+            destination=root/"staged"
+            layout.copy_legacy_storage(source,destination)
+            digest=layout.verify_staged_storage(source,destination)
+            self.assertRegex(digest,r"^[a-f0-9]{64}$")
+            (destination/"uploads"/"photo").write_text("modified")
+            with self.assertRaisesRegex(ValueError,"differs"):
+                layout.verify_staged_storage(source,destination)
+            (destination/"uploads"/"photo").write_text("original")
+            (source/".env.local").write_text("changed")
+            with self.assertRaisesRegex(ValueError,"differs"):
+                layout.verify_staged_storage(source,destination)
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

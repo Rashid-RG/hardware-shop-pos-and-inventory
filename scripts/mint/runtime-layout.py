@@ -34,6 +34,35 @@ def migration_inventory(project):
         entries.append({"name":name,"status":status})
     return {"schema":1,"kind":"mint-runtime-migration-inventory","entries":entries,"migrationAllowed":False,"requiresVerifiedBackup":True}
 
+def storage_manifest(root):
+    import hashlib
+    import stat
+    root=Path(root)
+    if root.resolve(strict=True)!=root or not root.is_dir():
+        raise ValueError("Invalid storage root.")
+    result={}
+    def visit(path, relative):
+        info=path.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            result[relative]=("directory",)
+            for child in sorted(path.iterdir()):
+                visit(child,relative+"/"+child.name)
+        elif stat.S_ISREG(info.st_mode):
+            with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW),"rb") as stream:
+                before=os.fstat(stream.fileno())
+                digest=hashlib.file_digest(stream,"sha256").hexdigest()
+                after=os.fstat(stream.fileno())
+            def identity(item):
+                return (item.st_dev,item.st_ino,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+            if identity(info)!=identity(before) or identity(before)!=identity(after):
+                raise ValueError("Legacy file changed during verification.")
+            result[relative]=("file",info.st_size,digest)
+        else:
+            raise ValueError("Unsupported legacy storage entry.")
+    for name in (".env.local","uploads","backups"):
+        visit(root/name,name)
+    return result
+
 def copy_legacy_storage(source, destination):
     """Copy to a new private staging directory. No source deletion or activation."""
     import hashlib
@@ -41,34 +70,11 @@ def copy_legacy_storage(source, destination):
     import shutil
     source=Path(source)
     destination=Path(destination)
-    def manifest(root):
-        result={}
-        def visit(path, relative):
-            info=path.lstat()
-            if stat.S_ISDIR(info.st_mode):
-                result[relative]=("directory",)
-                for child in sorted(path.iterdir()):
-                    visit(child,relative+"/"+child.name)
-            elif stat.S_ISREG(info.st_mode):
-                with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW),"rb") as stream:
-                    before=os.fstat(stream.fileno())
-                    digest=hashlib.file_digest(stream,"sha256").hexdigest()
-                    after=os.fstat(stream.fileno())
-                def identity(item):
-                    return (item.st_dev,item.st_ino,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
-                if identity(info)!=identity(before) or identity(before)!=identity(after):
-                    raise ValueError("Legacy file changed during verification.")
-                result[relative]=("file",info.st_size,digest)
-            else:
-                raise ValueError("Unsupported legacy storage entry.")
-        for name in (".env.local","uploads","backups"):
-            visit(root/name,name)
-        return result
     if source.resolve(strict=True)!=source or destination.parent.resolve(strict=True)!=destination.parent:
         raise ValueError("Linked storage path rejected.")
     if destination==source or source in destination.parents or os.path.lexists(destination):
         raise ValueError("Destination must be new and outside source.")
-    before=manifest(source)
+    before=storage_manifest(source)
     destination.mkdir(mode=0o700)
     # On failure retain partial staging for review; do not delete source data.
     for name in (".env.local","uploads","backups"):
@@ -79,12 +85,45 @@ def copy_legacy_storage(source, destination):
             shutil.copy2(entry,destination/name,follow_symlinks=False)
         else:
             raise ValueError("Missing legacy storage entry.")
-    after=manifest(source)
-    copied=manifest(destination)
+    after=storage_manifest(source)
+    copied=storage_manifest(destination)
     if before!=after or before!=copied:
         raise ValueError("Legacy storage changed or copy verification failed.")
     os.chmod(destination/".env.local",0o600)
     return {"verified":True,"files":sum(v[0]=="file" for v in copied.values()),"activationAllowed":False}
+
+def verify_staged_storage(project, destination):
+    """Detect stale or modified copies before any runtime mapping is changed."""
+    import json
+    import hashlib
+    import stat
+    from switch_journal import sync_dir
+    project=Path(project)
+    destination=Path(destination)
+    original=storage_manifest(project)
+    copied=storage_manifest(destination)
+    if original!=copied:
+        raise ValueError("Staged storage differs from the original installation.")
+    if original.get(".env.local",())[0]!="file" or any(original.get(name,())[0]!="directory" for name in ("uploads","backups")):
+        raise ValueError("Unexpected runtime storage types.")
+    if stat.S_IMODE(destination.stat().st_mode)&0o077 or stat.S_IMODE((destination/".env.local").stat().st_mode)&0o077:
+        raise ValueError("Staged credentials are not private.")
+    # Flush copied files and directories before retaining a successful receipt.
+    for name,entry in copied.items():
+        path=destination/name
+        if entry[0]=="file":
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+    for name,entry in reversed(list(copied.items())):
+        if entry[0]=="directory":
+            sync_dir(destination/name)
+    sync_dir(destination)
+    if storage_manifest(project)!=original or storage_manifest(destination)!=original:
+        raise ValueError("Storage changed during durable verification.")
+    return hashlib.sha256(json.dumps(original,sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
 def stage_migration(project, folder, confirmation):
     """Retain a verified private copy under the maintenance hold; never activate."""
@@ -146,7 +185,8 @@ def stage_migration(project, folder, confirmation):
         check_database_clients(project)
         if any(evidence(p)!=raw for p,raw in ((STATE/"maintenance-hold.json",hold),(folder/"recovery.json",meta),(folder/"maintenance-backup-receipt.json",receipt),(folder/"restore-test.json",restore))) or migration_inventory(project)!=inventory:
             raise ValueError("Migration evidence changed.")
-        record={"schema":1,"kind":"mint-runtime-migration-staged","source":str(project),"archiveSha256":digest,"holdDigest":sha(hold),"files":result["files"],"activationAllowed":False}
+        storage_digest=verify_staged_storage(project,destination)
+        record={"schema":1,"kind":"mint-runtime-migration-staged","storageDigest":storage_digest,"source":str(project),"archiveSha256":digest,"holdDigest":sha(hold),"files":result["files"],"activationAllowed":False}
         with (destination/"migration-receipt.json").open("x") as stream:
             json.dump(record,stream)
             stream.flush()
