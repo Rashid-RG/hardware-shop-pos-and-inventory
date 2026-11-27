@@ -295,7 +295,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -308,11 +308,43 @@ jobs:
           tar -C "$runtime" -czf "$RUNNER_TEMP/ars-node-linux-x64.tar.gz" bin lib LICENSE
       - name: Create pilot source archive with optional Mint runtime
         env:
-          PILOT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          PILOT_COMMIT: ${{ github.sha }}
         run: python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package "$RUNNER_TEMP/ars-node-linux-x64.tar.gz"
       - name: Retain installation package and SHA-256 checksum
         uses: actions/upload-artifact@v4
         with:
           name: ars-distributor-v1-pilot
           path: pilot-package/
+          retention-days: 14
+
+  package-windows-exe:
+    needs: [package-pilot]
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ars-distributor-v1-pilot
+          path: pilot-package
+      - name: Compile native Windows acceptance bootstrapper
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $zip=Get-ChildItem pilot-package -Filter '*.zip'
+          if (@($zip).Count -ne 1) { throw 'Expected one validated package.' }
+          $expected=(Get-Content -LiteralPath ($zip.FullName+'.sha256') -Raw).Split(' ')[0]
+          if ((Get-FileHash -LiteralPath $zip.FullName).Hash -ine $expected) { throw 'Package checksum mismatch.' }
+          New-Item -ItemType Directory -Path native-package | Out-Null
+          $exe=Join-Path (Resolve-Path native-package).Path 'ARS-Distributor-Setup.exe'
+          $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          & $csc /nologo /target:winexe /optimize+ "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll scripts/windows-native-setup.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed.' }
+          $process=Start-Process -FilePath $exe -ArgumentList '--verify-payload' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Embedded payload verification failed.' }
+          ((Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant()+'  ARS-Distributor-Setup.exe') | Set-Content -Encoding ascii -LiteralPath ($exe+'.sha256')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ars-distributor-windows-native-pilot
+          path: native-package/
           retention-days: 14
