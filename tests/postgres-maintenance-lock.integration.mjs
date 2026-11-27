@@ -440,7 +440,8 @@ test('combined activation transfer retains gate across candidate and rollback ch
  });
 });
 
-test('disposable child exits on coordinator database session loss while IPC stays connected',{timeout:30000},async()=>{
+for(const failure of ['database-session-loss','ipc-disconnect']){
+test('disposable child releases leases after '+failure,{timeout:30000},async()=>{
  const {fork}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
  const {randomInt}=await import('node:crypto');
@@ -484,13 +485,22 @@ test('disposable child exits on coordinator database session loss while IPC stay
    });
   }finally{clearTimeout(timer);grant.revoke();}
   assert.equal(child.connected,true);
-  await c.end();
-  // Keep IPC open: only the database gate has disappeared.
-  assert.equal(child.connected,true);
+  if(failure==='database-session-loss'){
+   await c.end();
+   // Keep IPC open: only the database gate has disappeared.
+   assert.equal(child.connected,true);
+  }else{
+   // Parent channel loss must stop the child even with the gate still held.
+   child.disconnect();
+  }
   const result=await Promise.race([closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Watchdog did not stop the child.')),10000);})]);
   clearTimeout(timer);
   assert.deepEqual(result,{code:1,signal:null});
-  for(const id of Object.values(keys))assert.equal(await lock(probe,id),true);
+  if(failure==='ipc-disconnect'){
+   await assertGateOwner(probe,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
+   assert.equal(await lock(probe,keys.gateId),false);
+  }else assert.equal(await lock(probe,keys.gateId),true);
+  for(const id of [keys.writerId,keys.fenceId])assert.equal(await lock(probe,id),true);
  }finally{
   clearTimeout(timer);
   if(child&&child.exitCode===null&&child.signalCode===null)child.kill();
@@ -498,3 +508,4 @@ test('disposable child exits on coordinator database session loss while IPC stay
   await Promise.allSettled([c.end(),probe.end()]);
  }
 });
+}
