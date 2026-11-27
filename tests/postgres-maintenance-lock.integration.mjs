@@ -427,3 +427,15 @@ test('private authorized child owns disposable writer and fence itself',{timeout
   }
  }finally{await c.end();}
 });
+
+
+test('combined activation transfer retains gate across candidate and rollback child processes',{timeout:60000},async()=>{
+ const {rehearseActivationTransfer}=await import('../scripts/database-activation-transfer-rehearsal.mjs');
+ const binding={releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64)};
+ const result=await rehearseActivationTransfer(url.toString(),binding);
+ assert.deepEqual(result,{
+  candidateWriterRehearsed:true,rollbackWriterRehearsed:true,
+  gateObservedAcrossTransitions:true,liveStartupAllowed:false,
+  activationAllowed:false,continuousExclusionVerified:false
+ });
+});
