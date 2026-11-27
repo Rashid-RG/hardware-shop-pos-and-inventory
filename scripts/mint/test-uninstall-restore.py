@@ -32,5 +32,37 @@ class Tests(unittest.TestCase):
                 archive.writestr("uploads/../unexpected","fixture")
             with self.assertRaises(ValueError):
                 module.verify_uploads(path)
+    def test_final_review(self):
+        from uninstall_final_review import review, FLAGS
+        from copy import deepcopy
+        uid="a"*32
+        archive="ars-mint-20261127T120000Z-"+uid+"-v2-with-uploads.dump"
+        evidence={k:"b"*64 for k in ("hold","shutdown","meta","receipt")}
+        members={p.name:"c"*64 for p in module.load_prepare().members(Path(archive))}
+        record=dict(schema=1,kind="mint-uninstall-restore-observation",uninstallId=uid,
+                    archiveSha256=members[archive],isolatedRestorePassed=True,
+                    allPublicTableFingerprintsMatched=True,uploadArchiveIntegrityVerified=True,
+                    restoredTableCount=5,uploadMemberCount=0,evidenceDigests=evidence,
+                    archiveMemberDigests=members,**{k:False for k in FLAGS})
+        plan=review(record,uid,archive,evidence,members)
+        self.assertTrue(plan["restoreObservationMatched"])
+        for flag in FLAGS:
+            self.assertIs(plan[flag],False)
+            bad=deepcopy(record)
+            bad[flag]=True
+            with self.assertRaises(ValueError):
+                review(bad,uid,archive,evidence,members)
+        for key in ("uninstallId","archiveSha256","isolatedRestorePassed","evidenceDigests","archiveMemberDigests"):
+            bad=deepcopy(record)
+            del bad[key]
+            with self.assertRaises(ValueError):
+                review(bad,uid,archive,evidence,members)
+        altered=dict(members)
+        altered[archive]="d"*64
+        with self.assertRaises(ValueError):
+            review(record,uid,archive,evidence,altered)
+        altered=dict(evidence,shutdown="e"*64)
+        with self.assertRaises(ValueError):
+            review(record,uid,archive,altered,members)
 if __name__=="__main__":
     unittest.main()
