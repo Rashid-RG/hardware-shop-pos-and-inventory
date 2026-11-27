@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 from resume_maintenance import open_lock
-from repair_test_build import assert_local_docker
+from repair_test_build import assert_local_docker, verify_retained_build
 STATE=Path.home()/".local/share/ars-hardware"
 
 def load(name):
@@ -43,6 +43,9 @@ def run(repair):
         result=json.loads(test_raw)
         if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
             raise ValueError("Incomplete repair rehearsal.")
+        if result.get("testedBuildRetained") is not True:
+            raise ValueError("Tested build retention required.")
+        verify_retained_build(repair,result["buildFingerprint"])
         final={"schema":1,"kind":"mint-repair-rehearsal-observation","backupObservationDigest":observer.sha(raw),"testReceiptDigest":observer.sha(test_raw),"repairReceiptDigest":binding[0],"activationAllowed":False,"startupAllowed":False,"repairApplied":False}
         with (repair/"repair-rehearsal-observation.json").open("x") as stream:
             json.dump(final,stream,sort_keys=True)

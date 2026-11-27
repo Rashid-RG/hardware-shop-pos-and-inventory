@@ -64,8 +64,13 @@ def test(folder, compatibility=False, repair=None):
         receipt=folder/"restore-test.json" if repair is None else repair/"repair-restore-test.json"
         if repair is None:
             receipt.unlink(missing_ok=True)
-        elif os.path.lexists(receipt):
-            raise ValueError("Existing repair result must be retained.")
+        elif os.path.lexists(receipt) or os.path.lexists(repair/"tested-build"):
+            raise ValueError("Existing repair result or build must be retained.")
+        if repair is not None:
+            if not compatibility:
+                raise ValueError("Repair requires application compatibility rehearsal.")
+            from repair_test_build import assert_local_docker
+            assert_local_docker()
         if name.endswith("-with-uploads.dump"):
             with zipfile.ZipFile(folder/(dump.stem+"-uploads.zip")) as bundle:
                 if bundle.testzip() is not None:
@@ -271,6 +276,9 @@ def test(folder, compatibility=False, repair=None):
                             app_created=False
             if sha(dump)!=checksum:
                 raise ValueError("Backup changed during restoration test.")
+            if repair is not None:
+                from repair_test_build import retain_tested_build
+                retain_tested_build(repair,isolated,build_fingerprint)
         finally:
             try:
                 if app_created:
@@ -289,7 +297,7 @@ def test(folder, compatibility=False, repair=None):
             temporary.write_text(json.dumps(result,indent=2)+"\n")
             temporary.replace(receipt)
         else:
-            result.update({"kind":"isolated-repair-restore-test","repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
+            result.update({"kind":"isolated-repair-restore-test","testedBuildRetained":True,"repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
             with receipt.open("x") as stream:
                 json.dump(result,stream,indent=2)
                 stream.flush()

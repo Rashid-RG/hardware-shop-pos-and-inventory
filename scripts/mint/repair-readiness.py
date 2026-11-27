@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 from resume_maintenance import open_lock
-from repair_test_build import assert_local_docker
+from repair_test_build import assert_local_docker, verify_retained_build
 
 STATE=Path.home()/".local/share/ars-hardware"
 FLAGS=("activationAllowed","startupAllowed","repairApplied")
@@ -60,7 +60,10 @@ def inspect(repair):
                 raise ValueError("Repair rehearsal used different backup evidence.")
         if review.validate_repair(repair,project,observer)!=binding or any(observer.read(path)!=raw[key] for key,path in files.items()) or observer.snapshot(recovery)!=evidence:
             raise ValueError("Evidence changed during review.")
-        return {"schema":1,"repairEvidenceMatched":True,"testedBuildFingerprint":test["buildFingerprint"],"testedBuildRetained":False,"continuousExclusionVerified":False,"rollbackVerified":False,**{key:False for key in FLAGS}}
+        if test.get("testedBuildRetained") is not True:
+            raise ValueError("A new rehearsal with retained build is required.")
+        verify_retained_build(repair,test["buildFingerprint"])
+        return {"schema":1,"repairEvidenceMatched":True,"testedBuildFingerprint":test["buildFingerprint"],"testedBuildRetained":True,"continuousExclusionVerified":False,"rollbackVerified":False,**{key:False for key in FLAGS}}
 
 def main():
     title="RS Nextward | Repair readiness review"
@@ -71,7 +74,7 @@ def main():
         return
     try:
         inspect(Path(answer.stdout.strip()))
-        dialog("--info","--no-markup","--text=Repair and backup evidence matched. The tested temporary build was not retained for activation. Continuous writer exclusion, rollback and physical acceptance are not certified. Live repair remains locked.")
+        dialog("--info","--no-markup","--text=Repair and backup evidence matched. The exact tested build is retained and its fingerprint matches. Native host compatibility is not certified. Continuous writer exclusion, rollback and physical acceptance are not certified. Live repair remains locked.")
     except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         dialog("--error","--no-markup","--text=Repair readiness review blocked. Missing, stale or altered evidence. No repair applied.")
 
