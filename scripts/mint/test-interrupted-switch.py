@@ -405,6 +405,57 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(hold.read_text(),"fixture hold")
             self.assertEqual(json.loads((root/"switch-journal.json").read_text())["phase"],"switched")
             self.assertFalse(startup_allowed(root))
+    def test_offline_rollback_restores_previous_pointer_without_startup(self):
+        import hashlib
+        import os
+        import maintenance_backup
+        from release_fingerprint import fingerprint
+        from types import SimpleNamespace
+        spec=importlib.util.spec_from_file_location("intent",Path(__file__).with_name("prepare-switch-intent.py"))
+        intent=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(intent)
+        spec=importlib.util.spec_from_file_location("selector",Path(__file__).with_name("select-offline-release.py"))
+        selector=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous=root/"previous"
+            candidate=root/"staged-releases"/"1.2.3"
+            for release in (previous,candidate):
+                (release/"dist").mkdir(parents=True)
+                (release/"dist/server.cjs").write_text("fixture")
+                (release/"node_modules").mkdir()
+            runtime=root/"runtime"
+            runtime.mkdir()
+            (runtime/".env.local").write_text("fixture")
+            (runtime/"uploads").mkdir()
+            (runtime/"backups").mkdir()
+            intent.prepare_candidate_runtime(previous,runtime)
+            intent.prepare_candidate_runtime(candidate,runtime)
+            (root/"project").symlink_to(candidate)
+            hold=root/"maintenance-hold.json"
+            hold.write_text(json.dumps({"purpose":"pre-update backup","previousProject":str(previous)}))
+            sha=lambda raw:hashlib.sha256(raw).hexdigest()
+            with tempfile.TemporaryDirectory() as build:
+                import shutil
+                for part in ("dist","node_modules"):
+                    shutil.copytree(previous/part,Path(build)/part)
+                digest=fingerprint(Path(build))
+            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes()),"desktopUid":os.getuid(),"previousBuildDigest":digest}
+            target=root/"runtime-switch-intent.json"
+            target.write_text(json.dumps({"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}))
+            journal=root/"switch-journal.json"
+            journal.write_text(json.dumps({"schema":1,"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":"switched","switchId":"a"*32,"intentDigest":sha(target.read_bytes()),"maintenanceDigest":sha(hold.read_bytes()),"startupAllowed":False}))
+            proposal=SimpleNamespace(plain=lambda *args:None,read=lambda path:path.read_bytes(),sha=sha)
+            with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"load",return_value=proposal), patch.object(selector.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+                result=selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE")
+                self.assertTrue(result["previousSelected"])
+                self.assertTrue(selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE")["previousSelected"])
+            self.assertEqual((root/"project").resolve(),previous)
+            self.assertTrue(candidate.exists())
+            self.assertTrue(hold.exists())
+            self.assertTrue(target.exists())
+            self.assertFalse(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
