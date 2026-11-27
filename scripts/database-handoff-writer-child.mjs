@@ -2,8 +2,14 @@
 import pg from 'pg';
 import {acquireRehearsalWriter} from './database-handoff-writer-rehearsal.mjs';
 import {assertGateOwner,HANDOFF_CLASS} from './database-handoff-gate.mjs';
-let client,phase='challenge';
-const stop=async code=>{phase='stopped';try{await client?.end();}finally{process.exit(code);}};
+let client,phase='challenge',watchdog,stopping=false,checking=false;
+const stop=async code=>{
+ if(stopping)return;
+ stopping=true;phase='stopped';clearInterval(watchdog);
+ // Bound shutdown even if the database socket is no longer responsive.
+ const deadline=setTimeout(()=>process.exit(1),6000);
+ try{await client?.end();}catch{code=1;}finally{clearTimeout(deadline);process.exit(code);}
+};
 process.on('disconnect',()=>void stop(1));
 process.on('message',async m=>{
  try{
@@ -27,7 +33,15 @@ process.on('message',async m=>{
    const fence=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[HANDOFF_CLASS,fenceId]);
    if(fence.rows[0]?.acquired!==true)throw Error('Fence unavailable.');
    await assertGateOwner(client,m.owner,{lockClass:HANDOFF_CLASS,lockId:gateId});
+   if(stopping||!process.connected)throw Error('Coordinator disconnected.');
    phase='holding';
+   // A live IPC parent alone does not prove its database gate still exists.
+   watchdog=setInterval(async()=>{
+    if(stopping||checking)return;
+    checking=true;
+    try{if(!process.connected)throw Error('Coordinator disconnected.');await assertGateOwner(client,m.owner,{lockClass:HANDOFF_CLASS,lockId:gateId});}
+    catch{await stop(1);}finally{checking=false;}
+   },250);
    process.send({schema:1,type:'holding',owner});
   }else if(phase==='holding'&&m.type==='release'){await stop(0);}
   else throw Error('Invalid phase.');
