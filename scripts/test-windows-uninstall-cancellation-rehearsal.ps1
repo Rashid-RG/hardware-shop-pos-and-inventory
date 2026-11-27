@@ -52,3 +52,58 @@ foreach ($phase in @('archive','receipt','proof-removed','complete')) {
   if ([IO.Directory]::Exists($fixture)) {Microsoft.PowerShell.Management\Remove-Item -LiteralPath $fixture -Recurse -Force}
  }
 }
+
+. (Join-Path $PSScriptRoot 'windows-uninstall-coordinator.ps1')
+foreach ($cut in @('backup','restore','review','changed-hold','complete')) {
+ $fixture=Join-Path ([IO.Path]::GetTempPath()) ('ars-coordinator-'+[guid]::NewGuid().ToString('N'))
+ try {
+  [void][IO.Directory]::CreateDirectory($fixture)
+  $uid='a'*32
+  $project=Join-Path $fixture 'app'
+  $recovery=Join-Path (Join-Path $fixture 'uninstall-recovery') $uid
+  [void][IO.Directory]::CreateDirectory($project)
+  [void][IO.Directory]::CreateDirectory($recovery)
+  $marker=Join-Path $fixture 'maintenance.json'
+  $sample=Join-Path $fixture 'business.json'
+  [IO.File]::WriteAllText($marker,'synthetic hold')
+  [IO.File]::WriteAllText($sample,'synthetic business data')
+  $originalHash=(Get-FileHash -LiteralPath $marker).Hash
+  $calls=New-Object 'System.Collections.Generic.List[string]'
+  $check={
+   if ((Get-FileHash -LiteralPath $marker).Hash -cne $originalHash) {throw 'simulated changed hold'}
+  }
+  $backup={
+   param($p)
+   $calls.Add('backup')
+   if ($cut -eq 'backup') {throw 'simulated backup failure'}
+   if ($cut -eq 'changed-hold') {[IO.File]::WriteAllText($marker,'changed synthetic hold')}
+   return $recovery
+  }
+  $restore={
+   param($p,$f)
+   $calls.Add('restore')
+   if ($cut -eq 'restore') {throw 'simulated restore failure'}
+   return @{uninstallId=$uid;isolatedRestorePassed=$true}
+  }
+  $review={
+   param($p,$f)
+   $calls.Add('review')
+   if ($cut -eq 'review') {throw 'simulated review failure'}
+   return @{uninstallId=$uid;restoreObservationMatched=$true;applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;serviceRemovalAllowed=$false;uninstalled=$false;finalUninstallBackupVerified=$false;continuousExclusionVerified=$false}
+  }
+  $blocked=$false
+  try {$result=Invoke-ArsUninstallRehearsalStages $project $fixture $uid $check $backup $restore $review} catch {if ($_.Exception.Message -notlike 'simulated*') {throw};$blocked=$true}
+  if ($cut -eq 'complete') {
+   if ($blocked -or -not $result.finalReviewMatched -or -not $result.maintenanceHoldObserved) {throw 'Completion mismatch.'}
+   foreach ($flag in @('applicationRemovalAllowed','databaseDeletionAllowed','serviceRemovalAllowed','uninstalled','finalUninstallBackupVerified','continuousExclusionVerified')) {
+    if ($result[$flag] -isnot [bool] -or $result[$flag]) {throw 'Unexpected authorization.'}
+   }
+  } elseif (-not $blocked) {throw 'Coordinator accepted simulated failure.'}
+  $expected=switch ($cut) {'backup' {'backup'} 'changed-hold' {'backup'} 'restore' {'backup,restore'} default {'backup,restore,review'}}
+  if (($calls -join ',') -cne $expected) {throw 'Unexpected stage execution.'}
+  if (-not (Test-Path -LiteralPath $marker) -or [IO.File]::ReadAllText($sample) -cne 'synthetic business data') {throw 'Fixture data or hold lost.'}
+  if ($cut -ne 'changed-hold' -and (Get-FileHash -LiteralPath $marker).Hash -cne $originalHash) {throw 'Hold changed unexpectedly.'}
+ } finally {
+  if ([IO.Directory]::Exists($fixture)) {Microsoft.PowerShell.Management\Remove-Item -LiteralPath $fixture -Recurse -Force}
+ }
+}
