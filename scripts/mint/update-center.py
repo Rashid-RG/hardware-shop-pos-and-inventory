@@ -183,6 +183,49 @@ def activation_review(project):
         else:
             notice("Proposal preparation or verification blocked. Check protected backup and compatibility evidence or contact RS Nextward. No live activation was requested.",True)
 
+def runtime_migration_center(project):
+    """Graphical entry points; underlying tools enforce maintenance and evidence checks."""
+    while True:
+        interrupted=os.path.lexists(STATE/"runtime-migration-interrupted.json")
+        staged=os.path.lexists(STATE/"runtime-migration-staged")
+        held=os.path.lexists(STATE/"maintenance-hold.json")
+        actions=["Inspect runtime storage"]
+        if interrupted:
+            actions.append("Recover interrupted mapping")
+        elif held and staged:
+            actions.append("Map verified runtime")
+        elif held and not os.path.lexists(STATE/"runtime"):
+            actions.append("Stage legacy runtime")
+        choice=dialog("--list","--no-markup","--text=Permanent runtime migration\\nMaintenance: "+("Active" if held else "Not active")+"\\nOriginal files are retained. Mapping never starts billing.","--column=Action","--width=640","--height=360",*actions,"Return")
+        action=choice.stdout.strip()
+        if choice.returncode!=0 or action=="Return": return
+        if action not in actions: continue
+        if action=="Inspect runtime storage":
+            try:
+                result=subprocess.run(["python3",str(project/"scripts/mint/runtime-layout.py"),str(project),"--inventory"],cwd=project,capture_output=True,text=True,timeout=30)
+                data=json.loads(result.stdout) if result.returncode==0 else {}
+                entries=data.get("entries",[])
+                if data.get("kind")!="mint-runtime-migration-inventory" or len(entries)!=3:
+                    raise ValueError("Invalid inventory")
+                notice("\\n".join(str(e["name"])+": "+str(e["status"]) for e in entries)+"\\nNo data moved.")
+            except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
+                notice("Runtime assessment unavailable. Contact RS Nextward.",True)
+            continue
+        args=[]
+        if action=="Stage legacy runtime":
+            folder=select_recovery()
+            if not folder: continue
+            args=["--stage",str(folder),"--confirmation","STAGE RUNTIME MIGRATION"]
+            message="Prepare a private verified copy using the selected protected and restoration-tested backup?"
+        elif action=="Map verified runtime":
+            args=["--map-staged","--confirmation","MAP VERIFIED RUNTIME"]
+            message="Map verified files to permanent storage? Original files are retained. POS remains stopped."
+        else:
+            args=["--recover-mapping","--confirmation","RECOVER RUNTIME MAPPING"]
+            message="Continue the interrupted offline mapping? POS remains stopped. Conflicting evidence requires support."
+        if dialog("--question","--no-markup","--text="+message).returncode==0:
+            execute(project,"runtime-layout.py",str(project),*args)
+
 def status(project):
     version="Unknown"
     try:
@@ -250,7 +293,7 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -283,6 +326,8 @@ def main():
                         execute(project,"test-update-restore.py",str(folder),*extra)
             elif action=="Activation Review Center":
                 activation_review(project)
+            elif action=="Runtime Migration Center":
+                runtime_migration_center(project)
             elif action=="Stop POS and prepare protected backup":
                 if (STATE/"maintenance-hold.json").exists():
                     notice("Maintenance is already active. Review the existing backup or resume the current POS.",True)

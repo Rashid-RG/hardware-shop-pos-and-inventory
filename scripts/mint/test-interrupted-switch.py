@@ -296,6 +296,18 @@ class RecoveryTests(unittest.TestCase):
             self.assertFalse(startup_allowed(state))
             self.assertEqual((originals/".env.local").read_text(),"fixture")
             self.assertEqual((project/"uploads").resolve(),runtime/"uploads")
+    def test_migration_menu_recovery_requires_confirmation(self):
+        from types import SimpleNamespace
+        spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
+        center=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(center)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            (root/"runtime-migration-interrupted.json").touch()
+            answers=[SimpleNamespace(returncode=0,stdout="Recover interrupted mapping"),SimpleNamespace(returncode=1,stdout=""),SimpleNamespace(returncode=0,stdout="Recover interrupted mapping"),SimpleNamespace(returncode=0,stdout=""),SimpleNamespace(returncode=0,stdout="Return")]
+            with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=answers), patch.object(center,"execute") as execute:
+                center.runtime_migration_center(root)
+                execute.assert_called_once_with(root,"runtime-layout.py",str(root),"--recover-mapping","--confirmation","RECOVER RUNTIME MAPPING")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
