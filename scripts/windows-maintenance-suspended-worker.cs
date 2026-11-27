@@ -4,6 +4,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Diagnostics;
 
 namespace RSNextward.Maintenance {
     public static class SuspendedWorker {
@@ -51,8 +53,12 @@ namespace RSNextward.Maintenance {
         }
 
         // Trusted internal executable and arguments only. No shell or inherited handles.
-        // This synchronous primitive does not yet provide IPC or abort-signal integration.
+        // Native cancellation capability; a trusted IPC bridge is still required.
         public static void Run(string executable, string[] args, string directory, int timeoutMs) {
+            Run(executable, args, directory, timeoutMs, CancellationToken.None);
+        }
+        public static void Run(string executable, string[] args, string directory, int timeoutMs, CancellationToken cancellation) {
+            cancellation.ThrowIfCancellationRequested();
             if (String.IsNullOrEmpty(executable) || !Path.IsPathRooted(executable) ||
                 !String.Equals(Path.GetFullPath(executable), executable, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(executable) || !String.Equals(Path.GetExtension(executable), ".exe", StringComparison.OrdinalIgnoreCase) ||
@@ -76,13 +82,23 @@ namespace RSNextward.Maintenance {
                     job.AssignSuspendedWorker(info.process);
                     assigned = true;
                     if (job.ActiveProcesses != 1) throw new InvalidOperationException("Worker containment not verified.");
+                    cancellation.ThrowIfCancellationRequested();
                     if (ResumeThread(info.thread) != 1) throw new InvalidOperationException("Worker resume failed.");
-                    uint wait = WaitForSingleObject(info.process, (uint)timeoutMs);
-                    if (wait != 0) throw new InvalidOperationException("Worker wait failed or timed out.");
+                    var elapsed = Stopwatch.StartNew();
+                    while (true) {
+                        cancellation.ThrowIfCancellationRequested();
+                        long remaining = timeoutMs - elapsed.ElapsedMilliseconds;
+                        if (remaining <= 0) throw new InvalidOperationException("Worker wait failed or timed out.");
+                        uint wait = WaitForSingleObject(info.process, (uint)Math.Min(100L, remaining));
+                        if (wait == 0) break;
+                        if (wait != 258) throw new InvalidOperationException("Worker wait failed or timed out.");
+                    }
+                    cancellation.ThrowIfCancellationRequested();
                     uint code;
                     if (!GetExitCodeProcess(info.process, out code) || code != 0)
                         throw new InvalidOperationException("Worker failed.");
                     if (job.ActiveProcesses != 0) throw new InvalidOperationException("Worker descendants remain active.");
+                    cancellation.ThrowIfCancellationRequested();
                     complete = true;
                 } finally {
                     try {
@@ -91,6 +107,13 @@ namespace RSNextward.Maintenance {
                             else if (!TerminateProcess(info.process, 1)) throw new Win32Exception(Marshal.GetLastWin32Error());
                             if (WaitForSingleObject(info.process, 10000) != 0)
                                 throw new InvalidOperationException("Worker termination not verified.");
+                            if (assigned) {
+                                var cleanup = Stopwatch.StartNew();
+                                while (job.ActiveProcesses != 0) {
+                                    if (cleanup.ElapsedMilliseconds >= 10000) throw new InvalidOperationException("Worker job termination not verified.");
+                                    Thread.Sleep(25);
+                                }
+                            }
                         }
                     } finally {
                         CloseHandle(info.thread);
