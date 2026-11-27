@@ -5,7 +5,12 @@ import {readFile,access} from 'node:fs/promises';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 
-if(process.platform!=='win32'||process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted')throw Error('Disposable Windows CI only.');
+// Node's generic test discovery also finds this platform-specific fixture.
+if(process.platform!=='win32'){
+ console.log('Skipping native Windows supervisor fixture on non-Windows platform.');
+ process.exit(0);
+}
+if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted')throw Error('Disposable Windows CI only.');
 const [supervisor,dir]=process.argv.slice(2);
 if(!supervisor||!dir)throw Error('Fixture paths required.');
 async function run(mode){
