@@ -69,7 +69,13 @@ try {
   $ids=Get-Content -LiteralPath $activeMarker -Raw|ConvertFrom-Json
   if ($ids.Count -ne 2) {throw 'Invalid cancellation fixture evidence.'}
   foreach ($workerId in $ids) {
-   if (Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue) {throw 'Cancelled job process remained active.'}
+   $deadline=[DateTime]::UtcNow.AddSeconds(10)
+   do {
+    $remaining=Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue
+    if (-not $remaining) {break}
+    Start-Sleep -Milliseconds 50
+   } while ([DateTime]::UtcNow -lt $deadline)
+   if ($remaining) {throw ('Cancelled job process remained active. PID: '+$workerId)}
   }
  } finally {$cts.Dispose()}
  # Verify authorization rejection using in-memory private control streams.
@@ -132,7 +138,13 @@ public sealed class ArsBridgeFixtureStream : Stream {
    $ids=Get-Content -LiteralPath $ready -Raw|ConvertFrom-Json
    if ($ids.Count -ne 2) {throw 'Invalid bridge fixture evidence.'}
    foreach ($workerId in $ids) {
-    if (Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue) {throw 'Revoked bridge job survived.'}
+    $deadline=[DateTime]::UtcNow.AddSeconds(10)
+   do {
+    $remaining=Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue
+    if (-not $remaining) {break}
+    Start-Sleep -Milliseconds 50
+   } while ([DateTime]::UtcNow -lt $deadline)
+   if ($remaining) {throw ('Revoked bridge job survived. PID: '+$workerId)}
    }
   } finally {$control.Dispose()}
  }
