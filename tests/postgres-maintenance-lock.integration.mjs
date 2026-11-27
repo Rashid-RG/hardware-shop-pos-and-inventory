@@ -456,7 +456,8 @@ test('disposable child releases leases after '+failure,{timeout:60000},async()=>
   assert.equal(await lock(c,keys.gateId),true);
   const owner=(await c.query("SELECT current_database() AS database,pg_backend_pid() AS pid,backend_start::text AS started,system_identifier::text AS cluster,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS oid FROM pg_stat_activity,pg_control_system() WHERE pid=pg_backend_pid()")).rows[0];
   child=fork(fileURLToPath(new URL('../scripts/database-handoff-writer-child.mjs',import.meta.url)),[],{execArgv:[],stdio:['ignore','ignore','ignore','ipc'],env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??''}});
-  closed=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));
+  // Observe process exit, not IPC stream closure: disconnect can leave close pending.
+  closed=new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal})));
   child.on('error',()=>{});
   const binding={releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64),purpose:'candidate',candidatePid:child.pid};
   const {createHandoffAuthorization}=await import('../scripts/database-handoff-authorization.mjs');
@@ -533,9 +534,14 @@ test('disposable child releases leases after '+failure,{timeout:60000},async()=>
   }
  }finally{
   clearTimeout(timer);
-  if(child&&child.exitCode===null&&child.signalCode===null)child.kill();
-  if(closed)await closed;
-  await Promise.allSettled([c.end(),probe.end()]);
+  try{
+   if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');
+   if(closed){
+    let cleanupTimer;
+    try{await Promise.race([closed,new Promise((_,reject)=>{cleanupTimer=setTimeout(()=>reject(Error('Child cleanup timed out.')),5000);})]);}
+    finally{clearTimeout(cleanupTimer);if(child.connected)child.disconnect();child.unref();}
+   }
+  }finally{await Promise.allSettled([c.end(),probe.end()]);}
  }
 });
 }
