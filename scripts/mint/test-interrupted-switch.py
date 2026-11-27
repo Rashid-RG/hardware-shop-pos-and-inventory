@@ -483,6 +483,28 @@ class RecoveryTests(unittest.TestCase):
             for phase in ("switched","completed"):
                 (root/"switch-journal.json").write_text(json.dumps({"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":phase}))
                 self.assertFalse(startup_allowed(root))
+    def test_offline_release_menu_requires_confirmation_and_uses_previous_tools(self):
+        from types import SimpleNamespace
+        spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
+        center=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(center)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous=root/"previous"
+            candidate=root/"candidate"
+            previous.mkdir()
+            candidate.mkdir()
+            (root/"project").symlink_to(candidate)
+            (root/"maintenance-hold.json").touch()
+            (root/"switch-journal.json").write_text(json.dumps({"kind":"mint-offline-release-selection","phase":"switched","previous":str(previous),"candidate":str(candidate),"startupAllowed":False}))
+            yes=SimpleNamespace(returncode=0,stdout="Return to previous release")
+            no=SimpleNamespace(returncode=1,stdout="")
+            with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,no]), patch.object(center,"execute") as run:
+                center.offline_release_center(candidate)
+                run.assert_not_called()
+            with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
+                center.offline_release_center(candidate)
+                run.assert_called_once_with(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

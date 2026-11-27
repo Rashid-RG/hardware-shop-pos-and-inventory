@@ -285,15 +285,72 @@ def view_history(folder,kind):
         details.append("Last verified cloud backup at this attempt: "+str(data.get("verifiedAt") or "None"))
     notice("\n".join(details))
 
+def offline_release_center(project):
+    """Offline selection and rollback only; never start a candidate."""
+    journal=STATE/"switch-journal.json"
+    hold=STATE/"maintenance-hold.json"
+    target=STATE/"runtime-switch-intent.json"
+    if not hold.is_file() or hold.is_symlink():
+        notice("A protected maintenance hold is required.",True)
+        return
+    actions=[]
+    tool_project=project
+    if os.path.lexists(journal):
+        try:
+            if journal.is_symlink() or not journal.is_file() or journal.stat().st_size>65536:
+                raise ValueError("Invalid journal")
+            data=json.loads(journal.read_text())
+            if data.get("kind")!="mint-offline-release-selection" or data.get("startupAllowed") is not False:
+                raise ValueError("Unsupported journal")
+            # Continue using the original control script after the pointer moves.
+            tool_project=Path(data["previous"])
+            active=(STATE/"project").resolve(strict=True)
+            if not tool_project.is_absolute() or tool_project.resolve(strict=True)!=tool_project or active not in (tool_project,Path(data["candidate"])):
+                raise ValueError("Unexpected release layout")
+            phase=data.get("phase")
+            if phase in ("backup-verified","switched","offline-rollback-pending"):
+                actions=["Return to previous release"]
+            elif phase=="offline-rolled-back":
+                actions=["Finalize offline rollback"]
+            else:
+                raise ValueError("Unsupported phase")
+        except (OSError,ValueError,TypeError,KeyError,AttributeError,RuntimeError):
+            notice("Unresolved switch evidence. Contact RS Nextward.",True)
+            return
+    elif target.is_file() and not target.is_symlink():
+        actions=["Select verified release offline"]
+    if not actions:
+        notice("Prepare a verified switch intent first.")
+        return
+    choice=dialog("--list","--no-markup","--text=Offline release operations only. Billing remains stopped.","--column=Action","--width=640","--height=300",*actions,"Return")
+    action=choice.stdout.strip()
+    if choice.returncode!=0 or action not in actions:
+        return
+    if action=="Select verified release offline":
+        folder=select_recovery()
+        if not folder:
+            return
+        args=[str(folder),"--confirmation","SELECT OFFLINE RELEASE"]
+        message="Select the verified candidate? Billing stays stopped. The previous release is retained."
+    elif action=="Return to previous release":
+        args=["--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE"]
+        message="Return to the previous software version? No database restoration or startup will occur."
+    else:
+        args=["--finalize-rollback","--confirmation","FINALIZE OFFLINE ROLLBACK"]
+        message="Archive verified rollback evidence? Maintenance remains active until you separately resume the previous POS."
+    if dialog("--question","--no-markup","--text="+message).returncode==0:
+        execute(tool_project,"select-offline-release.py",*args)
+        # Exit this center so subsequent operations re-resolve the active project.
+
 def main():
     if os.geteuid()==0:
         raise ValueError("Run as the desktop user.")
-    project=(STATE/"project").resolve(strict=True)
     with (STATE/"update-center.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
+            project=(STATE/"project").resolve(strict=True)
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
+                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Offline Release Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
             if action=="Prepare signed release":
@@ -326,6 +383,8 @@ def main():
                         execute(project,"test-update-restore.py",str(folder),*extra)
             elif action=="Activation Review Center":
                 activation_review(project)
+            elif action=="Offline Release Center":
+                offline_release_center(project)
             elif action=="Runtime Migration Center":
                 runtime_migration_center(project)
             elif action=="Stop POS and prepare protected backup":
