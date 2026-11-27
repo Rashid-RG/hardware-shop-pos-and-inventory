@@ -3,13 +3,16 @@
 import pg from 'pg';
 import { acquireHandoffGate, acquireMaintenanceTransactionFence } from './database-handoff-gate.mjs';
 import dotenv from 'dotenv';
-import {readFileSync,realpathSync} from 'node:fs';
-import {join,dirname,resolve} from 'node:path';
+import {readFileSync,realpathSync,openSync,writeFileSync,fsyncSync,closeSync,createReadStream} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {fingerprintPublicTables,assertFingerprintMatch} from './uninstall-table-fingerprints.mjs';
+import {join,dirname,resolve,basename} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 const root=realpathSync(fileURLToPath(new URL('../',import.meta.url)));
 async function main(){
- if(process.platform!=='win32'||process.argv.length!==3||process.env.ARS_RUNTIME_ROOT!==undefined) throw Error('Unsupported maintenance runtime.');
+ const uninstall=process.argv[3]==='--uninstall-manifest';
+ if(process.platform!=='win32'||process.argv.length!==(uninstall?4:3)||process.env.ARS_RUNTIME_ROOT!==undefined) throw Error('Unsupported maintenance runtime.');
  const destination=realpathSync(process.argv[2]);
  const config=dotenv.parse(readFileSync(join(root,'.env.local')));
  const url=new URL(config.DATABASE_URL);
@@ -35,6 +38,7 @@ async function main(){
   await client.query('LOCK TABLE '+rows.map(r=>ident(r.schemaname)+'.'+ident(r.tablename)).join(',')+' IN SHARE MODE NOWAIT');
   const activity=await client.query("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend') OR EXISTS (SELECT 1 FROM pg_prepared_xacts WHERE database=current_database()) AS busy");
   if(activity.rows[0]?.busy!==false||failure) throw Error('Other database clients or prepared transactions detected.');
+  const before=uninstall?await fingerprintPublicTables(client):null;
   let output='';
   await new Promise((ok,fail)=>{
    child=spawn('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'scripts','backup-local-postgres.ps1'),'-Destination',destination,'-OutputArchive'],{cwd:root,windowsHide:true,stdio:['ignore','pipe','ignore']});
@@ -45,6 +49,17 @@ async function main(){
   if(failure||JSON.stringify(rows)!==JSON.stringify((await tables()).rows)) throw Error('Maintenance evidence changed.');
   const paths=output.split(/\r?\n/).filter(l=>l.startsWith('ARS_ARCHIVE='));
   if(paths.length!==1||dirname(resolve(paths[0].slice(12))).toLowerCase()!==destination.toLowerCase()) throw Error('Unexpected archive location.');
+  if(uninstall){
+   assertFingerprintMatch(before,await fingerprintPublicTables(client));
+   const archive=resolve(paths[0].slice(12));
+   const hash=createHash('sha256');
+   for await(const chunk of createReadStream(archive))hash.update(chunk);
+   const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
+   if(locks.rows[0]?.count!==3||failure)throw Error('Database protection lost.');
+   const manifest={schema:1,kind:'windows-uninstall-table-manifest',archive:basename(archive),dumpSha256:hash.digest('hex'),tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
+   const fd=openSync(join(destination,'uninstall-table-manifest.json'),'wx',0o600);
+   try{writeFileSync(fd,JSON.stringify(manifest)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
+  }
   await client.query('ROLLBACK');
   if(failure) throw failure;
   console.log(paths[0]);

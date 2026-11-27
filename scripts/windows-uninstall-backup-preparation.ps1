@@ -53,7 +53,7 @@ function Prepare-ArsUninstallBackup([string]$project) {
   }
   Set-Acl -LiteralPath $folder -AclObject $acl
   $uploads=Get-ArsPreparedFingerprint (Join-Path $project 'uploads')
-  $result=@(& node (Join-Path $project 'scripts/windows-locked-maintenance-backup.mjs') $folder)
+  $result=@(& node (Join-Path $project 'scripts/windows-locked-maintenance-backup.mjs') $folder --uninstall-manifest)
   if ($LASTEXITCODE -ne 0) {throw 'Protected backup failed.'}
   $lines=@($result|Where-Object {$_ -is [string] -and $_.StartsWith('ARS_ARCHIVE=')})
   if ($lines.Count -ne 1) {throw 'Unique backup required.'}
@@ -64,6 +64,12 @@ function Prepare-ArsUninstallBackup([string]$project) {
    Assert-ArsPlainPath $member
    $hashes[[IO.Path]::GetFileName($member)]=(Get-FileHash -LiteralPath $member -Algorithm SHA256).Hash.ToLowerInvariant()
   }
+  $manifestPath=Join-Path $folder 'uninstall-table-manifest.json'
+  Assert-ArsPlainPath $manifestPath
+  if ((Get-Item -LiteralPath $manifestPath).Length -gt 16777216) {throw 'Manifest too large.'}
+  $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+  if ($manifest.schema -ne 1 -or $manifest.kind -cne 'windows-uninstall-table-manifest' -or $manifest.archive -cne [IO.Path]::GetFileName($archive) -or $manifest.dumpSha256 -cne $hashes[[IO.Path]::GetFileName($archive)] -or $manifest.locksObserved -isnot [bool] -or -not $manifest.locksObserved -or $manifest.applicationRemovalAllowed -isnot [bool] -or $manifest.applicationRemovalAllowed) {throw 'Invalid protected manifest.'}
+  $hashes['uninstall-table-manifest.json']=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
   & node (Join-Path $project 'scripts/verify-backup.mjs') $archive|Out-Null
   if ($LASTEXITCODE -ne 0 -or (Get-ArsPreparedFingerprint (Join-Path $project 'uploads')).digest -cne $uploads.digest -or (Get-FileHash -LiteralPath $holdPath -Algorithm SHA256).Hash -cne $holdHash -or (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash -cne $proofHash -or (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {throw 'Backup or maintenance evidence changed.'}
   $meta=[ordered]@{schema=1;kind='windows-final-uninstall-backup';uninstallId=$hold.uninstallId;previousProject=$project;archive=[IO.Path]::GetFileName($archive);archiveDigests=$hashes;holdDigest=$holdHash;shutdownDigest=$proofHash;restoreTestPassed=$false;finalUninstallBackupVerified=$false;applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;continuousExclusionVerified=$false}
