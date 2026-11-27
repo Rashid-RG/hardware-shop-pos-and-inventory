@@ -201,3 +201,76 @@ test('Linux maintenance interruption signals an inherited process group',{skip:p
   assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
  }finally{f.controller.abort();if(pending)await pending.catch(()=>{});await rm(dir,{recursive:true,force:true});}
 });
+
+import {withMaintenanceTableFence} from '../scripts/database-maintenance-table-fence.mjs';
+class TableFixtureClient extends FixtureClient {
+ constructor(){
+  super();this.tables=[{schemaname:'public',tablename:'invoice'},{schemaname:'public',tablename:'quote"line'}];
+  this.tableLocks=2;this.busy=false;this.transaction=false;this.denyTableLock=false;this.sql=[];
+ }
+ async query(sql,args){
+  this.sql.push(sql);
+  if(sql==='BEGIN'){assert.equal(this.transaction,false);this.transaction=true;return {rows:[]};}
+  if(sql==='ROLLBACK'){assert.equal(this.transaction,true);this.transaction=false;return {rows:[]};}
+  if(sql.startsWith('SET LOCAL')){assert.equal(this.transaction,true);return {rows:[]};}
+  if(sql.startsWith('SELECT schemaname,tablename'))return {rows:this.tables.map(r=>({...r}))};
+  if(sql.startsWith('LOCK TABLE ')){
+   assert.equal(this.transaction,true);
+   if(this.denyTableLock)throw Error('Fixture table lock denied.');
+   return {rows:[]};
+  }
+  if(sql.includes('AS busy'))return {rows:[{busy:this.busy}]};
+  if(sql.includes('count(DISTINCT c.oid)'))return {rows:[{count:this.transaction?this.tableLocks:0}]};
+  return super.query(sql,args);
+ }
+}
+test('maintenance table fence retains original session across multiple stages and rolls back once',async()=>{
+ const client=new TableFixtureClient();let scope;
+ const value=await withMaintenanceSession(client,'hardware_pos_ci',session=>withMaintenanceTableFence(client,session,async fence=>{
+  scope=fence;
+  assert.equal(fence.owner,session.owner);
+  assert.equal(fence.signal,session.signal);
+  assert.equal(client.closed,0);
+  assert.equal(client.transaction,true);
+  await fence.assertActive();
+  await fence.assertActive();
+  return 'archive reviewed';
+ }));
+ assert.equal(value,'archive reviewed');
+ assert.ok(client.sql.includes('LOCK TABLE "public"."invoice","public"."quote""line" IN SHARE MODE NOWAIT'));
+ assert.equal(client.sql.filter(s=>s==='BEGIN').length,1);
+ assert.equal(client.sql.filter(s=>s==='ROLLBACK').length,1);
+ assert.equal(client.transaction,false);
+ assert.equal(client.closed,1);
+ await assert.rejects(scope.assertActive(),/unavailable/);
+});
+test('maintenance table fence rejects unprotected entry and rolls back acquisition failures',async()=>{
+ for(const [mode,pattern] of [['empty',/No valid managed/],['invalid',/No valid managed/],['busy',/Other database clients/],['denied',/lock denied/],['missing',/table locks not verified/]]){
+  const client=new TableFixtureClient();
+  if(mode==='empty')client.tables=[];
+  if(mode==='invalid')client.tables=[{schemaname:'other',tablename:'invoice'}];
+  if(mode==='busy')client.busy=true;
+  if(mode==='denied')client.denyTableLock=true;
+  if(mode==='missing')client.tableLocks=1;
+  await assert.rejects(withMaintenanceSession(client,'hardware_pos_ci',session=>withMaintenanceTableFence(client,session,async()=>assert.fail('Unprotected stage started'))),pattern);
+  assert.equal(client.transaction,false);
+  assert.equal(client.sql.filter(s=>s==='ROLLBACK').length,1);
+  assert.equal(client.closed,1);
+ }
+});
+test('maintenance table fence rejects changed tables, lost locks, owner changes and stage failures',async()=>{
+ for(const [mode,pattern] of [['tables',/table set changed/],['locks',/table locks not verified/],['owner',/identity changed/],['disconnect',/unavailable/],['stage',/fixture stage failed/]]){
+  const client=new TableFixtureClient();
+  await assert.rejects(withMaintenanceSession(client,'hardware_pos_ci',session=>withMaintenanceTableFence(client,session,async()=>{
+   if(mode==='tables')client.tables.push({schemaname:'public',tablename:'new_table'});
+   if(mode==='locks')client.tableLocks=1;
+   if(mode==='owner')client.pid++;
+   if(mode==='disconnect')client.emit('end');
+   if(mode==='stage')throw Error('fixture stage failed');
+   return 'must not complete';
+  })),pattern);
+  assert.equal(client.transaction,false);
+  assert.equal(client.sql.filter(s=>s==='ROLLBACK').length,1);
+  assert.equal(client.closed,1);
+ }
+});
