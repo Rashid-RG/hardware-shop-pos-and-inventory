@@ -120,6 +120,30 @@ class RecoveryTests(unittest.TestCase):
             self.assertNotIn("private-fixture",json.dumps(result))
             self.assertEqual((project/".env.local").read_text(),"private-fixture")
             self.assertFalse((runtime/".env.local").exists())
+    def test_legacy_copy_verifies_bytes_without_removing_originals(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            source=root/"legacy"
+            source.mkdir()
+            (source/".env.local").write_bytes(b"fixture-secret")
+            (source/"uploads").mkdir()
+            (source/"uploads"/"image").write_bytes(b"image")
+            (source/"backups").mkdir()
+            (source/"backups"/"archive").write_bytes(b"archive")
+            target=root/"copy"
+            result=layout.copy_legacy_storage(source,target)
+            self.assertEqual(result,{"verified":True,"files":3,"activationAllowed":False})
+            self.assertEqual((source/".env.local").read_bytes(),(target/".env.local").read_bytes())
+            self.assertEqual((target/".env.local").stat().st_mode & 0o777,0o600)
+            with self.assertRaises(ValueError):
+                layout.copy_legacy_storage(source,target)
+            (source/"uploads"/"linked").symlink_to(root/"missing")
+            with self.assertRaises(ValueError):
+                layout.copy_legacy_storage(source,root/"rejected")
+            self.assertFalse((root/"rejected").exists())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

@@ -34,6 +34,58 @@ def migration_inventory(project):
         entries.append({"name":name,"status":status})
     return {"schema":1,"kind":"mint-runtime-migration-inventory","entries":entries,"migrationAllowed":False,"requiresVerifiedBackup":True}
 
+def copy_legacy_storage(source, destination):
+    """Copy to a new private staging directory. No source deletion or activation."""
+    import hashlib
+    import stat
+    import shutil
+    source=Path(source)
+    destination=Path(destination)
+    def manifest(root):
+        result={}
+        def visit(path, relative):
+            info=path.lstat()
+            if stat.S_ISDIR(info.st_mode):
+                result[relative]=("directory",)
+                for child in sorted(path.iterdir()):
+                    visit(child,relative+"/"+child.name)
+            elif stat.S_ISREG(info.st_mode):
+                with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW),"rb") as stream:
+                    before=os.fstat(stream.fileno())
+                    digest=hashlib.file_digest(stream,"sha256").hexdigest()
+                    after=os.fstat(stream.fileno())
+                def identity(item):
+                    return (item.st_dev,item.st_ino,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
+                if identity(info)!=identity(before) or identity(before)!=identity(after):
+                    raise ValueError("Legacy file changed during verification.")
+                result[relative]=("file",info.st_size,digest)
+            else:
+                raise ValueError("Unsupported legacy storage entry.")
+        for name in (".env.local","uploads","backups"):
+            visit(root/name,name)
+        return result
+    if source.resolve(strict=True)!=source or destination.parent.resolve(strict=True)!=destination.parent:
+        raise ValueError("Linked storage path rejected.")
+    if destination==source or source in destination.parents or os.path.lexists(destination):
+        raise ValueError("Destination must be new and outside source.")
+    before=manifest(source)
+    destination.mkdir(mode=0o700)
+    # On failure retain partial staging for review; do not delete source data.
+    for name in (".env.local","uploads","backups"):
+        entry=source/name
+        if entry.is_dir():
+            shutil.copytree(entry,destination/name,symlinks=True)
+        elif entry.is_file():
+            shutil.copy2(entry,destination/name,follow_symlinks=False)
+        else:
+            raise ValueError("Missing legacy storage entry.")
+    after=manifest(source)
+    copied=manifest(destination)
+    if before!=after or before!=copied:
+        raise ValueError("Legacy storage changed or copy verification failed.")
+    os.chmod(destination/".env.local",0o600)
+    return {"verified":True,"files":sum(v[0]=="file" for v in copied.values()),"activationAllowed":False}
+
 def prepare(project):
     if os.geteuid()==0:
         raise ValueError("Run setup as the desktop user.")
