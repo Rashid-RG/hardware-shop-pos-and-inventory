@@ -45,7 +45,7 @@ def inspect(repair):
     with open_lock(STATE/"maintenance.lock") as maintenance,open_lock(STATE/"update.lock") as update:
         for lock in (maintenance,update):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        for name in ("runtime-activation-interrupted.json","runtime-switch-intent.json","runtime-migration-interrupted.json","switch-journal.json","handoff-pending.json"):
+        for name in ("runtime-activation-interrupted.json","runtime-switch-intent.json","runtime-migration-interrupted.json","switch-journal.json","handoff-pending.json","repair-interrupted.json"):
             if os.path.lexists(STATE/name):
                 raise ValueError("Unresolved maintenance evidence.")
         project=(STATE/"project").resolve(strict=True)
