@@ -97,3 +97,51 @@ test('connection loss, owner changes and stage failures prevent successful compl
   assert.equal(capability.signal.aborted,true);
  }
 });
+
+import {runMaintenanceChild} from '../scripts/database-maintenance-child.mjs';
+import {getEventListeners} from 'node:events';
+function childFixture(){
+ const controller=new AbortController();
+ const checks=[];
+ const session={signal:controller.signal,assertActive:async()=>{checks.push('check');if(controller.signal.aborted)throw Error('Fixture ownership lost.');}};
+ const run=(source,options={})=>runMaintenanceChild(session,process.execPath,['-e',source],{cwd:process.cwd(),...options});
+ return {controller,checks,session,run};
+}
+test('maintenance child checks ownership at both boundaries and returns bounded stdout',async()=>{
+ const f=childFixture();
+ assert.equal(await f.run("process.stdout.write('fixture');process.stderr.write('private diagnostic')"),'fixture');
+ assert.deepEqual(f.checks,['check','check']);
+ assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
+});
+test('maintenance child rejects exit failures, output excess and timeout',async()=>{
+ for(const [source,options,pattern] of [
+  ['process.exit(7)',{},/did not complete/],
+  ["process.stdout.write('x'.repeat(4096))",{maxOutput:128},/output limit/],
+  ["process.stderr.write('x'.repeat(4096))",{maxOutput:128},/output limit/],
+  ['setInterval(()=>{},1000)',{timeoutMs:100},/timed out/]
+ ]){
+  const f=childFixture();
+  await assert.rejects(f.run(source,options),pattern);
+  assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
+  assert.equal(f.checks.length,1);
+ }
+});
+test('maintenance child refuses pre-aborted sessions and terminates on interruption',async()=>{
+ const before=childFixture();
+ before.controller.abort();
+ await assert.rejects(before.run("process.stdout.write('must not run')"),/ownership lost/);
+ const active=childFixture();
+ const pending=active.run('setInterval(()=>{},1000)',{timeoutMs:10000});
+ const timer=setTimeout(()=>active.controller.abort(),100);
+ try{await assert.rejects(pending,/interrupted/);}finally{clearTimeout(timer);}
+ assert.equal(getEventListeners(active.controller.signal,'abort').length,0);
+ assert.equal(active.checks.length,1);
+});
+test('successful child exit cannot bypass final ownership verification',async()=>{
+ const f=childFixture();
+ let calls=0;
+ f.session.assertActive=async()=>{if(++calls===2)throw Error('Final ownership lost.');};
+ await assert.rejects(f.run("process.stdout.write('fixture')"),/Final ownership lost/);
+ assert.equal(calls,2);
+ assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
+});
