@@ -145,3 +145,59 @@ test('successful child exit cannot bypass final ownership verification',async()=
  assert.equal(calls,2);
  assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
 });
+
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
+test('Linux maintenance rejects successful parent exit with surviving same-group child',{skip:process.platform!=='linux'},async()=>{
+ const f=childFixture();
+ const dir=await mkdtemp(join(tmpdir(),'ars-maintenance-group-'));
+ const pidFile=join(dir,'pid');
+ let pid;
+ try{
+  const source="const {spawn}=require('node:child_process');const fs=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});fs.writeFileSync("+JSON.stringify(pidFile)+",String(child.pid));child.unref();";
+  await assert.rejects(f.run(source,{timeoutMs:10000}),/process group remained active/);
+  pid=Number(await readFile(pidFile,'utf8'));
+  assert.ok(Number.isSafeInteger(pid)&&pid>1);
+  // A terminated orphan may briefly remain as a zombie until reaped.
+  let stopped=false;
+  for(let i=0;i<100;i++){
+   try{const stat=await readFile('/proc/'+pid+'/stat','utf8');if(stat.slice(stat.lastIndexOf(')')+2).startsWith('Z')){stopped=true;break;}}
+   catch(error){if(error.code==='ENOENT'){stopped=true;break;}throw error;}
+   await delay(25);
+  }
+  assert.ok(stopped,'same-group descendant remained running');
+  assert.equal(f.checks.length,1);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('Linux maintenance interruption signals an inherited process group',{skip:process.platform!=='linux'},async()=>{
+ const f=childFixture();
+ const dir=await mkdtemp(join(tmpdir(),'ars-maintenance-abort-'));
+ const ready=join(dir,'ready');
+ let pending;
+ try{
+  const childSource="require('node:fs').writeFileSync("+JSON.stringify(ready)+",String(process.pid));setInterval(()=>{},1000);";
+  const source="require('node:child_process').spawn(process.execPath,['-e',"+JSON.stringify(childSource)+"],{stdio:'inherit'});setInterval(()=>{},1000);";
+  pending=f.run(source,{timeoutMs:15000});
+  // Observe rejection immediately even if fixture startup fails.
+  const rejected=assert.rejects(pending,/interrupted/);
+  rejected.catch(()=>{});
+  let pid;
+  for(let i=0;i<200;i++){
+   try{pid=Number(await readFile(ready,'utf8'));if(Number.isSafeInteger(pid)&&pid>1)break;}catch(error){if(error.code!=='ENOENT')throw error;}
+   await delay(25);
+  }
+  assert.ok(Number.isSafeInteger(pid)&&pid>1,'descendant did not start');
+  f.controller.abort();
+  await rejected;
+  let stopped=false;
+  for(let i=0;i<100;i++){
+   try{const stat=await readFile('/proc/'+pid+'/stat','utf8');if(stat.slice(stat.lastIndexOf(')')+2).startsWith('Z')){stopped=true;break;}}
+   catch(error){if(error.code==='ENOENT'){stopped=true;break;}throw error;}
+   await delay(25);
+  }
+  assert.ok(stopped,'descendant remained running after interruption');
+  assert.equal(getEventListeners(f.controller.signal,'abort').length,0);
+ }finally{f.controller.abort();if(pending)await pending.catch(()=>{});await rm(dir,{recursive:true,force:true});}
+});
