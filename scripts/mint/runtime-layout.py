@@ -14,8 +14,15 @@ def prepare(project):
         raise ValueError("Run setup as the desktop user.")
     project=project.resolve(strict=True)
     active=STATE/"project"
-    if active.is_symlink() and active.resolve()!=project:
-        raise ValueError("Another installation is already configured.")
+    if os.path.lexists(active):
+        # An installer is not an update or recovery tool. Never rebuild or
+        # restart an already registered installation in place.
+        raise ValueError("An installation is already registered. Use the Update Center or RS Nextward recovery support.")
+    if STATE.is_symlink() or STATE.resolve()!=STATE:
+        raise ValueError("Unexpected linked installation directory.")
+    for name in ("maintenance-hold.json","runtime-switch-intent.json","runtime-activation-interrupted.json","handoff-pending.json","switch-journal.json"):
+        if os.path.lexists(STATE/name):
+            raise ValueError("Existing recovery evidence requires review before installation.")
     STATE.mkdir(mode=0o700,parents=True,exist_ok=True)
     if RUNTIME.is_symlink():
         raise ValueError("Runtime directory must not be a symbolic link.")

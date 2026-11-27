@@ -10,7 +10,7 @@ node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)' || { ec
 docker info >/dev/null
 docker compose version >/dev/null
 systemctl --user show-environment >/dev/null
-# Fresh installs use stable runtime data; legacy installations fail closed.
+# Fresh-install entry point only. Registered installations must use update/recovery tools.
 python3 scripts/mint/runtime-layout.py "$root"
 npm ci --include=dev
 npm run build
@@ -35,7 +35,7 @@ import sys
 script, desktop = sys.argv[1:]
 # Desktop Entry value escaping precedes Exec argument parsing.
 arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\\\').replace('%', '%%')
-entry = f'[Desktop Entry]\nType=Application\nName=ARS Distributors POS\nExec=python3 "{arg}"\nIcon=applications-office\nTerminal=false\nCategories=Office;\n'
+entry = f'[Desktop Entry]\nType=Application\nName=ARS Distributor POS\nExec=python3 "{arg}"\nIcon=applications-office\nTerminal=false\nCategories=Office;\n'
 for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target = folder/'ars-hardware.desktop'
     target.write_text(entry)
@@ -55,4 +55,4 @@ PY
 gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
 python3 scripts/mint/install-recovery-shortcut.py
-echo "Setup complete. Open ARS Distributors POS on the desktop."
+echo "Setup complete. Open ARS Distributor POS on the desktop."

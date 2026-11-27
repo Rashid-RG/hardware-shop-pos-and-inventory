@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 import json
+import importlib.util
 import resume_maintenance as resume
 from switch_journal import write_journal,switch_pointer
 from interrupted_switch import recovery_plan
@@ -68,6 +69,33 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 resume.open_lock(lock)
             self.assertEqual(target.read_text(),"preserve")
+    def test_fresh_installer_refuses_registered_installation_and_recovery_evidence(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            project=root/"release"
+            project.mkdir()
+            state=root/"state"
+            state.mkdir()
+            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",state/"runtime"), patch.object(layout.os,"geteuid",return_value=1000):
+                active=state/"project"
+                active.symlink_to(project)
+                with self.assertRaisesRegex(ValueError,"already registered"):
+                    layout.prepare(project)
+                self.assertFalse((state/"runtime").exists())
+                active.unlink()
+                active.symlink_to(root/"missing")
+                with self.assertRaisesRegex(ValueError,"already registered"):
+                    layout.prepare(project)
+                active.unlink()
+                marker=state/"maintenance-hold.json"
+                marker.write_text("preserve")
+                with self.assertRaisesRegex(ValueError,"recovery evidence"):
+                    layout.prepare(project)
+                self.assertEqual(marker.read_text(),"preserve")
+                self.assertFalse((state/"runtime").exists())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
