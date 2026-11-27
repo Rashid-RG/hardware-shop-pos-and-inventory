@@ -40,6 +40,12 @@ def notice(message):
 def main():
     if os.geteuid()==0:
         raise ValueError("Run as desktop user.")
+    if STATE.resolve(strict=True)!=STATE or not STATE.is_dir():
+        raise ValueError("Invalid managed state directory.")
+    # Existence alone is sufficient to block activation, including dangling links.
+    if os.path.lexists(STATE/"runtime-activation-interrupted.json"):
+        notice("Interrupted activation evidence is retained. Update preparation and verification are blocked. Contact RS Nextward support for recovery review. No evidence will be removed, and the POS will not be started.")
+        return
     project=(STATE/"project").resolve(strict=True)
     runtime=STATE/"runtime"
     if runtime.is_symlink() or runtime.resolve(strict=True)!=runtime or not runtime.is_dir():
