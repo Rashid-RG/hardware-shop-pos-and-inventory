@@ -1,5 +1,9 @@
 """Consent-based Mint prerequisite bootstrap using configured signed apt repositories."""
 import shutil
+import os
+import grp
+import pwd
+import stat
 import subprocess
 
 def run_ok(args):
@@ -11,6 +15,34 @@ def run_ok(args):
 def candidate(package):
     result=subprocess.run(["apt-cache","policy",package],check=True,capture_output=True,text=True,env={"PATH":"/usr/bin:/bin","LC_ALL":"C"})
     return next((line.split(":",1)[1].strip() for line in result.stdout.splitlines() if line.strip().startswith("Candidate:")), "(none)")
+
+def configure_docker_access(dialog):
+    # Only handle the standard local rootful Docker service. Never change
+    # socket permissions, remote contexts, daemon configuration or sudo policy.
+    if os.geteuid()==0 or os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT"):
+        raise RuntimeError("Custom Docker access requires support review.")
+    context=subprocess.run(["docker","context","show"],check=True,capture_output=True,text=True).stdout.strip()
+    if context!="default":
+        raise RuntimeError("Non-default Docker context requires support review.")
+    if not run_ok(["systemctl","is-active","--quiet","docker.service"]):
+        raise RuntimeError("Docker service is not active. Ask an administrator to start it.")
+    user=pwd.getpwuid(os.getuid()).pw_name
+    group=grp.getgrnam("docker")
+    info=os.stat("/var/run/docker.sock")
+    if not stat.S_ISSOCK(info.st_mode) or info.st_uid!=0 or info.st_gid!=group.gr_gid:
+        raise RuntimeError("Unexpected Docker socket ownership. No permissions were changed.")
+    if group.gr_gid in os.getgroups():
+        raise RuntimeError("Docker access failed despite active membership. Contact support.")
+    if user in group.gr_mem or pwd.getpwuid(os.getuid()).pw_gid==group.gr_gid:
+        dialog("--info","--no-markup","--text=Docker access is already configured. Sign out of Linux Mint and sign back in, then reopen Setup.")
+        return False
+    if not shutil.which("pkexec") or not os.path.isfile("/usr/sbin/usermod"):
+        raise RuntimeError("Administrator authorization tools are missing.")
+    if dialog("--question","--no-markup","--width=560","--text=Docker access is required for the local PostgreSQL database. Adding this account to the Docker group grants root-equivalent access to this computer. Only approve for a trusted administrator-managed account. Setup will not change any database or socket permissions.","--ok-label=Authorize Docker access","--cancel-label=Cancel"):
+        return False
+    subprocess.run(["pkexec","/usr/sbin/usermod","-aG","docker","--",user],check=True)
+    dialog("--info","--no-markup","--text=Docker access configured. Save your work, sign out of Linux Mint and sign back in, then reopen Setup. No ARS database was created.")
+    return False
 
 def install_missing(dialog):
     if not shutil.which("apt-cache"):
@@ -32,7 +64,7 @@ def install_missing(dialog):
         packages.extend(["nodejs","npm"])
     if shutil.which("docker"):
         if not run_ok(["docker","info"]):
-            raise RuntimeError("Existing Docker is not accessible. Start Docker or ask support to review account permissions.")
+            return configure_docker_access(dialog)
         if not run_ok(["docker","compose","version"]):
             raise RuntimeError("Existing Docker has no Compose v2. Setup will not mix Docker package providers.")
     else:
@@ -46,7 +78,7 @@ def install_missing(dialog):
     if dialog("--question","--no-markup","--text=Setup needs these packages from configured system repositories:\n"+", ".join(packages)+"\nAdministrator authorization is required. Continue?","--ok-label=Install requirements","--cancel-label=Cancel"):
         return False
     # APT confirms repository signatures. Never add repositories, remove packages,
-    # bypass authentication, change Docker group membership or run application as root.
+    # bypass authentication or run application as root.
     subprocess.run(["pkexec","/usr/bin/apt-get","--no-remove","--assume-yes","install",*packages],check=True)
     dialog("--info","--no-markup","--text=Prerequisites installed. Reopen Setup after administrator review of Docker access. No ARS database was created.")
     return False
