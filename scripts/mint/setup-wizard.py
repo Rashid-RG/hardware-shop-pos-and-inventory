@@ -14,7 +14,7 @@ STATE = Path.home() / ".local/share/ars-hardware"
 def dialog(*args):
     return subprocess.run(["zenity", "--title="+TITLE, *args]).returncode
 
-def preflight():
+def assert_fresh():
     if os.geteuid() == 0:
         raise RuntimeError("Run Setup as your regular desktop user, not as root.")
     if os.path.lexists(STATE):
@@ -22,6 +22,8 @@ def preflight():
     for name in (".env.local", "uploads", "backups"):
         if os.path.lexists(ROOT/name):
             raise RuntimeError("Existing local runtime data detected. Fresh setup is blocked.")
+def preflight():
+    assert_fresh()
     missing = [x for x in ("node","npm","docker","python3","zenity","systemctl","xdg-open","xdg-user-dir") if not shutil.which(x)]
     if missing:
         raise RuntimeError("Install these required components first: "+", ".join(missing))
@@ -41,10 +43,13 @@ def main():
         except BlockingIOError:
             return 1
         try:
-            preflight()
+            assert_fresh()
             if dialog("--question","--no-markup","--width=500","--text=Thank you for choosing RS Nextward.\n\nWelcome to ARS Distributor 1.0 Pilot Setup. This wizard prepares your wholesale distribution workspace and local database. Internet access is required.","--ok-label=Next","--cancel-label=Cancel"):
                 return 0
             if dialog("--text-info","--width=650","--height=450","--filename="+str(ROOT/"docs/pilot-installation-terms.txt"),"--checkbox=I accept these pilot installation conditions","--ok-label=Accept and continue","--cancel-label=Do not accept"):
+                return 0
+            from setup_prerequisites import install_missing
+            if not install_missing(dialog):
                 return 0
             if dialog("--question","--no-markup","--width=520","--text=Ready to install from:\n"+str(ROOT)+"\n\nKeep this folder in a permanent location. Setup creates a desktop shortcut and enables the user service. Business data is stored separately.","--ok-label=Install","--cancel-label=Cancel"):
                 return 0
@@ -59,8 +64,8 @@ def main():
             if not dialog("--question","--no-markup","--width=480","--text=Thank you for choosing RS Nextward.\n\nInstallation steps completed. Launch ARS Distributor to verify database readiness and complete first-administrator setup.","--ok-label=Launch ARS Distributor","--cancel-label=Finish"):
                 subprocess.run(["python3",str(ROOT/"scripts/mint/open.py")],check=True)
             return 0
-        except (OSError,RuntimeError,subprocess.CalledProcessError):
-            dialog("--error","--no-markup","--text=Setup could not complete or a prerequisite is missing. Existing files and database volumes have been retained. Contact RS Nextward support; do not rerun setup or delete data.")
+        except (OSError,RuntimeError,subprocess.CalledProcessError) as error:
+            dialog("--error","--no-markup","--text=Setup could not complete. Existing files and database volumes have been retained. Contact RS Nextward support; do not delete data.\n\n"+str(error))
             return 1
 
 if __name__ == "__main__":
