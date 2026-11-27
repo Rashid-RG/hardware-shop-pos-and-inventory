@@ -89,6 +89,8 @@ $previousBuildDigest=$null
 $backwardStartupPassed=$false
 $backwardReadsPassed=$false
 $backwardWritesPassed=$false
+$candidateRestartPreserved=$false
+$previousRestartPreserved=$false
 $repairBuildRoot=$null
 $repairImage=$null
 try {
@@ -210,6 +212,27 @@ try {
     $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
     $null=Invoke-DockerChecked @('stop','-t','15',$appName)
     $authenticatedWritesPassed=$true
+    if ($RepairFolder) {
+      $restartSchema=Get-TestSchema $name
+      $restartBefore=Get-TestRowFingerprints $name $restartSchema
+      $null=Invoke-DockerChecked @('start',$appName)
+      $restartReady=$false
+      for ($i=0;$i -lt 90;$i++) {
+        & docker exec $appName node -e $probe | Out-Null
+        if ($LASTEXITCODE -eq 0) { $restartReady=$true;break }
+        Start-Sleep -Seconds 2
+      }
+      if (-not $restartReady) { throw 'Post-write restart failed readiness.' }
+      $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main',$appName,'node','-e',$runner,$encoded)
+      $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+      $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+      if (((Get-TestSchema $name)|ConvertTo-Json -Depth 8 -Compress) -cne ($restartSchema|ConvertTo-Json -Depth 8 -Compress)) { throw 'Schema changed during post-write restart.' }
+      $restartAfter=Get-TestRowFingerprints $name $restartSchema
+      foreach ($table in $restartSchema.Keys) {
+        if ($restartBefore[$table] -cne $restartAfter[$table]) { throw "Post-write restart changed persisted records: $table" }
+      }
+      $candidateRestartPreserved=$true
+    }
     if ($PreviousVersion -or $RepairFolder) {
       if ($PreviousDependencyImage -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Previous version requires its own pinned trusted dependency image.' }
       $oldImage=@(Invoke-DockerChecked @('image','inspect','--format','{{.Id}}',$PreviousDependencyImage))
@@ -258,6 +281,28 @@ try {
       $null=Invoke-DockerChecked @('stop','-t','15',$appName)
       if ((Get-ArsPreparedFingerprint $oldCopy).digest -cne $previousBuildDigest -or (Get-ArsPreparedFingerprint $oldDist).digest -cne $previousBuildDigest) { throw 'Previous build changed during rehearsal.' }
       $backwardWritesPassed=$true
+      if ($RepairFolder) {
+       $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+      $restartSchema=Get-TestSchema $name
+      $restartBefore=Get-TestRowFingerprints $name $restartSchema
+      $null=Invoke-DockerChecked @('start',$appName)
+      $restartReady=$false
+      for ($i=0;$i -lt 90;$i++) {
+        & docker exec $appName node -e $probe | Out-Null
+        if ($LASTEXITCODE -eq 0) { $restartReady=$true;break }
+        Start-Sleep -Seconds 2
+      }
+      if (-not $restartReady) { throw 'Post-write restart failed readiness.' }
+      $null=Invoke-DockerChecked @('exec','-e',('ARS_TEST_EMAIL='+$testEmail),'-e',('ARS_TEST_PASSWORD='+$testPassword),'-e','ARS_TEST_SHOP=shop-main',$appName,'node','-e',$runner,$encoded)
+      $null=Invoke-DockerChecked @('exec',$name,'psql','-X','-U','restore_admin','-d','ars_update_test','-v','ON_ERROR_STOP=1','-c',("DELETE FROM auth_sessions WHERE user_id='"+$testId+"'"))
+      $null=Invoke-DockerChecked @('stop','-t','15',$appName)
+      if (((Get-TestSchema $name)|ConvertTo-Json -Depth 8 -Compress) -cne ($restartSchema|ConvertTo-Json -Depth 8 -Compress)) { throw 'Schema changed during post-write restart.' }
+      $restartAfter=Get-TestRowFingerprints $name $restartSchema
+      foreach ($table in $restartSchema.Keys) {
+        if ($restartBefore[$table] -cne $restartAfter[$table]) { throw "Post-write restart changed persisted records: $table" }
+      }
+       $previousRestartPreserved=$true
+      }
     }
 
 
@@ -285,6 +330,8 @@ try {
 $evidence=[ordered]@{schema=1;recoveryId=$RecoveryId;version=$record.version;preparedDigest=$fingerprint.digest;archiveSha256=$before;createdAt=[DateTime]::UtcNow.ToString('o');restoredRowCounts=$counts;offlineRestorePassed=$true;candidateStartupPassed=$startupPassed;authenticatedReadsPassed=$authenticatedReadsPassed;authenticatedWritesPassed=$authenticatedWritesPassed;dependencyImageId=$DependencyImage;compatibilityTestPassed=$false;previousBuildDigest=$previousBuildDigest;previousDependencyImageId=$PreviousDependencyImage;backwardStartupPassed=$backwardStartupPassed;backwardReadsPassed=$backwardReadsPassed;backwardWritesPassed=$backwardWritesPassed;historicalRowsCompared=$historicalRowsCompared;historicalTableCount=$historicalTableCount;activationApproved=$false}
 if ($RepairFolder) {
  $evidence.kind='windows-isolated-repair-restore-test'
+ $evidence.candidateRestartPreserved=$candidateRestartPreserved
+ $evidence.previousRestartPreserved=$previousRestartPreserved
  $evidence.repairSpecificBackwardTested=($backwardStartupPassed -and $backwardReadsPassed -and $backwardWritesPassed)
  $evidence.repairBinding=$repairBinding
  $evidence.repairApplied=$false

@@ -18,7 +18,7 @@ class Tests(unittest.TestCase):
         flags={k:False for k in module.FLAGS}
         binding=("a"*64,"b"*64)
         backup=dict(schema=1,kind="repair-backup-observation",backupEvidenceMatched=True,repairCandidateRestoreTested=False,repairReceiptDigest=binding[0],manifestDigest=binding[1],**flags)
-        test=dict(kind="isolated-repair-restore-test",restoreTestPassed=True,authenticatedReadsPassed=True,authenticatedWritesPassed=True,migrationCompatibilityPassed=True,continuousExclusionVerified=False,activationApproved=False,buildFingerprint="c"*64,previousBuildFingerprint="d"*64,repairSpecificBackwardTested=True,backwardStartupPassed=True,backwardReadsPassed=True,backwardWritesPassed=True,**flags)
+        test=dict(kind="isolated-repair-restore-test",restoreTestPassed=True,authenticatedReadsPassed=True,authenticatedWritesPassed=True,migrationCompatibilityPassed=True,continuousExclusionVerified=False,activationApproved=False,buildFingerprint="c"*64,previousBuildFingerprint="d"*64,candidateRestartPreserved=True,previousRestartPreserved=True,repairSpecificBackwardTested=True,backwardStartupPassed=True,backwardReadsPassed=True,backwardWritesPassed=True,**flags)
         raw={k:json.dumps(v).encode() for k,v in (("backup",backup),("test",test))}
         final=dict(schema=1,kind="mint-repair-rehearsal-observation",backupObservationDigest=Observer.sha(raw["backup"]),testReceiptDigest=Observer.sha(raw["test"]),repairReceiptDigest=binding[0],**flags)
         raw["completion"]=json.dumps(final).encode()

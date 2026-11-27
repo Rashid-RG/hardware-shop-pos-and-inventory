@@ -41,7 +41,7 @@ def run(repair):
             raise ValueError("Evidence changed; repair result is not approved.")
         test_raw=observer.read(repair/"repair-restore-test.json")
         result=json.loads(test_raw)
-        if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed","repairSpecificBackwardTested","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
+        if result.get("kind")!="isolated-repair-restore-test" or any(result.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed","candidateRestartPreserved","previousRestartPreserved","repairSpecificBackwardTested","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed")) or any(result.get(k) is not False for k in ("activationAllowed","startupAllowed","repairApplied")):
             raise ValueError("Incomplete repair rehearsal.")
         if result.get("testedBuildRetained") is not True:
             raise ValueError("Tested build retention required.")

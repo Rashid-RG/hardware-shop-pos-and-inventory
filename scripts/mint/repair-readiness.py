@@ -25,7 +25,7 @@ def validate_receipts(binding, raw, observer):
         raise ValueError("Unexpected repair authorization.")
     if backup.get("schema")!=1 or backup.get("kind")!="repair-backup-observation" or backup.get("backupEvidenceMatched") is not True or backup.get("repairCandidateRestoreTested") is not False or backup.get("repairReceiptDigest")!=binding[0] or backup.get("manifestDigest")!=binding[1]:
         raise ValueError("Repair backup evidence mismatch.")
-    if test.get("kind")!="isolated-repair-restore-test" or any(test.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed","repairSpecificBackwardTested","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed")) or test.get("continuousExclusionVerified") is not False or test.get("activationApproved") is not False:
+    if test.get("kind")!="isolated-repair-restore-test" or any(test.get(k) is not True for k in ("restoreTestPassed","authenticatedReadsPassed","authenticatedWritesPassed","migrationCompatibilityPassed","candidateRestartPreserved","previousRestartPreserved","repairSpecificBackwardTested","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed")) or test.get("continuousExclusionVerified") is not False or test.get("activationApproved") is not False:
         raise ValueError("Incomplete repair rehearsal.")
     if not isinstance(test.get("buildFingerprint"),str) or not re.fullmatch(r"[a-f0-9]{64}",test["buildFingerprint"]):
         raise ValueError("Tested build fingerprint missing.")

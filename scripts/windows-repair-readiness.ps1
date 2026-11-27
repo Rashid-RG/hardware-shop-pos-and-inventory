@@ -12,7 +12,7 @@ function Assert-ArsRepairReadinessReceipts($binding,$backup,$test,$completion,[s
   if ($backup.binding.$key -cne $binding[$key] -or $test.repairBinding.$key -cne $binding[$key]) { throw 'Repair identity mismatch.' }
  }
  if ($test.schema -ne 1 -or $test.kind -cne 'windows-isolated-repair-restore-test' -or $test.recoveryId -cne $backup.recoveryId -or $test.dependencyImageId -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Invalid repair test receipt.' }
- foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','repairSpecificBackwardTested')) {
+ foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','candidateRestartPreserved','previousRestartPreserved','repairSpecificBackwardTested')) {
   if ($test.$flag -isnot [bool] -or -not $test.$flag) { throw 'Incomplete repair test.' }
  }
  if ($test.previousBuildDigest -cnotmatch '^[a-f0-9]{64}$' -or $test.previousDependencyImageId -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'Previous executable identity missing.' }

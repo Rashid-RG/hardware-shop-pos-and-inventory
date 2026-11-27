@@ -56,8 +56,8 @@ try{
  const rows=Array.isArray(accounts)?accounts:accounts.accounts;
  assert.equal(Number(rows.find(x=>x.id===account.id)?.balance),50);
  await request('/api/auth/logout','POST');
- token=undefined;
  await request('/api/profile','GET',undefined,401);
+ token=undefined;
  console.log('Native restored CI: authenticated financial reads, invoice, stock, duplicate rejection, credit collection and logout passed.');
 }finally{
  if(token)await request('/api/auth/logout','POST').catch(()=>{});

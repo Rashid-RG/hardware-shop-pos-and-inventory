@@ -86,6 +86,8 @@ def test(folder, compatibility=False, repair=None):
         backward_result=False
         backward_reads=False
         backward_writes=False
+        candidate_restart_preserved=False
+        previous_restart_preserved=False
         previous_build=None
         authenticated_reads=False
         authenticated_writes=False
@@ -226,6 +228,16 @@ def test(folder, compatibility=False, repair=None):
                 write_probe()
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if repair is not None:
+                    # Reopen the same candidate after writing; compare every persisted row.
+                    restart_schema=snapshot()
+                    restart_before=fingerprints(restart_schema)
+                    run(["docker","start",app_name],stdout=subprocess.DEVNULL)
+                    wait_ready()
+                    auth_probe()
+                    run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                    if snapshot()!=restart_schema or fingerprints(restart_schema)!=restart_before:
+                        raise RuntimeError("Candidate restart changed persisted business records.")
+                    candidate_restart_preserved=True
                     authenticated_reads=True
                     authenticated_writes=True
                     if fingerprint(isolated)!=build_fingerprint:
@@ -286,6 +298,16 @@ def test(folder, compatibility=False, repair=None):
                             run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                             authenticated_writes=True
                             backward_writes=True
+                            if repair is not None:
+                                restart_schema=snapshot()
+                                restart_before=fingerprints(restart_schema)
+                                run(["docker","start",app_name],stdout=subprocess.DEVNULL)
+                                wait_ready()
+                                auth_probe()
+                                run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                                if snapshot()!=restart_schema or fingerprints(restart_schema)!=restart_before:
+                                    raise RuntimeError("Previous version restart changed persisted business records.")
+                                previous_restart_preserved=True
                             if fingerprint(old)!=previous_build or any(fingerprint(project/part)!=fingerprint(old/part) for part in ("dist","node_modules")):
                                 raise ValueError("Previous executable changed during backward rehearsal.")
                         finally:
@@ -314,7 +336,7 @@ def test(folder, compatibility=False, repair=None):
             temporary.write_text(json.dumps(result,indent=2)+"\n")
             temporary.replace(receipt)
         else:
-            result.update({"kind":"isolated-repair-restore-test","repairSpecificBackwardTested":backward_result and backward_reads and backward_writes,"testedBuildRetained":True,"repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
+            result.update({"kind":"isolated-repair-restore-test","repairSpecificBackwardTested":backward_result and backward_reads and backward_writes,"candidateRestartPreserved":candidate_restart_preserved,"previousRestartPreserved":previous_restart_preserved,"testedBuildRetained":True,"repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
             with receipt.open("x") as stream:
                 json.dump(result,stream,indent=2)
                 stream.flush()

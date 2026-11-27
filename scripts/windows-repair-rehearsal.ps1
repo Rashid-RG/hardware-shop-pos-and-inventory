@@ -36,7 +36,7 @@ function Invoke-ArsRepairRehearsal([string]$project,[string]$folder) {
   $plan=(@(& (Join-Path $project 'scripts/plan-windows-runtime-activation.ps1') -RecoveryId $id) -join [Environment]::NewLine) | ConvertFrom-Json
   Test-ArsRepairBackupPlan $plan $id
   $result=Get-Content -LiteralPath (Join-Path $folder 'repair-restore-test.json') -Raw | ConvertFrom-Json
-  foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','repairSpecificBackwardTested')) {
+  foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','candidateRestartPreserved','previousRestartPreserved','repairSpecificBackwardTested')) {
    if ($result.$flag -isnot [bool] -or -not $result.$flag) { throw 'Repair rehearsal incomplete.' }
   }
   foreach ($name in @('recovery.json','rollback-compatibility-rehearsal.json')) {
