@@ -1,6 +1,7 @@
 # Read-only Windows uninstall planning. Never removes files, services or database volumes.
 . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
 . (Join-Path $PSScriptRoot 'windows-uninstall-backup-review.ps1')
+. (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
 function Get-ArsUninstallPreview([string]$project,[string]$state) {
  foreach ($dir in @($project,$state,(Join-Path $state 'desktop-control'))) {
   Assert-ArsPlainPath $dir
@@ -59,5 +60,9 @@ function Show-ArsUninstallPreview([string]$project) {
  }
  $message="Application: "+$plan.installation+[Environment]::NewLine+[Environment]::NewLine+"Business configuration, uploads and backups are still inside the installation. These must be preserved, together with the PostgreSQL database, invoices, inventory and accounts. PostgreSQL and shared prerequisites will not be removed."
  if (-not (Show-ArsSetupPage 'Preserve your business' $message 'Review requirements')) { return }
- $null=Show-ArsSetupPage 'Removal is not yet enabled' 'Permanent storage separation, verified final backup, installation ownership and service shutdown are required. Permanent business data deletion is disabled. No application, service, file or database was removed.' 'Finish'
+ try {
+  $null=Review-ArsInstallationIdentity $project $state
+  $identity='Recorded fresh-install application identity matched. Exclusive ownership is not certified.'
+ } catch {$identity='Fresh-install identity missing or changed. No removal permitted.'}
+ $null=Show-ArsSetupPage 'Removal is not yet enabled' ($identity+[Environment]::NewLine+[Environment]::NewLine+'Permanent storage separation, verified final backup, installation ownership and service shutdown are required. Permanent business data deletion is disabled. No application, service, file or database was removed.') 'Finish'
 }

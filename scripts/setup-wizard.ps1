@@ -123,6 +123,11 @@ try {
  $shortcut.WorkingDirectory=$root
  $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
  $shortcut.Save()
+ # Record the application only, separately from mutable business storage.
+ . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
+ $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
+ [void][IO.Directory]::CreateDirectory($state)
+ Write-ArsInstallationIdentity $root $state
  Set-ArsProgress 5 'Setup steps completed.'
  Close-ArsProgress
  if (Show-ArsSetupPage 'Setup completed' 'Thank you for choosing RS Nextward. Launch ARS to verify readiness and register the first administrator.' 'Launch ARS') {

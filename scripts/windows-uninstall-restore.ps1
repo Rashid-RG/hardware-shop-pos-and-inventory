@@ -19,6 +19,7 @@ function Invoke-ArsUninstallDocker([string[]]$Arguments) {
  $output
 }
 function Get-ArsUninstallUploadCount([string]$archive) {
+ Add-Type -AssemblyName System.IO.Compression
  Add-Type -AssemblyName System.IO.Compression.FileSystem
  $zip=[IO.Compression.ZipFile]::OpenRead($archive)
  try {

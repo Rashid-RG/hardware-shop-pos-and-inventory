@@ -10,6 +10,7 @@ $blocked=$false
 try {Assert-ArsUninstallRestoredTables $expected $actual} catch {$blocked=$true}
 if (-not $blocked) {throw 'Altered customer record accepted.'}
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('ars-uninstall-zip-'+[guid]::NewGuid().ToString('N')+'.zip')
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 try {
  $zip=[IO.Compression.ZipFile]::Open($fixture,[IO.Compression.ZipArchiveMode]::Create)
