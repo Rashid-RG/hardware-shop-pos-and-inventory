@@ -164,7 +164,7 @@ test('Linux maintenance rejects successful parent exit with surviving same-group
   let stopped=false;
   for(let i=0;i<100;i++){
    try{const stat=await readFile('/proc/'+pid+'/stat','utf8');if(stat.slice(stat.lastIndexOf(')')+2).startsWith('Z')){stopped=true;break;}}
-   catch(error){if(error.code==='ENOENT'){stopped=true;break;}throw error;}
+   catch(error){if(['ENOENT','ESRCH'].includes(error.code)){stopped=true;break;}throw error;}
    await delay(25);
   }
   assert.ok(stopped,'same-group descendant remained running');
@@ -194,7 +194,7 @@ test('Linux maintenance interruption signals an inherited process group',{skip:p
   let stopped=false;
   for(let i=0;i<100;i++){
    try{const stat=await readFile('/proc/'+pid+'/stat','utf8');if(stat.slice(stat.lastIndexOf(')')+2).startsWith('Z')){stopped=true;break;}}
-   catch(error){if(error.code==='ENOENT'){stopped=true;break;}throw error;}
+   catch(error){if(['ENOENT','ESRCH'].includes(error.code)){stopped=true;break;}throw error;}
    await delay(25);
   }
   assert.ok(stopped,'descendant remained running after interruption');
