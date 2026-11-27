@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
-. (Join-Path $PSScriptRoot 'windows-repair-backup-review.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-rehearsal.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
@@ -48,6 +48,24 @@ try {
   $choice=[Windows.Forms.MessageBox]::Show('Prepare new repair files? Choose Yes. To review existing repair backup evidence, choose No.',$title,'YesNoCancel','Question')
   if ($choice -eq 'Cancel') { continue }
   if ($choice -eq 'No') {
+   $test=[Windows.Forms.MessageBox]::Show('Run isolated repair restoration rehearsal? Choose Yes. To review backup evidence first, choose No.',$title,'YesNoCancel','Question')
+   if ($test -eq 'Cancel') { continue }
+   if ($test -eq 'Yes') {
+    $picker=New-Object Windows.Forms.FolderBrowserDialog
+    try {
+     $picker.Description='Select managed repair preparation folder'
+     if ($picker.ShowDialog() -ne 'OK') { continue }
+     $repairFolder=$picker.SelectedPath
+    } finally { $picker.Dispose() }
+    if (-not (Show-ArsSetupPage 'Isolated repair test' 'Build the exact repair package and restore into a disposable disconnected database? Internet access for dependencies is required. No live repair will be applied.' 'Run test')) { continue }
+    try {
+     Invoke-ArsRepairRehearsal $root $repairFolder
+     [void][Windows.Forms.MessageBox]::Show('Isolated repair rehearsal completed. Activation remains locked.',$title,'OK','Information')
+    } catch {
+     [void][Windows.Forms.MessageBox]::Show('Repair rehearsal blocked or failed. No live repair applied. Contact RS Nextward support.',$title,'OK','Error')
+    }
+    continue
+   }
    $picker=New-Object Windows.Forms.FolderBrowserDialog
    try {
     $picker.Description='Select managed repair preparation folder'
