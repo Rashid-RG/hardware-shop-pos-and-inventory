@@ -10,6 +10,7 @@ node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)' || { ec
 docker info >/dev/null
 docker compose version >/dev/null
 systemctl --user show-environment >/dev/null
+PYTHONDONTWRITEBYTECODE=1 python3 scripts/mint/desktop_registration.py preflight "$root"
 # Fresh-install entry point only. Registered installations must use update/recovery tools.
 python3 scripts/mint/runtime-layout.py "$root"
 echo "ARS_SETUP_STAGE 1"
@@ -44,7 +45,8 @@ arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\
 entry = f'[Desktop Entry]\nType=Application\nName=ARS Distributor POS\nExec=python3 "{arg}"\nIcon=ars-distributor\nTerminal=false\nCategories=Office;\n'
 for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target = folder/'ars-hardware.desktop'
-    target.write_text(entry)
+    with target.open("x") as stream:
+        stream.write(entry)
     target.chmod(0o755)
 PY
 python3 - "$app/project/scripts/mint/update-center.py" "$desktop" <<'PY'
@@ -55,7 +57,8 @@ arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\
 entry = f'[Desktop Entry]\nType=Application\nName=RS Nextward Update Center\nExec=python3 "{arg}"\nIcon=system-software-update\nTerminal=false\nCategories=System;\n'
 for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target = folder/'ars-update-center.desktop'
-    target.write_text(entry)
+    with target.open("x") as stream:
+        stream.write(entry)
     target.chmod(0o755)
 PY
 gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
@@ -73,6 +76,7 @@ target.chmod(0o755)
 PY
 # Record only fresh package installs; development source trees have no pilot manifest.
 if [[ -f "$root/PILOT-FILES.json" ]]; then
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/mint/desktop_registration.py record "$root"
   PYTHONDONTWRITEBYTECODE=1 python3 scripts/mint/installation_identity.py "$root"
 fi
 echo "ARS_SETUP_STAGE 5"

@@ -86,8 +86,10 @@ def main():
     try:
         from installation_identity import review
         review(STATE,project)
-        identity="Recorded fresh-install tree identity matched. Exclusive ownership is not yet certified."
-    except (OSError,ValueError,RuntimeError,KeyError,TypeError):
+        from desktop_registration import review as review_registration, desktop_path
+        review_registration(Path.home(),desktop_path(),project)
+        identity="Fresh-install tree, shortcuts and service registration matched. Exclusive ownership is not yet certified."
+    except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         identity="Fresh-install identity missing or changed. No removal permitted."
     ui.page("Removal is not yet enabled",
         identity+"\n\nPermanent runtime mappings matched. A verified final backup, installation ownership certification and service shutdown verification are still required before removal can be enabled.\n\nNo application, service, file or database was removed.","Finish")
