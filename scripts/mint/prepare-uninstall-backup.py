@@ -17,6 +17,8 @@ import tempfile
 from repair_interruption import read_regular, sync_dir
 from resume_maintenance import open_lock
 from repair_test_build import assert_local_docker
+from uninstall_cancellation import validate, CONFIRMATION
+from maintenance_backup import stopped
 
 STATE=Path.home()/".local/share/ars-hardware"
 ARCHIVE=re.compile(r"ars-mint-\d{8}T\d{6}Z-[a-f0-9]{32}-v2-with-uploads\.dump")
@@ -43,6 +45,9 @@ def prepare(version):
     raw=read_regular(hold_path)
     hold=json.loads(raw)
     validate_hold(hold,project,version)
+    proof_path=STATE/"uninstall-shutdown.json"
+    proof_raw=read_regular(proof_path)
+    validate(raw,proof_raw,project,CONFIRMATION)
     runtime=STATE/"runtime"
     for name in (".env.local","uploads","backups"):
         target=runtime/name
@@ -54,6 +59,9 @@ def prepare(version):
         raise ValueError("Invalid recovery directory.")
     with open_lock(STATE/"update.lock") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if read_regular(hold_path)!=raw or read_regular(proof_path)!=proof_raw:
+            raise ValueError("Shutdown evidence changed.")
+        stopped()
         target=recovery/hold["uninstallId"]
         if os.path.lexists(target):
             raise ValueError("Existing recovery must be retained.")
@@ -82,9 +90,10 @@ def prepare(version):
             subprocess.run([str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(copied)],check=True)
             with copied.open("rb") as stream:
                 digest=hashlib.file_digest(stream,"sha256").hexdigest()
-            if read_regular(hold_path)!=raw or (STATE/"project").resolve(strict=True)!=project:
+            stopped()
+            if read_regular(hold_path)!=raw or read_regular(proof_path)!=proof_raw or (STATE/"project").resolve(strict=True)!=project:
                 raise ValueError("Maintenance evidence changed.")
-            meta=dict(schema=1,kind="mint-final-uninstall-backup",uninstallId=hold["uninstallId"],version=version,previousProject=str(project),archive=dump.name,archiveSha256=digest,createdAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),activationApproved=False,restoreTestPassed=False,applicationRemovalAllowed=False,databaseDeletionAllowed=False)
+            meta=dict(schema=1,kind="mint-final-uninstall-backup",uninstallId=hold["uninstallId"],version=version,previousProject=str(project),archive=dump.name,archiveSha256=digest,shutdownDigest=hashlib.sha256(proof_raw).hexdigest(),createdAt=datetime.datetime.now(datetime.timezone.utc).isoformat(),activationApproved=False,restoreTestPassed=False,applicationRemovalAllowed=False,databaseDeletionAllowed=False)
             with (folder/"recovery.json").open("x") as stream:
                 json.dump(meta,stream,sort_keys=True)
                 stream.flush()

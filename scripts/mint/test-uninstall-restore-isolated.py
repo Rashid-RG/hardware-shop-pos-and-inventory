@@ -16,6 +16,8 @@ from backup_snapshot import fingerprints, psql_command
 from repair_interruption import read_regular, sync_dir
 from repair_test_build import assert_local_docker
 from resume_maintenance import open_lock
+from uninstall_cancellation import validate, CONFIRMATION
+from maintenance_backup import stopped
 
 STATE=Path.home()/".local/share/ars-hardware"
 IMAGE="postgres:16-alpine"
@@ -83,11 +85,16 @@ def inspect(folder):
         for name in ("repair-interrupted.json","runtime-switch-intent.json","runtime-activation-interrupted.json","runtime-migration-interrupted.json","switch-journal.json","handoff-pending.json"):
             if os.path.lexists(STATE/name):
                 raise ValueError("Unresolved maintenance incident.")
-        files={"hold":STATE/"maintenance-hold.json","meta":folder/"recovery.json","receipt":folder/"maintenance-backup-receipt.json"}
+        files={"shutdown":STATE/"uninstall-shutdown.json","hold":STATE/"maintenance-hold.json","meta":folder/"recovery.json","receipt":folder/"maintenance-backup-receipt.json"}
         raw={k:read_regular(p) for k,p in files.items()}
         hold,meta,receipt=(json.loads(raw[k]) for k in ("hold","meta","receipt"))
         project=(STATE/"project").resolve(strict=True)
         prepare.validate_hold(hold,project,meta["version"])
+        validate(raw["hold"],raw["shutdown"],project,CONFIRMATION)
+        stopped()
+        shutdown_digest=hashlib.sha256(raw["shutdown"]).hexdigest()
+        if meta.get("shutdownDigest")!=shutdown_digest or receipt.get("shutdownDigest")!=shutdown_digest:
+            raise ValueError("Backup is not bound to the verified shutdown.")
         if meta.get("kind")!="mint-final-uninstall-backup" or meta.get("previousProject")!=str(project) or meta.get("uninstallId")!=folder.name or hold.get("uninstallId")!=folder.name or meta.get("restoreTestPassed") is not False or meta.get("applicationRemovalAllowed") is not False or meta.get("databaseDeletionAllowed") is not False:
             raise ValueError("Invalid uninstall archive evidence.")
         if receipt.get("kind")!="mint-uninstall-backup-observation" or receipt.get("uninstallId")!=folder.name or receipt.get("holdDigest")!=hashlib.sha256(raw["hold"]).hexdigest() or receipt.get("recoveryDigest")!=hashlib.sha256(raw["meta"]).hexdigest() or receipt.get("archive")!=meta["archive"] or receipt.get("database")!="hardware_pos_ars" or receipt.get("locksObserved") is not True or any(receipt.get(k) is not False for k in ("activationAllowed","applicationRemovalAllowed","finalUninstallBackupVerified","continuousExclusionVerified")):
@@ -132,6 +139,7 @@ def inspect(folder):
         finally:
             if created:
                 run(["docker","rm","-f","-v",name],stdout=subprocess.DEVNULL)
+        stopped()
         if any(read_regular(p)!=raw[k] for k,p in files.items()) or any(sha(p)!=before[p.name] for p in members) or (STATE/"project").resolve(strict=True)!=project:
             raise ValueError("Recovery evidence changed during test.")
         observation.update(uninstallId=folder.name,evidenceDigests={k:hashlib.sha256(v).hexdigest() for k,v in raw.items()},archiveMemberDigests=before)
