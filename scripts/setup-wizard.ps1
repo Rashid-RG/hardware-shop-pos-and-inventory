@@ -18,12 +18,18 @@ function New-Secret {
  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
  return [BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
 }
-function Assert-Fresh {
+function Assert-FreshFiles {
  foreach ($name in @('.env.local','uploads','backups')) {
   if (Test-Path -LiteralPath (Join-Path $root $name)) { throw 'Existing runtime detected. Fresh setup is blocked.' }
  }
  $state = Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
  if (Test-Path -LiteralPath $state) { throw 'Existing installation or recovery state detected. Contact support.' }
+ foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'),[Environment]::GetFolderPath('Programs'))) {
+  if (Test-Path -LiteralPath (Join-Path $folder 'ARS Distributor.lnk')) { throw 'Existing shortcut detected. Fresh setup is blocked.' }
+ }
+}
+function Assert-Fresh {
+ Assert-FreshFiles
  foreach ($tool in @('node','npm.cmd','docker')) {
   if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Missing prerequisite: $tool." }
  }
@@ -42,9 +48,12 @@ try {
  try { $owned=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned=$true }
  if (-not $owned) { return }
  Set-Location -LiteralPath $root
- if (-not (Confirm-Step ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access, Node.js 22.12+ and running Docker Desktop are required.'))) { return }
+ if (-not (Confirm-Step ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
+ Assert-FreshFiles
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
  if ([System.Windows.Forms.MessageBox]::Show(($terms+[Environment]::NewLine+'Do you accept these pilot installation conditions?'),$title,'YesNo','Question') -ne 'Yes') { return }
+ . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
+ if (-not (Install-ArsMissingPrerequisites)) { return }
  Assert-Fresh
  if (-not (Confirm-Step ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage builds the application and prepares a fresh private database.'))) { return }
  Assert-Fresh
