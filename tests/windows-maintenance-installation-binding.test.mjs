@@ -55,6 +55,8 @@ test('maintenance installation rejects malformed or authorizing identity records
  await f.save(missing);
  await assert.rejects(reviewMaintenanceInstallation(f.root,f.state,sid),/identity does not match/);
  await writeFile(f.path,'{');
+ await assert.rejects(reviewMaintenanceInstallation(f.root,f.state,sid),/Invalid installation identity file/);
+ await writeFile(f.path,'{"schema":');
  await assert.rejects(reviewMaintenanceInstallation(f.root,f.state,sid),SyntaxError);
 }));
 test('maintenance installation rejects changed binary, manifest and missing identity',()=>fixture(async f=>{
