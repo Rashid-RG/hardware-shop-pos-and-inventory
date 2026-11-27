@@ -12,6 +12,12 @@ function Invoke-Checked([string]$program,[string[]]$arguments) {
  & $program @arguments
  if ($LASTEXITCODE -ne 0) { throw "$program failed (exit $LASTEXITCODE)." }
 }
+function New-Secret {
+ $bytes = New-Object byte[] 48
+ $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+ try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+ return [BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
+}
 function Assert-Fresh {
  foreach ($name in @('.env.local','uploads','backups')) {
   if (Test-Path -LiteralPath (Join-Path $root $name)) { throw 'Existing runtime detected. Fresh setup is blocked.' }
@@ -26,10 +32,10 @@ function Assert-Fresh {
  Invoke-Checked 'docker' @('compose','version')
  $volumes = @(docker volume ls --format '{{.Name}}')
  if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Docker volumes.' }
- if ($volumes | Where-Object { $_ -match 'hardware_pos_pgdata|ars-mint' }) { throw 'Existing ARS database volume detected. No setup changes made.' }
+ if ($volumes | Where-Object { $_ -match 'hardware_pos_pgdata|ars-mint|ars-windows-pilot' }) { throw 'Existing ARS database volume detected. No setup changes made.' }
  $containers = @(docker ps -a --format '{{.Names}}')
  if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Docker containers.' }
- if ($containers -contains 'hardware-pos-postgres') { throw 'Existing ARS container detected.' }
+ if ($containers -contains 'hardware-pos-postgres' -or $containers -contains 'ars-windows-pilot-postgres') { throw 'Existing ARS container detected.' }
  if (Get-NetTCPConnection -LocalPort 3000,5433 -State Listen -ErrorAction SilentlyContinue) { throw 'Required local ports are already occupied.' }
 }
 try {
@@ -40,13 +46,30 @@ try {
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
  if ([System.Windows.Forms.MessageBox]::Show(($terms+[Environment]::NewLine+'Do you accept these pilot installation conditions?'),$title,'YesNo','Question') -ne 'Yes') { return }
  Assert-Fresh
- if (-not (Confirm-Step ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage prepares a production build only.'))) { return }
+ if (-not (Confirm-Step ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage builds the application and prepares a fresh private database.'))) { return }
  Assert-Fresh
  Invoke-Checked 'npm.cmd' @('ci','--include=dev')
  Invoke-Checked 'npm.cmd' @('run','build')
  Assert-Fresh
- # Do not provision or start the legacy Compose database with its default password.
- [void][System.Windows.Forms.MessageBox]::Show('Application build prepared successfully. Secure Windows database provisioning is not yet enabled in this pilot wizard. No database or configuration was created.',$title,'OK','Information')
+ # Create configuration exclusively. Never replace credentials or use legacy defaults.
+ $password=New-Secret
+ $jwt=New-Secret
+ $config=Join-Path $root '.env.local'
+ $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User
+ $acl=New-Object Security.AccessControl.FileSecurity
+ $acl.SetAccessRuleProtection($true,$false)
+ $rule=New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow')
+ $acl.AddAccessRule($rule)
+ $stream=[IO.File]::Open($config,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ try {
+  $stream.SetAccessControl($acl)
+  $lines=@('ARS_WINDOWS_PILOT=1',"ARS_WINDOWS_DB_PASSWORD=$password","DATABASE_URL=postgresql://ars:$password@127.0.0.1:5433/hardware_pos_ars","JWT_SECRET=$jwt")
+  $data=[Text.Encoding]::UTF8.GetBytes(($lines -join [Environment]::NewLine)+[Environment]::NewLine)
+  $stream.Write($data,0,$data.Length)
+ } finally { $stream.Dispose() }
+ # Separate Compose project and loopback-only port. No deletion on failure.
+ Invoke-Checked 'docker' @('compose','-p','ars-windows-pilot','--env-file','.env.local','-f','scripts/windows-pilot-compose.yml','up','-d','--wait')
+ [void][System.Windows.Forms.MessageBox]::Show('Private database container prepared. Application launch integration is pending. Keep this installation folder and its configuration intact.',$title,'OK','Information')
 } catch {
  [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message,$title,'OK','Error')
  exit 1
