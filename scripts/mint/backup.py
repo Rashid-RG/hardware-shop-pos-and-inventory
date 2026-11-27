@@ -82,7 +82,11 @@ def backup(retain_all=False):
         dump.rename(BACKUPS / dump.name)
     # The cloud runner acquires its lock before this local archive stage.
     # A retained or malformed lock is still evidence: preserve all archives.
-    if retain_all or os.path.lexists(BACKUPS / '.ars-drive-backup.lock'):
+    if retain_all:
+        print('Backup retention deferred for protected recovery.', file=sys.stderr)
+        print('ARS_ARCHIVE=' + str(BACKUPS / dump.name))
+        return
+    if os.path.lexists(BACKUPS / '.ars-drive-backup.lock'):
         print('Backup retention deferred while encrypted backup is running or interrupted.', file=sys.stderr)
     else:
         completed = sorted((p for p in BACKUPS.glob('ars-mint-*.dump') if MANAGED.fullmatch(p.name)

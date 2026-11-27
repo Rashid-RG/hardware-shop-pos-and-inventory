@@ -27,6 +27,7 @@ async function main(){
   await acquireMaintenanceTransactionFence(client);
  await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
+  await client.query("SET LOCAL idle_in_transaction_session_timeout='0'");
   const tables=()=>client.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename");
   const {rows}=await tables();
   if(!rows.length) throw Error('No public tables.');
