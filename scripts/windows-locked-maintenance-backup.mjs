@@ -1,7 +1,7 @@
 // Windows final archive wrapper: holds the application lease and table SHARE locks
 // while the fixed local backup script executes. Never starts a POS or switches a database.
 import pg from 'pg';
-import { acquireHandoffGate, acquireMaintenanceTransactionFence } from './database-handoff-gate.mjs';
+import { acquireHandoffGate, acquireMaintenanceTransactionFence, assertMaintenanceOwner } from './database-handoff-gate.mjs';
 import dotenv from 'dotenv';
 import {readFileSync,realpathSync,openSync,writeFileSync,fsyncSync,closeSync,createReadStream,lstatSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -45,6 +45,7 @@ async function main(){
   const lease=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[1642958133,1]);
   if(lease.rows[0]?.acquired!==true) throw Error('Application writer still owns database.');
   await acquireMaintenanceTransactionFence(client);
+  const maintenanceOwner=await assertMaintenanceOwner(client);
  await client.query('BEGIN');
   await client.query("SET LOCAL lock_timeout='5s'");
   await client.query("SET LOCAL idle_in_transaction_session_timeout='0'");
@@ -74,10 +75,12 @@ async function main(){
    const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
    if(locks.rows[0]?.count!==3||failure)throw Error('Database protection lost.');
    if(JSON.stringify(evidence())!==JSON.stringify(shutdown))throw Error('Shutdown evidence changed during protected backup.');
+   await assertMaintenanceOwner(client,maintenanceOwner);
    const manifest={...shutdown,schema:1,kind:'windows-uninstall-table-manifest',archive:basename(archive),dumpSha256:hash.digest('hex'),tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
    const fd=openSync(join(destination,'uninstall-table-manifest.json'),'wx',0o600);
    try{writeFileSync(fd,JSON.stringify(manifest)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   }
+  await assertMaintenanceOwner(client,maintenanceOwner);
   await client.query('ROLLBACK');
   if(failure) throw failure;
   console.log(paths[0]);
