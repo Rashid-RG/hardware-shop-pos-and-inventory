@@ -241,7 +241,7 @@ test('retained Windows maintenance marker blocks launcher restart and precedes s
  assert.match(launcher,/maintenance\.json/);
  assert.ok(launcher.indexOf('if (Test-Path -LiteralPath $maintenancePath)')<launcher.indexOf("if (-not (Test-Path '.env.local'))"));
  assert.ok(stop.indexOf("'maintenance.json'")<stop.indexOf('$pipe.Connect(3000)'));
- assert.ok(stop.indexOf('$process.WaitForExit(120000)')<stop.indexOf("'maintenance-shutdown.json'"));
+ assert.ok(stop.indexOf('$process.WaitForExit(120000)')<stop.indexOf("$verifiedPath=Join-Path"));
  assert.match(stop,/activationApproved=\$false/);
 });
 

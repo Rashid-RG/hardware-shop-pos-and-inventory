@@ -30,6 +30,7 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
 & (Join-Path $PSScriptRoot 'test-windows-installation-identity.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-desktop-registration.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-uninstall-shutdown.ps1')
+& (Join-Path $PSScriptRoot 'test-windows-uninstall-cancellation.ps1')
 Invoke-Checked 'node' @('--test','tests/uninstall-table-fingerprints.test.mjs')
 & (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -Rollback -RepairFixture
 $postgresRoot = Join-Path $env:ProgramFiles 'PostgreSQL'
