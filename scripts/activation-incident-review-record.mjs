@@ -31,3 +31,29 @@ export async function recordActivationIncidentObservation(directory,input,confir
  if(process.platform!=='win32'){const d=await open(path,'r');try{await d.sync();}finally{await d.close();}}
  return {state:'activation-observation-retained',recordDigest:hash(bytes),incidentDigest:record.incidentDigest,reviewDigest:record.reviewDigest,freshCredentialsRequired:true,...blocked};
 }
+
+export async function revalidateActivationIncidentObservation(directory,input){
+ const path=await root(directory);
+ // Always authenticate again; a retained file alone proves no authorization.
+ const fresh=await observeAuthenticatedActivationReview(input);
+ validate(fresh);
+ const name='activation-review-'+fresh.incidentDigest+'-'+fresh.reviewDigest+'.json';
+ const target=join(path,name),before=await lstat(target),actual=await realpath(target);
+ if(!before.isFile()||before.size<1||before.size>8192||(process.platform==='win32'?actual.toLowerCase()!==target.toLowerCase():actual!==target))throw Error('Invalid retained observation.');
+ const f=await open(target,'r');
+ let bytes;
+ try{
+  const a=await f.stat();
+  if(a.dev!==before.dev||a.ino!==before.ino||a.size!==before.size||a.mtimeMs!==before.mtimeMs||a.ctimeMs!==before.ctimeMs)throw Error('Observation changed.');
+  const buffer=Buffer.alloc(before.size+1);
+  const {bytesRead}=await f.read(buffer,0,buffer.length,0),b=await f.stat();
+  if(bytesRead!==before.size||b.size!==a.size||b.mtimeMs!==a.mtimeMs||b.ctimeMs!==a.ctimeMs)throw Error('Observation changed.');
+  bytes=buffer.subarray(0,bytesRead);
+ }finally{await f.close();}
+ const saved=JSON.parse(bytes.toString('utf8'));
+ validate(saved);
+ if(!['incidentDigest','reviewDigest','snapshotDigest'].every(k=>saved[k]===fresh[k])||!['operator','reviewer'].every(k=>saved[k].id===fresh[k].id&&saved[k].revisionDigest===fresh[k].revisionDigest))throw Error('Retained observation stale or accounts changed.');
+ const after=await lstat(target);
+ if(after.dev!==before.dev||after.ino!==before.ino||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs||await root(directory)!==path)throw Error('Observation changed.');
+ return {state:'activation-observation-matched',recordDigest:hash(bytes),incidentDigest:fresh.incidentDigest,reviewDigest:fresh.reviewDigest,freshCredentialsRequired:true,...blocked};
+}
