@@ -69,7 +69,23 @@ try {
  } finally { $stream.Dispose() }
  # Separate Compose project and loopback-only port. No deletion on failure.
  Invoke-Checked 'docker' @('compose','-p','ars-windows-pilot','--env-file','.env.local','-f','scripts/windows-pilot-compose.yml','up','-d','--wait')
- [void][System.Windows.Forms.MessageBox]::Show('Private database container prepared. Application launch integration is pending. Keep this installation folder and its configuration intact.',$title,'OK','Information')
+ # Create user shortcuts only if no existing shortcut would be overwritten.
+ $desktop=[Environment]::GetFolderPath('DesktopDirectory')
+ $programs=[Environment]::GetFolderPath('Programs')
+ $shell=New-Object -ComObject WScript.Shell
+ foreach ($folder in @($desktop,$programs)) {
+  $link=Join-Path $folder 'ARS Distributor.lnk'
+  if (Test-Path -LiteralPath $link) { throw 'Existing ARS shortcut detected. Retain it and contact support.' }
+  $shortcut=$shell.CreateShortcut($link)
+  $shortcut.TargetPath=Join-Path $env:WINDIR 'System32\wscript.exe'
+  $shortcut.Arguments='"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"'
+  $shortcut.WorkingDirectory=$root
+  $shortcut.Description='ARS Distributor | RS Nextward'
+  $shortcut.Save()
+ }
+ if ([System.Windows.Forms.MessageBox]::Show('Thank you for choosing RS Nextward. Setup steps completed. Launch ARS now to verify readiness and register the first administrator?',$title,'YesNo','Information') -eq 'Yes') {
+  Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"')
+ }
 } catch {
  [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message,$title,'OK','Error')
  exit 1

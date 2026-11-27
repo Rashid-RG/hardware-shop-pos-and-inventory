@@ -101,6 +101,13 @@ function Wait-ForDockerCompose([int]$timeoutSeconds = 180) {
 }
 
 function Try-StartDockerCompose {
+  if ($windowsPilot) {
+    # Start only the already provisioned container. Never create or replace a database on launch.
+    try {
+      docker start ars-windows-pilot-postgres *> $null
+      return ($LASTEXITCODE -eq 0)
+    } catch { return $false }
+  }
   if ($externalRuntime) { throw 'Release-relative Docker startup is prohibited with external runtime.' }
   try {
     cmd /c "docker compose up -d" *> $null
@@ -143,6 +150,25 @@ if (-not (Test-Path 'node_modules')) {
   throw 'Node dependencies are missing. Run npm ci from the project folder first.'
 }
 $envLines = Get-Content -LiteralPath $configPath
+$pilotLines=@($envLines | Where-Object { $_ -match '^ARS_WINDOWS_PILOT=' })
+$windowsPilot=$pilotLines.Count -gt 0
+if ($windowsPilot) {
+  if ($pilotLines.Count -ne 1 -or $pilotLines[0] -cne 'ARS_WINDOWS_PILOT=1') { throw 'Invalid Windows pilot configuration.' }
+  $passwordLines=@($envLines | Where-Object { $_ -match '^ARS_WINDOWS_DB_PASSWORD=' })
+  if ($passwordLines.Count -ne 1 -or $passwordLines[0] -cnotmatch '^ARS_WINDOWS_DB_PASSWORD=[0-9a-f]{96}$') { throw 'Invalid pilot database credential.' }
+  $password=$passwordLines[0].Substring('ARS_WINDOWS_DB_PASSWORD='.Length)
+  if ((Get-DatabaseUrlFromEnvFile) -cne "postgresql://ars:$password@127.0.0.1:5433/hardware_pos_ars") { throw 'Pilot database configuration mismatch.' }
+  # Bind startup to the expected existing Compose container and named data volume.
+  $raw=@(docker inspect ars-windows-pilot-postgres 2>$null)
+  if ($LASTEXITCODE -ne 0 -or -not $raw) { throw 'Pilot database container missing. Use recovery support; setup must not recreate it.' }
+  $db=($raw -join [Environment]::NewLine | ConvertFrom-Json)
+  if ($db.Config.Labels.'com.docker.compose.project' -cne 'ars-windows-pilot' -or $db.Config.Labels.'com.docker.compose.service' -cne 'postgres') { throw 'Unexpected pilot container identity.' }
+  $mount=@($db.Mounts | Where-Object { $_.Destination -eq '/var/lib/postgresql/data' })
+  if ($mount.Count -ne 1 -or $mount[0].Type -ne 'volume' -or $mount[0].Name -cne 'ars-windows-pilot_pilot_pgdata') { throw 'Pilot database volume binding mismatch.' }
+  $ports=@($db.HostConfig.PortBindings.'5432/tcp')
+  if ($ports.Count -ne 1 -or $ports[0].HostIp -cne '127.0.0.1' -or $ports[0].HostPort -cne '5433') { throw 'Pilot database network binding mismatch.' }
+}
+
 $jwtLine = $envLines | Where-Object { $_ -match '^\s*JWT_SECRET\s*=' } | Select-Object -First 1
 $jwtValue = if ($jwtLine) { (($jwtLine -replace '^\s*JWT_SECRET\s*=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
 if ($jwtValue.Length -lt 32 -or $jwtValue -match '(?i)replace.with|change.?me|example|password') {
