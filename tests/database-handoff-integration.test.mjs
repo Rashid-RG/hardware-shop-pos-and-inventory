@@ -10,9 +10,17 @@ test('server and maintenance acquire gate before writer lease and fail closed',(
  assert.ok(section.indexOf('singleWriterLease = client')<section.indexOf('pg_advisory_unlock'));
  assert.ok(section.indexOf('pg_advisory_unlock')<section.indexOf('if (connectionLost)'));
  assert.match(section,/await client\.end\(\)/);
- for(const p of ['scripts/windows-locked-maintenance-backup.mjs','scripts/mint/locked-backup.mjs']){
-  const s=read(p);
-  assert.ok(s.indexOf('await acquireHandoffGate(client)')<s.indexOf('pg_try_advisory_lock'));
-  assert.ok(s.indexOf('await client.end()')>s.indexOf("client.query('ROLLBACK')"));
+ const windows=read('scripts/windows-locked-maintenance-backup.mjs');
+ const mint=read('scripts/mint/locked-backup.mjs');
+ const session=read('scripts/database-maintenance-session.mjs');
+ const fence=read('scripts/database-maintenance-table-fence.mjs');
+ for(const s of [windows,session]){
+  const gate=s.indexOf('await acquireHandoffGate(client)');
+  const writer=s.indexOf('pg_try_advisory_lock');
+  assert.ok(gate>=0&&writer>gate);
  }
+ assert.match(mint,/withMaintenanceSession\(client,'hardware_pos_ars',session=>withMaintenanceTableFence\(client,session,/);
+ assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
+ assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
+ assert.ok(windows.indexOf('await client.end()')>windows.indexOf("client.query('ROLLBACK')"));
 });
