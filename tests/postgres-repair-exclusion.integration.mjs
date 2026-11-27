@@ -1,7 +1,12 @@
 // Disposable hosted CI only. Never connect to an operational installation.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,realpathSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import pg from 'pg';
 import {acquireHandoffGate, acquireMaintenanceTransactionFence, captureGateOwner, assertGateOwner, HANDOFF_CLASS, HANDOFF_ID, WRITER_ID, TRANSACTION_FENCE_ID} from '../scripts/database-handoff-gate.mjs';
 
@@ -22,7 +27,33 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
  const table='ars_repair_ci_'+randomUUID().replaceAll('-','');
  const ident='"'+table+'"';
  let fixtureCreated=false;
+ const fixtureHome=realpathSync(mkdtempSync(join(tmpdir(),'ars-repair-ci-')));
+ const state=join(fixtureHome,'.local','share','ars-hardware');
+ const repairName='repair-preparation-'+randomUUID().replaceAll('-','');
+ const repair=join(state,repairName);
+ const marker=join(state,'repair-interrupted.json');
+ const receipt=join(repair,'rollback-preparation.json');
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ // Use the production Mint marker writer and reviewer inside a child with a
+ // private HOME, never the installed user's state. No services are started.
+ const python=(code,args=[])=>spawnSync('python3',['-c',code,...args],{
+  cwd:root,env:{PATH:process.env.PATH,HOME:fixtureHome,PYTHONPATH:join(root,'scripts','mint')},
+  encoding:'utf8',timeout:15000
+ });
+ const assertStartup=(allowed)=>{
+  const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',
+   "import {assertOrdinaryStartupAllowed} from './backend/maintenanceStartupGuard.ts'; try {assertOrdinaryStartupAllowed(); process.exit(0)} catch {process.exit(23)}"],{
+   cwd:root,env:{PATH:process.env.PATH,HOME:fixtureHome},encoding:'utf8',timeout:15000
+  });
+  assert.equal(result.status,allowed?0:23,result.stderr);
+ };
  try{
+  assert.equal(process.platform,'linux');
+  mkdirSync(repair,{recursive:true,mode:0o700});
+  const raw=JSON.stringify({schema:1,kind:'mint-repair-rollback-preparation',repairSpecificRollbackTested:true,activationAllowed:false,startupAllowed:false,repairApplied:false,rollbackAllowed:false});
+  writeFileSync(receipt,raw,{flag:'wx',mode:0o600});
+  const receiptDigest=createHash('sha256').update(raw).digest('hex');
+  assertStartup(true);
   const coordinator=await open(), rival=await open(), observer=await open();
   const identities=await Promise.all(clients.map(c=>c.query("SELECT current_database() AS db,pg_backend_pid() AS pid,system_identifier::text AS cluster FROM pg_control_system()")));
   assert.ok(identities.every(r=>r.rows[0].db==='hardware_pos_ci'&&r.rows[0].cluster===identities[0].rows[0].cluster));
@@ -41,6 +72,10 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   const owner=await captureGateOwner(coordinator);
   await coordinator.query('BEGIN');
   await coordinator.query('LOCK TABLE '+ident+' IN SHARE MODE NOWAIT');
+  const begin=python("import sys; from pathlib import Path; from repair_interruption import STATE,make_record,retain_marker,inspect; assert STATE==Path(sys.argv[1]); retain_marker(STATE,make_record(sys.argv[2],sys.argv[3])); assert inspect(STATE)['markerRetained'] is True",[state,repairName,receiptDigest]);
+  assert.equal(begin.status,0,begin.stderr);
+  const markerBytes=readFileSync(marker);
+  assertStartup(false);
   await rival.query("SET lock_timeout='250ms'");
   // Simulate three stages of a repair plan without switching files or launching an app.
   for(const phase of ['preparation','file-switch-placeholder','verification']){
@@ -65,6 +100,16 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   }
   assert.equal(released,true,'Coordinator backend did not disappear');
   await assert.rejects(assertGateOwner(observer,owner),/ownership not verified/);
+  assertStartup(false);
+  assert.deepEqual(readFileSync(marker),markerBytes);
+  const review=python("import sys; from pathlib import Path; from repair_interruption import STATE,inspect; assert STATE==Path(sys.argv[1]); result=inspect(STATE); assert result['rollbackReceiptMatched'] is True and result['startupAllowed'] is False and result['recoveryAllowed'] is False",[state]);
+  assert.equal(review.status,0,review.stderr);
+  // A corrupted marker must also fail closed; no recovery action may clear it.
+  writeFileSync(marker,'{');
+  assertStartup(false);
+  const corrupt=python("from repair_interruption import STATE,inspect; inspect(STATE)");
+  assert.notEqual(corrupt.status,0);
+  assert.equal(readFileSync(marker,'utf8'),'{');
   // Locks cannot survive connection loss. A durable maintenance marker is independently required.
   for(const id of keys)assert.equal(await tryLock(rival,id),true);
   await rival.query('SELECT pg_advisory_unlock_all()');
@@ -74,9 +119,11 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
  }finally{
   // Close all lock owners before removing only our random CI fixture.
   for(const c of clients)await c.end().catch(()=>{});
-  if(fixtureCreated){
-   const cleanup=await connect();
-   try{await cleanup.query('DROP TABLE '+ident);}finally{await cleanup.end();}
-  }
+  try{
+   if(fixtureCreated){
+    const cleanup=await connect();
+    try{await cleanup.query('DROP TABLE '+ident);}finally{await cleanup.end();}
+   }
+  }finally{rmSync(fixtureHome,{recursive:true,force:true});}
  }
 });
