@@ -363,6 +363,45 @@ class RecoveryTests(unittest.TestCase):
                 self.assertTrue((candidate/name).is_symlink())
                 self.assertEqual((candidate/name).resolve(),runtime/name)
             self.assertEqual((runtime/".env.local").read_text(),"fixture")
+    def test_offline_selection_retains_startup_blockers(self):
+        import hashlib
+        import maintenance_backup
+        from types import SimpleNamespace
+        spec=importlib.util.spec_from_file_location("switch_intent",Path(__file__).with_name("prepare-switch-intent.py"))
+        intent=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(intent)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous=root/"previous"
+            candidate=root/"staged-releases"/"1.2.3"
+            for release in (previous,candidate):
+                (release/"dist").mkdir(parents=True)
+                (release/"dist/server.cjs").touch()
+            runtime=root/"runtime"
+            runtime.mkdir()
+            (runtime/".env.local").write_text("fixture")
+            (runtime/"uploads").mkdir()
+            (runtime/"backups").mkdir()
+            (root/"project").symlink_to(previous)
+            hold=root/"maintenance-hold.json"
+            hold.write_text("fixture hold")
+            sha=lambda raw:hashlib.sha256(raw).hexdigest()
+            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes())}
+            target=root/"runtime-switch-intent.json"
+            target.write_text(json.dumps({"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}))
+            raw=target.read_bytes()
+            proposal=SimpleNamespace(plain=lambda *args:None,read=lambda path:path.read_bytes(),sha=sha)
+            with patch.object(intent,"STATE",root), patch.object(intent.os,"geteuid",return_value=1000), patch.object(intent,"load",return_value=proposal), patch.object(intent,"verified_binding",return_value=binding), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+                with self.assertRaisesRegex(ValueError,"approval"):
+                    intent.select_offline_release(root,"")
+                result=intent.select_offline_release(root,"SELECT OFFLINE RELEASE")
+            self.assertTrue(result["selected"])
+            self.assertFalse(result["startupAllowed"])
+            self.assertEqual((root/"project").resolve(),candidate)
+            self.assertEqual(target.read_bytes(),raw)
+            self.assertEqual(hold.read_text(),"fixture hold")
+            self.assertEqual(json.loads((root/"switch-journal.json").read_text())["phase"],"switched")
+            self.assertFalse(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
