@@ -41,6 +41,11 @@ try {
  }
  $info.EnvironmentVariables['PATH']=Join-Path $env:SystemRoot 'System32'
  foreach ($key in @('TEMP','TMP','USERPROFILE','HOME')) { $info.EnvironmentVariables[$key]=$root }
+ # A private maintenance location is required by the ordinary startup guard.
+ $privateLocal=Join-Path $root 'local-app-data'
+ New-Item -ItemType Directory -Path $privateLocal -ErrorAction Stop | Out-Null
+ $info.EnvironmentVariables['LOCALAPPDATA']=$privateLocal
+ $info.EnvironmentVariables['APPDATA']=$privateLocal
  $info.EnvironmentVariables['NODE_ENV']='production'
  $info.EnvironmentVariables['DATABASE_URL']='postgresql://restore_admin@127.0.0.1:55433/ars_native_ci'
  $info.EnvironmentVariables['PORT']='30123'
