@@ -59,5 +59,53 @@ class Rehearsal(unittest.TestCase):
                     self.assertTrue((history/"cancellation.json").is_file())
                 for p,content in before.items(): self.assertEqual(p.read_bytes(),content)
                 self.assertEqual((state/"project").resolve(),project)
+
+    def test_coordinator_failure_paths(self):
+        import uninstall_coordinator as coordinator
+        from unittest.mock import Mock
+        from contextlib import ExitStack
+        for phase in ("backup", "restore", "review", "complete"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as tmp:
+                state=Path(tmp).resolve()
+                project=state/"project";project.mkdir()
+                uid="a"*32
+                hold=state/"maintenance-hold.json"
+                proof=state/"uninstall-shutdown.json"
+                record={"uninstallId":uid,"version":"1.0.0"}
+                observation={"uninstallId":uid}
+                hold.write_text(json.dumps(record))
+                proof.write_text(json.dumps(observation))
+                sample=state/"business.json";sample.write_bytes(b"synthetic business data")
+                before={p:p.read_bytes() for p in (hold,proof,sample)}
+                restore=Mock()
+                restore.inspect.return_value={"uninstallId":uid,"isolatedRestorePassed":True}
+                backup=Mock()
+                final=Mock(return_value={"uninstallId":uid,"restoreObservationMatched":True,
+                                         **{k:False for k in coordinator.FLAGS}})
+                if phase=="backup": backup.side_effect=RuntimeError("simulated backup failure")
+                if phase=="restore": restore.inspect.side_effect=RuntimeError("simulated restore failure")
+                if phase=="review": final.side_effect=RuntimeError("simulated review failure")
+                spec=Mock()
+                with ExitStack() as stack:
+                    for name,value in (("STATE",state),("shutdown",Mock(return_value=observation)),
+                                       ("read_regular",lambda p:p.read_bytes()),("validate",Mock()),
+                                       ("stopped",Mock()),("inspect",final)):
+                        stack.enter_context(patch.object(coordinator,name,value))
+                    stack.enter_context(patch.object(coordinator.os,"geteuid",return_value=1000))
+                    stack.enter_context(patch.object(coordinator.subprocess,"run",backup))
+                    stack.enter_context(patch.object(coordinator.importlib.util,"spec_from_file_location",return_value=spec))
+                    stack.enter_context(patch.object(coordinator.importlib.util,"module_from_spec",return_value=restore))
+                    if phase=="complete":
+                        result=coordinator.rehearse(coordinator.CONFIRMATION)
+                        self.assertTrue(result["finalReviewMatched"])
+                        for flag in coordinator.FLAGS: self.assertIs(result[flag],False)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError,"simulated"):
+                            coordinator.rehearse(coordinator.CONFIRMATION)
+                backup.assert_called_once()
+                self.assertEqual(restore.inspect.call_count,0 if phase=="backup" else 1)
+                self.assertEqual(final.call_count,1 if phase in ("review","complete") else 0)
+                for p,raw in before.items(): self.assertEqual(p.read_bytes(),raw)
+                self.assertFalse(startup_allowed(state))
 if __name__=="__main__":
     unittest.main()
