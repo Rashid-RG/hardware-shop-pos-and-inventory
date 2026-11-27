@@ -164,6 +164,8 @@ jobs:
           trap 'rm -rf "$output"' EXIT
           node --import tsx scripts/generate-report-compatibility-fixtures.ts "$output"
           python3 scripts/verify-report-branding.py "$output"
+      - name: Verify official quotation branding and saved mixed units
+        run: node --import tsx --test tests/quotation-branding.integration.mjs
       - name: Frontend and server production build
         run: npm run build
   database-validation:
