@@ -107,6 +107,9 @@ VALUES('native-history-customer','shop-main','Synthetic historical customer',0,0
  if ((Get-HistoricalRows 'ars_native_restored_ci') -cne $historical -or (Get-HistoricalRows 'ars_native_ci') -cne $historical -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $archiveHash) { throw 'Historical fixture or archive changed during restored startup.' }
  Write-Host 'Native Windows restored database startup and historical preservation passed.'
  # Seed a synthetic administrator exclusively in the restored database.
+ # Authentication loads users at application startup; stop before inserting the fixture.
+ Stop-NativeApplication $process
+ $process=$null
  $testEmail='native-'+[guid]::NewGuid().ToString('N')+'@example.invalid'
  $testId='native-'+[guid]::NewGuid().ToString('N')
  $testPassword=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
@@ -117,6 +120,8 @@ VALUES('native-history-customer','shop-main','Synthetic historical customer',0,0
  } finally { Pop-Location }
  $sql="INSERT INTO users(id,email,name,role,password_hash) VALUES ('$testId','$testEmail','Native CI Administrator','Super Admin','"+$hash[0]+"');"
  Invoke-NativeChecked (Join-Path $PostgresBin 'psql.exe') @('-X','-h','127.0.0.1','-p','55433','-U','restore_admin','-d','ars_native_restored_ci','-v','ON_ERROR_STOP=1','-c',$sql)
+ # Reload the persisted synthetic user through ordinary production startup.
+ $process=Start-NativeApplication
  # Run the trusted CI-only probe using the same clean environment and native runtime.
  $probe=Join-Path $build 'native-restored-probe.mjs'
  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows-native-restored-probe.mjs') -Destination $probe
