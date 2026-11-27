@@ -30,7 +30,7 @@ jobs:
         shell: powershell
         run: ./scripts/verify-windows-ci.ps1
   mint-script-checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
           python3 scripts/mint/test-switch-coordinator.py
           python3 scripts/mint/test-interrupted-switch.py
   maintenance-validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -85,7 +85,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
         run: node --test tests/postgres-maintenance-lock.integration.mjs
   application-validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -120,7 +120,7 @@ jobs:
       - name: Frontend and server production build
         run: npm run build
   database-validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -197,7 +197,7 @@ jobs:
       - name: Run installed Mint backup and isolated recovery rehearsal
         run: bash scripts/verify-mint-rehearsal-ci.sh ${{ job.services.postgres.id }}
   hosted-validation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -228,7 +228,7 @@ jobs:
   validate:
     if: ${{ always() }}
     needs: [maintenance-validation, application-validation, database-validation, hosted-validation]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every validation job to pass
