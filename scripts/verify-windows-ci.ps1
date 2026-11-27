@@ -33,6 +33,18 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
 & (Join-Path $PSScriptRoot 'test-windows-uninstall-cancellation.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-uninstall-cancellation-rehearsal.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-maintenance-job.ps1')
+
+$supervisorFixture=Join-Path $env:RUNNER_TEMP ('ars-supervisor-'+[guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($supervisorFixture)
+try {
+  $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+  if (-not (Test-Path -LiteralPath $compiler -PathType Leaf)) {throw 'Native C# compiler unavailable.'}
+  $supervisor=Join-Path $supervisorFixture 'maintenance-supervisor.exe'
+  $sources=@('windows-maintenance-job.cs','windows-maintenance-suspended-worker.cs','windows-maintenance-cancellation-bridge.cs','windows-maintenance-supervisor.cs') | ForEach-Object {Join-Path $PSScriptRoot $_}
+  Invoke-Checked $compiler (@('/nologo','/target:exe',('/out:'+$supervisor))+$sources)
+  Invoke-Checked 'node' @((Join-Path $PSScriptRoot 'test-windows-maintenance-supervisor.mjs'),$supervisor,$supervisorFixture)
+} finally {Remove-Item -LiteralPath $supervisorFixture -Recurse -Force}
+
 Invoke-Checked 'node' @('--test','tests/uninstall-table-fingerprints.test.mjs')
 & (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -Rollback -RepairFixture
 $postgresRoot = Join-Path $env:ProgramFiles 'PostgreSQL'
