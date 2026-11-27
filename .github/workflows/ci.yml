@@ -154,7 +154,12 @@ jobs:
           git archive HEAD | tar -x -C "$proposal"
           (
             cd "$proposal"
-            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' 'dependencies.@vitejs/plugin-react=latest' 'devDependencies.esbuild=0.28.2'
+            # Resolve an explicit modern React plugin version rather than retaining a stale latest tag in the lockfile.
+            plugin="$(npm view '@vitejs/plugin-react@6' version --json | node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);const selected=Array.isArray(v)?v.at(-1):v;if(typeof selected!=="string"||!/^6\.[0-9]+\.[0-9]+$/.test(selected))process.exit(1);console.log(selected);});')"
+            npm view "@vitejs/plugin-react@$plugin" peerDependencies --json
+            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' "dependencies.@vitejs/plugin-react=$plugin" 'devDependencies.esbuild=0.28.2'
+            # Remove only the obsolete plugin entry in the disposable proposal.
+            node -e 'const fs=require("node:fs");const f="package-lock.json";const lock=JSON.parse(fs.readFileSync(f,"utf8"));delete lock.packages["node_modules/@vitejs/plugin-react"];fs.writeFileSync(f,JSON.stringify(lock,null,2)+"\n");'
             npm install --package-lock-only --ignore-scripts --no-fund
             npm ci
             npm run lint
