@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 from maintenance_backup import stopped, check_database_clients
+from startup_guard import migration_mapping_valid
 
 STATE=Path.home()/".local/share/ars-hardware"
 FLAGS={"activationAllowed":False,"runtimeActivated":False,"startupAllowed":False,"rollbackAllowed":False}
@@ -72,7 +73,9 @@ def snapshot(folder):
         plain(runtime/name,name!=".env.local")
         if not (current/name).is_symlink() or (current/name).resolve(strict=True)!=runtime/name:
             raise ValueError("Stable runtime mapping required.")
-    for name in ("handoff-pending.json","switch-journal.json"):
+    if not migration_mapping_valid(STATE):
+        raise ValueError("Incomplete runtime migration mapping.")
+    for name in ("handoff-pending.json","switch-journal.json","runtime-migration-interrupted.json"):
         p=STATE/name
         if p.exists() or p.is_symlink():
             raise ValueError("Unresolved handoff or switch journal.")

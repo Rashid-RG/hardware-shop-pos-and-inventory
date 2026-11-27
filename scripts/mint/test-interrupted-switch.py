@@ -326,6 +326,19 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs["cwd"],project)
                 self.assertEqual(cmd[cmd.index("-p")+1],"ars-mint")
                 self.assertFalse((project/".env.local").exists())
+    def test_update_preflight_rejects_interrupted_runtime_migration(self):
+        spec=importlib.util.spec_from_file_location("update_plan",Path(__file__).with_name("update-switch-plan.py"))
+        plan=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plan)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            marker=root/"runtime-migration-interrupted.json"
+            marker.symlink_to(root/"missing")
+            with patch.object(plan,"STATE",root), patch.object(plan.subprocess,"run") as run:
+                with self.assertRaisesRegex(ValueError,"Resolve runtime migration"):
+                    plan.plan(root/"unused")
+                run.assert_not_called()
+            self.assertTrue(marker.is_symlink())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

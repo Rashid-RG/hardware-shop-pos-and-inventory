@@ -11,6 +11,7 @@ import sys
 import tempfile
 import shutil
 from release_fingerprint import fingerprint
+from startup_guard import migration_mapping_valid
 
 STATE=Path.home()/".local/share/ars-hardware"
 
@@ -19,6 +20,8 @@ def sha(path):
         return hashlib.file_digest(f,"sha256").hexdigest()
 
 def plan(folder, quiet=False):
+    if os.path.lexists(STATE/"runtime-migration-interrupted.json") or not migration_mapping_valid(STATE):
+        raise ValueError("Resolve runtime migration before preparing software updates.")
     output=subprocess.DEVNULL if quiet else None
     folder=folder.resolve(strict=True)
     if folder.parent!=(STATE/"update-recovery").resolve(strict=True):
