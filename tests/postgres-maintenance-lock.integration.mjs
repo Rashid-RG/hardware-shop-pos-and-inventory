@@ -441,7 +441,7 @@ test('combined activation transfer retains gate across candidate and rollback ch
 });
 
 for(const failure of ['database-session-loss','ipc-disconnect','forced-child-exit']){
-test('disposable child releases leases after '+failure,{timeout:30000},async()=>{
+test('disposable child releases leases after '+failure,{timeout:60000},async()=>{
  const {fork}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
  const {randomInt}=await import('node:crypto');
@@ -512,6 +512,24 @@ test('disposable child releases leases after '+failure,{timeout:30000},async()=>
     if(!acquired)await new Promise(resolve=>setTimeout(resolve,25));
    }
    assert.equal(acquired,true,'Child lease did not clear');
+  }
+  if(failure==='forced-child-exit'){
+   // Release only the diagnostic leases; never release the coordinator gate.
+   for(const id of [keys.writerId,keys.fenceId]){
+    assert.equal((await probe.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[HANDOFF_CLASS,id])).rows[0].released,true);
+   }
+   const {rehearseChildWriter}=await import('../scripts/database-handoff-child-writer.mjs');
+   for(const purpose of ['rollback','candidate']){
+    await assertGateOwner(probe,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
+    assert.equal(await lock(probe,keys.gateId),false);
+    const recovered=await rehearseChildWriter(c,url.toString(),keys,{releaseDigest:binding.releaseDigest,runtimeDigest:binding.runtimeDigest,maintenanceDigest:binding.maintenanceDigest,purpose});
+    assert.equal(recovered.childHeldWriterAndFence,true);
+    assert.equal(recovered.authorizationVerified,true);
+    assert.equal(recovered.liveStartupAllowed,false);
+    await assertGateOwner(probe,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
+    assert.equal(await lock(probe,keys.gateId),false);
+   }
+   for(const id of [keys.writerId,keys.fenceId])assert.equal(await lock(probe,id),true);
   }
  }finally{
   clearTimeout(timer);
