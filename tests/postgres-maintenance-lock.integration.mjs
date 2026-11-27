@@ -439,3 +439,62 @@ test('combined activation transfer retains gate across candidate and rollback ch
   activationAllowed:false,continuousExclusionVerified:false
  });
 });
+
+test('disposable child exits on coordinator database session loss while IPC stays connected',{timeout:30000},async()=>{
+ const {fork}=await import('node:child_process');
+ const {fileURLToPath}=await import('node:url');
+ const {randomInt}=await import('node:crypto');
+ const {HANDOFF_CLASS}=await import('../scripts/database-handoff-gate.mjs');
+ const c=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const probe=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const base=randomInt(10,2147483644),keys={gateId:base,writerId:base+1,fenceId:base+2};
+ let child,closed,timer;
+ const lock=async(client,id)=>(await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[HANDOFF_CLASS,id])).rows[0].acquired;
+ try{
+  await c.connect();await probe.connect();
+  assert.equal(await lock(c,keys.gateId),true);
+  const owner=(await c.query("SELECT current_database() AS database,pg_backend_pid() AS pid,backend_start::text AS started,system_identifier::text AS cluster,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS oid FROM pg_stat_activity,pg_control_system() WHERE pid=pg_backend_pid()")).rows[0];
+  child=fork(fileURLToPath(new URL('../scripts/database-handoff-writer-child.mjs',import.meta.url)),[],{execArgv:[],stdio:['ignore','ignore','ignore','ipc'],env:{PATH:process.env.PATH??'',SystemRoot:process.env.SystemRoot??''}});
+  closed=new Promise(resolve=>child.once('close',(code,signal)=>resolve({code,signal})));
+  child.on('error',()=>{});
+  const binding={releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64),purpose:'candidate',candidatePid:child.pid};
+  const {createHandoffAuthorization}=await import('../scripts/database-handoff-authorization.mjs');
+  const grant=createHandoffAuthorization(binding,{ttlMs:10000});
+  try{
+   await new Promise((resolve,reject)=>{
+    timer=setTimeout(()=>reject(Error('Coordinator loss fixture did not acquire leases.')),12000);
+    child.once('error',reject);
+    child.once('exit',()=>reject(Error('Child exited before coordinator loss.')));
+    let phase='proof';
+    const send=m=>child.send(m,e=>{if(e)reject(e);});
+    child.on('message',async m=>{
+     try{
+      assert.equal(m.schema,1);
+      if(phase==='proof'){
+       assert.equal(m.type,'proof');assert.equal(grant.consume(m.token,m.binding),true);
+       phase='holding';send({schema:1,type:'accepted',connection:url.toString(),keys,owner});
+      }else{
+       assert.equal(phase,'holding');assert.equal(m.type,'holding');phase='verified';
+       for(const id of [keys.writerId,keys.fenceId])await assertGateOwner(probe,m.owner,{lockClass:HANDOFF_CLASS,lockId:id});
+       resolve();
+      }
+     }catch(e){reject(e);}
+    });
+    send({schema:1,type:'challenge',token:grant.token,binding});
+   });
+  }finally{clearTimeout(timer);grant.revoke();}
+  assert.equal(child.connected,true);
+  await c.end();
+  // Keep IPC open: only the database gate has disappeared.
+  assert.equal(child.connected,true);
+  const result=await Promise.race([closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Watchdog did not stop the child.')),10000);})]);
+  clearTimeout(timer);
+  assert.deepEqual(result,{code:1,signal:null});
+  for(const id of Object.values(keys))assert.equal(await lock(probe,id),true);
+ }finally{
+  clearTimeout(timer);
+  if(child&&child.exitCode===null&&child.signalCode===null)child.kill();
+  if(closed)await closed;
+  await Promise.allSettled([c.end(),probe.end()]);
+ }
+});
