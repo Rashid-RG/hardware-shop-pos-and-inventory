@@ -27,11 +27,32 @@ export async function rehearseActivationTransfer(connection,binding){
    if(await lock(rival,gateId))throw Error('Rival acquired gate.');
    if(lost)throw Error('Fixture connection lost.');
   };
-  await check();
+  // A queued independent contender must remain blocked throughout both transfers.
+  const observer=new pg.Client(options);
+  observer.on('error',()=>{lost=true;});
+  let queued;
+  try{
+   await observer.connect();
+   const waiting=await identity(observer);
+   if(waiting.cluster!==owner.cluster||waiting.oid!==owner.oid||waiting.pid===owner.pid||waiting.pid===other.pid)throw Error('Observer identity mismatch.');
+   let acquired=false,failed=false;
+   queued=observer.query('SELECT pg_advisory_lock($1::integer,$2::integer)',[HANDOFF_CLASS,gateId]).then(()=>{acquired=true;},()=>{failed=true;});
+   const assertWaiting=async()=>{
+    const r=await coordinator.query("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=$1::oid AND objid=$2::oid AND objsubid=2 AND pid=$3::integer AND mode='ExclusiveLock' AND NOT granted) AS waiting",[HANDOFF_CLASS,gateId,waiting.pid]);
+    if(acquired||failed||lost||r.rows[0]?.waiting!==true)throw Error('Queued gate exclusion not observed.');
+   };
+   // Wait for PostgreSQL to register the contender, rather than assuming IPC timing.
+   let registered=false;
+   for(let attempt=0;attempt<100;attempt++){
+    try{await assertWaiting();registered=true;break;}catch(e){if(acquired||failed||lost)throw e;await new Promise(resolve=>setTimeout(resolve,10));}
+   }
+   if(!registered)throw Error('Queued contender not registered.');
+   await check();
   for(const purpose of ['candidate','rollback']){
    const result=await rehearseChildWriter(coordinator,url.toString(),{gateId,writerId,fenceId},{...binding,purpose});
    if(result.childHeldWriterAndFence!==true||result.authorizationVerified!==true||result.liveStartupAllowed!==false)throw Error('Fixture writer transfer failed.');
    await check();
+   await assertWaiting();
    // Both child leases must have been released before the next phase.
    for(const id of [writerId,fenceId]){
     if(!await lock(coordinator,id))throw Error('Child lease remains held.');
@@ -39,6 +60,13 @@ export async function rehearseActivationTransfer(connection,binding){
    }
   }
   await check();
+  await assertWaiting();
+  // Release only after both child leases are gone; the queued contender must then acquire.
+  if((await coordinator.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[HANDOFF_CLASS,gateId])).rows[0]?.released!==true)throw Error('Coordinator gate release failed.');
+  await queued;
+  if(!acquired||failed||lost)throw Error('Queued contender did not acquire after release.');
+  await assertGateOwner(observer,waiting,{lockClass:HANDOFF_CLASS,lockId:gateId});
+  }finally{await observer.end();if(queued)await queued;}
   return {candidateWriterRehearsed:true,rollbackWriterRehearsed:true,gateObservedAcrossTransitions:true,liveStartupAllowed:false,activationAllowed:false,continuousExclusionVerified:false};
  }finally{await Promise.allSettled([rival.end(),coordinator.end()]);}
 }
