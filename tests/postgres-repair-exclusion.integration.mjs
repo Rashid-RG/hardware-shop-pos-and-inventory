@@ -133,3 +133,51 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   }finally{rmSync(fixtureHome,{recursive:true,force:true});}
  }
 });
+
+import {withMaintenanceSession} from '../scripts/database-maintenance-session.mjs';
+import {withMaintenanceTableFence} from '../scripts/database-maintenance-table-fence.mjs';
+
+test('real maintenance table fence permits reads but excludes writes across stages', {timeout:60000}, async()=>{
+ const ident='"ars_fence_ci_'+randomUUID().replaceAll('-','')+'"';
+ const fresh=()=>new pg.Client({connectionString:expected,connectionTimeoutMillis:5000,query_timeout:10000});
+ let created=false;
+ const setup=await connect();
+ try{
+  await setup.query('CREATE TABLE '+ident+' (id integer PRIMARY KEY, quantity integer NOT NULL)');
+  created=true;
+  await setup.query('INSERT INTO '+ident+' VALUES (1,8)');
+ }finally{await setup.end();}
+ try{
+  const owner=fresh();
+  await withMaintenanceSession(owner,'hardware_pos_ci',session=>withMaintenanceTableFence(owner,session,async fence=>{
+   const rival=await connect();
+   try{
+    await rival.query("SET lock_timeout='250ms'");
+    for(const phase of ['backup-placeholder','restore-placeholder','review-placeholder']){
+     await fence.assertActive();
+     assert.deepEqual((await rival.query('SELECT * FROM '+ident)).rows,[{id:1,quantity:8}]);
+     for(const id of keys)assert.equal(await tryLock(rival,id),false,phase);
+     for(const sql of ['UPDATE '+ident+' SET quantity=0 WHERE id=1','INSERT INTO '+ident+' VALUES (2,1)','DELETE FROM '+ident+' WHERE id=1']){
+      await assert.rejects(rival.query(sql),{code:'55P03'});
+     }
+    }
+   }finally{await rival.end();}
+  }));
+  const check=await connect();
+  try{
+   for(const id of keys)assert.equal(await tryLock(check,id),true);
+   await check.query('SELECT pg_advisory_unlock_all()');
+   assert.deepEqual((await check.query('SELECT * FROM '+ident)).rows,[{id:1,quantity:8}]);
+   await check.query('UPDATE '+ident+' SET quantity=7 WHERE id=1');
+   assert.equal((await check.query('SELECT quantity FROM '+ident)).rows[0].quantity,7);
+  }finally{await check.end();}
+  // A separate connected client at scope entry must prevent work.
+  const busy=await connect();
+  try{
+   const next=fresh();
+   await assert.rejects(withMaintenanceSession(next,'hardware_pos_ci',session=>withMaintenanceTableFence(next,session,async()=>assert.fail('Busy database admitted'))),/Other database clients/);
+  }finally{await busy.end();}
+ }finally{
+  if(created){const cleanup=await connect();try{await cleanup.query('DROP TABLE '+ident);}finally{await cleanup.end();}}
+ }
+});
