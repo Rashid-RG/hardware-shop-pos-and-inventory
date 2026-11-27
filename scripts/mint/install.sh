@@ -71,5 +71,9 @@ with target.open("x") as stream:
     stream.write(f'[Desktop Entry]\nType=Application\nName=RS Nextward Maintenance Center\nExec=/usr/bin/python3 "{arg}"\nIcon=ars-distributor\nTerminal=false\nCategories=System;\n')
 target.chmod(0o755)
 PY
+# Record only fresh package installs; development source trees have no pilot manifest.
+if [[ -f "$root/PILOT-FILES.json" ]]; then
+  PYTHONDONTWRITEBYTECODE=1 python3 scripts/mint/installation_identity.py "$root"
+fi
 echo "ARS_SETUP_STAGE 5"
 echo "Setup complete. Open ARS Distributor POS on the desktop."

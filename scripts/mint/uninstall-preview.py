@@ -83,8 +83,14 @@ def main():
         "Application: "+plan["installation"]+"\n\nPermanent storage: "+plan["retainedRuntime"]+
         "\n\nDatabase, customer accounts, inventory, invoices, documents, settings and backups must be retained. PostgreSQL and shared prerequisites will not be removed. Permanent data deletion is disabled.","Review requirements"):
         return
+    try:
+        from installation_identity import review
+        review(STATE,project)
+        identity="Recorded fresh-install tree identity matched. Exclusive ownership is not yet certified."
+    except (OSError,ValueError,RuntimeError,KeyError,TypeError):
+        identity="Fresh-install identity missing or changed. No removal permitted."
     ui.page("Removal is not yet enabled",
-        "Permanent runtime mappings matched. A verified final backup, installation ownership certification and service shutdown verification are still required before removal can be enabled.\n\nNo application, service, file or database was removed.","Finish")
+        identity+"\n\nPermanent runtime mappings matched. A verified final backup, installation ownership certification and service shutdown verification are still required before removal can be enabled.\n\nNo application, service, file or database was removed.","Finish")
 
 if __name__=="__main__":
     main()
