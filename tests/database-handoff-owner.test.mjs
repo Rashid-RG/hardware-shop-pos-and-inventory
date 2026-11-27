@@ -34,3 +34,66 @@ test('maintenance ownership requires all three locks and the original session an
  }
  await assert.rejects(assertMaintenanceOwner({query:async()=>{throw Error('connection lost');}},owner),/connection lost/);
 });
+
+import {EventEmitter} from 'node:events';
+import {withMaintenanceSession} from '../scripts/database-maintenance-session.mjs';
+class FixtureClient extends EventEmitter {
+ constructor(){super();this.calls=[];this.database='hardware_pos_ci';this.denied=0;this.locks=3;this.pid=123;this.closed=0;}
+ async connect(){this.calls.push('connect');}
+ async end(){this.closed++;this.calls.push('end');this.emit('end');}
+ async query(sql,args){
+  if(sql==='SELECT current_database() AS name')return {rows:[{name:this.database}]};
+  if(sql.includes('pg_try_advisory_lock')){
+   this.calls.push(args[1]);return {rows:[{acquired:args[1]!==this.denied}]};
+  }
+  this.calls.push('verify');
+  return {rows:[{pid:this.pid,started:'2026-01-01 00:00:00.123456+00',database:this.database,database_oid:'12345',locks:this.locks}]};
+ }
+}
+test('dedicated maintenance session retains lock order and invalidates capability on cleanup',async()=>{
+ const client=new FixtureClient();let capability;
+ const value=await withMaintenanceSession(client,'hardware_pos_ci',async session=>{
+  capability=session;
+  assert.equal(session.signal.aborted,false);
+  assert.equal(client.closed,0);
+  await session.assertActive();
+  return 'fixture complete';
+ });
+ assert.equal(value,'fixture complete');
+ assert.deepEqual(client.calls.slice(0,4),['connect',2,1,3]);
+ assert.equal(client.closed,1);
+ assert.equal(capability.signal.aborted,true);
+ await assert.rejects(capability.assertActive(),/unavailable/);
+ assert.equal(client.listenerCount('error'),0);
+ assert.equal(client.listenerCount('end'),0);
+});
+test('failed lock acquisition and unexpected database never start maintenance work',async()=>{
+ for(const denied of [1,2,3]){
+  const client=new FixtureClient();client.denied=denied;
+  await assert.rejects(withMaintenanceSession(client,'hardware_pos_ci',async()=>assert.fail('work started')));
+  assert.equal(client.closed,1);
+ }
+ const client=new FixtureClient();client.database='other';
+ await assert.rejects(withMaintenanceSession(client,'hardware_pos_ci',async()=>assert.fail('work started')),/Unexpected maintenance database/);
+ assert.deepEqual(client.calls,['connect','end']);
+ const pooled=new FixtureClient();pooled.release=()=>{};
+ await assert.rejects(withMaintenanceSession(pooled,'hardware_pos_ci',async()=>{}),/Dedicated managed/);
+ assert.deepEqual(pooled.calls,[]);
+});
+test('connection loss, owner changes and stage failures prevent successful completion',async()=>{
+ for(const mode of ['error','end','owner','lock','stage']){
+  const client=new FixtureClient();let capability;
+  await assert.rejects(withMaintenanceSession(client,'hardware_pos_ci',async session=>{
+   capability=session;
+   if(mode==='error')client.emit('error',Error('fixture loss'));
+   if(mode==='end')client.emit('end');
+   if(mode==='owner')client.pid++;
+   if(mode==='lock')client.locks=2;
+   if(mode==='stage')throw Error('fixture stage failure');
+   if(['error','end'].includes(mode))assert.equal(session.signal.aborted,true);
+   return 'must not complete';
+  }));
+  assert.equal(client.closed,1);
+  assert.equal(capability.signal.aborted,true);
+ }
+});
