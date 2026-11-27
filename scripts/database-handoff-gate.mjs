@@ -37,3 +37,16 @@ export async function acquireMaintenanceTransactionFence(client){
  const result=await client.query('SELECT pg_try_advisory_lock($1::integer,$2::integer) AS acquired',[HANDOFF_CLASS,TRANSACTION_FENCE_ID]);
  if(result.rows[0]?.acquired!==true)throw Error('Outstanding fenced transaction blocks maintenance.');
 }
+
+// Snapshot of the same session holding all three maintenance locks.
+// A snapshot alone is not proof of uninterrupted ownership between stages.
+export async function assertMaintenanceOwner(client,owner){
+ const result=await client.query(
+  "SELECT pg_backend_pid() AS pid, backend_start::text AS started, current_database() AS database, (SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid, (SELECT count(DISTINCT objid)::int FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=$1::oid AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted) AS locks FROM pg_stat_activity WHERE pid=pg_backend_pid()",
+  [HANDOFF_CLASS]);
+ const row=result.rows[0];
+ if(result.rows.length!==1||!Number.isSafeInteger(row?.pid)||row.pid<=0||typeof row.started!=='string'||!row.started||typeof row.database!=='string'||!row.database||typeof row.database_oid!=='string'||!/^\d{1,10}$/.test(row.database_oid)||row.locks!==3)throw Error('Complete maintenance ownership not verified.');
+ const identity={pid:row.pid,started:row.started,database:row.database,databaseOid:row.database_oid};
+ if(owner!==undefined&&(!owner||Object.keys(identity).some(k=>identity[k]!==owner[k])))throw Error('Maintenance owner identity changed.');
+ return Object.freeze(identity);
+}
