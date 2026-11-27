@@ -73,6 +73,22 @@ function Refresh-Choices {
  if ($select.Items.Count -gt 0) { $select.SelectedIndex=0 }
 }
 function Update-Buttons {
+ # Any incident entry, including malformed evidence, requires support review.
+ try {
+  $cursor=$control
+  while ($cursor) {
+   $item=Get-Item -LiteralPath $cursor -Force
+   if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid control directory.' }
+   $cursor=Split-Path -Parent $cursor
+  }
+  $blocked=@(Get-ChildItem -LiteralPath $control -Force | Where-Object { $_.Name -ieq 'runtime-activation-interrupted.json' }).Count -ne 0
+ } catch { $blocked=$true }
+ if ($blocked) {
+  foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel)) {$button.Enabled=$false}
+  $status.Text='Activation incident retained or control directory unavailable. All update actions are blocked. Contact RS Nextward support for recovery review. No evidence will be removed.'
+  $status.ForeColor=[Drawing.Color]::DarkRed
+  return
+ }
  $exists=Test-Path -LiteralPath (Join-Path $control 'runtime-activation-proposal.json')
  $prepare.Enabled=($select.SelectedIndex -ge 0 -and -not $exists)
  $verify.Enabled=($select.SelectedIndex -ge 0 -and $exists)
