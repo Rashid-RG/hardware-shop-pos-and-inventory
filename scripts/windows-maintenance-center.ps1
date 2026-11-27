@@ -4,6 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+. (Join-Path $PSScriptRoot 'windows-prepare-repair.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
@@ -39,11 +40,27 @@ function Get-ArsMaintenanceSummary {
   ('Maintenance evidence: '+$(if ($held) {'Review required'} else {'No listed marker found'}))
   ('Database readiness: '+$(if ($ready) {'Endpoint reports ready'} else {'Not confirmed'}))
   ''
-  'Read-only checks do not authorize startup. Repair and uninstall remain locked.'
+  'Diagnostics and isolated repair preparation. Repair activation and uninstall remain locked.'
  ) -join [Environment]::NewLine
 }
 try {
- while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Refresh') {}
+ while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Prepare repair') {
+  $picker=New-Object Windows.Forms.FolderBrowserDialog
+  try {
+   $picker.Description='Select extracted exact-version ARS installation package'
+   if ($picker.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { continue }
+   $source=$picker.SelectedPath
+  } finally { $picker.Dispose() }
+  if (-not (Show-ArsSetupPage 'Prepare isolated repair' 'Verify and copy the exact installed package? No live files or database will be replaced. A verified backup is required before activation.' 'Prepare')) { continue }
+  try {
+   $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
+   # State may be absent before the first POS launch; do not silently create it.
+   $folder=Prepare-ArsRepair $root $source $state
+   [void][Windows.Forms.MessageBox]::Show(('Repair source prepared. No repair applied. Backup and activation review required.'+[Environment]::NewLine+$folder),$title,'OK','Information')
+  } catch {
+   [void][Windows.Forms.MessageBox]::Show('Repair preparation blocked. Existing application and database retained. Contact RS Nextward support.',$title,'OK','Error')
+  }
+ }
 } catch {
  [void][Windows.Forms.MessageBox]::Show('Maintenance diagnostics unavailable. Contact RS Nextward support. No repair or uninstall performed.',$title,'OK','Error')
 }
