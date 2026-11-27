@@ -9,7 +9,15 @@ test('Mint proposal is explicitly non-authorizing and preserves evidence',()=>{
  assert.match(s,/backupHoldBindingVerified":True/);
  assert.match(s,/continuousExclusionVerified":False/);
  for(const flag of ['activationAllowed','runtimeActivated','startupAllowed','rollbackAllowed'])assert.ok(s.includes('"'+flag+'":False'));
- assert.doesNotMatch(s,/switch_pointer\(|\.unlink\(|\.rename\(|systemctl.*start/);
+ // Only the transient observation marker may be removed, after exact byte verification.
+ const finish=s.match(/^def finish_activation_observation\(marker, expected\):\n([\s\S]*?)(?=^def )/m);
+ assert.ok(finish);
+ assert.match(finish[1],/if read\(marker\)!=expected:\n        raise ValueError\([^\n]+\)\n    marker\.unlink\(\)\n    sync_state\(\)/);
+ assert.equal((s.match(/\.unlink\(/g)||[]).length,1);
+ assert.match(s,/marker, marker_raw=begin_activation_observation\(\)/);
+ assert.match(s,/finish_activation_observation\(marker,marker_raw\)/);
+ assert.match(s,/marker=STATE\/"runtime-activation-interrupted\.json"/);
+ assert.doesNotMatch(s.replace(finish[0],''),/switch_pointer\(|\.unlink\(|\.rename\(|systemctl.*start/);
 });
 
 test('Mint activation requires protected backup receipt and exact hold digest',()=>{
