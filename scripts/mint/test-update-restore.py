@@ -42,7 +42,7 @@ def copy_isolated_candidate(staged, destination, runtime):
         raise ValueError("Candidate changed during isolated copy.")
     return expected
 
-def test(folder, compatibility=False):
+def test(folder, compatibility=False, repair=None):
     if os.geteuid()==0:
         raise ValueError("Run as the installed desktop user.")
     folder=folder.resolve(strict=True)
@@ -61,8 +61,11 @@ def test(folder, compatibility=False):
         run([str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(dump)])
         checksum=sha(dump)
         # Invalidate any prior result before beginning another test.
-        receipt=folder/"restore-test.json"
-        receipt.unlink(missing_ok=True)
+        receipt=folder/"restore-test.json" if repair is None else repair/"repair-restore-test.json"
+        if repair is None:
+            receipt.unlink(missing_ok=True)
+        elif os.path.lexists(receipt):
+            raise ValueError("Existing repair result must be retained.")
         if name.endswith("-with-uploads.dump"):
             with zipfile.ZipFile(folder/(dump.stem+"-uploads.zip")) as bundle:
                 if bundle.testzip() is not None:
@@ -110,17 +113,22 @@ def test(folder, compatibility=False):
                 version=metadata.get("version","")
                 if not isinstance(version,str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?",version):
                     raise ValueError("Invalid release version.")
-                staged=STATE/"staged-releases"/version
-                if not staged.is_dir() or staged.is_symlink() or not (staged/"dist/server.cjs").is_file():
-                    raise ValueError("Verified staged application required.")
-                run(["openssl","dgst","-sha256","-verify",str(STATE/"release-signing-public.pem"),"-signature",str(staged/".ars-release-manifest.sig"),str(staged/".ars-release-manifest.json")])
-                manifest=json.loads((staged/".ars-release-manifest.json").read_text())
-                if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
-                    raise ValueError("Release manifest mismatch.")
-                import tempfile
-                candidate_temp=tempfile.TemporaryDirectory(prefix="ars-isolated-candidate-")
-                isolated=Path(candidate_temp.name)/"build"
-                build_fingerprint=copy_isolated_candidate(staged,isolated,STATE/"runtime")
+                if repair is None:
+                    staged=STATE/"staged-releases"/version
+                    if not staged.is_dir() or staged.is_symlink() or not (staged/"dist/server.cjs").is_file():
+                        raise ValueError("Verified staged application required.")
+                    run(["openssl","dgst","-sha256","-verify",str(STATE/"release-signing-public.pem"),"-signature",str(staged/".ars-release-manifest.sig"),str(staged/".ars-release-manifest.json")])
+                    manifest=json.loads((staged/".ars-release-manifest.json").read_text())
+                    if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
+                        raise ValueError("Release manifest mismatch.")
+                    import tempfile
+                    candidate_temp=tempfile.TemporaryDirectory(prefix="ars-isolated-candidate-")
+                    isolated=Path(candidate_temp.name)/"build"
+                    build_fingerprint=copy_isolated_candidate(staged,isolated,STATE/"runtime")
+                else:
+                    from repair_test_build import build_candidate
+                    candidate_temp,isolated,build_fingerprint=build_candidate(repair)
+                    staged=None
                 node_image="node:22-bookworm-slim"
                 run(["docker","image","inspect",node_image],stdout=subprocess.DEVNULL)
                 def snapshot():
@@ -196,7 +204,7 @@ def test(folder, compatibility=False):
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
                 if fingerprints(schema)!=before:
                     raise RuntimeError("Existing database rows changed during startup; automatic compatibility approval blocked.")
-                if fingerprint(isolated)!=build_fingerprint or fingerprint(staged,STATE/"runtime")!=build_fingerprint:
+                if fingerprint(isolated)!=build_fingerprint or (staged is not None and fingerprint(staged,STATE/"runtime")!=build_fingerprint):
                     raise ValueError("Staged build changed during compatibility testing.")
                 compatibility_result=True
                 # Exercise writes only after the read-only preservation check. Restart the same test application.
@@ -210,51 +218,57 @@ def test(folder, compatibility=False):
                 wait_ready()
                 write_probe()
                 run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
-                # Preserve all rows, including the newly issued synthetic invoices, across rollback startup.
-                schema=snapshot()
-                before=fingerprints(schema)
-                # Test previous version on the same migrated database, not a fresh restore.
-                # Copy only its executable build and dependencies, never runtime files.
-                import tempfile
-                import shutil
-                with tempfile.TemporaryDirectory(prefix="ars-old-build-") as temp:
-                    old=Path(temp)
-                    for part in ("dist","node_modules"):
-                        shutil.copytree(project/part,old/part,symlinks=True)
-                    previous_build=fingerprint(old)
-                    run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
-                    app_created=False
-                    run(["docker","run","-d","--pull=never","--name",app_name,
-                         "--network","container:"+container,"--read-only","--tmpfs","/tmp",
-                         "--tmpfs","/app/uploads","--cap-drop","ALL","--security-opt","no-new-privileges",
-                         "-v",str(old)+":/app:ro","-w","/app",
-                         "-e","NODE_ENV=production","-e","ARS_LISTEN_HOST=127.0.0.1",
-                         "-e","PORT=3000","-e","JWT_SECRET="+secrets.token_hex(48),
-                         "-e","DATABASE_URL=postgresql://restore_admin:"+password+"@127.0.0.1:5432/ars_update_test",
-                         node_image,"node","dist/server.cjs"],stdout=subprocess.DEVNULL)
-                    app_created=True
-                    try:
-                        for _ in range(90):
-                            probe=subprocess.run(["docker","exec",app_name,"node","-e","fetch('http://127.0.0.1:3000/api/ready').then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
-                            if probe.returncode==0:
-                                break
-                            time.sleep(2)
-                        else:
-                            raise RuntimeError("Previous release cannot start on the migrated database.")
-                        auth_probe()
-                        run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
-                        if fingerprints(schema)!=before:
-                            raise RuntimeError("Previous release changed historical records on migrated database.")
-                        backward_result=True
-                        authenticated_reads=True
-                        run(["docker","start",app_name],stdout=subprocess.DEVNULL)
-                        wait_ready()
-                        write_probe()
-                        run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
-                        authenticated_writes=True
-                    finally:
+                if repair is not None:
+                    authenticated_reads=True
+                    authenticated_writes=True
+                    if fingerprint(isolated)!=build_fingerprint:
+                        raise ValueError("Repair build changed during testing.")
+                else:
+                    # Preserve all rows, including the newly issued synthetic invoices, across rollback startup.
+                    schema=snapshot()
+                    before=fingerprints(schema)
+                    # Test previous version on the same migrated database, not a fresh restore.
+                    # Copy only its executable build and dependencies, never runtime files.
+                    import tempfile
+                    import shutil
+                    with tempfile.TemporaryDirectory(prefix="ars-old-build-") as temp:
+                        old=Path(temp)
+                        for part in ("dist","node_modules"):
+                            shutil.copytree(project/part,old/part,symlinks=True)
+                        previous_build=fingerprint(old)
                         run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
                         app_created=False
+                        run(["docker","run","-d","--pull=never","--name",app_name,
+                             "--network","container:"+container,"--read-only","--tmpfs","/tmp",
+                             "--tmpfs","/app/uploads","--cap-drop","ALL","--security-opt","no-new-privileges",
+                             "-v",str(old)+":/app:ro","-w","/app",
+                             "-e","NODE_ENV=production","-e","ARS_LISTEN_HOST=127.0.0.1",
+                             "-e","PORT=3000","-e","JWT_SECRET="+secrets.token_hex(48),
+                             "-e","DATABASE_URL=postgresql://restore_admin:"+password+"@127.0.0.1:5432/ars_update_test",
+                             node_image,"node","dist/server.cjs"],stdout=subprocess.DEVNULL)
+                        app_created=True
+                        try:
+                            for _ in range(90):
+                                probe=subprocess.run(["docker","exec",app_name,"node","-e","fetch('http://127.0.0.1:3000/api/ready').then(r=>r.json()).then(d=>process.exit(d.ok===true&&d.status==='ready'&&d.database==='reachable'&&d.sourceOfTruth==='normalized'?0:1)).catch(()=>process.exit(1))"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
+                                if probe.returncode==0:
+                                    break
+                                time.sleep(2)
+                            else:
+                                raise RuntimeError("Previous release cannot start on the migrated database.")
+                            auth_probe()
+                            run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                            if fingerprints(schema)!=before:
+                                raise RuntimeError("Previous release changed historical records on migrated database.")
+                            backward_result=True
+                            authenticated_reads=True
+                            run(["docker","start",app_name],stdout=subprocess.DEVNULL)
+                            wait_ready()
+                            write_probe()
+                            run(["docker","stop","-t","15",app_name],stdout=subprocess.DEVNULL)
+                            authenticated_writes=True
+                        finally:
+                            run(["docker","rm","-f","-v",app_name],stdout=subprocess.DEVNULL)
+                            app_created=False
             if sha(dump)!=checksum:
                 raise ValueError("Backup changed during restoration test.")
         finally:
@@ -270,9 +284,16 @@ def test(folder, compatibility=False):
                 "testedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "restoredRowCounts":counts,"restoreTestPassed":True,
                 "buildFingerprint":build_fingerprint,"previousBuildFingerprint":previous_build,"backwardStartupPassed":backward_result,"authenticatedReadsPassed":authenticated_reads,"authenticatedWritesPassed":authenticated_writes,"migrationCompatibilityPassed":compatibility_result,"activationApproved":False}
-        temporary=folder/(".restore-"+uuid.uuid4().hex)
-        temporary.write_text(json.dumps(result,indent=2)+"\n")
-        temporary.replace(receipt)
+        if repair is None:
+            temporary=folder/(".restore-"+uuid.uuid4().hex)
+            temporary.write_text(json.dumps(result,indent=2)+"\n")
+            temporary.replace(receipt)
+        else:
+            result.update({"kind":"isolated-repair-restore-test","repairApplied":False,"startupAllowed":False,"activationAllowed":False,"continuousExclusionVerified":False})
+            with receipt.open("x") as stream:
+                json.dump(result,stream,indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
         print("Isolated restoration verified:",receipt)
         print("Compatibility check:",compatibility_result,"; activation remains unapproved.")
 
