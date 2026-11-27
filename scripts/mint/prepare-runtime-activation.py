@@ -107,6 +107,31 @@ def snapshot(folder):
 def matches(record, observed):
     return record.get("schema")==1 and record.get("kind")=="mint-runtime-activation-proposal" and record.get("observationOnly") is True and record.get("snapshot")==observed
 
+def sync_state():
+    fd=os.open(STATE,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+
+def begin_activation_observation():
+    marker=STATE/"runtime-activation-interrupted.json"
+    # flock releases automatically on process death; a durable marker does not.
+    # Any existing entry, including an invalid or incomplete record, blocks retry.
+    record={"schema":1,"kind":"mint-interrupted-activation",
+            "startedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "desktopUid":os.getuid(),**FLAGS}
+    with os.fdopen(os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600),"w") as f:
+        json.dump(record,f)
+        f.flush()
+        os.fsync(f.fileno())
+    sync_state()
+    return marker,read(marker)
+
+def finish_activation_observation(marker, expected):
+    if read(marker)!=expected:
+        raise ValueError("Activation incident marker changed.")
+    marker.unlink()
+    sync_state()
+
 def prepare(folder, verify=False, confirmation=""):
     if os.geteuid()==0:
         raise ValueError("Desktop user required.")
@@ -121,6 +146,7 @@ def prepare(folder, verify=False, confirmation=""):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if not verify and confirmation!="PREPARE MINT ACTIVATION":
             raise ValueError("Explicit confirmation required.")
+        marker, marker_raw=begin_activation_observation()
         observed=snapshot(folder)
         if not verify:
             if target.exists() or target.is_symlink():
@@ -138,6 +164,7 @@ def prepare(folder, verify=False, confirmation=""):
         raw=read(target)
         if not matches(json.loads(raw),snapshot(folder)) or read(target)!=raw:
             raise ValueError("Activation proposal invalid or stale.")
+        finish_activation_observation(marker,marker_raw)
         return {"proposalMatched":True,"proposalDigest":sha(raw),"backupHoldBindingVerified":True,"continuousExclusionVerified":False,**FLAGS}
 
 if __name__=="__main__":
