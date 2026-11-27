@@ -284,3 +284,23 @@ jobs:
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
         run: test "$RESULTS" = "success,success,success,success,success,success"
+
+  package-pilot:
+    # Acceptance package only; this job neither deploys nor publishes a release.
+    needs: [validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Create source-only pilot archive
+        env:
+          PILOT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package
+      - name: Retain installation package and SHA-256 checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: ars-distributor-v1-pilot
+          path: pilot-package/
+          retention-days: 14
