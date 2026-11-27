@@ -48,6 +48,8 @@ try {
  try { $owned=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned=$true }
  if (-not $owned) { return }
  Set-Location -LiteralPath $root
+ . (Join-Path $PSScriptRoot 'windows-setup-resume.ps1')
+ Consume-ArsSetupResume
  if (-not (Confirm-Step ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
  Assert-FreshFiles
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw

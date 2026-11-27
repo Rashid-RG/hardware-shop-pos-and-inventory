@@ -38,6 +38,7 @@ function Install-ArsMissingPrerequisites {
   & winget install --id Docker.DockerDesktop --exact --source winget --interactive
   if ($LASTEXITCODE -ne 0) { throw 'Docker installation did not complete. Reopen Setup after resolving the publisher prompt.' }
  }
+ Offer-ArsSetupResume
  [void][System.Windows.Forms.MessageBox]::Show('Prerequisite installation steps completed. Restart Windows if requested, start Docker Desktop and finish its first-run prompts, then reopen ARS Setup. No ARS database has been created.',$title,'OK','Information')
  return $false
 }
