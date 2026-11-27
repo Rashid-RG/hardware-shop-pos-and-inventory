@@ -349,6 +349,9 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         while True:
             project=(STATE/"project").resolve(strict=True)
+            if os.path.lexists(STATE/"switch-journal.json"):
+                offline_release_center(project)
+                return
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
                           "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Offline Release Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return

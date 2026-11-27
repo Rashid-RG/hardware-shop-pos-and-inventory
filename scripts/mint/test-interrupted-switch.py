@@ -557,6 +557,20 @@ class RecoveryTests(unittest.TestCase):
                 self.assertFalse((isolated/name).exists())
                 self.assertFalse((isolated/name).is_symlink())
                 self.assertTrue((staged/name).is_symlink())
+    def test_update_center_routes_pending_switch_directly_to_recovery(self):
+        spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
+        center=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(center)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            candidate=root/"candidate"
+            candidate.mkdir()
+            (root/"project").symlink_to(candidate)
+            (root/"switch-journal.json").symlink_to(root/"missing")
+            with patch.object(center,"STATE",root), patch.object(center.os,"geteuid",return_value=1000), patch.object(center,"offline_release_center") as recover, patch.object(center,"dialog") as dialog:
+                center.main()
+                recover.assert_called_once_with(candidate)
+                dialog.assert_not_called()
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
