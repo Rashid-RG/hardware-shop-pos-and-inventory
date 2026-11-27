@@ -59,7 +59,19 @@ try {
  . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
  if (-not (Install-ArsMissingPrerequisites)) { return }
  Assert-Fresh
- if (-not (Show-ArsSetupPage 'Ready to install' ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage builds the application and prepares a fresh private database.'))) { return }
+ . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
+ $picker=New-Object Windows.Forms.FolderBrowserDialog
+ try {
+  $picker.Description='Select the parent folder for ARS Distributor'
+  $picker.SelectedPath=$env:LOCALAPPDATA
+  if ($picker.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
+  $destination=Join-Path $picker.SelectedPath 'ARS Distributor'
+ } finally { $picker.Dispose() }
+ if (-not (Show-ArsSetupPage 'Ready to install' ('Install permanently in: '+$destination+[Environment]::NewLine+'Setup copies verified files and prepares a fresh private database.'))) { return }
+ Assert-Fresh
+ Copy-ArsPilotRelease $root $destination
+ $root=$destination
+ Set-Location -LiteralPath $root
  Assert-Fresh
  Open-ArsProgress
  Set-ArsProgress 0 'Installing locked application dependencies...'
