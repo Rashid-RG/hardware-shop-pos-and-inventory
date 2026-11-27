@@ -111,3 +111,14 @@ test('native authentication session is closed before the second evidence inspect
  assert.equal(connected,false);
  assert.equal(result.activationAllowed,false);
 });
+
+test('native recovery identifier validation matches actual platform archive names',async()=>{
+ const {validNativeRecoveryId}=await import('../scripts/activation-incident-native-review.mjs');
+ const id='a'.repeat(32),mint='1.0.0-ars-mint-20261127T030000Z-'+id;
+ assert.equal(validNativeRecoveryId(mint+'-v2-with-uploads','linux'),true);
+ assert.equal(validNativeRecoveryId(mint+'-database-only','linux'),true);
+ assert.equal(validNativeRecoveryId('1.0.0-'+id,'win32'),true);
+ assert.equal(validNativeRecoveryId('1.0.0-'+id,'linux'),false);
+ assert.equal(validNativeRecoveryId(mint+'-v2-with-uploads','win32'),false);
+ for(const bad of ['../'+mint+'-v2-with-uploads',mint+'-v2-with-uploads/..',mint+'-v2-with-uploads.dump','',null])assert.equal(validNativeRecoveryId(bad,'linux'),false);
+});
