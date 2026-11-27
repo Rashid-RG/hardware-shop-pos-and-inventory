@@ -39,3 +39,4 @@ try {
 } finally {
   Invoke-Checked 'pg_ctl' @('-D',$cluster,'-m','fast','-w','stop')
 }
+& (Join-Path $PSScriptRoot 'test-windows-native-startup-ci.ps1') -Project (Split-Path -Parent $PSScriptRoot) -PostgresBin (Join-Path $bin.FullName 'bin')
