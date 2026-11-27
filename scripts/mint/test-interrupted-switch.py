@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 from switch_journal import write_journal,switch_pointer
 from interrupted_switch import recovery_plan
+from startup_guard import startup_allowed
 
 class RecoveryTests(unittest.TestCase):
     def test_interrupted_and_completed_switch(self):
@@ -28,6 +29,19 @@ class RecoveryTests(unittest.TestCase):
             record["phase"]="rolled-back"
             write_journal(root,record)
             self.assertEqual(recovery_plan(root)["action"],"verify-previous")
+    def test_startup_blocked_by_retained_update_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            self.assertTrue(startup_allowed(root))
+            for name in ("runtime-switch-intent.json","maintenance-hold.json","runtime-activation-interrupted.json","handoff-pending.json"):
+                marker=root/name
+                marker.touch()
+                self.assertFalse(startup_allowed(root))
+                marker.unlink()
+                marker.symlink_to(root/"missing")
+                self.assertFalse(startup_allowed(root))
+                marker.unlink()
+            self.assertTrue(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

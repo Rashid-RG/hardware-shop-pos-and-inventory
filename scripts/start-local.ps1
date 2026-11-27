@@ -14,6 +14,13 @@ if ($DesktopLaunch) {
 
 # Block both desktop and development launcher paths during retained maintenance.
 $maintenancePath=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control\maintenance.json'
+$controlPath=Split-Path -Parent $maintenancePath
+if (Test-Path -LiteralPath $controlPath) {
+  $controlItem=Get-Item -LiteralPath $controlPath -Force
+  if (-not $controlItem.PSIsContainer -or ($controlItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid desktop control directory.' }
+  $blocking=@(Get-ChildItem -LiteralPath $controlPath -Force | Where-Object { $_.Name -in @('runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json') })
+  if ($blocking.Count -gt 0) { throw 'Unresolved update or activation incident. Contact RS Nextward support before restarting.' }
+}
 if (Test-Path -LiteralPath $maintenancePath) {
   throw 'ARS is in retained maintenance mode. Do not restart until recovery or update preparation has been reviewed.'
 }
