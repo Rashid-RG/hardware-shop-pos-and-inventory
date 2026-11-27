@@ -63,3 +63,37 @@ test('rejects same account, wrong password, mismatched configuration and stale e
  let calls=0;
  await assert.rejects(observeAuthenticatedActivationReview({...input,readReview:async()=>{const r=fixture();if(calls++)r.snapshot.evidence.recovery='b'.repeat(64);return r;}}),/changed/);
 });
+
+test('durable observations reject duplicates, stale credentials and modified evidence',async()=>{
+ const {mkdtemp,readFile,readdir,writeFile,rm}=await import('node:fs/promises');
+ const {tmpdir}=await import('node:os');
+ const {join}=await import('node:path');
+ const {recordActivationIncidentObservation,revalidateActivationIncidentObservation}=await import('../scripts/activation-incident-review-record.mjs');
+ const directory=await mkdtemp(join(tmpdir(),'ars-activation-review-'));
+ try{
+  const input=await options();
+  const confirmation='RETAIN ACTIVATION REVIEW OBSERVATION';
+  const first=await recordActivationIncidentObservation(directory,input,confirmation);
+  assert.equal(first.state,'activation-observation-retained');
+  assert.equal(first.startupAllowed,false);
+  const files=await readdir(directory);
+  assert.equal(files.length,1);
+  const path=join(directory,files[0]),raw=await readFile(path);
+  assert.equal(raw.includes(operator.password),false);
+  assert.equal(raw.includes(reviewer.password),false);
+  assert.equal(digest(raw),first.recordDigest);
+  const matched=await revalidateActivationIncidentObservation(directory,input);
+  assert.equal(matched.state,'activation-observation-matched');
+  assert.equal(matched.recordDigest,first.recordDigest);
+  assert.equal(matched.recoveryAllowed,false);
+  await assert.rejects(recordActivationIncidentObservation(directory,input,confirmation),{code:'EEXIST'});
+  await assert.rejects(revalidateActivationIncidentObservation(directory,{...input,reviewer:{...reviewer,password:'wrong'}}),/denied/);
+  const changed=JSON.parse(raw.toString());
+  changed.operator.revisionDigest='b'.repeat(64);
+  await writeFile(path,JSON.stringify(changed));
+  await assert.rejects(revalidateActivationIncidentObservation(directory,input),/stale/);
+  changed.startupAllowed=true;
+  await writeFile(path,JSON.stringify(changed));
+  await assert.rejects(revalidateActivationIncidentObservation(directory,input),/Invalid observation/);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
