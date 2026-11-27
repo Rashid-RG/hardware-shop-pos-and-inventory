@@ -2,9 +2,7 @@ name: Hardware POS checks
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/shop-opening-pilot
+  # Pull requests validate the proposed merge; use workflow_dispatch for branches without a PR.
   pull_request:
     branches:
       - main
@@ -55,7 +53,7 @@ jobs:
           python3 scripts/mint/test-switch-journal.py
           python3 scripts/mint/test-switch-coordinator.py
           python3 scripts/mint/test-interrupted-switch.py
-  validate:
+  maintenance-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -86,14 +84,70 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
         run: node --test tests/postgres-maintenance-lock.integration.mjs
-      - name: Double-entry accounting safeguards (isolated PostgreSQL)
+  application-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
         env:
-          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
-        run: node --import tsx --test tests/postgres-general-ledger.integration.mjs
+          POSTGRES_DB: hardware_pos_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hardware_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
       - name: TypeScript checks
         run: npm run lint
       - name: Regression tests
         run: npm test
+      - name: Verify generated A4 mixed-unit invoice
+        run: |
+          command -v pdftotext >/dev/null || (sudo apt-get update && sudo apt-get install -y poppler-utils)
+          node --import tsx --test tests/ars-shared-stock-pdf.integration.mjs
+      - name: Frontend and server production build
+        run: npm run build
+  database-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hardware_pos_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hardware_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Double-entry accounting safeguards (isolated PostgreSQL)
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+        run: node --import tsx --test tests/postgres-general-ledger.integration.mjs
       - name: Real PostgreSQL checkout integration
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
@@ -142,13 +196,42 @@ jobs:
         run: bash scripts/verify-postgres-backup-ci.sh
       - name: Run installed Mint backup and isolated recovery rehearsal
         run: bash scripts/verify-mint-rehearsal-ci.sh ${{ job.services.postgres.id }}
-      - name: Verify generated A4 mixed-unit invoice
-        run: |
-          command -v pdftotext >/dev/null || (sudo apt-get update && sudo apt-get install -y poppler-utils)
-          node --import tsx --test tests/ars-shared-stock-pdf.integration.mjs
-      - name: Frontend and server production build
-        run: npm run build
+  hosted-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hardware_pos_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hardware_pos_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
       - name: Build isolated hosted container image (no deployment)
         run: docker build --tag ars-hardware-pos:ci .
       - name: Smoke test hosted container and persistent uploads (isolated PostgreSQL)
         run: bash scripts/verify-hosted-container-ci.sh
+  validate:
+    if: ${{ always() }}
+    needs: [maintenance-validation, application-validation, database-validation, hosted-validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every validation job to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: test "$RESULTS" = "success,success,success,success"
