@@ -1,0 +1,8 @@
+ARS DISTRIBUTOR POS — VERSION 1.0 PILOT
+RS Nextward
+
+Pilot installation conditions (not a commercial software licence).
+
+This build is for supervised acceptance testing. Do not enter live business data until the owner approves the release. Keep backups and recovery credentials secure. Never use setup to overwrite an existing installation. Internet access is needed to obtain dependencies. Third-party software remains subject to its own licence terms. Automatic live software updates are not approved.
+
+Accepting these conditions authorizes fresh installation on this computer only. It does not approve production deployment or waive any legal rights.
