@@ -106,6 +106,34 @@ VALUES('native-history-customer','shop-main','Synthetic historical customer',0,0
  $process=Start-NativeApplication
  if ((Get-HistoricalRows 'ars_native_restored_ci') -cne $historical -or (Get-HistoricalRows 'ars_native_ci') -cne $historical -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $archiveHash) { throw 'Historical fixture or archive changed during restored startup.' }
  Write-Host 'Native Windows restored database startup and historical preservation passed.'
+ # Seed a synthetic administrator exclusively in the restored database.
+ $testEmail='native-'+[guid]::NewGuid().ToString('N')+'@example.invalid'
+ $testId='native-'+[guid]::NewGuid().ToString('N')
+ $testPassword=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
+ Push-Location -LiteralPath $build
+ try {
+  $hash=@(& $node -e "console.log(require('bcryptjs').hashSync(process.argv[1],10))" $testPassword)
+  if ($LASTEXITCODE -ne 0 -or $hash.Count -ne 1 -or $hash[0] -cnotmatch '^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$') { throw 'Synthetic password hash failed.' }
+ } finally { Pop-Location }
+ $sql="INSERT INTO users(id,email,name,role,password_hash) VALUES ('$testId','$testEmail','Native CI Administrator','Super Admin','"+$hash[0]+"');"
+ Invoke-NativeChecked (Join-Path $PostgresBin 'psql.exe') @('-X','-h','127.0.0.1','-p','55433','-U','restore_admin','-d','ars_native_restored_ci','-v','ON_ERROR_STOP=1','-c',$sql)
+ # Run the trusted CI-only probe using the same clean environment and native runtime.
+ $probe=Join-Path $build 'native-restored-probe.mjs'
+ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'windows-native-restored-probe.mjs') -Destination $probe
+ $info.Arguments='native-restored-probe.mjs'
+ $info.EnvironmentVariables['ARS_NATIVE_CI']='disposable-windows-runner'
+ $info.EnvironmentVariables['ARS_TEST_EMAIL']=$testEmail
+ $info.EnvironmentVariables['ARS_TEST_PASSWORD']=$testPassword
+ $client=[Diagnostics.Process]::Start($info)
+ try {
+  $clientOut=$client.StandardOutput.ReadToEndAsync()
+  $clientErr=$client.StandardError.ReadToEndAsync()
+  if (-not $client.WaitForExit(180000)) { $client.Kill(); $client.WaitForExit(); throw 'Native transaction probe timed out.' }
+  if ($client.ExitCode -ne 0) { throw ('Native transaction probe failed: '+$clientErr.GetAwaiter().GetResult()) }
+  Write-Host $clientOut.GetAwaiter().GetResult()
+ } finally { $client.Dispose() }
+ if ((Get-HistoricalRows 'ars_native_restored_ci') -cne $historical -or (Get-HistoricalRows 'ars_native_ci') -cne $historical -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -cne $archiveHash) { throw 'Historical fixture or archive changed during transaction probe.' }
+
  # Only the synthetic runner database is inspected. No shop backup is used.
  Invoke-NativeChecked (Join-Path $PostgresBin 'psql.exe') @('-X','-h','127.0.0.1','-p','55433','-U','restore_admin','-d','ars_native_restored_ci','-v','ON_ERROR_STOP=1','-c','SELECT count(*) FROM products; SELECT count(*) FROM customers; SELECT count(*) FROM sales_transactions;')
  if ((Get-ArsPreparedFingerprint (Join-Path $build 'dist')).digest -cne (Get-ArsPreparedFingerprint (Join-Path $Project 'dist')).digest) { throw 'Native executable changed.' }
