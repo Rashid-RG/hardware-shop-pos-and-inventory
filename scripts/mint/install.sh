@@ -12,10 +12,14 @@ docker compose version >/dev/null
 systemctl --user show-environment >/dev/null
 # Fresh-install entry point only. Registered installations must use update/recovery tools.
 python3 scripts/mint/runtime-layout.py "$root"
+echo "ARS_SETUP_STAGE 1"
 npm ci --include=dev
+echo "ARS_SETUP_STAGE 2"
 npm run build
+echo "ARS_SETUP_STAGE 3"
 # Provision the image while the installer has internet access.
 docker compose -p ars-mint --env-file .env.local -f scripts/mint/compose.yaml up -d --wait
+echo "ARS_SETUP_STAGE 4"
 app="$HOME/.local/share/ars-hardware"
 mkdir -p "$app" "$HOME/.config/systemd/user" "$HOME/.local/share/applications"
 ln -sfnT "$root" "$app/project"
@@ -55,4 +59,5 @@ PY
 gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
 python3 scripts/mint/install-recovery-shortcut.py
+echo "ARS_SETUP_STAGE 5"
 echo "Setup complete. Open ARS Distributor POS on the desktop."

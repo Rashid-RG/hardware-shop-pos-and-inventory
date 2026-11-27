@@ -46,29 +46,25 @@ def main():
         try:
             consume_resume(ROOT)
             assert_fresh()
-            if dialog("--question","--no-markup","--width=500","--text=Thank you for choosing RS Nextward.\n\nWelcome to ARS Distributor 1.0 Pilot Setup. This wizard prepares your wholesale distribution workspace and local database. Internet access is required.","--ok-label=Next","--cancel-label=Cancel"):
+            from setup_ui import SetupUI
+            ui=SetupUI(ROOT,TITLE)
+            if not ui.page("Welcome to Setup","Thank you for choosing RS Nextward.\n\nWelcome to ARS Distributor 1.0 Pilot Setup. This wizard prepares your wholesale distribution workspace and local database. Internet access is required."):
                 return 0
-            if dialog("--text-info","--width=650","--height=450","--filename="+str(ROOT/"docs/pilot-installation-terms.txt"),"--checkbox=I accept these pilot installation conditions","--ok-label=Accept and continue","--cancel-label=Do not accept"):
+            if not ui.page("Installation agreement",(ROOT/"docs/pilot-installation-terms.txt").read_text(),"Accept and continue",agreement=True):
                 return 0
             from setup_node_runtime import prepare_node
             prepare_node(ROOT, dialog)
             from setup_prerequisites import install_missing
             if not install_missing(dialog, lambda: offer_resume(ROOT, dialog)):
                 return 0
-            if dialog("--question","--no-markup","--width=520","--text=Ready to install from:\n"+str(ROOT)+"\n\nKeep this folder in a permanent location. Setup creates a desktop shortcut and enables the user service. Business data is stored separately.","--ok-label=Install","--cancel-label=Cancel"):
+            if not ui.page("Ready to install","Install from:\n"+str(ROOT)+"\n\nKeep this folder in a permanent location. Setup creates a desktop shortcut and enables the user service. Business data is stored separately.","Install"):
                 return 0
             preflight()
-            progress = subprocess.Popen(["zenity","--title="+TITLE,"--progress","--pulsate","--no-cancel","--auto-close","--text=Installing dependencies, building the application and preparing PostgreSQL. Do not close Setup."],stdin=subprocess.PIPE)
-            try:
-                subprocess.run(["bash",str(ROOT/"scripts/mint/install.sh")],cwd=ROOT,check=True)
-            finally:
-                if progress.poll() is None:
-                    progress.terminate()
-                progress.wait()
-            if not dialog("--question","--no-markup","--width=480","--text=Thank you for choosing RS Nextward.\n\nInstallation steps completed. Launch ARS Distributor to verify database readiness and complete first-administrator setup.","--ok-label=Launch ARS Distributor","--cancel-label=Finish"):
+            ui.install()
+            if ui.page("Setup completed","Thank you for choosing RS Nextward.\n\nInstallation steps completed. Launch ARS Distributor to verify database readiness and complete first-administrator setup.","Launch ARS Distributor",cancel="Finish"):
                 subprocess.run(["python3",str(ROOT/"scripts/mint/open.py")],check=True)
             return 0
-        except (OSError,RuntimeError,subprocess.CalledProcessError) as error:
+        except (OSError,RuntimeError,ImportError,ValueError,subprocess.CalledProcessError) as error:
             dialog("--error","--no-markup","--text=Setup could not complete. Existing files and database volumes have been retained. Contact RS Nextward support; do not delete data.\n\n"+str(error))
             return 1
 
