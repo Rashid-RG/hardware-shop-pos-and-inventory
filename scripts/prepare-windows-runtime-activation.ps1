@@ -54,7 +54,12 @@ function Assert-MatchingProposal($snapshot) {
   [ordered]@{schema=1;proposalMatched=$true;recoveryId=$RecoveryId;proposalDigest=$before;runtimeActivated=$false;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false} | ConvertTo-Json
 }
 try {
-  try { $owns=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owns=$true }
+  try { $owns=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] {
+    # The previous owner terminated without releasing its maintenance mutex.
+    # Ownership transfers to this process, but its prior operation is unverified.
+    $owns=$true
+    throw 'Interrupted maintenance detected. Review recovery state before preparing or verifying activation.'
+  }
   if (-not $owns) { throw 'Another maintenance operation is active.' }
   foreach ($dir in @($control,$runtime,$folder,$PSScriptRoot)) { Assert-Chain $dir }
   $snapshot=Get-Snapshot
