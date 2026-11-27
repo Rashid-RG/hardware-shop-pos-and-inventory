@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
-. (Join-Path $PSScriptRoot 'windows-prepare-repair.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-backup-review.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
@@ -44,7 +44,29 @@ function Get-ArsMaintenanceSummary {
  ) -join [Environment]::NewLine
 }
 try {
- while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Prepare repair') {
+ while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Maintenance tools') {
+  $choice=[Windows.Forms.MessageBox]::Show('Prepare new repair files? Choose Yes. To review existing repair backup evidence, choose No.',$title,'YesNoCancel','Question')
+  if ($choice -eq 'Cancel') { continue }
+  if ($choice -eq 'No') {
+   $picker=New-Object Windows.Forms.FolderBrowserDialog
+   try {
+    $picker.Description='Select managed repair preparation folder'
+    if ($picker.ShowDialog() -ne 'OK') { continue }
+    $repairFolder=$picker.SelectedPath
+    $picker.Description='Select managed update recovery folder'
+    if ($picker.ShowDialog() -ne 'OK') { continue }
+    $recoveryFolder=$picker.SelectedPath
+   } finally { $picker.Dispose() }
+   try {
+    $expected=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor\update-recovery'
+    if ((Split-Path -Parent $recoveryFolder) -ine $expected) { throw 'Managed recovery folder required.' }
+    Review-ArsRepairBackup $root $repairFolder (Split-Path -Leaf $recoveryFolder)
+    [void][Windows.Forms.MessageBox]::Show('Existing backup evidence matched. Repair candidate restoration testing is still required. Activation remains locked.',$title,'OK','Information')
+   } catch {
+    [void][Windows.Forms.MessageBox]::Show('Backup review blocked. Existing verified maintenance and restoration evidence is required. No repair applied.',$title,'OK','Error')
+   }
+   continue
+  }
   $picker=New-Object Windows.Forms.FolderBrowserDialog
   try {
    $picker.Description='Select extracted exact-version ARS installation package'
