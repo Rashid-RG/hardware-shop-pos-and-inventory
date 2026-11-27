@@ -56,10 +56,10 @@ def main():
                 line=Gtk.Label(label=label+": "+value)
                 line.set_xalign(0)
                 box.pack_start(line,False,False,0)
-            note=Gtk.Label(label="Read-only checks. Repair and uninstall remain locked.")
+            note=Gtk.Label(label="Diagnostics and isolated repair preparation. Repair activation and uninstall remain locked.")
             note.set_xalign(0)
             box.pack_start(note,False,False,0)
-            for label,code in (("Recovery Center",1),("Update Center",2),("Refresh",3),("Close",0)):
+            for label,code in (("Recovery Center",1),("Update Center",2),("Prepare repair",4),("Refresh",3),("Close",0)):
                 win.add_button(label,code)
             win.show_all()
             action=win.run()
@@ -67,9 +67,9 @@ def main():
             win.destroy()
         if action==3:
             continue
-        if action not in (1,2):
+        if action not in (1,2,4):
             return
-        script=project/"scripts/mint"/("recovery-center.py" if action==1 else "update-center.py")
+        script=project/"scripts/mint"/({1:"recovery-center.py",2:"update-center.py",4:"prepare-repair.py"}[action])
         if script.resolve(strict=True)!=script or not script.is_file():
             raise RuntimeError("Maintenance tool unavailable.")
         subprocess.run(["/usr/bin/python3",str(script)],cwd=project,check=True)
