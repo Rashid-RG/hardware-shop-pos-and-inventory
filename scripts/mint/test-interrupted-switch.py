@@ -96,6 +96,30 @@ class RecoveryTests(unittest.TestCase):
                     layout.prepare(project)
                 self.assertEqual(marker.read_text(),"preserve")
                 self.assertFalse((state/"runtime").exists())
+    def test_runtime_inventory_preserves_legacy_credentials_and_reports_conflict(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            state=root/"state"
+            state.mkdir()
+            project=root/"release"
+            project.mkdir()
+            runtime=state/"runtime"
+            runtime.mkdir()
+            (state/"project").symlink_to(project)
+            (project/".env.local").write_text("private-fixture")
+            (project/"uploads").mkdir()
+            (runtime/"uploads").mkdir()
+            (project/"backups").symlink_to(root/"missing")
+            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",runtime):
+                result=layout.migration_inventory(project)
+            self.assertEqual([e["status"] for e in result["entries"]],["legacy-source","destination-conflict","unsafe-link"])
+            self.assertFalse(result["migrationAllowed"])
+            self.assertNotIn("private-fixture",json.dumps(result))
+            self.assertEqual((project/".env.local").read_text(),"private-fixture")
+            self.assertFalse((runtime/".env.local").exists())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
