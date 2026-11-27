@@ -23,8 +23,11 @@ function Invoke-ArsRepairRehearsal([string]$project,[string]$folder) {
   if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') { throw 'Invalid recovery ID.' }
   $control=Join-Path $state 'desktop-control'
   Assert-ArsPlainPath $control
-  $markers=@('runtime-activation-interrupted.json','runtime-switch-intent.json','runtime-migration-interrupted.json','handoff-pending.json','switch-journal.json')
+  $markers=@('runtime-activation-interrupted.json','runtime-switch-intent.json','runtime-migration-interrupted.json','handoff-pending.json','switch-journal.json','repair-interrupted.json','runtime-switch-journal.json')
   if (@(Get-ChildItem -LiteralPath $control -Force | Where-Object Name -in $markers).Count) { throw 'Unresolved maintenance evidence.' }
+  foreach ($entry in @(Get-ChildItem -LiteralPath $folder -Force)) {
+   if ($entry.Name -in @('repair-restore-test.json','repair-rehearsal-observation.json')) { throw 'Existing rehearsal evidence must be retained; prepare a fresh repair folder.' }
+  }
   $recovery=Join-Path (Join-Path $state 'update-recovery') $id
   foreach ($name in @('recovery.json','rollback-compatibility-rehearsal.json')) {
    if ((Get-ArsRepairMetadataHash $recovery $name) -cne $obs.evidence.$name) { throw 'Backup evidence changed.' }
@@ -35,6 +38,7 @@ function Invoke-ArsRepairRehearsal([string]$project,[string]$folder) {
   if ((Get-ArsRepairMetadataHash $folder 'backup-observation.json') -cne $hash -or ((Get-ArsRepairReviewBinding $project $state $folder) | ConvertTo-Json -Compress) -cne ($binding | ConvertTo-Json -Compress)) { throw 'Repair evidence changed.' }
   $plan=(@(& (Join-Path $project 'scripts/plan-windows-runtime-activation.ps1') -RecoveryId $id) -join [Environment]::NewLine) | ConvertFrom-Json
   Test-ArsRepairBackupPlan $plan $id
+  $testHash=Get-ArsRepairMetadataHash $folder 'repair-restore-test.json'
   $result=Get-Content -LiteralPath (Join-Path $folder 'repair-restore-test.json') -Raw | ConvertFrom-Json
   foreach ($flag in @('offlineRestorePassed','candidateStartupPassed','authenticatedReadsPassed','authenticatedWritesPassed','historicalRowsCompared','backwardStartupPassed','backwardReadsPassed','backwardWritesPassed','candidateRestartPreserved','previousRestartPreserved','repairSpecificBackwardTested')) {
    if ($result.$flag -isnot [bool] -or -not $result.$flag) { throw 'Repair rehearsal incomplete.' }
@@ -45,7 +49,8 @@ function Invoke-ArsRepairRehearsal([string]$project,[string]$folder) {
   $prior=Get-Content -LiteralPath (Join-Path $recovery 'rollback-compatibility-rehearsal.json') -Raw | ConvertFrom-Json
   if ($result.previousBuildDigest -cne $prior.previousBuildDigest -or $result.previousDependencyImageId -cne $prior.previousDependencyImageId -or $result.archiveSha256 -cne $prior.archiveSha256) { throw 'Previous executable or archive mismatch.' }
   # Separate completion receipt, only after post-rehearsal evidence checks.
-  $final=[ordered]@{schema=1;kind='windows-repair-rehearsal-observation';backupObservationDigest=$hash;testReceiptDigest=(Get-ArsRepairMetadataHash $folder 'repair-restore-test.json');activationAllowed=$false;repairApplied=$false;startupAllowed=$false}
+  if ((Get-ArsRepairMetadataHash $folder 'repair-restore-test.json') -cne $testHash -or (Get-ArsRepairMetadataHash $folder 'backup-observation.json') -cne $hash -or @(Get-ChildItem -LiteralPath $control -Force | Where-Object Name -in $markers).Count) { throw 'Rehearsal evidence changed before completion.' }
+  $final=[ordered]@{schema=1;kind='windows-repair-rehearsal-observation';scope='isolated-rehearsal-only';liveRepairCompleted=$false;rollbackAllowed=$false;continuousExclusionVerified=$false;backupObservationDigest=$hash;testReceiptDigest=$testHash;activationAllowed=$false;repairApplied=$false;startupAllowed=$false}
   $file=[IO.File]::Open((Join-Path $folder 'repair-rehearsal-observation.json'),[IO.FileMode]::CreateNew)
   try { $bytes=[Text.Encoding]::UTF8.GetBytes(($final | ConvertTo-Json)); $file.Write($bytes,0,$bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
  } finally {

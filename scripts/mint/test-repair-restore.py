@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 from resume_maintenance import open_lock
+from repair_interruption import sync_dir
 from repair_test_build import assert_local_docker, verify_retained_build
 STATE=Path.home()/".local/share/ars-hardware"
 
@@ -24,8 +25,13 @@ def run(repair):
     observer.plain(STATE,True)
     with open_lock(STATE/"maintenance.lock") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if os.path.lexists(STATE/"repair-interrupted.json"):
+            raise ValueError("Interrupted repair requires review.")
         project=(STATE/"project").resolve(strict=True)
         binding=review.validate_repair(repair,project,observer)
+        for name in ("repair-restore-test.json","repair-rehearsal-observation.json"):
+            if os.path.lexists(repair/name):
+                raise ValueError("Existing rehearsal evidence must be retained; prepare a fresh repair folder.")
         raw=observer.read(repair/"backup-observation.json")
         record=json.loads(raw)
         if record.get("kind")!="repair-backup-observation" or record.get("backupEvidenceMatched") is not True or record.get("repairReceiptDigest")!=binding[0] or record.get("manifestDigest")!=binding[1] or any(record.get(k) is not False for k in ("repairCandidateRestoreTested","activationAllowed","startupAllowed","repairApplied")):
@@ -49,11 +55,14 @@ def run(repair):
         if result.get("previousBuildFingerprint")!=prior.get("previousBuildFingerprint") or result.get("archiveSha256")!=prior.get("archiveSha256"):
             raise ValueError("Previous executable or recovery archive mismatch.")
         verify_retained_build(repair,result["buildFingerprint"])
-        final={"schema":1,"kind":"mint-repair-rehearsal-observation","backupObservationDigest":observer.sha(raw),"testReceiptDigest":observer.sha(test_raw),"repairReceiptDigest":binding[0],"activationAllowed":False,"startupAllowed":False,"repairApplied":False}
-        with (repair/"repair-rehearsal-observation.json").open("x") as stream:
+        final={"schema":1,"kind":"mint-repair-rehearsal-observation","scope":"isolated-rehearsal-only","liveRepairCompleted":False,"rollbackAllowed":False,"continuousExclusionVerified":False,"backupObservationDigest":observer.sha(raw),"testReceiptDigest":observer.sha(test_raw),"repairReceiptDigest":binding[0],"activationAllowed":False,"startupAllowed":False,"repairApplied":False}
+        if observer.read(repair/"repair-restore-test.json")!=test_raw or observer.read(repair/"backup-observation.json")!=raw or os.path.lexists(STATE/"repair-interrupted.json"):
+            raise ValueError("Rehearsal evidence changed before completion.")
+        with os.fdopen(os.open(repair/"repair-rehearsal-observation.json",os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600),"w") as stream:
             json.dump(final,stream,sort_keys=True)
             stream.flush()
             os.fsync(stream.fileno())
+        sync_dir(repair)
 
 def main():
     title="RS Nextward | Isolated repair restoration"

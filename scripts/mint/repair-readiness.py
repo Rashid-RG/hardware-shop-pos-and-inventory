@@ -29,6 +29,8 @@ def validate_receipts(binding, raw, observer):
         raise ValueError("Incomplete repair rehearsal.")
     if not isinstance(test.get("buildFingerprint"),str) or not re.fullmatch(r"[a-f0-9]{64}",test["buildFingerprint"]):
         raise ValueError("Tested build fingerprint missing.")
+    if final.get("scope")!="isolated-rehearsal-only" or any(final.get(k) is not False for k in ("liveRepairCompleted","rollbackAllowed","continuousExclusionVerified")):
+        raise ValueError("Invalid rehearsal completion scope.")
     if final.get("schema")!=1 or final.get("kind")!="mint-repair-rehearsal-observation" or final.get("backupObservationDigest")!=observer.sha(raw["backup"]) or final.get("testReceiptDigest")!=observer.sha(raw["test"]) or final.get("repairReceiptDigest")!=binding[0]:
         raise ValueError("Post-test observation missing or mismatched.")
     if not isinstance(test.get("previousBuildFingerprint"),str) or not re.fullmatch(r"[a-f0-9]{64}",test["previousBuildFingerprint"]):

@@ -19,6 +19,10 @@ function Assert-ArsRepairReadinessReceipts($binding,$backup,$test,$completion,[s
  foreach ($flag in @('activationApproved','continuousExclusionVerified')) {
   if ($test.$flag -isnot [bool] -or $test.$flag) { throw 'Unexpected test authorization.' }
  }
+ if ($completion.scope -cne 'isolated-rehearsal-only') { throw 'Invalid rehearsal completion scope.' }
+ foreach ($flag in @('liveRepairCompleted','rollbackAllowed','continuousExclusionVerified')) {
+  if ($completion.$flag -isnot [bool] -or $completion.$flag) { throw 'Unexpected completion authorization.' }
+ }
  if ($completion.schema -ne 1 -or $completion.kind -cne 'windows-repair-rehearsal-observation' -or $completion.backupObservationDigest -cne $backupHash -or $completion.testReceiptDigest -cne $testHash) { throw 'Post-test observation mismatch.' }
 }
 function Get-ArsRepairReadiness([string]$project,[string]$folder) {
