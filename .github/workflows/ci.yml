@@ -56,6 +56,7 @@ jobs:
           python3 scripts/mint/test-repair-backup-review.py
           python3 scripts/mint/test-repair-readiness.py
           python3 scripts/mint/test-repair-build-retention.py
+          python3 scripts/mint/test-repair-native-probe.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py

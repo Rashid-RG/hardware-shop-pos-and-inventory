@@ -8,6 +8,7 @@ import re
 import subprocess
 from resume_maintenance import open_lock
 from repair_test_build import assert_local_docker, verify_retained_build
+from repair_native_probe import inspect_native
 
 STATE=Path.home()/".local/share/ars-hardware"
 FLAGS=("activationAllowed","startupAllowed","repairApplied")
@@ -63,7 +64,8 @@ def inspect(repair):
         if test.get("testedBuildRetained") is not True:
             raise ValueError("A new rehearsal with retained build is required.")
         verify_retained_build(repair,test["buildFingerprint"])
-        return {"schema":1,"repairEvidenceMatched":True,"testedBuildFingerprint":test["buildFingerprint"],"testedBuildRetained":True,"continuousExclusionVerified":False,"rollbackVerified":False,**{key:False for key in FLAGS}}
+        native=inspect_native(STATE,repair,test["buildFingerprint"])
+        return {"nativeProbe":native,"schema":1,"repairEvidenceMatched":True,"testedBuildFingerprint":test["buildFingerprint"],"testedBuildRetained":True,"continuousExclusionVerified":False,"rollbackVerified":False,**{key:False for key in FLAGS}}
 
 def main():
     title="RS Nextward | Repair readiness review"
@@ -74,7 +76,7 @@ def main():
         return
     try:
         inspect(Path(answer.stdout.strip()))
-        dialog("--info","--no-markup","--text=Repair and backup evidence matched. The exact tested build is retained and its fingerprint matches. Native host compatibility is not certified. Continuous writer exclusion, rollback and physical acceptance are not certified. Live repair remains locked.")
+        dialog("--info","--no-markup","--text=Repair and backup evidence matched. The exact tested build is retained and its fingerprint matches. Registered Node runtime and server syntax checks passed. Native add-on loading and host startup are not certified. Continuous writer exclusion, rollback and physical acceptance are not certified. Live repair remains locked.")
     except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         dialog("--error","--no-markup","--text=Repair readiness review blocked. Missing, stale or altered evidence. No repair applied.")
 
