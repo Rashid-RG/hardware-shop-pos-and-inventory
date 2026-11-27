@@ -109,6 +109,24 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Prepare non-forced dependency remediation proposal
+        run: |
+          set -euo pipefail
+          mkdir -p security-proposal
+          cp package.json package-lock.json security-proposal/
+          (
+            cd security-proposal
+            npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+            npm audit --json > remaining.json || true
+            node -e 'const r=require("./remaining.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Proposed audit totals:",JSON.stringify(r.metadata.vulnerabilities)); for(const [name,v] of Object.entries(r.vulnerabilities||{})) console.log(name,v.severity,JSON.stringify(v.fixAvailable));'
+            node -e 'const old=require("../package-lock.json").packages, next=require("./package-lock.json").packages; for(const [k,v] of Object.entries(next)) if(k && old[k]?.version!==v.version) console.log(k,old[k]?.version||"new","=>",v.version);'
+          )
+      - name: Retain proposed dependency lockfile for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-remediation-proposal
+          path: security-proposal/
+          retention-days: 14
       - name: Dependency security audit (production and development)
         run: |
           set -euo pipefail
