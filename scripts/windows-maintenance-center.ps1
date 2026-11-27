@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
-. (Join-Path $PSScriptRoot 'windows-repair-readiness.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-rollback-preparation.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
@@ -54,6 +54,10 @@ try {
    } finally { $picker.Dispose() }
    try {
     $review=Get-ArsRepairReadiness $root $folder
+    if ([Windows.Forms.MessageBox]::Show('Prepare rollback evidence for the previous tested application? This does not apply a rollback.',$title,'YesNo','Question') -eq 'Yes') {
+     $null=Prepare-ArsRepairRollback $root $folder
+     [void][Windows.Forms.MessageBox]::Show('Previous executable and existing rollback evidence matched. Repair-specific backward testing is still required. Activation remains locked.',$title,'OK','Information')
+    }
     [void][Windows.Forms.MessageBox]::Show('Repair evidence, tested container image, native Node version and server syntax matched. Native dependency loading, Windows startup, writer exclusion and rollback are not certified. Activation remains locked.',$title,'OK','Information')
    } catch {
     [void][Windows.Forms.MessageBox]::Show('Repair readiness review blocked. Missing, stale or altered evidence. No repair applied.',$title,'OK','Error')
