@@ -1,5 +1,6 @@
 # Read-only repair readiness; never selects or activates a repair.
 . (Join-Path $PSScriptRoot 'windows-repair-rehearsal.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-native-probe.ps1')
 function Assert-ArsRepairReadinessReceipts($binding,$backup,$test,$completion,[string]$backupHash,[string]$testHash) {
  foreach ($receipt in @($backup,$test,$completion)) {
   foreach ($flag in @('activationAllowed','startupAllowed','repairApplied')) {
@@ -68,7 +69,8 @@ function Get-ArsRepairReadiness([string]$project,[string]$folder) {
    if ((Get-ArsRepairMetadataHash $recovery $name) -cne $backup.evidence.$name) { throw 'Backup evidence changed.' }
   }
   if (((Get-ArsRepairReviewBinding $project $state $folder) | ConvertTo-Json -Compress) -cne ($binding | ConvertTo-Json -Compress)) { throw 'Repair identity changed.' }
-  [ordered]@{schema=1;repairEvidenceMatched=$true;testedContainerImageRetained=$true;nativeWindowsBuildTested=$false;continuousExclusionVerified=$false;rollbackVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false}
+  $native=Get-ArsNativeRepairProbe $test.dependencyImageId
+  [ordered]@{nativeProbe=$native;schema=1;repairEvidenceMatched=$true;testedContainerImageRetained=$true;nativeWindowsBuildTested=$false;continuousExclusionVerified=$false;rollbackVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false}
  } finally {
   if ($owned) { $mutex.ReleaseMutex() }
   $mutex.Dispose()

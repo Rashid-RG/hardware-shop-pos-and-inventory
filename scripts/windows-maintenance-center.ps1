@@ -54,7 +54,7 @@ try {
    } finally { $picker.Dispose() }
    try {
     $review=Get-ArsRepairReadiness $root $folder
-    [void][Windows.Forms.MessageBox]::Show('Repair evidence and tested container image matched. Native Windows repair, writer exclusion and rollback are not certified. Activation remains locked.',$title,'OK','Information')
+    [void][Windows.Forms.MessageBox]::Show('Repair evidence, tested container image, native Node version and server syntax matched. Native dependency loading, Windows startup, writer exclusion and rollback are not certified. Activation remains locked.',$title,'OK','Information')
    } catch {
     [void][Windows.Forms.MessageBox]::Show('Repair readiness review blocked. Missing, stale or altered evidence. No repair applied.',$title,'OK','Error')
    }
