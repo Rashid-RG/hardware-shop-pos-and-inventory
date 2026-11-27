@@ -38,6 +38,9 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
         payload = runtime.read_bytes()
         z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.tar.gz", payload)
         z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.sha256", hashlib.sha256(payload).hexdigest()+"\n")
+    icon=pathlib.Path(target)/"ars-desktop.ico"
+    if icon.is_file():
+        z.writestr("ARS-Distributor/public/ars-desktop.ico",icon.read_bytes())
     z.writestr("ARS-Distributor/PILOT-RELEASE.json", json.dumps({"commit":commit,"status":"acceptance-only","liveUpdatesApproved":False}, sort_keys=True)+"\n")
 with zipfile.ZipFile(archive,"a",compression=zipfile.ZIP_DEFLATED) as z:
     manifest={}
@@ -51,4 +54,6 @@ with zipfile.ZipFile(archive) as z:
     assert all("ARS-Distributor/" + f in z.namelist() for f in required)
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
 (out / (name + ".sha256")).write_text(digest + "  " + name + "\n")
+if icon.is_file():
+    icon.unlink()
 print("Acceptance package:", name, digest)

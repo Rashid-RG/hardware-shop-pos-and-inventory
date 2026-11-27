@@ -112,6 +112,7 @@ try {
   $shortcut.Arguments='"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"'
   $shortcut.WorkingDirectory=$root
   $shortcut.Description='ARS Distributor | RS Nextward'
+  $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
   $shortcut.Save()
  }
  Set-ArsProgress 5 'Setup steps completed.'

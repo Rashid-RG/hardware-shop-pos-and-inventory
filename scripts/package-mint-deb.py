@@ -37,11 +37,12 @@ Description: ARS Distributor acceptance setup media
     put("usr/share/ars-distributor-pilot/payload.zip",archive.read_bytes())
     put("usr/share/ars-distributor-pilot/payload.sha256",digest+"\n")
     put("usr/share/ars-distributor-pilot/launch.py",Path("scripts/mint/native-setup-launch.py").read_bytes(),0o755)
+    put("usr/share/icons/hicolor/scalable/apps/ars-distributor-pilot.svg",Path("public/ars-official.svg").read_bytes())
     put("usr/share/applications/ars-distributor-pilot-setup.desktop","""[Desktop Entry]
 Type=Application
 Name=RS Nextward | ARS Distributor Setup
 Exec=/usr/bin/python3 /usr/share/ars-distributor-pilot/launch.py
-Icon=system-software-install
+Icon=ars-distributor-pilot
 Terminal=false
 Categories=System;
 """)

@@ -307,10 +307,15 @@ jobs:
           test -f "$runtime/LICENSE"
           test -x "$runtime/bin/npm"
           tar -C "$runtime" -czf "$RUNNER_TEMP/ars-node-linux-x64.tar.gz" bin lib LICENSE
+      - name: Install signed Ubuntu SVG renderer
+        run: sudo apt-get install -y --no-install-recommends librsvg2-bin
       - name: Create pilot source archive with optional Mint runtime
         env:
           PILOT_COMMIT: ${{ github.sha }}
-        run: python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package "$RUNNER_TEMP/ars-node-linux-x64.tar.gz"
+        run: |
+          mkdir -p pilot-package
+          python3 scripts/generate-desktop-icon.py public/ars-official.svg pilot-package/ars-desktop.ico
+          python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package "$RUNNER_TEMP/ars-node-linux-x64.tar.gz"
       - name: Retain installation package and SHA-256 checksum
         uses: actions/upload-artifact@v4
         with:
@@ -339,10 +344,19 @@ jobs:
           New-Item -ItemType Directory -Path native-package | Out-Null
           $exe=Join-Path (Resolve-Path native-package).Path 'ARS-Distributor-Setup.exe'
           $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-          & $csc /nologo /target:winexe /optimize+ "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll (Resolve-Path -LiteralPath "scripts/windows-native-setup.cs").Path
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $icon=Join-Path (Resolve-Path native-package).Path 'ars-desktop.ico'
+          $archive=[IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            $entry=$archive.GetEntry('ARS-Distributor/public/ars-desktop.ico')
+            if (-not $entry) { throw 'Missing official desktop icon.' }
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry,$icon)
+          } finally { $archive.Dispose() }
+          & $csc /nologo /target:winexe /optimize+ "/win32icon:$icon" "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll (Resolve-Path -LiteralPath "scripts/windows-native-setup.cs").Path
           if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed.' }
           $process=Start-Process -FilePath $exe -ArgumentList '--verify-payload' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Embedded payload verification failed.' }
+          Remove-Item -LiteralPath $icon
           ((Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant()+'  ARS-Distributor-Setup.exe') | Set-Content -Encoding ascii -LiteralPath ($exe+'.sha256')
       - uses: actions/upload-artifact@v4
         with:
