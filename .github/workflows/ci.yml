@@ -63,6 +63,7 @@ jobs:
           python3 scripts/mint/test-repair-activation-plan.py
           python3 scripts/mint/test-repair-switch-rehearsal.py
           python3 scripts/mint/test-uninstall-preview.py
+          python3 scripts/mint/test-uninstall-backup-review.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py

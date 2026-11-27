@@ -45,6 +45,8 @@ def inspect(state, project):
 
 def main():
     from setup_ui import SetupUI
+    import importlib.util
+    import subprocess
     if os.geteuid()==0:
         raise ValueError("Desktop user required.")
     project=(STATE/"project").resolve(strict=True)
@@ -53,6 +55,24 @@ def main():
     ui=SetupUI(project,"RS Nextward | ARS Distributor Uninstall Wizard")
     if not ui.page("Welcome to the Uninstall Wizard",
         "Thank you for choosing RS Nextward. This wizard reviews application removal without deleting your business records. Nothing is removed during this preview.","Review installation"):
+        return
+    # Existing protected update recovery is reviewed separately: it has a
+    # maintenance hold, so ordinary uninstall layout inspection would reject it.
+    if os.path.lexists(STATE/"maintenance-hold.json"):
+        if not ui.page("Review existing protected backup",
+            "An existing maintenance hold was detected. Review its protected update recovery evidence. This does not certify a final uninstall backup or permit removal.","Select recovery"):
+            return
+        selected=subprocess.run(["zenity","--file-selection","--directory","--filename="+str(STATE/"update-recovery")+"/"],capture_output=True,text=True)
+        if selected.returncode:
+            return
+        try:
+            spec=importlib.util.spec_from_file_location("uninstall_backup",Path(__file__).with_name("uninstall-backup-review.py"))
+            module=importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.inspect(Path(selected.stdout.strip()))
+            ui.page("Protected backup evidence matched","Existing protected update backup and restoration evidence matched. A dedicated final uninstall backup and continuous writer protection are not yet certified. No removal performed.","Finish")
+        except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
+            ui.page("Backup review blocked","Missing or stale protected recovery evidence. Maintenance remains active. No removal performed.","Close")
         return
     try:
         plan=inspect(STATE,project)
