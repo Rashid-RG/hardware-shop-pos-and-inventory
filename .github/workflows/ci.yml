@@ -367,6 +367,8 @@ jobs:
           if ((Get-FileHash -LiteralPath $zip.FullName).Hash -ine $expected) { throw 'Package checksum mismatch.' }
           New-Item -ItemType Directory -Path native-package | Out-Null
           $exe=Join-Path (Resolve-Path native-package).Path 'ARS-Distributor-Setup.exe'
+          $windowsPayload=Join-Path $env:RUNNER_TEMP ('ars-windows-payload-'+[guid]::NewGuid().ToString('N')+'.zip')
+          & ./scripts/package-windows-supervisor.ps1 -SourceZip $zip.FullName -OutputZip $windowsPayload
           $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $icon=Join-Path (Resolve-Path native-package).Path 'ars-desktop.ico'
@@ -376,11 +378,11 @@ jobs:
             if (-not $entry) { throw 'Missing official desktop icon.' }
             [IO.Compression.ZipFileExtensions]::ExtractToFile($entry,$icon)
           } finally { $archive.Dispose() }
-          & $csc /nologo /target:winexe /optimize+ "/win32icon:$icon" "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll (Resolve-Path -LiteralPath "scripts/windows-native-setup.cs").Path
+          & $csc /nologo /target:winexe /optimize+ "/win32icon:$icon" "/out:$exe" "/resource:$windowsPayload,ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll (Resolve-Path -LiteralPath "scripts/windows-native-setup.cs").Path
           if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed.' }
           $process=Start-Process -FilePath $exe -ArgumentList '--verify-payload' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Embedded payload verification failed.' }
-          Remove-Item -LiteralPath $icon
+          Remove-Item -LiteralPath $icon,$windowsPayload
           ((Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant()+'  ARS-Distributor-Setup.exe') | Set-Content -Encoding ascii -LiteralPath ($exe+'.sha256')
       - uses: actions/upload-artifact@v4
         with:
