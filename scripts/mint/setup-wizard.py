@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from setup_resume import offer_resume, consume_resume
 
 TITLE = "RS Nextward | ARS Distributor Setup"
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +44,7 @@ def main():
         except BlockingIOError:
             return 1
         try:
+            consume_resume(ROOT)
             assert_fresh()
             if dialog("--question","--no-markup","--width=500","--text=Thank you for choosing RS Nextward.\n\nWelcome to ARS Distributor 1.0 Pilot Setup. This wizard prepares your wholesale distribution workspace and local database. Internet access is required.","--ok-label=Next","--cancel-label=Cancel"):
                 return 0
@@ -51,7 +53,7 @@ def main():
             from setup_node_runtime import prepare_node
             prepare_node(ROOT, dialog)
             from setup_prerequisites import install_missing
-            if not install_missing(dialog):
+            if not install_missing(dialog, lambda: offer_resume(ROOT, dialog)):
                 return 0
             if dialog("--question","--no-markup","--width=520","--text=Ready to install from:\n"+str(ROOT)+"\n\nKeep this folder in a permanent location. Setup creates a desktop shortcut and enables the user service. Business data is stored separately.","--ok-label=Install","--cancel-label=Cancel"):
                 return 0

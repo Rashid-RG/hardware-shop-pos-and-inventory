@@ -16,7 +16,7 @@ def candidate(package):
     result=subprocess.run(["apt-cache","policy",package],check=True,capture_output=True,text=True,env={"PATH":"/usr/bin:/bin","LC_ALL":"C"})
     return next((line.split(":",1)[1].strip() for line in result.stdout.splitlines() if line.strip().startswith("Candidate:")), "(none)")
 
-def configure_docker_access(dialog):
+def configure_docker_access(dialog, resume):
     # Only handle the standard local rootful Docker service. Never change
     # socket permissions, remote contexts, daemon configuration or sudo policy.
     if os.geteuid()==0 or os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT"):
@@ -34,6 +34,7 @@ def configure_docker_access(dialog):
     if group.gr_gid in os.getgroups():
         raise RuntimeError("Docker access failed despite active membership. Contact support.")
     if user in group.gr_mem or pwd.getpwuid(os.getuid()).pw_gid==group.gr_gid:
+        resume()
         dialog("--info","--no-markup","--text=Docker access is already configured. Sign out of Linux Mint and sign back in, then reopen Setup.")
         return False
     if not shutil.which("pkexec") or not os.path.isfile("/usr/sbin/usermod"):
@@ -41,10 +42,11 @@ def configure_docker_access(dialog):
     if dialog("--question","--no-markup","--width=560","--text=Docker access is required for the local PostgreSQL database. Adding this account to the Docker group grants root-equivalent access to this computer. Only approve for a trusted administrator-managed account. Setup will not change any database or socket permissions.","--ok-label=Authorize Docker access","--cancel-label=Cancel"):
         return False
     subprocess.run(["pkexec","/usr/sbin/usermod","-aG","docker","--",user],check=True)
+    resume()
     dialog("--info","--no-markup","--text=Docker access configured. Save your work, sign out of Linux Mint and sign back in, then reopen Setup. No ARS database was created.")
     return False
 
-def install_missing(dialog):
+def install_missing(dialog, resume=lambda: None):
     if not shutil.which("apt-cache"):
         raise RuntimeError("APT package manager is required.")
     packages=[]
@@ -64,7 +66,7 @@ def install_missing(dialog):
         packages.extend(["nodejs","npm"])
     if shutil.which("docker"):
         if not run_ok(["docker","info"]):
-            return configure_docker_access(dialog)
+            return configure_docker_access(dialog, resume)
         if not run_ok(["docker","compose","version"]):
             raise RuntimeError("Existing Docker has no Compose v2. Setup will not mix Docker package providers.")
     else:
@@ -80,5 +82,6 @@ def install_missing(dialog):
     # APT confirms repository signatures. Never add repositories, remove packages,
     # bypass authentication or run application as root.
     subprocess.run(["pkexec","/usr/bin/apt-get","--no-remove","--assume-yes","install",*packages],check=True)
+    resume()
     dialog("--info","--no-markup","--text=Prerequisites installed. Reopen Setup after administrator review of Docker access. No ARS database was created.")
     return False
