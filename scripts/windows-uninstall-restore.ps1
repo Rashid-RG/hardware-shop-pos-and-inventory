@@ -107,6 +107,7 @@ function Test-ArsUninstallRestore([string]$project,[string]$folder) {
   if ((Get-Item -LiteralPath $manifestPath).Length -gt 16777216) {throw 'Manifest too large.'}
   $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
   if ($manifest.schema -ne 1 -or $manifest.kind -cne 'windows-uninstall-table-manifest' -or $manifest.archive -cne $meta.archive -or $manifest.dumpSha256 -cne $hashes[$meta.archive] -or $manifest.locksObserved -isnot [bool] -or -not $manifest.locksObserved -or $manifest.applicationRemovalAllowed -isnot [bool] -or $manifest.applicationRemovalAllowed -or $manifest.continuousExclusionVerified -isnot [bool] -or $manifest.continuousExclusionVerified) {throw 'Invalid protected manifest.'}
+  Assert-ArsUninstallManifestBinding $manifest $id $digests.hold $digests.proof
   Assert-ArsUninstallRestoredTables $manifest.tables $manifest.tables
   & node (Join-Path $project 'scripts/verify-backup.mjs') $archive|Out-Null
   if ($LASTEXITCODE -ne 0) {throw 'Archive verification failed.'}
@@ -137,6 +138,8 @@ function Test-ArsUninstallRestore([string]$project,[string]$folder) {
   foreach ($key in $paths.Keys) {if ((Get-FileHash -LiteralPath $paths[$key] -Algorithm SHA256).Hash -cne $digests[$key]) {throw 'Maintenance evidence changed.'}}
   foreach ($p in $members) {if ((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hashes[[IO.Path]::GetFileName($p)]) {throw 'Archive evidence changed.'}}
   if (@(Get-ChildItem -LiteralPath $control -Force|Where-Object Name -in $markers).Count -or (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {throw 'Maintenance evidence changed.'}
+  $old=Get-Process -Id ([int]$raw.hold.pid) -ErrorAction SilentlyContinue
+  if ($old -and $old.StartTime.ToUniversalTime().Ticks.ToString() -ceq $raw.hold.startedUtc) {throw 'Original application remains active.'}
   $record=[ordered]@{schema=1;kind='windows-uninstall-restore-observation';uninstallId=$id;archiveSha256=$hashes[$meta.archive];isolatedRestorePassed=$true;allPublicTableFingerprintsMatched=$true;restoredTableCount=@($actual.PSObject.Properties.Name).Count;uploadArchiveReadable=$true;uploadMemberCount=$uploadCount;evidenceDigests=$digests;archiveMemberDigests=$hashes;finalUninstallBackupVerified=$false;applicationRemovalAllowed=$false;serviceRemovalAllowed=$false;databaseDeletionAllowed=$false;continuousExclusionVerified=$false;uninstalled=$false}
   $stream=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   try {$bytes=[Text.Encoding]::UTF8.GetBytes(($record|ConvertTo-Json -Depth 6));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)} finally {$stream.Dispose()}
