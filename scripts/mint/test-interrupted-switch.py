@@ -466,6 +466,23 @@ class RecoveryTests(unittest.TestCase):
             self.assertFalse(proposal_path.exists())
             self.assertTrue((root/("rolled-back-intent-"+"a"*32+".json")).is_file())
             self.assertFalse(startup_allowed(root))
+    def test_offline_journal_never_authorizes_startup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous=root/"previous"
+            candidate=root/"candidate"
+            for release in (previous,candidate):
+                (release/"dist").mkdir(parents=True)
+                (release/"dist/server.cjs").touch()
+            (root/"project").symlink_to(previous)
+            for phase in ("offline-rolled-back","offline-rollback-pending","rolled-back","completed"):
+                (root/"switch-journal.json").write_text(json.dumps({"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":phase}))
+                self.assertFalse(startup_allowed(root))
+            (root/"project").unlink()
+            (root/"project").symlink_to(candidate)
+            for phase in ("switched","completed"):
+                (root/"switch-journal.json").write_text(json.dumps({"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":phase}))
+                self.assertFalse(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

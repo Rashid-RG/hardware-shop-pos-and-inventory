@@ -26,6 +26,7 @@ export function assertOrdinaryStartupAllowed() {
   } else if (process.platform === 'linux') {
     assertNoMaintenanceEvidence(path.join(os.homedir(), '.local', 'share', 'ars-hardware'), [
       'maintenance-hold.json', 'handoff-pending.json', 'runtime-switch-intent.json',
+      'runtime-migration-interrupted.json', 'runtime-activation-interrupted.json', 'switch-journal.json',
     ]);
   }
 }

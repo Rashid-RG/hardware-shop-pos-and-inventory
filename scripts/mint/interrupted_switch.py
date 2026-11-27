@@ -20,6 +20,11 @@ def recovery_plan(root):
             raise ValueError("Missing executable")
     except (OSError,ValueError,TypeError,KeyError,RuntimeError):
         return {"action":"manual-review","reason":"Invalid recovery state"}
+    if record.get("kind")=="mint-offline-release-selection":
+        # Offline selection never authorizes starting either application.
+        if phase in ("backup-verified","switched","offline-rollback-pending","offline-rolled-back"):
+            return {"action":"hold-for-review","reason":"Offline release selection or rollback requires finalization","active":str(active),"previous":str(previous),"candidate":str(candidate),"phase":phase}
+        return {"action":"manual-review","reason":"Offline journal cannot authorize startup"}
     if phase=="completed" and active==candidate:
         return {"action":"verify-current","reason":"Completed switch"}
     if phase=="rolled-back" and active==previous:
