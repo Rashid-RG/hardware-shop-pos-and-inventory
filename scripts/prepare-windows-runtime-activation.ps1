@@ -7,6 +7,7 @@ $control=Join-Path $state 'desktop-control'
 $runtime=Join-Path $state 'runtime-prepared'
 $folder=Join-Path (Join-Path $state 'update-recovery') $RecoveryId
 $target=Join-Path $control 'runtime-activation-proposal.json'
+$incident=Join-Path $control 'runtime-activation-interrupted.json'
 $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
 $owns=$false
 function Assert-Chain([string]$Path) {
@@ -16,6 +17,21 @@ function Assert-Chain([string]$Path) {
     if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid directory chain.' }
     $cursor=Split-Path -Parent $cursor
   }
+}
+function Assert-NoActivationIncident {
+  # Enumerate the directory so even a dangling reparse point blocks review.
+  Assert-Chain $control
+  if (@(Get-ChildItem -LiteralPath $control -Force | Where-Object { $_.Name -ieq 'runtime-activation-interrupted.json' }).Count -ne 0) {
+    throw 'Unresolved interrupted activation. Contact RS Nextward support.'
+  }
+}
+function Save-ActivationIncident {
+  Assert-Chain $control
+  Assert-NoActivationIncident
+  $record=[ordered]@{schema=1;kind='windows-interrupted-activation';detectedAt=[DateTime]::UtcNow.ToString('o');recoveryId=$RecoveryId;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false}
+  $bytes=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Compress))
+  $stream=[IO.File]::Open($incident,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+  try { $stream.Write($bytes,0,$bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
 }
 function Get-PlainHash([string]$Path) {
   Assert-Chain (Split-Path -Parent $Path)
@@ -58,10 +74,12 @@ try {
     # The previous owner terminated without releasing its maintenance mutex.
     # Ownership transfers to this process, but its prior operation is unverified.
     $owns=$true
+    Save-ActivationIncident
     throw 'Interrupted maintenance detected. Review recovery state before preparing or verifying activation.'
   }
   if (-not $owns) { throw 'Another maintenance operation is active.' }
   foreach ($dir in @($control,$runtime,$folder,$PSScriptRoot)) { Assert-Chain $dir }
+  Assert-NoActivationIncident
   $snapshot=Get-Snapshot
   if ($Verify) { Assert-MatchingProposal $snapshot; return }
   if (Test-Path -LiteralPath $target) { throw 'Existing proposal must be retained.' }
