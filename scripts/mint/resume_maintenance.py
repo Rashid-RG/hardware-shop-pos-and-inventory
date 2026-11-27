@@ -7,19 +7,28 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import stat
 from urllib.request import urlopen
 from switch_journal import sync_dir
 from startup_guard import startup_allowed
+from maintenance_backup import stopped, check_database_clients
 
 STATE=Path.home()/".local/share/ars-hardware"
 UNIT="ars-hardware.service"
 
+def open_lock(path):
+    stream=os.fdopen(os.open(path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600),"a")
+    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+        stream.close()
+        raise ValueError("Invalid maintenance lock.")
+    return stream
+
 def resume(confirmation):
     if os.geteuid()==0 or confirmation!="RESUME CURRENT POS":
         raise ValueError("Explicit desktop-user resume approval required.")
-    with (STATE/"maintenance.lock").open("a") as lock:
+    with open_lock(STATE/"maintenance.lock") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        with (STATE/"update.lock").open("a") as update:
+        with open_lock(STATE/"update.lock") as update:
             fcntl.flock(update,fcntl.LOCK_EX|fcntl.LOCK_NB)
             hold=STATE/"maintenance-hold.json"
             journal=STATE/"switch-journal.json"
@@ -33,13 +42,18 @@ def resume(confirmation):
             if record.get("purpose")!="pre-update backup" or record.get("previousProject")!=str(current):
                 raise ValueError("Cannot confirm unchanged application. Manual review required.")
             saved=hold.read_bytes()
+            stopped()
+            check_database_clients(current)
+            if hold.is_symlink() or hold.read_bytes()!=saved or (STATE/"project").resolve(strict=True)!=current:
+                raise ValueError("Maintenance evidence changed before resume.")
             hold.unlink()
-            sync_dir(STATE)
             try:
+                sync_dir(STATE)
                 if not startup_allowed(STATE):
                     raise RuntimeError("Startup guard rejected resume.")
                 subprocess.run(["systemctl","--user","start","--no-block",UNIT],check=True,timeout=30)
-                for _ in range(155):
+                deadline=time.monotonic()+155
+                while time.monotonic()<deadline:
                     active=subprocess.run(["systemctl","--user","is-active",UNIT],capture_output=True,text=True,timeout=10)
                     try:
                         with urlopen("http://127.0.0.1:3000/api/ready",timeout=1) as response:
@@ -52,12 +66,14 @@ def resume(confirmation):
                     time.sleep(1)
                 raise RuntimeError("POS readiness was not confirmed.")
             except BaseException:
-                with hold.open("xb") as stream:
-                    stream.write(saved)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                sync_dir(STATE)
-                subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)
+                try:
+                    with hold.open("xb") as stream:
+                        stream.write(saved)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    sync_dir(STATE)
+                finally:
+                    subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)
                 raise
 
 if __name__=="__main__":
