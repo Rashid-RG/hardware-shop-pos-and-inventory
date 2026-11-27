@@ -2,6 +2,7 @@
 param([Parameter(Mandatory=$true)][string]$SourceZip,[Parameter(Mandatory=$true)][string]$OutputZip)
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {throw 'Hosted packaging runner required.'}
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $source=(Get-Item -LiteralPath $SourceZip).FullName
 $output=[IO.Path]::GetFullPath($OutputZip)
