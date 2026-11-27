@@ -39,6 +39,11 @@ $verify=New-Object Windows.Forms.Button
 $verify.Text='Verify proposal'
 $verify.SetBounds(216,284,180,38)
 $form.Controls.Add($verify)
+$incidentReview=New-Object Windows.Forms.Button
+$incidentReview.Text='Review incident'
+$incidentReview.SetBounds(406,284,236,38)
+$incidentReview.Enabled=$false
+$form.Controls.Add($incidentReview)
 $close=New-Object Windows.Forms.Button
 $close.Text='Close'
 $close.SetBounds(522,350,120,38)
@@ -73,6 +78,7 @@ function Refresh-Choices {
  if ($select.Items.Count -gt 0) { $select.SelectedIndex=0 }
 }
 function Update-Buttons {
+ $incidentReview.Enabled=$false
  # Any incident entry, including malformed evidence, requires support review.
  try {
   $cursor=$control
@@ -82,10 +88,11 @@ function Update-Buttons {
    $cursor=Split-Path -Parent $cursor
   }
   $blocked=@(Get-ChildItem -LiteralPath $control -Force | Where-Object { $_.Name -ieq 'runtime-activation-interrupted.json' }).Count -ne 0
+  $incidentReview.Enabled=($blocked -and $select.SelectedIndex -ge 0)
  } catch { $blocked=$true }
  if ($blocked) {
   foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel)) {$button.Enabled=$false}
-  $status.Text='Activation incident retained or control directory unavailable. All update actions are blocked. Contact RS Nextward support for recovery review. No evidence will be removed.'
+  $status.Text='Activation incident retained or control directory unavailable. Update actions are blocked. Select the matching archive and review incident evidence. No evidence will be removed.'
   $status.ForeColor=[Drawing.Color]::DarkRed
   return
  }
@@ -104,6 +111,7 @@ function Invoke-Review([bool]$Verification) {
   $answer=[Windows.Forms.MessageBox]::Show('Retain an activation proposal for this archive? This does not install an update, resume billing or restore live data.','ARS Distributor',[Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Question,[Windows.Forms.MessageBoxDefaultButton]::Button2)
   if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
  }
+ $incidentReview.Enabled=$false
  $prepare.Enabled=$false
  $verify.Enabled=$false
  $select.Enabled=$false
@@ -138,7 +146,7 @@ function Invoke-Intent([string]$Mode) {
   $answer=[Windows.Forms.MessageBox]::Show($message,'ARS Distributor',[Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Question,[Windows.Forms.MessageBoxDefaultButton]::Button2)
   if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
  }
- foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$close,$select)) {$button.Enabled=$false}
+ foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$close,$select)) {$button.Enabled=$false}
  $status.Text='Verifying switch intent and retained update evidence...'
  $form.Refresh()
  try {
@@ -167,6 +175,44 @@ function Invoke-Intent([string]$Mode) {
   Update-Buttons
  }
 }
+$incidentReview.Add_Click({
+ $id=[string]$select.SelectedItem
+ if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}
+$intentVerify.Add_Click({Invoke-Intent 'verify'})
+$intentCancel.Add_Click({Invoke-Intent 'cancel'})
+$select.Add_SelectedIndexChanged({Update-Buttons})
+$prepare.Add_Click({Invoke-Review $false})
+$verify.Add_Click({Invoke-Review $true})
+try { Refresh-Choices; Update-Buttons; [void]$form.ShowDialog() } finally { $form.Dispose() }
+) {return}
+ foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$close,$select)) {$button.Enabled=$false}
+ $status.Text='Verifying incident evidence. No live changes will be made.'
+ $form.Refresh()
+ $message='Incident review blocked. Contact RS Nextward support. Evidence remains retained.'
+ $success=$false
+ try {
+  $helper=Join-Path $PSScriptRoot 'prepare-windows-runtime-activation.ps1'
+  $data=(@(& $helper -RecoveryId $id -ReviewIncident) -join [Environment]::NewLine) | ConvertFrom-Json
+  if ($data.schema -ne 1 -or $data.kind -cne 'windows-activation-incident-review' -or $data.snapshot.recoveryId -cne $id -or $data.incidentDigest -notmatch '^[A-Fa-f0-9]{64}
+$intentVerify.Add_Click({Invoke-Intent 'verify'})
+$intentCancel.Add_Click({Invoke-Intent 'cancel'})
+$select.Add_SelectedIndexChanged({Update-Buttons})
+$prepare.Add_Click({Invoke-Review $false})
+$verify.Add_Click({Invoke-Review $true})
+try { Refresh-Choices; Update-Buttons; [void]$form.ShowDialog() } finally { $form.Dispose() }
+ -or $data.incidentRetained -ne $true -or $data.administratorApprovalRequired -ne $true) {throw 'Invalid review.'}
+  foreach ($flag in @('activationAllowed','startupAllowed','rollbackAllowed','runtimeActivated','recoveryAllowed','continuousExclusionVerified')) {
+   if ($data.$flag -isnot [bool] -or $data.$flag) {throw 'Unexpected authorization.'}
+  }
+  $message='Incident evidence matched. Administrator review is still required. Startup and live installation remain locked.'
+  $success=$true
+ } catch {} finally {
+  $select.Enabled=$true
+  $close.Enabled=$true
+  Update-Buttons
+ }
+ [void][Windows.Forms.MessageBox]::Show($message,'ARS Distributor',[Windows.Forms.MessageBoxButtons]::OK,$(if ($success) {[Windows.Forms.MessageBoxIcon]::Information} else {[Windows.Forms.MessageBoxIcon]::Warning}))
+})
 $intent.Add_Click({Invoke-Intent 'retain'})
 $intentVerify.Add_Click({Invoke-Intent 'verify'})
 $intentCancel.Add_Click({Invoke-Intent 'cancel'})
