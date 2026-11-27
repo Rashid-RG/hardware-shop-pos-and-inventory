@@ -127,6 +127,26 @@ jobs:
           name: dependency-remediation-proposal
           path: security-proposal/
           retention-days: 14
+      - name: Prepare targeted direct dependency upgrade proposal
+        run: |
+          set -euo pipefail
+          mkdir -p security-targeted
+          cp package.json package-lock.json security-targeted/
+          (
+            cd security-targeted
+            # Explicit versions from the audit, not an unrestricted forced upgrade.
+            npm pkg set 'dependencies.nodemailer=10.6.1' 'dependencies.vite=5.4.21' 'devDependencies.vite=5.4.21' 'devDependencies.postcss=8.5.33'
+            npm install --package-lock-only --ignore-scripts --no-fund
+            npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+            npm audit --json > remaining.json || true
+            node -e 'const r=require("./remaining.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Targeted audit totals:",JSON.stringify(r.metadata.vulnerabilities)); for(const [name,v] of Object.entries(r.vulnerabilities||{})) console.log(name,v.severity,JSON.stringify(v.fixAvailable));'
+          )
+      - name: Retain targeted direct dependency proposal
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-targeted-proposal
+          path: security-targeted/
+          retention-days: 14
       - name: Dependency security audit (production and development)
         run: |
           set -euo pipefail
