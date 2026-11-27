@@ -7,7 +7,7 @@ from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler
 
 STATE=Path.home()/".local/share/ars-hardware"
 TITLE="RS Nextward | ARS Distributor Maintenance Center"
-MARKERS=("maintenance-hold.json","runtime-activation-interrupted.json","runtime-switch-intent.json","runtime-migration-interrupted.json","handoff-pending.json")
+MARKERS=("maintenance-hold.json","runtime-activation-interrupted.json","runtime-switch-intent.json","runtime-migration-interrupted.json","handoff-pending.json","repair-interrupted.json","switch-journal.json")
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):
@@ -59,7 +59,7 @@ def main():
             note=Gtk.Label(label="Diagnostics and isolated repair preparation. Repair activation and uninstall remain locked.")
             note.set_xalign(0)
             box.pack_start(note,False,False,0)
-            for label,code in (("Recovery Center",1),("Update Center",2),("Prepare repair",4),("Review backup",5),("Test repair",6),("Review readiness",7),("Native test",8),("Prepare rollback",9),("Refresh",3),("Close",0)):
+            for label,code in (("Recovery Center",1),("Update Center",2),("Prepare repair",4),("Review backup",5),("Test repair",6),("Review readiness",7),("Native test",8),("Prepare rollback",9),("Review interruption",10),("Refresh",3),("Close",0)):
                 win.add_button(label,code)
             win.show_all()
             action=win.run()
@@ -67,9 +67,9 @@ def main():
             win.destroy()
         if action==3:
             continue
-        if action not in (1,2,4,5,6,7,8,9):
+        if action not in (1,2,4,5,6,7,8,9,10):
             return
-        script=project/"scripts/mint"/({1:"recovery-center.py",2:"update-center.py",4:"prepare-repair.py",5:"repair-backup-review.py",6:"test-repair-restore.py",7:"repair-readiness.py",8:"native-repair-rehearsal.py",9:"repair-rollback-preparation.py"}[action])
+        script=project/"scripts/mint"/({1:"recovery-center.py",2:"update-center.py",4:"prepare-repair.py",5:"repair-backup-review.py",6:"test-repair-restore.py",7:"repair-readiness.py",8:"native-repair-rehearsal.py",9:"repair-rollback-preparation.py",10:"repair_interruption.py"}[action])
         if script.resolve(strict=True)!=script or not script.is_file():
             raise RuntimeError("Maintenance tool unavailable.")
         subprocess.run(["/usr/bin/python3",str(script)],cwd=project,check=True)

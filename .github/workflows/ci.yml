@@ -59,6 +59,7 @@ jobs:
           python3 scripts/mint/test-repair-native-probe.py
           python3 scripts/mint/test-native-repair-rehearsal.py
           python3 scripts/mint/test-repair-rollback-preparation.py
+          python3 scripts/mint/test-repair-interruption.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py

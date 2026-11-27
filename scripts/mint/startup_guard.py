@@ -47,7 +47,7 @@ def migration_mapping_valid(root):
 
 def startup_allowed(root):
     root=Path(root)
-    for name in ("runtime-switch-intent.json","maintenance-hold.json","runtime-activation-interrupted.json","handoff-pending.json","runtime-migration-interrupted.json"):
+    for name in ("runtime-switch-intent.json","maintenance-hold.json","runtime-activation-interrupted.json","handoff-pending.json","runtime-migration-interrupted.json","repair-interrupted.json"):
         entry=root/name
         if entry.exists() or entry.is_symlink():
             return False
