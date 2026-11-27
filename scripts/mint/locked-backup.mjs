@@ -20,7 +20,9 @@ function evidence(path){
 const holdPath=resolve(state,'maintenance-hold.json');
 const holdRaw=evidence(holdPath);
 const hold=JSON.parse(holdRaw);
-if(hold.purpose!=='pre-update backup'||hold.previousProject!==project||hold.version!==process.argv[2])throw Error('Matching maintenance hold required.');
+const uninstall=process.argv[3]==='--uninstall';
+if(process.argv.length!==(uninstall?4:3)||hold.purpose!==(uninstall?'pre-uninstall backup':'pre-update backup')||hold.previousProject!==project||hold.version!==process.argv[2])throw Error('Matching maintenance hold required.');
+if(uninstall&&(!/^[a-f0-9]{32}$/.test(hold.uninstallId)||hold.applicationRemovalAllowed!==false))throw Error('Non-authorizing uninstall hold required.');
 const lines=readFileSync(resolve(project,'.env.local'),'utf8').split(/\r?\n/);
 const urls=lines.filter(x=>x.startsWith('DATABASE_URL='));
 if(urls.length!==1)throw Error('Unique local database configuration required.');
@@ -52,7 +54,7 @@ try{
   if(before.rows[0].count!==0)throw Error('Other database clients detected.');
   let output='';
   await new Promise((ok,fail)=>{
-    child=spawn('python3',['scripts/mint/prepare-update-backup.py',process.argv[2]],{cwd:project,stdio:['ignore','pipe','inherit'],detached:true});
+    child=spawn('python3',[uninstall?'scripts/mint/prepare-uninstall-backup.py':'scripts/mint/prepare-update-backup.py',process.argv[2]],{cwd:project,stdio:['ignore','pipe','inherit'],detached:true});
     child.stdout.on('data',chunk=>{output+=chunk.toString();if(output.length>65536){failure=Error('Unexpected backup output');stopChild();}});
     const timer=setTimeout(()=>{failure=Error('Maintenance backup timed out');stopChild();},900000);
     child.once('error',err=>{clearTimeout(timer);fail(err);});
@@ -64,15 +66,17 @@ try{
   const matches=output.split(/\r?\n/).filter(x=>x.startsWith('Pinned recovery archive: '));
   if(matches.length!==1)throw Error('Missing unique recovery archive');
   const folder=matches[0].slice('Pinned recovery archive: '.length);
-  if(realpathSync(folder)!==folder||dirname(folder)!==resolve(state,'update-recovery')||!lstatSync(folder).isDirectory())throw Error('Unexpected recovery folder.');
+  if(realpathSync(folder)!==folder||dirname(folder)!==resolve(state,uninstall?'uninstall-recovery':'update-recovery')||!lstatSync(folder).isDirectory())throw Error('Unexpected recovery folder.');
   const metaPath=resolve(folder,'recovery.json'),metaRaw=evidence(metaPath),meta=JSON.parse(metaRaw);
   if(meta.version!==hold.version||meta.previousProject!==project||meta.activationApproved!==false||!/^ars-mint-[A-Za-z0-9_-]+\.dump$/.test(meta.archive))throw Error('Recovery metadata mismatch.');
+  if(uninstall&&(meta.kind!=='mint-final-uninstall-backup'||meta.uninstallId!==hold.uninstallId||meta.applicationRemovalAllowed!==false||meta.restoreTestPassed!==false))throw Error('Uninstall backup metadata mismatch.');
   const identity=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid FROM pg_control_system()");
   const db=identity.rows[0];
   if(identity.rows.length!==1||db.database!=='hardware_pos_ars'||!/^\d{1,20}$/.test(db.system_identifier)||!/^\d{1,10}$/.test(db.database_oid))throw Error('Database identity unavailable.');
   const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
   if(locks.rows[0]?.count!==3||failure||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
   const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.system_identifier,databaseOid:db.database_oid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
+  if(uninstall)Object.assign(receipt,{kind:'mint-uninstall-backup-observation',uninstallId:hold.uninstallId,applicationRemovalAllowed:false,finalUninstallBackupVerified:false});
   const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);
   try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
