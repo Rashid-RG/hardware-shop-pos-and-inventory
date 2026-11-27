@@ -57,12 +57,24 @@ def main():
             from setup_prerequisites import install_missing
             if not install_missing(dialog, lambda: offer_resume(ROOT, dialog)):
                 return 0
-            if not ui.page("Ready to install","Install from:\n"+str(ROOT)+"\n\nKeep this folder in a permanent location. Setup creates a desktop shortcut and enables the user service. Business data is stored separately.","Install"):
+            chosen=subprocess.run(["zenity","--title="+TITLE,"--file-selection","--directory","--filename="+str(Path.home())+"/"],capture_output=True,text=True)
+            if chosen.returncode:
+                return 0
+            parent=Path(chosen.stdout.strip())
+            destination=parent/"ARS Distributor"
+            if not ui.page("Ready to install","Install permanently in:\n"+str(destination)+"\n\nSetup copies verified application files, creates desktop shortcuts and enables the user service. Business data is stored separately.","Install"):
                 return 0
             preflight()
+            from setup_destination import copy_release
+            installed=copy_release(ROOT,destination)
+            # Never register a runtime executable from the disposable download folder.
+            old_runtime=str(ROOT/".ars-node-runtime"/"bin")
+            os.environ["PATH"]=os.pathsep.join(p for p in os.environ["PATH"].split(os.pathsep) if p!=old_runtime)
+            prepare_node(installed,dialog)
+            ui.root=installed
             ui.install()
             if ui.page("Setup completed","Thank you for choosing RS Nextward.\n\nInstallation steps completed. Launch ARS Distributor to verify database readiness and complete first-administrator setup.","Launch ARS Distributor",cancel="Finish"):
-                subprocess.run(["python3",str(ROOT/"scripts/mint/open.py")],check=True)
+                subprocess.run(["python3",str(installed/"scripts/mint/open.py")],check=True)
             return 0
         except (OSError,RuntimeError,ImportError,ValueError,subprocess.CalledProcessError) as error:
             dialog("--error","--no-markup","--text=Setup could not complete. Existing files and database volumes have been retained. Contact RS Nextward support; do not delete data.\n\n"+str(error))

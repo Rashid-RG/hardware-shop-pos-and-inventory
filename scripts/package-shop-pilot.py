@@ -39,6 +39,13 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.tar.gz", payload)
         z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.sha256", hashlib.sha256(payload).hexdigest()+"\n")
     z.writestr("ARS-Distributor/PILOT-RELEASE.json", json.dumps({"commit":commit,"status":"acceptance-only","liveUpdatesApproved":False}, sort_keys=True)+"\n")
+with zipfile.ZipFile(archive,"a",compression=zipfile.ZIP_DEFLATED) as z:
+    manifest={}
+    for item in z.infolist():
+        path=item.filename.removeprefix("ARS-Distributor/")
+        mode=(item.external_attr >> 16) & 0o777
+        manifest[path]={"sha256":hashlib.sha256(z.read(item)).hexdigest(),"mode":mode or 0o644}
+    z.writestr("ARS-Distributor/PILOT-FILES.json",json.dumps(manifest,sort_keys=True)+"\n")
 with zipfile.ZipFile(archive) as z:
     assert z.testzip() is None
     assert all("ARS-Distributor/" + f in z.namelist() for f in required)
