@@ -1,5 +1,6 @@
 # Read-only Windows uninstall planning. Never removes files, services or database volumes.
 . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
+. (Join-Path $PSScriptRoot 'windows-uninstall-backup-review.ps1')
 function Get-ArsUninstallPreview([string]$project,[string]$state) {
  foreach ($dir in @($project,$state,(Join-Path $state 'desktop-control'))) {
   Assert-ArsPlainPath $dir
@@ -28,6 +29,20 @@ function Show-ArsUninstallPreview([string]$project) {
  if (-not (Show-ArsSetupPage 'Welcome to the Uninstall Wizard' 'Thank you for choosing RS Nextward. This wizard reviews application removal while preserving your business records. Nothing will be removed during this preview.' 'Review installation')) { return }
  try {
   $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
+  $control=Join-Path $state 'desktop-control'
+  Assert-ArsPlainPath $control
+  if (Test-Path -LiteralPath (Join-Path $control 'maintenance.json')) {
+   if (-not (Show-ArsSetupPage 'Review existing protected backup' 'An existing maintenance hold was detected. Review its protected update recovery evidence. This does not certify a final uninstall backup or permit removal.' 'Select recovery')) { return }
+   $picker=New-Object Windows.Forms.FolderBrowserDialog
+   try {
+    $picker.Description='Select managed update recovery folder'
+    if ($picker.ShowDialog() -ne 'OK') { return }
+    $folder=$picker.SelectedPath
+   } finally { $picker.Dispose() }
+   $null=Get-ArsUninstallBackupReview $project $folder
+   $null=Show-ArsSetupPage 'Protected backup evidence matched' 'Existing protected update recovery evidence matched. Dedicated final uninstall backup and continuous writer protection are not yet certified. No removal performed.' 'Finish'
+   return
+  }
   $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
   $owned=$false
   try {
