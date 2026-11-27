@@ -10,7 +10,7 @@ import time
 import stat
 from urllib.request import urlopen
 from switch_journal import sync_dir
-from startup_guard import startup_allowed
+from startup_guard import startup_allowed, migration_mapping_valid
 from maintenance_backup import stopped, check_database_clients
 
 STATE=Path.home()/".local/share/ars-hardware"
@@ -41,6 +41,8 @@ def resume(confirmation):
             current=(STATE/"project").resolve(strict=True)
             if record.get("purpose")!="pre-update backup" or record.get("previousProject")!=str(current):
                 raise ValueError("Cannot confirm unchanged application. Manual review required.")
+            if not migration_mapping_valid(STATE):
+                raise ValueError("Runtime migration mapping is incomplete; maintenance hold retained.")
             saved=hold.read_bytes()
             stopped()
             check_database_clients(current)

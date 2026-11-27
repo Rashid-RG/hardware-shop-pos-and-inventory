@@ -235,6 +235,32 @@ class RecoveryTests(unittest.TestCase):
             self.assertFalse(startup_allowed(state))
             self.assertEqual((state/"runtime-migration-originals"/".env.local").read_text(),"fixture")
             self.assertEqual((project/".env.local").resolve(),state/"runtime"/".env.local")
+    def test_startup_rejects_incomplete_migration_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            project=root/"release"
+            project.mkdir()
+            (root/"project").symlink_to(project)
+            originals=root/"runtime-migration-originals"
+            originals.mkdir()
+            runtime=root/"runtime"
+            runtime.mkdir()
+            self.assertFalse(startup_allowed(root))
+            digest="a"*64
+            (runtime/"migration-receipt.json").write_text(json.dumps({"schema":1,"kind":"mint-runtime-migration-staged","activationAllowed":False,"storageDigest":digest}))
+            (runtime/"mapping-complete.json").write_text(json.dumps({"schema":1,"storageDigest":digest,"originalsRetained":True,"startupAllowed":False}))
+            for name in (".env.local","uploads","backups"):
+                for folder in (runtime,originals):
+                    if name==".env.local":
+                        (folder/name).write_text("fixture")
+                    else:
+                        (folder/name).mkdir()
+                (project/name).symlink_to(runtime/name)
+            self.assertTrue(startup_allowed(root))
+            (runtime/"uploads"/"new-photo").write_text("normal business change")
+            self.assertTrue(startup_allowed(root))
+            (project/"uploads").unlink()
+            self.assertFalse(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")
