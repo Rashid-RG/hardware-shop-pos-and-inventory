@@ -59,6 +59,22 @@ function Cancel-ArsUninstall([string]$project,[string]$confirmation) {
    $null=Review-ArsDesktopRegistration $project $state ([Environment]::GetFolderPath('DesktopDirectory')) ([Environment]::GetFolderPath('Programs'))
   }
   Assert-UnchangedInstallation
+  return (Complete-ArsUninstallCancellation $control $project $hold $proof $hashes $bytes $incidents ${function:Assert-UnchangedInstallation})
+
+ } finally {
+  if ($owned) {$mutex.ReleaseMutex()}
+  $mutex.Dispose()
+ }
+}
+# Internal only until integrated cancellation and interruption acceptance.
+
+function Complete-ArsUninstallCancellation([string]$control,[string]$project,$hold,$proof,$hashes,$bytes,[string[]]$incidents,[scriptblock]$check) {
+  # Internal file transition. Caller holds launcher mutex and validates live identity.
+  Assert-ArsPlainPath $control
+  Assert-ArsUninstallCancellation $hold $proof $project 'CANCEL UNINSTALL AND KEEP POS'
+  $marker=Join-Path $control 'maintenance.json'
+  $proofPath=Join-Path $control 'maintenance-shutdown.json'
+  & $check
   $history=Join-Path $control ('uninstall-cancelled-'+$hold.uninstallId)
   New-Item -ItemType Directory -Path $history -ErrorAction Stop|Out-Null
   foreach ($p in @($marker,$proofPath)) {
@@ -68,15 +84,10 @@ function Cancel-ArsUninstall([string]$project,[string]$confirmation) {
   }
   $receipt=[ordered]@{schema=1;kind='windows-uninstall-cancellation';uninstallId=$hold.uninstallId;previousProject=$project;cancelledAt=[DateTime]::UtcNow.ToString('o');holdDigest=$hashes[$marker];shutdownDigest=$hashes[$proofPath];backupArchivesRetained=$true;databaseRestored=$false;releaseSwitched=$false;applicationRemovalAllowed=$false;applicationStarted=$false}
   Write-ArsCancellationBytes (Join-Path $history 'cancellation.json') ([Text.Encoding]::UTF8.GetBytes(($receipt|ConvertTo-Json -Compress)))
-  Assert-UnchangedInstallation
+  & $check
   # Remove completion evidence first; the hold remains if interrupted.
   Remove-Item -LiteralPath $proofPath -ErrorAction Stop
   if ((Get-FileHash -LiteralPath $marker -Algorithm SHA256).Hash -cne $hashes[$marker] -or @(Get-ChildItem -LiteralPath $control -Force -ErrorAction Stop|Where-Object Name -in $incidents).Count) {throw 'Maintenance evidence changed; hold retained.'}
   Remove-Item -LiteralPath $marker -ErrorAction Stop
   return $receipt
- } finally {
-  if ($owned) {$mutex.ReleaseMutex()}
-  $mutex.Dispose()
- }
 }
-# Internal only until integrated cancellation and interruption acceptance.
