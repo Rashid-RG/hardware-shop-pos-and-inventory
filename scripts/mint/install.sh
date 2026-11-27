@@ -61,5 +61,15 @@ PY
 gio set "$desktop/ars-update-center.desktop" metadata::trusted true 2>/dev/null || true
 gio set "$desktop/ars-hardware.desktop" metadata::trusted true 2>/dev/null || true
 python3 scripts/mint/install-recovery-shortcut.py
+python3 - "$app/project/scripts/mint/maintenance-center.py" <<'PY'
+from pathlib import Path
+import sys
+script=sys.argv[1]
+arg=''.join('\\'+c if c in '"'+chr(96)+'$\\' else c for c in script).replace('\\','\\\\').replace('%','%%')
+target=Path.home()/".local/share/applications/ars-maintenance-center.desktop"
+with target.open("x") as stream:
+    stream.write(f'[Desktop Entry]\nType=Application\nName=RS Nextward Maintenance Center\nExec=/usr/bin/python3 "{arg}"\nIcon=ars-distributor\nTerminal=false\nCategories=System;\n')
+target.chmod(0o755)
+PY
 echo "ARS_SETUP_STAGE 5"
 echo "Setup complete. Open ARS Distributor POS on the desktop."

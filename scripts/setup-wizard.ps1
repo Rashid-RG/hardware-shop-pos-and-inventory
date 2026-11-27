@@ -115,6 +115,14 @@ try {
   $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
   $shortcut.Save()
  }
+ $maintenanceLink=Join-Path $programs 'RS Nextward Maintenance Center.lnk'
+ if (Test-Path -LiteralPath $maintenanceLink) { throw 'Existing maintenance shortcut retained.' }
+ $shortcut=$shell.CreateShortcut($maintenanceLink)
+ $shortcut.TargetPath=Join-Path $env:WINDIR 'System32\wscript.exe'
+ $shortcut.Arguments='"'+(Join-Path $root 'Maintenance-ARS-Distributor.vbs')+'"'
+ $shortcut.WorkingDirectory=$root
+ $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
+ $shortcut.Save()
  Set-ArsProgress 5 'Setup steps completed.'
  Close-ArsProgress
  if (Show-ArsSetupPage 'Setup completed' 'Thank you for choosing RS Nextward. Launch ARS to verify readiness and register the first administrator.' 'Launch ARS') {
