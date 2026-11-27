@@ -31,7 +31,7 @@ def select_offline_release(folder, confirmation):
     with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
         for lock in (maintenance,update):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json","switch-journal.json"):
+        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json","switch-journal.json","repair-interrupted.json"):
             if os.path.lexists(STATE/name):
                 raise ValueError("Unresolved recovery evidence.")
         raw=proposal.read(target)
@@ -80,7 +80,7 @@ def rollback_offline_release(confirmation):
     with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
         for lock in (maintenance,update):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json"):
+        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json","repair-interrupted.json"):
             if os.path.lexists(STATE/name):
                 raise ValueError("Unresolved recovery evidence.")
         raw=proposal.read(target)
@@ -143,7 +143,7 @@ def finalize_offline_rollback(confirmation):
     with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
         for lock in (maintenance,update):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json"):
+        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json","repair-interrupted.json"):
             if os.path.lexists(STATE/name):
                 raise ValueError("Unresolved recovery evidence.")
         hold=STATE/"maintenance-hold.json"
