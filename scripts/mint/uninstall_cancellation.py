@@ -79,31 +79,40 @@ def cancel(confirmation):
             stopped()
             check_database_clients(project)
         check()
-        history=STATE/("uninstall-cancelled-"+uid)
-        history.mkdir(mode=0o700)
-        archive_bytes(history/hold.name,raw_hold)
-        archive_bytes(history/proof.name,raw_proof)
-        if read_regular(history/hold.name)!=raw_hold or read_regular(history/proof.name)!=raw_proof:
-            raise ValueError("Archived evidence differs.")
-        record={"schema":1,"kind":"mint-uninstall-cancellation","uninstallId":uid,
-                "previousProject":str(project),"cancelledAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "holdDigest":hashlib.sha256(raw_hold).hexdigest(),"shutdownDigest":hashlib.sha256(raw_proof).hexdigest(),
-                "backupArchivesRetained":True,"databaseRestored":False,"releaseSwitched":False,
-                "applicationRemovalAllowed":False,"applicationStarted":False}
-        retain(history/"cancellation.json",record)
-        sync_dir(STATE)
-        check()
-        # Archive first, clear proof first, clear startup block last.
-        # A crash between the two unlinks leaves startup blocked.
-        proof.unlink()
-        sync_dir(STATE)
-        if read_regular(hold)!=raw_hold or any(os.path.lexists(STATE/name) for name in INCIDENTS):
-            raise ValueError("Maintenance evidence changed; hold retained.")
-        hold.unlink()
-        sync_dir(STATE)
-        if not startup_allowed(STATE):
-            archive_bytes(hold,raw_hold)
-            sync_dir(STATE)
-            raise ValueError("Startup remains blocked; manual review required.")
-        return record
+        return complete_cancellation(STATE,project,hold,proof,raw_hold,raw_proof,uid,check)
+
 # Internal until end-to-end cancellation and backup orchestration are rehearsed.
+
+
+def complete_cancellation(state,project,hold,proof,raw_hold,raw_proof,uid,check):
+    # Caller must hold both maintenance locks and perform live identity checks.
+    if validate(raw_hold,raw_proof,project,CONFIRMATION)!=uid or hold!=state/'maintenance-hold.json' or proof!=state/'uninstall-shutdown.json':
+        raise ValueError('Invalid cancellation binding.')
+    check()
+    history=state/("uninstall-cancelled-"+uid)
+    history.mkdir(mode=0o700)
+    archive_bytes(history/hold.name,raw_hold)
+    archive_bytes(history/proof.name,raw_proof)
+    if read_regular(history/hold.name)!=raw_hold or read_regular(history/proof.name)!=raw_proof:
+        raise ValueError("Archived evidence differs.")
+    record={"schema":1,"kind":"mint-uninstall-cancellation","uninstallId":uid,
+            "previousProject":str(project),"cancelledAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "holdDigest":hashlib.sha256(raw_hold).hexdigest(),"shutdownDigest":hashlib.sha256(raw_proof).hexdigest(),
+            "backupArchivesRetained":True,"databaseRestored":False,"releaseSwitched":False,
+            "applicationRemovalAllowed":False,"applicationStarted":False}
+    retain(history/"cancellation.json",record)
+    sync_dir(state)
+    check()
+    # Archive first, clear proof first, clear startup block last.
+    # A crash between the two unlinks leaves startup blocked.
+    proof.unlink()
+    sync_dir(state)
+    if read_regular(hold)!=raw_hold or any(os.path.lexists(state/name) for name in INCIDENTS):
+        raise ValueError("Maintenance evidence changed; hold retained.")
+    hold.unlink()
+    sync_dir(state)
+    if not startup_allowed(state):
+        archive_bytes(hold,raw_hold)
+        sync_dir(state)
+        raise ValueError("Startup remains blocked; manual review required.")
+    return record
