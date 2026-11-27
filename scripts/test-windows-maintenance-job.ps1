@@ -1,6 +1,6 @@
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:OS -ne 'Windows_NT') {throw 'Disposable Windows CI runner required.'}
-Add-Type -Path @((Join-Path $PSScriptRoot 'windows-maintenance-job.cs'),(Join-Path $PSScriptRoot 'windows-maintenance-suspended-worker.cs'))
+Add-Type -Path @((Join-Path $PSScriptRoot 'windows-maintenance-job.cs'),(Join-Path $PSScriptRoot 'windows-maintenance-suspended-worker.cs'),(Join-Path $PSScriptRoot 'windows-maintenance-cancellation-bridge.cs'))
 $nodeCommand=Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $node=[IO.Path]::GetFullPath([string]$nodeCommand.Path)
 if (-not [IO.File]::Exists($node)) {throw 'Native Node executable unavailable.'}
@@ -72,4 +72,68 @@ try {
    if (Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue) {throw 'Cancelled job process remained active.'}
   }
  } finally {$cts.Dispose()}
+ # Verify authorization rejection using in-memory private control streams.
+ $bridgeMarker=Join-Path $fixture 'bridge-refused.txt'
+ foreach ($bytes in @([byte[]]@(),[byte[]]@(88))) {
+  $control=New-Object IO.MemoryStream
+  try {
+   if ($bytes.Length) {$control.Write($bytes,0,$bytes.Length)}
+   $control.Position=0
+   $blocked=$false
+   try {[RSNextward.Maintenance.CancellationBridge]::Run($control,$node,[string[]]@('-e','require("node:fs").writeFileSync(process.argv[1],"unexpected")',$bridgeMarker),$fixture,15000)} catch {
+    if (-not $_.Exception.ToString().Contains('Maintenance authorization unavailable.')) {throw}
+    $blocked=$true
+   }
+   if (-not $blocked -or (Test-Path -LiteralPath $bridgeMarker)) {throw 'Unauthorized bridge worker executed.'}
+  } finally {$control.Dispose()}
+ }
+ # Managed fixture supplies a deterministic private stream, with its second
+ # read blocked until the worker signals readiness by creating a marker.
+ Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Threading;
+public sealed class ArsBridgeFixtureStream : Stream {
+    private readonly string marker;
+    private readonly int revokeByte;
+    private int reads;
+    public ArsBridgeFixtureStream(string marker, int revokeByte) { this.marker=marker; this.revokeByte=revokeByte; }
+    public override int ReadByte() {
+        if (Interlocked.Increment(ref reads)==1) return 65;
+        for(int i=0;i<400;i++) {
+            if(File.Exists(marker)) { if(revokeByte == -2) throw new IOException("fixture disconnect"); return revokeByte; }
+            Thread.Sleep(25);
+        }
+        throw new IOException("fixture readiness timeout");
+    }
+    public override bool CanRead {get{return true;}}
+    public override bool CanSeek {get{return false;}}
+    public override bool CanWrite {get{return false;}}
+    public override long Length {get{throw new NotSupportedException();}}
+    public override long Position {get{throw new NotSupportedException();}set{throw new NotSupportedException();}}
+    public override void Flush(){}
+    public override int Read(byte[] b,int o,int n){throw new NotSupportedException();}
+    public override long Seek(long o,SeekOrigin s){throw new NotSupportedException();}
+    public override void SetLength(long l){throw new NotSupportedException();}
+    public override void Write(byte[] b,int o,int n){throw new NotSupportedException();}
+}
+'@
+ foreach ($revoke in @(-1,88,-2)) {
+  $ready=Join-Path $fixture "bridge-$revoke.json"
+  $source='const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true});const fs=require("node:fs");fs.writeFileSync(process.argv[1]+".tmp",JSON.stringify([process.pid,c.pid]));fs.renameSync(process.argv[1]+".tmp",process.argv[1]);setInterval(()=>{},1000)'
+  $control=New-Object ArsBridgeFixtureStream -ArgumentList $ready,$revoke
+  try {
+   $blocked=$false
+   try {[RSNextward.Maintenance.CancellationBridge]::Run($control,$node,[string[]]@('-e',$source,$ready),$fixture,15000)} catch {
+    if (-not ($_.Exception.InnerException -is [OperationCanceledException])) {throw}
+    $blocked=$true
+   }
+   if (-not $blocked -or -not (Test-Path -LiteralPath $ready)) {throw 'Bridge revocation rehearsal failed.'}
+   $ids=Get-Content -LiteralPath $ready -Raw|ConvertFrom-Json
+   if ($ids.Count -ne 2) {throw 'Invalid bridge fixture evidence.'}
+   foreach ($workerId in $ids) {
+    if (Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue) {throw 'Revoked bridge job survived.'}
+   }
+  } finally {$control.Dispose()}
+ }
 } finally {Remove-Item -LiteralPath $fixture -Recurse -Force}
