@@ -157,6 +157,13 @@ jobs:
           fi
           command -v pdftotext >/dev/null
           node --import tsx --test tests/ars-shared-stock-pdf.integration.mjs
+      - name: Verify multipage PDF and workbook branding
+        run: |
+          set -euo pipefail
+          output="$(mktemp -d)"
+          trap 'rm -rf "$output"' EXIT
+          node --import tsx scripts/generate-report-compatibility-fixtures.ts "$output"
+          python3 scripts/verify-report-branding.py "$output"
       - name: Frontend and server production build
         run: npm run build
   database-validation:
