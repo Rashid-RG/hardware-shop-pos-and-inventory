@@ -37,7 +37,7 @@ class RecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             self.assertTrue(startup_allowed(root))
-            for name in ("runtime-switch-intent.json","maintenance-hold.json","runtime-activation-interrupted.json","handoff-pending.json"):
+            for name in ("runtime-switch-intent.json","maintenance-hold.json","runtime-activation-interrupted.json","handoff-pending.json","runtime-migration-interrupted.json"):
                 marker=root/name
                 marker.touch()
                 self.assertFalse(startup_allowed(root))
@@ -204,6 +204,37 @@ class RecoveryTests(unittest.TestCase):
                     self.assertFalse((source/".env.local").is_symlink())
                     self.assertEqual((source/"uploads"/"photo").read_text(),"image")
                     self.assertEqual((root/"runtime"/".env.local").read_text(),"fixture")
+    def test_mapping_entry_point_retains_hold_and_originals(self):
+        import hashlib
+        import maintenance_backup
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            state=Path(tmp)
+            project=state/"release"
+            project.mkdir()
+            (state/"project").symlink_to(project)
+            (project/".env.local").write_text("fixture")
+            (project/"uploads").mkdir()
+            (project/"backups").mkdir()
+            staged=state/"runtime-migration-staged"
+            layout.copy_legacy_storage(project,staged)
+            digest=layout.verify_staged_storage(project,staged)
+            hold=state/"maintenance-hold.json"
+            raw=json.dumps({"purpose":"pre-update backup","previousProject":str(project)}).encode()
+            hold.write_bytes(raw)
+            (staged/"migration-receipt.json").write_text(json.dumps({"schema":1,"kind":"mint-runtime-migration-staged","source":str(project),"storageDigest":digest,"holdDigest":hashlib.sha256(raw).hexdigest(),"activationAllowed":False}))
+            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",state/"runtime"), patch.object(layout.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+                with self.assertRaisesRegex(ValueError,"approval"):
+                    layout.map_staged_runtime(project,"")
+                result=layout.map_staged_runtime(project,"MAP VERIFIED RUNTIME")
+            self.assertTrue(result["mapped"])
+            self.assertFalse(result["startupAllowed"])
+            self.assertEqual(hold.read_bytes(),raw)
+            self.assertFalse(startup_allowed(state))
+            self.assertEqual((state/"runtime-migration-originals"/".env.local").read_text(),"fixture")
+            self.assertEqual((project/".env.local").resolve(),state/"runtime"/".env.local")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

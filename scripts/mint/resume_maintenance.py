@@ -32,7 +32,7 @@ def resume(confirmation):
             fcntl.flock(update,fcntl.LOCK_EX|fcntl.LOCK_NB)
             hold=STATE/"maintenance-hold.json"
             journal=STATE/"switch-journal.json"
-            for name in ("runtime-switch-intent.json","runtime-activation-interrupted.json","handoff-pending.json"):
+            for name in ("runtime-switch-intent.json","runtime-activation-interrupted.json","handoff-pending.json","runtime-migration-interrupted.json"):
                 if os.path.lexists(STATE/name):
                     raise ValueError("Retained update evidence requires manual review before resume.")
             if hold.is_symlink() or not hold.is_file() or journal.exists() or journal.is_symlink():
