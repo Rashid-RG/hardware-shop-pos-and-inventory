@@ -4,6 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+. (Join-Path $PSScriptRoot 'windows-uninstall-preview.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-activation-plan.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
 function Get-ArsMaintenanceSummary {
@@ -55,6 +56,10 @@ try {
     [void][Windows.Forms.MessageBox]::Show('Interruption evidence could not be verified. Marker retained. No startup or rollback performed.',$title,'OK','Error')
    }
    break
+  }
+  if ([Windows.Forms.MessageBox]::Show('Open the data-preserving Uninstall Wizard preview?',$title,'YesNo','Question') -eq 'Yes') {
+   Show-ArsUninstallPreview $root
+   continue
   }
   if ([Windows.Forms.MessageBox]::Show('Review completed repair readiness evidence?',$title,'YesNo','Question') -eq 'Yes') {
    $picker=New-Object Windows.Forms.FolderBrowserDialog
