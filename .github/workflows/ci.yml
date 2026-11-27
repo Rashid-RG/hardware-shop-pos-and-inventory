@@ -15,6 +15,34 @@ permissions:
   contents: read
 
 jobs:
+  tested-dependency-transfer:
+    # One-time read-only transport of the exact validated proposal.
+    # Remove this job when the verified manifest and lockfile are adopted.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Retrieve pinned tested dependency artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-final-proposal
+          run-id: 45948885686
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: tested-dependencies
+      - name: Verify and expose exact dependency files for adoption
+        working-directory: tested-dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' '5d403d1e33c3d2cff8cef24d05074e59fe654313c8457afe273157fcc3a944d1  package.json' 'edff9c8508ed4eaec7d66954b1be53fd1fea8cc21319bff3ad6bf895e5140bce  package-lock.json' 'e7c20dc4194a50158921360fc11df225c73fc41e20d993b8ecb2dfafe86f8f93  final-audit.json' | sha256sum --check
+          # These are dependency metadata only; never emit environment files or credentials.
+          for file in package.json package-lock.json; do
+            printf 'ARS_TESTED_FILE_BEGIN %s\n' "$file"
+            base64 -w 2048 "$file" | sed 's/^/ARS_TESTED_DATA /'
+            printf 'ARS_TESTED_FILE_END %s\n' "$file"
+          done
   windows-pilot-checks:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -109,72 +137,6 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Prepare non-forced dependency remediation proposal
-        run: |
-          set -euo pipefail
-          mkdir -p security-proposal
-          cp package.json package-lock.json security-proposal/
-          (
-            cd security-proposal
-            npm audit fix --package-lock-only --ignore-scripts --no-fund || true
-            npm audit --json > remaining.json || true
-            node -e 'const r=require("./remaining.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Proposed audit totals:",JSON.stringify(r.metadata.vulnerabilities)); for(const [name,v] of Object.entries(r.vulnerabilities||{})) console.log(name,v.severity,JSON.stringify(v.fixAvailable));'
-            node -e 'const old=require("../package-lock.json").packages, next=require("./package-lock.json").packages; for(const [k,v] of Object.entries(next)) if(k && old[k]?.version!==v.version) console.log(k,old[k]?.version||"new","=>",v.version);'
-          )
-      - name: Retain proposed dependency lockfile for review
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-remediation-proposal
-          path: security-proposal/
-          retention-days: 14
-      - name: Prepare targeted direct dependency upgrade proposal
-        run: |
-          set -euo pipefail
-          mkdir -p security-targeted
-          cp package.json package-lock.json security-targeted/
-          (
-            cd security-targeted
-            # Explicit versions from the audit, not an unrestricted forced upgrade.
-            npm pkg set 'dependencies.nodemailer=10.6.1' 'dependencies.vite=5.4.21' 'devDependencies.vite=5.4.21' 'devDependencies.postcss=8.5.33'
-            npm install --package-lock-only --ignore-scripts --no-fund
-            npm audit fix --package-lock-only --ignore-scripts --no-fund || true
-            npm audit --json > remaining.json || true
-            node -e 'const r=require("./remaining.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Targeted audit totals:",JSON.stringify(r.metadata.vulnerabilities)); for(const [name,v] of Object.entries(r.vulnerabilities||{})) console.log(name,v.severity,JSON.stringify(v.fixAvailable));'
-          )
-      - name: Retain targeted direct dependency proposal
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-targeted-proposal
-          path: security-targeted/
-          retention-days: 14
-      - name: Test final build-tool upgrade in isolated checkout
-        run: |
-          set -euo pipefail
-          proposal="$(mktemp -d)"
-          git archive HEAD | tar -x -C "$proposal"
-          (
-            cd "$proposal"
-            # Resolve an explicit modern React plugin version rather than retaining a stale latest tag in the lockfile.
-            plugin="$(npm view '@vitejs/plugin-react@6' version --json | node -e 'let b="";process.stdin.on("data",c=>b+=c);process.stdin.on("end",()=>{const v=JSON.parse(b);const selected=Array.isArray(v)?v.at(-1):v;if(typeof selected!=="string"||!/^6\.[0-9]+\.[0-9]+$/.test(selected))process.exit(1);console.log(selected);});')"
-            npm view "@vitejs/plugin-react@$plugin" peerDependencies --json
-            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' "dependencies.@vitejs/plugin-react=$plugin" 'devDependencies.esbuild=0.28.2'
-            # Remove only the obsolete plugin entry in the disposable proposal.
-            node -e 'const fs=require("node:fs");const f="package-lock.json";const lock=JSON.parse(fs.readFileSync(f,"utf8"));delete lock.packages["node_modules/@vitejs/plugin-react"];fs.writeFileSync(f,JSON.stringify(lock,null,2)+"\n");'
-            npm install --package-lock-only --ignore-scripts --no-fund
-            npm ci
-            npm run lint
-            npm run build
-            npm audit --json > final-audit.json || true
-            node -e 'const r=require("./final-audit.json"); if(r.error || !r.metadata?.vulnerabilities) process.exit(1); console.log("Final proposal audit:",JSON.stringify(r.metadata.vulnerabilities));'
-            mkdir -p "$GITHUB_WORKSPACE/security-final"
-            cp package.json package-lock.json final-audit.json "$GITHUB_WORKSPACE/security-final/"
-          )
-      - name: Retain tested final dependency proposal
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-final-proposal
-          path: security-final/
-          retention-days: 14
       - name: Dependency security audit (production and development)
         run: |
           set -euo pipefail
