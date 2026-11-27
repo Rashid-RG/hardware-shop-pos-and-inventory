@@ -440,7 +440,7 @@ test('combined activation transfer retains gate across candidate and rollback ch
  });
 });
 
-for(const failure of ['database-session-loss','ipc-disconnect']){
+for(const failure of ['database-session-loss','ipc-disconnect','forced-child-exit']){
 test('disposable child releases leases after '+failure,{timeout:30000},async()=>{
  const {fork}=await import('node:child_process');
  const {fileURLToPath}=await import('node:url');
@@ -489,18 +489,30 @@ test('disposable child releases leases after '+failure,{timeout:30000},async()=>
    await c.end();
    // Keep IPC open: only the database gate has disappeared.
    assert.equal(child.connected,true);
-  }else{
+  }else if(failure==='ipc-disconnect'){
    // Parent channel loss must stop the child even with the gate still held.
    child.disconnect();
+  }else{
+   // Abrupt process death bypasses the watchdog and normal cleanup.
+   assert.equal(child.kill('SIGKILL'),true);
   }
   const result=await Promise.race([closed,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Watchdog did not stop the child.')),10000);})]);
   clearTimeout(timer);
-  assert.deepEqual(result,{code:1,signal:null});
-  if(failure==='ipc-disconnect'){
+  if(failure==='forced-child-exit')assert.deepEqual(result,{code:null,signal:'SIGKILL'});
+  else assert.deepEqual(result,{code:1,signal:null});
+  if(failure!=='database-session-loss'){
    await assertGateOwner(probe,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
    assert.equal(await lock(probe,keys.gateId),false);
   }else assert.equal(await lock(probe,keys.gateId),true);
-  for(const id of [keys.writerId,keys.fenceId])assert.equal(await lock(probe,id),true);
+  // PostgreSQL may need a short interval to observe the dead socket.
+  for(const id of [keys.writerId,keys.fenceId]){
+   let acquired=false;
+   for(let attempt=0;attempt<100&&!acquired;attempt++){
+    acquired=await lock(probe,id);
+    if(!acquired)await new Promise(resolve=>setTimeout(resolve,25));
+   }
+   assert.equal(acquired,true,'Child lease did not clear');
+  }
  }finally{
   clearTimeout(timer);
   if(child&&child.exitCode===null&&child.signalCode===null)child.kill();
