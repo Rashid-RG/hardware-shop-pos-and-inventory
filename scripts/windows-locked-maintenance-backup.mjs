@@ -3,7 +3,7 @@
 import pg from 'pg';
 import { acquireHandoffGate, acquireMaintenanceTransactionFence } from './database-handoff-gate.mjs';
 import dotenv from 'dotenv';
-import {readFileSync,realpathSync,openSync,writeFileSync,fsyncSync,closeSync,createReadStream} from 'node:fs';
+import {readFileSync,realpathSync,openSync,writeFileSync,fsyncSync,closeSync,createReadStream,lstatSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fingerprintPublicTables,assertFingerprintMatch} from './uninstall-table-fingerprints.mjs';
 import {join,dirname,resolve,basename} from 'node:path';
@@ -14,6 +14,23 @@ async function main(){
  const uninstall=process.argv[3]==='--uninstall-manifest';
  if(process.platform!=='win32'||process.argv.length!==(uninstall?4:3)||process.env.ARS_RUNTIME_ROOT!==undefined) throw Error('Unsupported maintenance runtime.');
  const destination=realpathSync(process.argv[2]);
+ const evidence=()=>{
+  if(!process.env.LOCALAPPDATA)throw Error('Local application state unavailable.');
+  const state=join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor');
+  const control=join(state,'desktop-control');
+  const read=name=>{
+   const path=join(control,name);
+   const st=lstatSync(path);
+   if(!st.isFile()||st.isSymbolicLink()||st.size<1||st.size>65536||realpathSync(path).toLowerCase()!==resolve(path).toLowerCase())throw Error('Invalid maintenance evidence.');
+   const raw=readFileSync(path);
+   return {value:JSON.parse(raw.toString('utf8').replace(/^\uFEFF/,'')),digest:createHash('sha256').update(raw).digest('hex').toUpperCase()};
+  };
+  const h=read('maintenance.json'),p=read('maintenance-shutdown.json');
+  const a=h.value,b=p.value;
+  if(a.schema!==1||b.schema!==1||a.purpose!=='pre-uninstall backup'||b.purpose!==a.purpose||typeof a.project!=='string'||typeof b.project!=='string'||a.project.toLowerCase()!==root.toLowerCase()||b.project.toLowerCase()!==root.toLowerCase()||!/^[a-f0-9]{32}$/.test(a.uninstallId)||b.uninstallId!==a.uninstallId||a.shutdownVerified!==false||b.shutdownVerified!==true||a.pid!==b.pid||!Number.isInteger(a.pid)||a.pid<1||a.startedUtc!==b.startedUtc||a.requestedAt!==b.requestedAt||[a,b].some(r=>['applicationRemovalAllowed','databaseDeletionAllowed','activationApproved'].some(k=>r[k]!==false))||destination.toLowerCase()!==join(state,'uninstall-recovery',a.uninstallId).toLowerCase())throw Error('Matching non-authorizing shutdown evidence required.');
+  return {uninstallId:a.uninstallId,holdDigest:h.digest,shutdownDigest:p.digest};
+ };
+ const shutdown=uninstall?evidence():null;
  const config=dotenv.parse(readFileSync(join(root,'.env.local')));
  const url=new URL(config.DATABASE_URL);
  if(!['postgres:','postgresql:'].includes(url.protocol)||!['localhost','127.0.0.1','[::1]'].includes(url.hostname)||url.port!=='5433'||url.pathname!=='/hardware_pos'||url.search||url.hash||!url.username||!url.password) throw Error('Unsupported database configuration.');
@@ -56,7 +73,8 @@ async function main(){
    for await(const chunk of createReadStream(archive))hash.update(chunk);
    const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
    if(locks.rows[0]?.count!==3||failure)throw Error('Database protection lost.');
-   const manifest={schema:1,kind:'windows-uninstall-table-manifest',archive:basename(archive),dumpSha256:hash.digest('hex'),tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
+   if(JSON.stringify(evidence())!==JSON.stringify(shutdown))throw Error('Shutdown evidence changed during protected backup.');
+   const manifest={...shutdown,schema:1,kind:'windows-uninstall-table-manifest',archive:basename(archive),dumpSha256:hash.digest('hex'),tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
    const fd=openSync(join(destination,'uninstall-table-manifest.json'),'wx',0o600);
    try{writeFileSync(fd,JSON.stringify(manifest)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   }
