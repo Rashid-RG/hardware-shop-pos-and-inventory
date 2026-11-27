@@ -5,10 +5,11 @@ $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-rollback-preparation.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
- foreach ($name in @('maintenance.json','runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json')) {
+ foreach ($name in @('maintenance.json','runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json','repair-interrupted.json')) {
   if (Test-Path -LiteralPath (Join-Path $control $name)) { $held=$true }
  }
  $build=(Test-Path -LiteralPath (Join-Path $root 'dist/server.cjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $root 'dist/index.html') -PathType Leaf)
@@ -45,6 +46,16 @@ function Get-ArsMaintenanceSummary {
 }
 try {
  while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Maintenance tools') {
+  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
+  if (@(Get-ChildItem -LiteralPath $control -Force -ErrorAction SilentlyContinue | Where-Object Name -eq 'repair-interrupted.json').Count) {
+   try {
+    $null=Review-ArsRepairInterruption
+    [void][Windows.Forms.MessageBox]::Show('Interruption evidence and rollback preparation matched. Startup remains blocked. Contact RS Nextward support.',$title,'OK','Information')
+   } catch {
+    [void][Windows.Forms.MessageBox]::Show('Interruption evidence could not be verified. Marker retained. No startup or rollback performed.',$title,'OK','Error')
+   }
+   break
+  }
   if ([Windows.Forms.MessageBox]::Show('Review completed repair readiness evidence?',$title,'YesNo','Question') -eq 'Yes') {
    $picker=New-Object Windows.Forms.FolderBrowserDialog
    try {

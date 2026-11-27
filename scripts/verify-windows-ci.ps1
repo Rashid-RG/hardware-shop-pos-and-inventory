@@ -21,6 +21,7 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
 & (Join-Path $PSScriptRoot 'test-windows-repair-readiness.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-repair-native-probe.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-repair-rollback-preparation.ps1')
+& (Join-Path $PSScriptRoot 'test-windows-repair-interruption.ps1')
 $postgresRoot = Join-Path $env:ProgramFiles 'PostgreSQL'
 $bin = Get-ChildItem $postgresRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'bin/initdb.exe') } |
   Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1

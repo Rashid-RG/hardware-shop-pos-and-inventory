@@ -21,7 +21,7 @@ export function assertOrdinaryStartupAllowed() {
     if (!base || !path.isAbsolute(base)) throw new Error('Local maintenance location unavailable. Startup blocked.');
     assertNoMaintenanceEvidence(path.join(base, 'RS Nextward', 'ARS Distributor', 'desktop-control'), [
       'maintenance.json', 'maintenance-shutdown.json', 'activation.json', 'handoff-pending.json',
-      'runtime-switch-intent.json', 'runtime-switch-journal.json', 'runtime-active.json',
+      'runtime-switch-intent.json', 'runtime-switch-journal.json', 'runtime-active.json', 'repair-interrupted.json',
     ]);
   } else if (process.platform === 'linux') {
     assertNoMaintenanceEvidence(path.join(os.homedir(), '.local', 'share', 'ars-hardware'), [
