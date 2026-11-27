@@ -16,6 +16,7 @@ try {
   }
   $m=Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
   $v=Get-Content -LiteralPath $proof -Raw | ConvertFrom-Json
+  if ($null -ne $m.purpose -or $null -ne $v.purpose) {throw 'Dedicated uninstall maintenance requires its own cancellation procedure.'}
   if ($m.schema -ne 1 -or $v.schema -ne 1 -or $m.project -ine $root -or $v.project -ine $root -or $m.pid -ne $v.pid -or $m.startedUtc -cne $v.startedUtc -or $m.requestedAt -cne $v.requestedAt -or $m.shutdownVerified -ne $false -or $v.shutdownVerified -ne $true -or $m.activationApproved -ne $false -or $v.activationApproved -ne $false) { throw 'Matching verified pre-activation shutdown required. Contact support for interrupted maintenance.' }
   if (Test-Path -LiteralPath (Join-Path $control 'instance.json')) { throw 'Managed instance remains; cancellation blocked.' }
   if (Test-Path -LiteralPath (Join-Path $control 'activation.json')) { throw 'Activation evidence exists; use dedicated recovery procedure.' }
