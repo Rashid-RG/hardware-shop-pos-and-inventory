@@ -7,6 +7,7 @@ try {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $scriptDir '..')
 if ($DesktopLaunch) {
+  . (Join-Path $scriptDir 'windows-desktop-window.ps1')
   $launchMutex = New-Object System.Threading.Mutex($false, 'Local\ARSDistributorPOSLauncher')
   try { $ownsLaunch = $launchMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsLaunch = $true }
   if (-not $ownsLaunch) { return }
@@ -271,7 +272,7 @@ if ($portProcess) {
     try {
       $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 3
       if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
-        Start-Process 'http://localhost:3000'
+        Open-ArsDesktopWindow
         return
       }
     } catch { }
@@ -330,7 +331,7 @@ if ($DesktopLaunch) {
     try {
       $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 2
       if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
-        Start-Process 'http://localhost:3000'
+        Open-ArsDesktopWindow
         return
       }
     } catch { }

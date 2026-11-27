@@ -34,7 +34,8 @@ def launch():
                                 capture_output=True, text=True)
         state = result.stdout.strip()
         if state == 'active' and ready():
-            subprocess.run(['xdg-open', URL], check=True)
+            from desktop_window import open_window
+            open_window()
             return
         if state == 'failed':
             break

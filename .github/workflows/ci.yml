@@ -50,6 +50,7 @@ jobs:
         run: |
           python3 scripts/mint/test-release-fingerprint.py
           python3 scripts/mint/test-open.py
+          python3 scripts/mint/test-desktop-window.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py
