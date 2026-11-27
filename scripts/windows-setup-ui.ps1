@@ -81,6 +81,13 @@ function Open-ArsProgress {
  $script:progressBar.SetBounds(26,244,586,22)
  $script:progressBar.Maximum=5
  $script:progressForm.Controls.Add($script:progressBar)
+ $script:stageActivity=New-Object Windows.Forms.ProgressBar
+ $script:stageActivity.SetBounds(26,282,586,12)
+ $script:progressForm.Controls.Add($script:stageActivity)
+ $script:elapsedText=New-Object Windows.Forms.Label
+ $script:elapsedText.SetBounds(26,310,586,44)
+ $script:progressForm.Controls.Add($script:elapsedText)
+ $script:progressForm.Add_FormClosing({param($sender,$eventArgs) if ($eventArgs.CloseReason -eq [Windows.Forms.CloseReason]::UserClosing) { $eventArgs.Cancel=$true }})
  $script:progressForm.Show()
  [Windows.Forms.Application]::DoEvents()
 }

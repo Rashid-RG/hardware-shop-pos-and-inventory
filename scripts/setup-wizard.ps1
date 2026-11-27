@@ -51,6 +51,7 @@ try {
  . (Join-Path $PSScriptRoot 'windows-setup-resume.ps1')
  Consume-ArsSetupResume
  . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+ . (Join-Path $PSScriptRoot 'windows-setup-stage.ps1')
  if (-not (Show-ArsSetupPage 'Welcome to Setup' ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
  Assert-FreshFiles
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
@@ -62,9 +63,9 @@ try {
  Assert-Fresh
  Open-ArsProgress
  Set-ArsProgress 0 'Installing locked application dependencies...'
- Invoke-Checked 'npm.cmd' @('ci','--include=dev')
+ Invoke-ArsSetupStage 'dependencies'
  Set-ArsProgress 1 'Building the production application...'
- Invoke-Checked 'npm.cmd' @('run','build')
+ Invoke-ArsSetupStage 'build'
  Assert-Fresh
  Set-ArsProgress 2 'Preparing private database credentials...'
  # Create configuration exclusively. Never replace credentials or use legacy defaults.
@@ -85,7 +86,7 @@ try {
  } finally { $stream.Dispose() }
  Set-ArsProgress 3 'Downloading and starting PostgreSQL...'
  # Separate Compose project and loopback-only port. No deletion on failure.
- Invoke-Checked 'docker' @('compose','-p','ars-windows-pilot','--env-file','.env.local','-f','scripts/windows-pilot-compose.yml','up','-d','--wait')
+ Invoke-ArsSetupStage 'database'
  Set-ArsProgress 4 'Creating desktop and Start menu shortcuts...'
  # Create user shortcuts only if no existing shortcut would be overwritten.
  $desktop=[Environment]::GetFolderPath('DesktopDirectory')
