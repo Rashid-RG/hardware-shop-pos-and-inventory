@@ -36,3 +36,61 @@ def review(observation, uninstall_id, archive, evidence, members):
             "uninstallId": uninstall_id, "restoreObservationMatched": True,
             "evidenceDigests": dict(evidence), "archiveMemberDigests": dict(members),
             **{flag: False for flag in FLAGS}}
+
+
+def inspect(folder):
+    """Read and compare current managed recovery evidence under maintenance locks."""
+    import fcntl
+    import hashlib
+    import importlib.util
+    import json
+    import os
+    from pathlib import Path
+    from repair_interruption import read_regular
+    from resume_maintenance import open_lock
+    from maintenance_backup import stopped
+    from uninstall_cancellation import validate, CONFIRMATION
+
+    state = Path.home() / ".local/share/ars-hardware"
+    if os.geteuid() == 0 or state.resolve(strict=True) != state or state.stat().st_uid != os.getuid():
+        raise ValueError("Managed desktop user required.")
+    if folder.parent != state / "uninstall-recovery" or folder.resolve(strict=True) != folder or folder.stat().st_uid != os.getuid() or not re.fullmatch(r"[a-f0-9]{32}", folder.name):
+        raise ValueError("Managed uninstall recovery required.")
+    spec = importlib.util.spec_from_file_location("uninstall_restore", Path(__file__).with_name("test-uninstall-restore-isolated.py"))
+    restore = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(restore)
+    prepare = restore.load_prepare()
+    paths = {"hold": state / "maintenance-hold.json", "shutdown": state / "uninstall-shutdown.json",
+             "meta": folder / "recovery.json", "receipt": folder / "maintenance-backup-receipt.json",
+             "restore": folder / "uninstall-restore-test.json"}
+    def snapshot():
+        for marker in ("repair-interrupted.json", "runtime-switch-intent.json", "runtime-activation-interrupted.json", "runtime-migration-interrupted.json", "switch-journal.json", "handoff-pending.json"):
+            if os.path.lexists(state / marker):
+                raise ValueError("Unresolved maintenance incident.")
+        stopped()
+        project = (state / "project").resolve(strict=True)
+        if project != Path(__file__).resolve().parents[2]:
+            raise ValueError("Managed installation required.")
+        raw = {key: read_regular(path) for key, path in paths.items()}
+        hold, meta, receipt = (json.loads(raw[key]) for key in ("hold", "meta", "receipt"))
+        validate(raw["hold"], raw["shutdown"], project, CONFIRMATION)
+        prepare.validate_hold(hold, project, meta["version"])
+        digests = {key: hashlib.sha256(value).hexdigest() for key, value in raw.items() if key != "restore"}
+        if hold["uninstallId"] != folder.name or meta.get("uninstallId") != folder.name or meta.get("kind") != "mint-final-uninstall-backup" or meta.get("previousProject") != str(project) or meta.get("shutdownDigest") != digests["shutdown"] or any(meta.get(key) is not False for key in ("activationApproved", "restoreTestPassed", "applicationRemovalAllowed", "databaseDeletionAllowed")):
+            raise ValueError("Backup identity mismatch.")
+        if receipt.get("kind") != "mint-uninstall-backup-observation" or receipt.get("uninstallId") != folder.name or receipt.get("holdDigest") != digests["hold"] or receipt.get("shutdownDigest") != digests["shutdown"] or receipt.get("recoveryDigest") != digests["meta"] or receipt.get("archive") != meta["archive"] or receipt.get("database") != "hardware_pos_ars" or receipt.get("locksObserved") is not True or any(receipt.get(key) is not False for key in ("activationAllowed", "applicationRemovalAllowed", "finalUninstallBackupVerified", "continuousExclusionVerified")):
+            raise ValueError("Backup receipt mismatch.")
+        if not prepare.ARCHIVE.fullmatch(meta["archive"]):
+            raise ValueError("Invalid archive name.")
+        members = {p.name: restore.sha(p) for p in prepare.members(folder / meta["archive"])}
+        if members[meta["archive"]] != meta.get("archiveSha256"):
+            raise ValueError("Archive digest mismatch.")
+        plan = review(json.loads(raw["restore"]), folder.name, meta["archive"], digests, members)
+        return plan, raw
+    with open_lock(state / "maintenance.lock") as maintenance, open_lock(state / "update.lock") as update:
+        for lock in (maintenance, update):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        first = snapshot()
+        if snapshot() != first:
+            raise ValueError("Recovery evidence changed during review.")
+        return first[0]
