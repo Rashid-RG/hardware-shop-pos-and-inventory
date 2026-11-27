@@ -65,6 +65,7 @@ jobs:
           python3 scripts/mint/test-uninstall-preview.py
           python3 scripts/mint/test-uninstall-backup-review.py
           python3 scripts/mint/test-uninstall-backup-preparation.py
+          python3 scripts/mint/test-uninstall-restore.py
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py
