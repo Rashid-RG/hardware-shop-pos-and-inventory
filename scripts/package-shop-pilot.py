@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Create a deterministic source-only acceptance package from a verified Git commit."""
+"""Create an acceptance package from committed files and an optional CI runtime."""
 import hashlib, json, pathlib, subprocess, sys, zipfile
-commit, target = sys.argv[1:]
+commit, target = sys.argv[1:3]
+runtime = pathlib.Path(sys.argv[3]) if len(sys.argv) == 4 else None
 actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 if actual != commit:
     raise SystemExit("Checked out commit does not match requested release identity")
@@ -29,7 +30,14 @@ with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
         data = subprocess.check_output(["git", "show", commit + ":" + path])
         item = zipfile.ZipInfo("ARS-Distributor/" + path, (2026, 1, 1, 0, 0, 0))
         item.compress_type = zipfile.ZIP_DEFLATED
+        mode = subprocess.check_output(["git", "ls-tree", commit, "--", path], text=True).split()[0]
+        item.create_system = 3
+        item.external_attr = (int(mode, 8) & 0xffff) << 16
         z.writestr(item, data)
+    if runtime:
+        payload = runtime.read_bytes()
+        z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.tar.gz", payload)
+        z.writestr("ARS-Distributor/installer-runtime/node-linux-x64.sha256", hashlib.sha256(payload).hexdigest()+"\n")
     z.writestr("ARS-Distributor/PILOT-RELEASE.json", json.dumps({"commit":commit,"status":"acceptance-only","liveUpdatesApproved":False}, sort_keys=True)+"\n")
 with zipfile.ZipFile(archive) as z:
     assert z.testzip() is None

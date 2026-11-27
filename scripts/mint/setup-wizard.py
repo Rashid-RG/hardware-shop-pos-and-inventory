@@ -48,6 +48,8 @@ def main():
                 return 0
             if dialog("--text-info","--width=650","--height=450","--filename="+str(ROOT/"docs/pilot-installation-terms.txt"),"--checkbox=I accept these pilot installation conditions","--ok-label=Accept and continue","--cancel-label=Do not accept"):
                 return 0
+            from setup_node_runtime import prepare_node
+            prepare_node(ROOT, dialog)
             from setup_prerequisites import install_missing
             if not install_missing(dialog):
                 return 0

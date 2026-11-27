@@ -294,10 +294,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Create source-only pilot archive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare Linux x64 runtime payload
+        run: |
+          set -euo pipefail
+          runtime="$(dirname "$(dirname "$(realpath "$(command -v node)")")")"
+          test -f "$runtime/LICENSE"
+          test -x "$runtime/bin/npm"
+          tar -C "$runtime" -czf "$RUNNER_TEMP/ars-node-linux-x64.tar.gz" bin lib LICENSE
+      - name: Create pilot source archive with optional Mint runtime
         env:
           PILOT_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package
+        run: python3 scripts/package-shop-pilot.py "$PILOT_COMMIT" pilot-package "$RUNNER_TEMP/ars-node-linux-x64.tar.gz"
       - name: Retain installation package and SHA-256 checksum
         uses: actions/upload-artifact@v4
         with:
