@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
-. (Join-Path $PSScriptRoot 'windows-repair-rollback-preparation.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-activation-plan.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
@@ -65,6 +65,13 @@ try {
    } finally { $picker.Dispose() }
    try {
     $review=Get-ArsRepairReadiness $root $folder
+    if (Test-Path -LiteralPath (Join-Path $folder 'rollback-preparation.json')) {
+     if ([Windows.Forms.MessageBox]::Show('Prepare or verify the protected repair activation plan? No files will be switched.',$title,'YesNo','Question') -eq 'Yes') {
+      $null=Prepare-ArsRepairActivationPlan $root $folder
+      [void][Windows.Forms.MessageBox]::Show('Activation plan verified. Live file switching, startup and rollback remain locked.',$title,'OK','Information')
+     }
+     continue
+    }
     if ([Windows.Forms.MessageBox]::Show('Prepare rollback evidence for the previous tested application? This does not apply a rollback.',$title,'YesNo','Question') -eq 'Yes') {
      $null=Prepare-ArsRepairRollback $root $folder
      [void][Windows.Forms.MessageBox]::Show('Previous executable and existing rollback evidence matched. Isolated repair-specific backward compatibility evidence matched. Live activation remains locked.',$title,'OK','Information')

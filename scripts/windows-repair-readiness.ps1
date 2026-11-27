@@ -35,7 +35,7 @@ function Get-ArsRepairReadiness([string]$project,[string]$folder) {
   if ($LASTEXITCODE -ne 0 -or $endpoint -notin @('npipe:////./pipe/docker_engine','npipe:////./pipe/dockerDesktopLinuxEngine')) { throw 'Local Docker engine required.' }
   $control=Join-Path $state 'desktop-control'
   Assert-ArsPlainPath $control
-  $markers=@('runtime-activation-interrupted.json','runtime-switch-intent.json','runtime-migration-interrupted.json','handoff-pending.json','switch-journal.json')
+  $markers=@('runtime-activation-interrupted.json','runtime-switch-intent.json','runtime-migration-interrupted.json','handoff-pending.json','switch-journal.json','repair-interrupted.json','runtime-switch-journal.json')
   if (@(Get-ChildItem -LiteralPath $control -Force | Where-Object Name -in $markers).Count) { throw 'Unresolved maintenance evidence.' }
   $binding=Get-ArsRepairReviewBinding $project $state $folder
   $names=@('backup-observation.json','repair-restore-test.json','repair-rehearsal-observation.json')

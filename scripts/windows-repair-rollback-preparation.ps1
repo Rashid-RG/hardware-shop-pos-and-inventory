@@ -8,13 +8,8 @@ function Assert-ArsPreviousRepairBuild($previous,[string]$digest,[string]$archiv
  }
  if ($previous.activationApproved -isnot [bool] -or $previous.activationApproved) { throw 'Unexpected activation approval.' }
 }
-function Prepare-ArsRepairRollback([string]$project,[string]$folder) {
+function Get-ArsRepairRollbackObservation([string]$project,[string]$folder) {
  $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
- $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
- $owned=$false
- try {
-  try { $owned=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned=$true; throw 'Interrupted maintenance requires review.' }
-  if (-not $owned) { throw 'Maintenance is active.' }
   $ready=Get-ArsRepairReadiness $project $folder
   if ($ready.repairEvidenceMatched -ne $true -or $ready.activationAllowed -ne $false) { throw 'Repair readiness unavailable.' }
   $binding=Get-ArsRepairReviewBinding $project $state $folder
@@ -44,6 +39,15 @@ function Prepare-ArsRepairRollback([string]$project,[string]$folder) {
   if (($again | ConvertTo-Json -Depth 8 -Compress) -cne ($ready | ConvertTo-Json -Depth 8 -Compress) -or (Get-ArsPreparedFingerprint $dist).digest -cne $digest -or (Get-ArsRepairMetadataHash $recovery $name) -cne $previousHash -or ((Get-ArsRepairReviewBinding $project $state $folder)|ConvertTo-Json -Compress) -cne ($binding|ConvertTo-Json -Compress)) { throw 'Rollback evidence changed.' }
   foreach ($key in $hashes.Keys) { if ((Get-ArsRepairMetadataHash $folder $key) -cne $hashes[$key]) { throw 'Repair evidence changed.' } }
   $record=[ordered]@{schema=1;kind='windows-repair-rollback-preparation';recoveryId=$id;previousProject=$project;previousBuildDigest=$digest;previousDependencyImageId=$image;repairDependencyImageId=$test.dependencyImageId;archiveSha256=$test.archiveSha256;previousReceiptDigest=$previousHash;repairEvidenceDigests=$hashes;previousUpdateRollbackEvidenceMatched=$true;repairSpecificRollbackTested=$true;continuousExclusionVerified=$false;activationAllowed=$false;startupAllowed=$false;repairApplied=$false;rollbackAllowed=$false}
+  return $record
+}
+function Prepare-ArsRepairRollback([string]$project,[string]$folder) {
+ $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
+ $owned=$false
+ try {
+  try { $owned=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned=$true; throw 'Interrupted maintenance requires review.' }
+  if (-not $owned) { throw 'Maintenance is active.' }
+  $record=Get-ArsRepairRollbackObservation $project $folder
   $target=Join-Path $folder 'rollback-preparation.json'
   $bytes=[Text.Encoding]::UTF8.GetBytes(($record|ConvertTo-Json -Depth 8))
   $stream=[IO.File]::Open($target,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
