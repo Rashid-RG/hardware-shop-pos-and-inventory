@@ -154,7 +154,7 @@ jobs:
           git archive HEAD | tar -x -C "$proposal"
           (
             cd "$proposal"
-            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' 'dependencies.@vitejs/plugin-react=latest'
+            npm pkg set 'dependencies.vite=8.4.0' 'devDependencies.vite=8.4.0' 'dependencies.@vitejs/plugin-react=latest' 'devDependencies.esbuild=0.28.2'
             npm install --package-lock-only --ignore-scripts --no-fund
             npm ci
             npm run lint
