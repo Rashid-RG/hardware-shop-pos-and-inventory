@@ -177,14 +177,7 @@ function Invoke-Intent([string]$Mode) {
 }
 $incidentReview.Add_Click({
  $id=[string]$select.SelectedItem
- if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}
-$intentVerify.Add_Click({Invoke-Intent 'verify'})
-$intentCancel.Add_Click({Invoke-Intent 'cancel'})
-$select.Add_SelectedIndexChanged({Update-Buttons})
-$prepare.Add_Click({Invoke-Review $false})
-$verify.Add_Click({Invoke-Review $true})
-try { Refresh-Choices; Update-Buttons; [void]$form.ShowDialog() } finally { $form.Dispose() }
-) {return}
+ if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') {return}
  foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$close,$select)) {$button.Enabled=$false}
  $status.Text='Verifying incident evidence. No live changes will be made.'
  $form.Refresh()
@@ -193,14 +186,7 @@ try { Refresh-Choices; Update-Buttons; [void]$form.ShowDialog() } finally { $for
  try {
   $helper=Join-Path $PSScriptRoot 'prepare-windows-runtime-activation.ps1'
   $data=(@(& $helper -RecoveryId $id -ReviewIncident) -join [Environment]::NewLine) | ConvertFrom-Json
-  if ($data.schema -ne 1 -or $data.kind -cne 'windows-activation-incident-review' -or $data.snapshot.recoveryId -cne $id -or $data.incidentDigest -notmatch '^[A-Fa-f0-9]{64}
-$intentVerify.Add_Click({Invoke-Intent 'verify'})
-$intentCancel.Add_Click({Invoke-Intent 'cancel'})
-$select.Add_SelectedIndexChanged({Update-Buttons})
-$prepare.Add_Click({Invoke-Review $false})
-$verify.Add_Click({Invoke-Review $true})
-try { Refresh-Choices; Update-Buttons; [void]$form.ShowDialog() } finally { $form.Dispose() }
- -or $data.incidentRetained -ne $true -or $data.administratorApprovalRequired -ne $true) {throw 'Invalid review.'}
+  if ($data.schema -ne 1 -or $data.kind -cne 'windows-activation-incident-review' -or $data.snapshot.recoveryId -cne $id -or $data.incidentDigest -notmatch '^[A-Fa-f0-9]{64}$' -or $data.incidentRetained -ne $true -or $data.administratorApprovalRequired -ne $true) {throw 'Invalid review.'}
   foreach ($flag in @('activationAllowed','startupAllowed','rollbackAllowed','runtimeActivated','recoveryAllowed','continuousExclusionVerified')) {
    if ($data.$flag -isnot [bool] -or $data.$flag) {throw 'Unexpected authorization.'}
   }

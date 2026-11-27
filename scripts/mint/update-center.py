@@ -92,14 +92,46 @@ def switch_intent_review(project):
         else:
             notice("Switch intent operation blocked or unverified. Contact RS Nextward before resuming billing.",True)
 
+def authenticated_incident_review(project,folder,mode):
+    if mode not in ("record","verify"):
+        return
+    accounts=[]
+    for role in ("Operator Super Admin","Reviewer Super Admin"):
+        email=dialog("--entry","--no-markup","--text="+role+" email")
+        if email.returncode!=0: return
+        password=dialog("--entry","--hide-text","--no-markup","--text="+role+" password")
+        if password.returncode!=0: return
+        accounts.append({"email":email.stdout.rstrip("\n"),"password":password.stdout.rstrip("\n")})
+    payload={"recoveryId":folder.name,"mode":mode,"confirmation":"REVIEW ACTIVATION INCIDENT","operator":accounts[0],"reviewer":accounts[1]}
+    progress=subprocess.Popen(["zenity","--progress","--pulsate","--no-cancel","--title="+TITLE,"--text=Verifying administrators and retained evidence. Do not shut down."],stdin=subprocess.PIPE)
+    matched=False
+    try:
+        result=subprocess.run([str(STATE/"node"),str(project/"scripts/activation-incident-review-cli.mjs")],cwd=project,input=json.dumps(payload),capture_output=True,text=True,timeout=1900)
+        data=json.loads(result.stdout) if result.returncode==0 else {}
+        expected="activation-observation-retained" if mode=="record" else "activation-observation-matched"
+        matched=isinstance(data,dict) and data.get("state")==expected and data.get("freshCredentialsRequired") is True and all(data.get(k) is False for k in ("activationAllowed","startupAllowed","rollbackAllowed","runtimeActivated","recoveryAllowed","continuousExclusionVerified"))
+    except (OSError,ValueError,subprocess.SubprocessError):
+        pass
+    finally:
+        accounts.clear()
+        payload.clear()
+        if progress.poll() is None: progress.terminate()
+        progress.wait()
+    notice("Authenticated review recorded or matched. Incident retained; startup remains locked." if matched else "Authenticated review blocked. Contact RS Nextward support. No incident cleared.",not matched)
+
 def activation_review(project):
     """Dedicated graphical proposal review; no activation or resume operation."""
     while True:
         if os.path.lexists(STATE/"runtime-activation-interrupted.json"):
-            if dialog("--question","--no-markup","--text=Interrupted activation retained. Review recovery evidence without clearing the incident or starting the POS?").returncode!=0: return
+            choice=dialog("--list","--no-markup","--text=Interrupted activation retained. Startup remains locked.","--column=Action","Review evidence","Record authenticated review","Verify authenticated review","Return")
+            action=choice.stdout.strip()
+            if choice.returncode!=0 or action not in ("Review evidence","Record authenticated review","Verify authenticated review"): return
             folder=select_recovery()
             if not folder: return
-            execute(project,"prepare-runtime-activation.py",str(folder),"--review-incident")
+            if action=="Review evidence":
+                execute(project,"prepare-runtime-activation.py",str(folder),"--review-incident")
+            else:
+                authenticated_incident_review(project,folder,"record" if action=="Record authenticated review" else "verify")
             return
         target=STATE/"runtime-activation-proposal.json"
         exists=target.exists() or target.is_symlink()
