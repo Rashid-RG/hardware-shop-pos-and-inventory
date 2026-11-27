@@ -206,6 +206,10 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Repair writer exclusion and interrupted coordinator rehearsal
+        env:
+          DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
+        run: node --test tests/postgres-repair-exclusion.integration.mjs
       - name: Double-entry accounting safeguards (isolated PostgreSQL)
         env:
           DATABASE_URL: postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci
