@@ -287,9 +287,11 @@ class RecoveryTests(unittest.TestCase):
             originals=state/"runtime-migration-originals"
             originals.mkdir()
             (project/".env.local").rename(originals/".env.local")
-            (project/".env.local").symlink_to(runtime/".env.local")
-            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",runtime), patch.object(layout.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+            self.assertFalse((project/".env.local").exists())
+            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",runtime), patch.object(layout.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients") as clients:
                 result=layout.recover_interrupted_mapping(project,"RECOVER RUNTIME MAPPING")
+                self.assertEqual(clients.call_args_list[0].kwargs,{"env_file":runtime/".env.local"})
+                self.assertEqual(clients.call_count,2)
             self.assertTrue(result["mapped"])
             self.assertEqual(hold.read_bytes(),raw)
             self.assertFalse(marker.exists())
@@ -308,6 +310,22 @@ class RecoveryTests(unittest.TestCase):
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=answers), patch.object(center,"execute") as execute:
                 center.runtime_migration_center(root)
                 execute.assert_called_once_with(root,"runtime-layout.py",str(root),"--recover-mapping","--confirmation","RECOVER RUNTIME MAPPING")
+    def test_database_client_check_uses_verified_configuration_without_changing_compose_project(self):
+        import maintenance_backup
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            project=root/"release"
+            project.mkdir()
+            config=root/"verified.env"
+            config.write_text("fixture")
+            with patch.object(maintenance_backup.subprocess,"run",return_value=SimpleNamespace(stdout="0")) as run:
+                maintenance_backup.check_database_clients(project,env_file=config)
+                cmd=run.call_args.args[0]
+                self.assertEqual(cmd[cmd.index("--env-file")+1],str(config))
+                self.assertEqual(run.call_args.kwargs["cwd"],project)
+                self.assertEqual(cmd[cmd.index("-p")+1],"ars-mint")
+                self.assertFalse((project/".env.local").exists())
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

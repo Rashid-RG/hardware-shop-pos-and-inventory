@@ -381,9 +381,7 @@ def recover_interrupted_mapping(project, confirmation):
         stopped()
         # The configuration may be temporarily absent from the project.
         # Check database clients through the verified copy when necessary.
-        if not (project/".env.local").is_file():
-            raise ValueError("Configuration link absent; RS Nextward manual recovery required.")
-        check_database_clients(project)
+        check_database_clients(project,env_file=copy/".env.local")
         if not originals.exists():
             originals.mkdir(mode=0o700)
         if copy==staged:

@@ -24,9 +24,12 @@ def stopped():
         if probe.connect_ex(("127.0.0.1",3000))==0:
             raise RuntimeError("Another process is listening on the POS port.")
 
-def check_database_clients(project):
+def check_database_clients(project, env_file=None):
     # Observational check only: do not terminate sessions or change PostgreSQL settings.
-    cmd=["docker","compose","-p","ars-mint","--env-file",".env.local","-f","scripts/mint/compose.yaml","exec","-T","postgres","psql","-X","-U","ars","-d","hardware_pos_ars","-v","ON_ERROR_STOP=1","-Atc",
+    config=Path(env_file) if env_file is not None else Path(project)/".env.local"
+    if not config.is_absolute() or not config.is_file():
+        raise ValueError("Valid absolute database configuration required.")
+    cmd=["docker","compose","-p","ars-mint","--env-file",str(config),"-f","scripts/mint/compose.yaml","exec","-T","postgres","psql","-X","-U","ars","-d","hardware_pos_ars","-v","ON_ERROR_STOP=1","-Atc",
          "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'"]
     result=subprocess.run(cmd,cwd=project,check=True,capture_output=True,text=True,timeout=30)
     if result.stdout.strip()!="0":
