@@ -36,6 +36,7 @@ try {
   Invoke-Checked 'createdb' @('-h','127.0.0.1','-p','55432','-U','postgres','hardware_pos_ci')
   $env:DATABASE_URL = 'postgresql://postgres@127.0.0.1:55432/hardware_pos_ci'
   $env:JWT_SECRET = 'ci-only-disposable-windows-session-secret'
+  Invoke-Checked 'node' @('--test','tests/postgres-repair-exclusion.integration.mjs')
   Invoke-Checked 'node' @('--import','tsx','--test','--test-concurrency=1',
     'tests/postgres-checkout.integration.mjs','tests/postgres-credit.integration.mjs',
     'tests/postgres-purchases.integration.mjs','tests/postgres-product-intake.integration.mjs')

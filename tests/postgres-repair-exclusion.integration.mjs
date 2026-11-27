@@ -10,7 +10,9 @@ import {fileURLToPath} from 'node:url';
 import pg from 'pg';
 import {acquireHandoffGate, acquireMaintenanceTransactionFence, captureGateOwner, assertGateOwner, HANDOFF_CLASS, HANDOFF_ID, WRITER_ID, TRANSACTION_FENCE_ID} from '../scripts/database-handoff-gate.mjs';
 
-const expected='postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci';
+const windows=process.platform==='win32';
+const expected=windows?'postgresql://postgres@127.0.0.1:55432/hardware_pos_ci':'postgresql://postgres:ci-test-only-password@127.0.0.1:5432/hardware_pos_ci';
+if(!windows&&process.platform!=='linux')throw Error('Unsupported CI platform.');
 if(process.env.GITHUB_ACTIONS!=='true'||process.env.RUNNER_ENVIRONMENT!=='github-hosted'||process.env.DATABASE_URL!==expected)throw Error('Disposable hosted repair CI database required.');
 const connect=async()=>{
  const c=new pg.Client({connectionString:expected,connectionTimeoutMillis:5000,query_timeout:10000});
@@ -28,10 +30,11 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
  const ident='"'+table+'"';
  let fixtureCreated=false;
  const fixtureHome=realpathSync(mkdtempSync(join(tmpdir(),'ars-repair-ci-')));
- const state=join(fixtureHome,'.local','share','ars-hardware');
+ const state=windows?join(fixtureHome,'RS Nextward','ARS Distributor'):join(fixtureHome,'.local','share','ars-hardware');
+ const control=windows?join(state,'desktop-control'):state;
  const repairName='repair-preparation-'+randomUUID().replaceAll('-','');
  const repair=join(state,repairName);
- const marker=join(state,'repair-interrupted.json');
+ const marker=join(control,'repair-interrupted.json');
  const receipt=join(repair,'rollback-preparation.json');
  const root=fileURLToPath(new URL('../',import.meta.url));
  // Use the production Mint marker writer and reviewer inside a child with a
@@ -40,17 +43,20 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   cwd:root,env:{PATH:process.env.PATH,HOME:fixtureHome,PYTHONPATH:join(root,'scripts','mint')},
   encoding:'utf8',timeout:15000
  });
+ const ps=(action,digest='')=>spawnSync(join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',join(root,'scripts','test-windows-repair-interruption-fixture.ps1'),'-FixtureHome',fixtureHome,'-RepairName',repairName,'-Action',action,'-Digest',digest||'unused'],{
+  cwd:root,env:{...process.env,LOCALAPPDATA:fixtureHome},encoding:'utf8',timeout:15000
+ });
  const assertStartup=(allowed)=>{
   const result=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',
    "import {assertOrdinaryStartupAllowed} from './backend/maintenanceStartupGuard.ts'; try {assertOrdinaryStartupAllowed(); process.exit(0)} catch {process.exit(23)}"],{
-   cwd:root,env:{PATH:process.env.PATH,HOME:fixtureHome},encoding:'utf8',timeout:15000
+   cwd:root,env:windows?{...process.env,LOCALAPPDATA:fixtureHome}:{PATH:process.env.PATH,HOME:fixtureHome},encoding:'utf8',timeout:15000
   });
   assert.equal(result.status,allowed?0:23,result.stderr);
  };
  try{
-  assert.equal(process.platform,'linux');
   mkdirSync(repair,{recursive:true,mode:0o700});
-  const raw=JSON.stringify({schema:1,kind:'mint-repair-rollback-preparation',repairSpecificRollbackTested:true,activationAllowed:false,startupAllowed:false,repairApplied:false,rollbackAllowed:false});
+  mkdirSync(control,{recursive:true,mode:0o700});
+  const raw=JSON.stringify({schema:1,kind:windows?'windows-repair-rollback-preparation':'mint-repair-rollback-preparation',repairSpecificRollbackTested:true,activationAllowed:false,startupAllowed:false,repairApplied:false,rollbackAllowed:false});
   writeFileSync(receipt,raw,{flag:'wx',mode:0o600});
   const receiptDigest=createHash('sha256').update(raw).digest('hex');
   assertStartup(true);
@@ -72,7 +78,7 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   const owner=await captureGateOwner(coordinator);
   await coordinator.query('BEGIN');
   await coordinator.query('LOCK TABLE '+ident+' IN SHARE MODE NOWAIT');
-  const begin=python("import sys; from pathlib import Path; from repair_interruption import STATE,make_record,retain_marker,inspect; assert STATE==Path(sys.argv[1]); retain_marker(STATE,make_record(sys.argv[2],sys.argv[3])); assert inspect(STATE)['markerRetained'] is True",[state,repairName,receiptDigest]);
+  const begin=windows?ps('begin',receiptDigest):python("import sys; from pathlib import Path; from repair_interruption import STATE,make_record,retain_marker,inspect; assert STATE==Path(sys.argv[1]); retain_marker(STATE,make_record(sys.argv[2],sys.argv[3])); assert inspect(STATE)['markerRetained'] is True",[state,repairName,receiptDigest]);
   assert.equal(begin.status,0,begin.stderr);
   const markerBytes=readFileSync(marker);
   assertStartup(false);
@@ -102,12 +108,12 @@ test('repair coordinator excludes cooperating writers and ordinary table writes 
   await assert.rejects(assertGateOwner(observer,owner),/ownership not verified/);
   assertStartup(false);
   assert.deepEqual(readFileSync(marker),markerBytes);
-  const review=python("import sys; from pathlib import Path; from repair_interruption import STATE,inspect; assert STATE==Path(sys.argv[1]); result=inspect(STATE); assert result['rollbackReceiptMatched'] is True and result['startupAllowed'] is False and result['recoveryAllowed'] is False",[state]);
+  const review=windows?ps('review'):python("import sys; from pathlib import Path; from repair_interruption import STATE,inspect; assert STATE==Path(sys.argv[1]); result=inspect(STATE); assert result['rollbackReceiptMatched'] is True and result['startupAllowed'] is False and result['recoveryAllowed'] is False",[state]);
   assert.equal(review.status,0,review.stderr);
   // A corrupted marker must also fail closed; no recovery action may clear it.
   writeFileSync(marker,'{');
   assertStartup(false);
-  const corrupt=python("from repair_interruption import STATE,inspect; inspect(STATE)");
+  const corrupt=windows?ps('review'):python("from repair_interruption import STATE,inspect; inspect(STATE)");
   assert.notEqual(corrupt.status,0);
   assert.equal(readFileSync(marker,'utf8'),'{');
   // Locks cannot survive connection loss. A durable maintenance marker is independently required.
