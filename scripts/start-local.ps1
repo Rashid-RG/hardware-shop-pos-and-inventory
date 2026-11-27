@@ -101,6 +101,7 @@ function Wait-ForDockerCompose([int]$timeoutSeconds = 180) {
 }
 
 function Try-StartDockerCompose {
+  if ($externalRuntime) { throw 'Release-relative Docker startup is prohibited with external runtime.' }
   if ($windowsPilot) {
     # Start only the already provisioned container. Never create or replace a database on launch.
     try {
@@ -108,7 +109,6 @@ function Try-StartDockerCompose {
       return ($LASTEXITCODE -eq 0)
     } catch { return $false }
   }
-  if ($externalRuntime) { throw 'Release-relative Docker startup is prohibited with external runtime.' }
   try {
     cmd /c "docker compose up -d" *> $null
     return ($LASTEXITCODE -eq 0)
