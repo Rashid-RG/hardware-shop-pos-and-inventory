@@ -128,15 +128,86 @@ def rollback_offline_release(confirmation):
         write_journal(STATE,journal)
         return {"previousSelected":True,"maintenanceRetained":True,"startupAllowed":False,"databaseRestored":False}
 
+def finalize_offline_rollback(confirmation):
+    """Archive an offline rollback's blockers; leave ordinary resume separate."""
+    from resume_maintenance import open_lock
+    from maintenance_backup import stopped, check_database_clients
+    from switch_journal import sync_dir
+    from startup_guard import migration_mapping_valid
+    import re
+    if os.geteuid()==0 or confirmation!="FINALIZE OFFLINE ROLLBACK":
+        raise ValueError("Explicit rollback finalization approval required.")
+    intent=load_intent()
+    proposal=intent.load()
+    proposal.plain(STATE,True)
+    with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
+        for lock in (maintenance,update):
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        for name in ("runtime-activation-interrupted.json","runtime-migration-interrupted.json","handoff-pending.json"):
+            if os.path.lexists(STATE/name):
+                raise ValueError("Unresolved recovery evidence.")
+        hold=STATE/"maintenance-hold.json"
+        hold_raw=proposal.read(hold)
+        h=json.loads(hold_raw)
+        journal=STATE/"switch-journal.json"
+        raw=proposal.read(journal)
+        j=json.loads(raw)
+        switch_id=j.get("switchId")
+        if j.get("schema")!=1 or j.get("kind")!="mint-offline-release-selection" or j.get("phase")!="offline-rolled-back" or j.get("startupAllowed") is not False or not isinstance(switch_id,str) or not re.fullmatch(r"[a-f0-9]{32}",switch_id):
+            raise ValueError("Completed offline rollback required.")
+        previous=Path(j["previous"])
+        if not (STATE/"project").is_symlink() or (STATE/"project").resolve(strict=True)!=previous or h.get("purpose")!="pre-update backup" or h.get("previousProject")!=str(previous) or j.get("maintenanceDigest")!=proposal.sha(hold_raw) or not migration_mapping_valid(STATE):
+            raise ValueError("Rollback maintenance binding mismatch.")
+        target=STATE/"runtime-switch-intent.json"
+        archive=STATE/("rolled-back-intent-"+switch_id+".json")
+        journal_archive=STATE/("rolled-back-journal-"+switch_id+".json")
+        # Retain exact evidence before removing any blocker. A retry can use
+        # the archived intent if a crash happened after its unlink.
+        intent_raw=proposal.read(target if os.path.lexists(target) else archive)
+        record=json.loads(intent_raw)
+        binding=record["binding"]
+        if not intent.matches(record,binding) or record.get("switchId")!=switch_id or binding.get("desktopUid")!=os.getuid() or binding.get("previousProject")!=str(previous) or binding.get("maintenanceDigest")!=proposal.sha(hold_raw) or proposal.sha(intent_raw)!=j.get("intentDigest"):
+            raise ValueError("Rollback intent mismatch.")
+        stopped()
+        check_database_clients(previous)
+        for source,dest,expected in ((target,archive,intent_raw),(journal,journal_archive,raw)):
+            if not os.path.lexists(dest):
+                os.link(source,dest,follow_symlinks=False)
+                sync_dir(STATE)
+            if proposal.read(dest)!=expected or (os.path.lexists(source) and proposal.read(source)!=expected):
+                raise ValueError("Archived rollback evidence mismatch.")
+        if proposal.read(hold)!=hold_raw or (STATE/"project").resolve(strict=True)!=previous:
+            raise ValueError("Maintenance evidence changed.")
+        # Archive the proposal too, allowing a future update to prepare a new one.
+        prop=STATE/"runtime-activation-proposal.json"
+        prop_archive=STATE/("rolled-back-proposal-"+switch_id+".json")
+        prop_raw=proposal.read(prop if os.path.lexists(prop) else prop_archive)
+        if proposal.sha(prop_raw)!=binding.get("proposalDigest"):
+            raise ValueError("Activation proposal mismatch.")
+        if not os.path.lexists(prop_archive):
+            os.link(prop,prop_archive,follow_symlinks=False)
+            sync_dir(STATE)
+        if proposal.read(prop_archive)!=prop_raw:
+            raise ValueError("Archived proposal mismatch.")
+        for source in (prop,target,journal):
+            if os.path.lexists(source):
+                source.unlink()
+                sync_dir(STATE)
+        return {"rollbackFinalized":True,"maintenanceRetained":True,"startupAllowed":False}
+
 if __name__=="__main__":
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder",type=Path,nargs="?")
-    parser.add_argument("--rollback-offline",action="store_true")
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument("--rollback-offline",action="store_true")
+    mode.add_argument("--finalize-rollback",action="store_true")
     parser.add_argument("--confirmation",required=True)
     args=parser.parse_args()
     try:
-        if args.rollback_offline:
+        if args.finalize_rollback:
+            print(json.dumps(finalize_offline_rollback(args.confirmation)))
+        elif args.rollback_offline:
             print(json.dumps(rollback_offline_release(args.confirmation)))
         elif args.folder is not None:
             print(json.dumps(select_offline_release(args.folder,args.confirmation)))

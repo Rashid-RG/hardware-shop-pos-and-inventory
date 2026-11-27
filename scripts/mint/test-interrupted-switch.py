@@ -441,7 +441,9 @@ class RecoveryTests(unittest.TestCase):
                 for part in ("dist","node_modules"):
                     shutil.copytree(previous/part,Path(build)/part)
                 digest=fingerprint(Path(build))
-            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes()),"desktopUid":os.getuid(),"previousBuildDigest":digest}
+            proposal_path=root/"runtime-activation-proposal.json"
+            proposal_path.write_text("fixture proposal")
+            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes()),"desktopUid":os.getuid(),"previousBuildDigest":digest,"proposalDigest":sha(proposal_path.read_bytes())}
             target=root/"runtime-switch-intent.json"
             target.write_text(json.dumps({"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}))
             journal=root/"switch-journal.json"
@@ -455,6 +457,14 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(candidate.exists())
             self.assertTrue(hold.exists())
             self.assertTrue(target.exists())
+            self.assertFalse(startup_allowed(root))
+            with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"load",return_value=proposal), patch.object(selector.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+                self.assertTrue(selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK")["rollbackFinalized"])
+            self.assertTrue(hold.exists())
+            self.assertFalse(target.exists())
+            self.assertFalse(journal.exists())
+            self.assertFalse(proposal_path.exists())
+            self.assertTrue((root/("rolled-back-intent-"+"a"*32+".json")).is_file())
             self.assertFalse(startup_allowed(root))
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
