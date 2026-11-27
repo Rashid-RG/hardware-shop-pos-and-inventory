@@ -127,3 +127,44 @@ for(const mode of ['error','end','identity']){
  }
 }
 console.log('Windows maintenance session adapter interruption checks passed.');
+
+// Exercise the real PowerShell worker, native supervisor and independent result
+// verifier together. The backup producer is a disposable fixture, not Docker.
+import {mkdir,copyFile,writeFile,readdir} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+import {runProtectedWindowsBackup} from './windows-protected-backup-stage.mjs';
+const stageRoot=join(dir,'stage-runtime');
+const stageScripts=join(stageRoot,'scripts');
+const stageDestination=join(dir,'stage-recovery');
+await mkdir(stageScripts,{recursive:true});
+await mkdir(stageDestination);
+await copyFile(fileURLToPath(new URL('./windows-maintenance-backup-worker.ps1',import.meta.url)),join(stageScripts,'windows-maintenance-backup-worker.ps1'));
+const producer=join(stageScripts,'backup-local-postgres.ps1');
+await writeFile(producer,[
+ 'param([string]$Destination,[switch]$OutputArchive)',
+ '$ErrorActionPreference="Stop"',
+ '$archive=Join-Path $Destination "ars-hardware_pos-ci-fixture.dump"',
+ '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
+ 'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
+].join('\r\n'));
+const stageDb=new FixtureDatabase();
+const stageResult=await withMaintenanceSession(stageDb,'hardware_pos_ci',session=>
+ runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
+);
+assert.equal(stageResult.archive,join(stageDestination,'ars-hardware_pos-ci-fixture.dump'));
+assert.equal(stageResult.sha256,createHash('sha256').update(Buffer.alloc(4096)).digest('hex'));
+assert.match(stageResult.resultDigest,/^[a-f0-9]{64}$/);
+for(const field of ['applicationRemovalAllowed','databaseDeletionAllowed','activationAllowed','continuousExclusionVerified'])assert.equal(stageResult[field],false);
+assert.equal(stageDb.closed,true);
+const resultFiles=async()=>(await readdir(stageDestination)).filter(name=>name.startsWith('maintenance-result-'));
+assert.deepEqual(await resultFiles(),[stageResult.resultName]);
+const retained=await readFile(join(stageDestination,stageResult.resultName));
+// A failed producer must not publish a second result or remove existing evidence.
+await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive)\r\nthrow "Fixture backup failure"');
+await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
+ runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
+),/Native maintenance worker did not complete/);
+assert.deepEqual(await resultFiles(),[stageResult.resultName]);
+assert.deepEqual(await readFile(join(stageDestination,stageResult.resultName)),retained);
+console.log('Protected Windows backup stage fixture checks passed.');
