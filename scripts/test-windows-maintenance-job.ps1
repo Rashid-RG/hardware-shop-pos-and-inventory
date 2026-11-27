@@ -1,7 +1,9 @@
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:OS -ne 'Windows_NT') {throw 'Disposable Windows CI runner required.'}
 Add-Type -Path @((Join-Path $PSScriptRoot 'windows-maintenance-job.cs'),(Join-Path $PSScriptRoot 'windows-maintenance-suspended-worker.cs'))
-$node=(Get-Command node.exe -CommandType Application).Source
+$nodeCommand=Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$node=[IO.Path]::GetFullPath([string]$nodeCommand.Path)
+if (-not [IO.File]::Exists($node)) {throw 'Native Node executable unavailable.'}
 $fixture=Join-Path $env:RUNNER_TEMP ('ars-job-fixture-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($fixture)
 try {
