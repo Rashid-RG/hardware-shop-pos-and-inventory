@@ -39,4 +39,37 @@ try {
    if ($child) {throw 'Contained descendant survived termination.'}
   }
  }
+ $cancelMarker=Join-Path $fixture 'pre-cancelled.txt'
+ $cts=New-Object System.Threading.CancellationTokenSource
+ try {
+  $cts.Cancel()
+  $blocked=$false
+  try {
+   [RSNextward.Maintenance.SuspendedWorker]::Run($node,[string[]]@('-e','require("node:fs").writeFileSync(process.argv[1],"unexpected")',$cancelMarker),$fixture,15000,$cts.Token)
+  } catch {
+   if (-not ($_.Exception.InnerException -is [OperationCanceledException])) {throw}
+   $blocked=$true
+  }
+  if (-not $blocked -or (Test-Path -LiteralPath $cancelMarker)) {throw 'Pre-cancelled worker executed.'}
+ } finally {$cts.Dispose()}
+ $activeMarker=Join-Path $fixture 'active-cancel.json'
+ $cts=New-Object System.Threading.CancellationTokenSource
+ try {
+  $source='const c=require("node:child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true});require("node:fs").writeFileSync(process.argv[1],JSON.stringify([process.pid,c.pid]));setInterval(()=>{},1000)'
+  # Cancel from the managed timer while the calling PowerShell thread is blocked.
+  $cts.CancelAfter(3000)
+  $blocked=$false
+  try {
+   [RSNextward.Maintenance.SuspendedWorker]::Run($node,[string[]]@('-e',$source,$activeMarker),$fixture,15000,$cts.Token)
+  } catch {
+   if (-not ($_.Exception.InnerException -is [OperationCanceledException])) {throw}
+   $blocked=$true
+  }
+  if (-not $blocked -or -not (Test-Path -LiteralPath $activeMarker)) {throw 'Active cancellation fixture did not complete its rehearsal.'}
+  $ids=Get-Content -LiteralPath $activeMarker -Raw|ConvertFrom-Json
+  if ($ids.Count -ne 2) {throw 'Invalid cancellation fixture evidence.'}
+  foreach ($workerId in $ids) {
+   if (Get-Process -Id ([int]$workerId) -ErrorAction SilentlyContinue) {throw 'Cancelled job process remained active.'}
+  }
+ } finally {$cts.Dispose()}
 } finally {Remove-Item -LiteralPath $fixture -Recurse -Force}
