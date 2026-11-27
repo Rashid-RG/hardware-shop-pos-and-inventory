@@ -51,11 +51,13 @@ export async function nativeAuthenticatedActivationReview({recoveryId,operator,r
  const saved=JSON.parse(bindingBytes.toString('utf8')),expected={database:saved.database,systemIdentifier:saved.systemIdentifier,databaseOid:saved.databaseOid};
  const options=localConnectionConfig(dotenv.parse(configurationBytes).DATABASE_URL);
  if(options.database!==expected.database)throw Error('Database identity mismatch.');
- const client=new pg.Client(options);
- client.on('error',()=>{});
- try{
-  await client.connect();
-  const input={client,expected,configurationBytes,bindingBytes,readReview,operator,reviewer,confirmation};
-  return mode==='record'?await recordActivationIncidentObservation(control,input,'RETAIN ACTIVATION REVIEW OBSERVATION'):await revalidateActivationIncidentObservation(control,input);
- }finally{await client.end().catch(()=>{});}
+ // Native preflight requires no other database clients. Connect only between reviews.
+ const openClient=async()=>{
+  const client=new pg.Client(options);
+  client.on('error',()=>{});
+  try{await client.connect();return client;}
+  catch(error){await client.end().catch(()=>{});throw error;}
+ };
+ const input={openClient,expected,configurationBytes,bindingBytes,readReview,operator,reviewer,confirmation};
+ return mode==='record'?await recordActivationIncidentObservation(control,input,'RETAIN ACTIVATION REVIEW OBSERVATION'):await revalidateActivationIncidentObservation(control,input);
 }

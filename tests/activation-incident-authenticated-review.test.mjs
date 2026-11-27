@@ -97,3 +97,17 @@ test('durable observations reject duplicates, stale credentials and modified evi
   await assert.rejects(revalidateActivationIncidentObservation(directory,input),/Invalid observation/);
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+
+test('native authentication session is closed before the second evidence inspection',async()=>{
+ const input=await options();
+ const client=input.client;
+ delete input.client;
+ let connected=false,observations=0;
+ const result=await observeAuthenticatedActivationReview({...input,
+  readReview:async()=>{assert.equal(connected,false);observations++;return fixture();},
+  openClient:async()=>{assert.equal(observations,1);connected=true;return {...client,end:async()=>{connected=false;}};}
+ });
+ assert.equal(observations,2);
+ assert.equal(connected,false);
+ assert.equal(result.activationAllowed,false);
+});

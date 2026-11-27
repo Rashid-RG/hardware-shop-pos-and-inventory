@@ -5,7 +5,7 @@ import {bindActivationIncidentReview,assertSameActivationIncidentReview} from '.
 import {createHash} from 'node:crypto';
 const blocked={activationAllowed:false,runtimeActivated:false,startupAllowed:false,rollbackAllowed:false,recoveryAllowed:false,continuousExclusionVerified:false,independenceVerified:false};
 const digest=b=>createHash('sha256').update(b).digest('hex');
-export async function observeAuthenticatedActivationReview({client,expected,configurationBytes,bindingBytes,readReview,operator,reviewer,confirmation}){
+export async function observeAuthenticatedActivationReview({client,openClient,expected,configurationBytes,bindingBytes,readReview,operator,reviewer,confirmation}){
  if(confirmation!=='REVIEW ACTIVATION INCIDENT'||typeof readReview!=='function'||!Buffer.isBuffer(configurationBytes)||!Buffer.isBuffer(bindingBytes)||configurationBytes.length<1||configurationBytes.length>65536||bindingBytes.length<1||bindingBytes.length>65536)throw Error('Explicit evidence-bound review required.');
  // Copy bytes before asynchronous work and bind to the exact native snapshot.
  const configuration=Buffer.from(configurationBytes),binding=Buffer.from(bindingBytes);
@@ -18,7 +18,14 @@ export async function observeAuthenticatedActivationReview({client,expected,conf
  const evidence=first.snapshot.evidence;
  const configDigest=evidence.configuration??evidence.runtimeConfiguration;
  if(configDigest.toLowerCase()!==digest(configuration)||evidence.binding.toLowerCase()!==digest(binding))throw Error('Configuration or identity evidence mismatch.');
- const pair=await verifyOfflineRecoveryPair(client,saved,config,operator,reviewer);
+ if(openClient!==undefined&&(typeof openClient!=='function'||client))throw Error('Ambiguous database session.');
+ let session=client,pair;
+ try{
+  if(openClient)session=await openClient();
+  pair=await verifyOfflineRecoveryPair(session,saved,config,operator,reviewer);
+ }finally{
+  if(openClient&&session)await session.end();
+ }
  if(pair.state!=='distinct-admin-credentials-verified'||pair.credentialsVerified!==true||pair.distinctAccountsVerified!==true||pair.recoveryAllowed!==false)throw Error('Administrator review denied.');
  assertSameActivationIncidentReview(first,await readReview());
  // Also compare to the original digest in case an adapter reused a mutable object.
