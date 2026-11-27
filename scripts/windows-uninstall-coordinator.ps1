@@ -30,18 +30,24 @@ function Invoke-ArsUninstallRehearsal([string]$project,[string]$confirmation) {
   foreach ($p in @($holdPath,$proofPath)) {Assert-ArsPlainPath $p}
   if ((Get-FileHash -LiteralPath $holdPath -Algorithm SHA256).Hash -cne $holdDigest -or (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash -cne $proofDigest -or (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {throw 'Shutdown evidence changed.'}
  }
- Assert-RehearsalHold
- $folder=Prepare-ArsUninstallBackup $project
+ return (Invoke-ArsUninstallRehearsalStages $project $state $id ${function:Assert-RehearsalHold} {param($p) Prepare-ArsUninstallBackup $p} {param($p,$f) Test-ArsUninstallRestore $p $f} {param($p,$f) Get-ArsFinalUninstallEvidenceReview $p $f})
+}
+# Internal stage sequence, also exercised with isolated fixture callbacks.
+function Invoke-ArsUninstallRehearsalStages([string]$project,[string]$state,[string]$id,[scriptblock]$check,[scriptblock]$backup,[scriptblock]$restore,[scriptblock]$review) {
+ $ErrorActionPreference='Stop'
+ if ($id -cnotmatch '^[a-f0-9]{32}$') {throw 'Invalid uninstall identity.'}
+ & $check
+ $folder=& $backup $project
  if ($folder -ine (Join-Path (Join-Path $state 'uninstall-recovery') $id)) {throw 'Unexpected recovery identity.'}
- Assert-RehearsalHold
- $observation=Test-ArsUninstallRestore $project $folder
+ & $check
+ $observation=& $restore $project $folder
  if ($observation.uninstallId -cne $id -or $observation.isolatedRestorePassed -isnot [bool] -or -not $observation.isolatedRestorePassed) {throw 'Restore observation mismatch.'}
- Assert-RehearsalHold
- $plan=Get-ArsFinalUninstallEvidenceReview $project $folder
+ & $check
+ $plan=& $review $project $folder
  if ($plan.uninstallId -cne $id -or $plan.restoreObservationMatched -isnot [bool] -or -not $plan.restoreObservationMatched) {throw 'Final review mismatch.'}
  $flags=@('applicationRemovalAllowed','databaseDeletionAllowed','serviceRemovalAllowed','uninstalled','finalUninstallBackupVerified','continuousExclusionVerified')
  foreach ($flag in $flags) {if ($plan[$flag] -isnot [bool] -or $plan[$flag]) {throw 'Unexpected authorization.'}}
- Assert-RehearsalHold
+ & $check
  $result=[ordered]@{schema=1;kind='windows-uninstall-coordinator-rehearsal';uninstallId=$id;finalReviewMatched=$true;maintenanceHoldObserved=$true}
  foreach ($flag in $flags) {$result[$flag]=$false}
  return $result
