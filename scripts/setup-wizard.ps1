@@ -51,6 +51,7 @@ try {
  . (Join-Path $PSScriptRoot 'windows-setup-resume.ps1')
  Consume-ArsSetupResume
  . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+ . (Join-Path $PSScriptRoot 'windows-desktop-registration.ps1')
  . (Join-Path $PSScriptRoot 'windows-setup-stage.ps1')
  if (-not (Show-ArsSetupPage 'Welcome to Setup' ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
  Assert-FreshFiles
@@ -103,6 +104,7 @@ try {
  # Create user shortcuts only if no existing shortcut would be overwritten.
  $desktop=[Environment]::GetFolderPath('DesktopDirectory')
  $programs=[Environment]::GetFolderPath('Programs')
+ Assert-ArsRegistrationVacant $desktop $programs
  $shell=New-Object -ComObject WScript.Shell
  foreach ($folder in @($desktop,$programs)) {
   $link=Join-Path $folder 'ARS Distributor.lnk'
@@ -127,6 +129,7 @@ try {
  . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
  $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
  [void][IO.Directory]::CreateDirectory($state)
+ Write-ArsDesktopRegistration $root $state $desktop $programs
  Write-ArsInstallationIdentity $root $state
  Set-ArsProgress 5 'Setup steps completed.'
  Close-ArsProgress

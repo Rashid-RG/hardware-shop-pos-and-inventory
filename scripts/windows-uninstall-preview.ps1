@@ -2,6 +2,7 @@
 . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
 . (Join-Path $PSScriptRoot 'windows-uninstall-backup-review.ps1')
 . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
+. (Join-Path $PSScriptRoot 'windows-desktop-registration.ps1')
 function Get-ArsUninstallPreview([string]$project,[string]$state) {
  foreach ($dir in @($project,$state,(Join-Path $state 'desktop-control'))) {
   Assert-ArsPlainPath $dir
@@ -62,7 +63,8 @@ function Show-ArsUninstallPreview([string]$project) {
  if (-not (Show-ArsSetupPage 'Preserve your business' $message 'Review requirements')) { return }
  try {
   $null=Review-ArsInstallationIdentity $project $state
-  $identity='Recorded fresh-install application identity matched. Exclusive ownership is not certified.'
+  $null=Review-ArsDesktopRegistration $project $state ([Environment]::GetFolderPath('DesktopDirectory')) ([Environment]::GetFolderPath('Programs'))
+  $identity='Fresh-install application and desktop registration matched. Exclusive ownership is not certified.'
  } catch {$identity='Fresh-install identity missing or changed. No removal permitted.'}
  $null=Show-ArsSetupPage 'Removal is not yet enabled' ($identity+[Environment]::NewLine+[Environment]::NewLine+'Permanent storage separation, verified final backup, installation ownership and service shutdown are required. Permanent business data deletion is disabled. No application, service, file or database was removed.') 'Finish'
 }
