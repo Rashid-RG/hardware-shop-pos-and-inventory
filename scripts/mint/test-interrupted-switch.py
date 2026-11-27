@@ -177,6 +177,33 @@ class RecoveryTests(unittest.TestCase):
             (source/".env.local").write_text("changed")
             with self.assertRaisesRegex(ValueError,"differs"):
                 layout.verify_staged_storage(source,destination)
+    def test_runtime_mapping_and_partial_failure_preserve_originals(self):
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        for failure in (None,1,2,3):
+            with tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                source=root/"legacy"
+                source.mkdir()
+                (source/".env.local").write_text("fixture")
+                (source/"uploads").mkdir()
+                (source/"uploads"/"photo").write_text("image")
+                (source/"backups").mkdir()
+                layout.copy_legacy_storage(source,root/"staged")
+                with self.assertRaisesRegex(ValueError,"Disposable"):
+                    layout.rehearse_runtime_mapping(root)
+                (root/".ars-runtime-test").touch()
+                if failure is None:
+                    self.assertTrue(layout.rehearse_runtime_mapping(root)["mapped"])
+                    self.assertTrue((source/".env.local").is_symlink())
+                    self.assertEqual((root/"originals"/".env.local").read_text(),"fixture")
+                else:
+                    with self.assertRaisesRegex(RuntimeError,"Injected"):
+                        layout.rehearse_runtime_mapping(root,failure)
+                    self.assertFalse((source/".env.local").is_symlink())
+                    self.assertEqual((source/"uploads"/"photo").read_text(),"image")
+                    self.assertEqual((root/"runtime"/".env.local").read_text(),"fixture")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

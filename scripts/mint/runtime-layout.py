@@ -125,6 +125,52 @@ def verify_staged_storage(project, destination):
         raise ValueError("Storage changed during durable verification.")
     return hashlib.sha256(json.dumps(original,sort_keys=True,separators=(",",":")).encode()).hexdigest()
 
+def rehearse_runtime_mapping(root, fail_after=None):
+    """Exercise retained originals and runtime links in a disposable fixture only."""
+    from switch_journal import sync_dir
+    root=Path(root)
+    if root.resolve(strict=True)!=root or not (root/".ars-runtime-test").is_file() or (root/".ars-runtime-test").is_symlink():
+        raise ValueError("Disposable runtime test directory required.")
+    project=root/"legacy"
+    staged=root/"staged"
+    runtime=root/"runtime"
+    retained=root/"originals"
+    if any(os.path.lexists(p) for p in (runtime,retained)):
+        raise ValueError("Runtime rehearsal destination already exists.")
+    digest=verify_staged_storage(project,staged)
+    retained.mkdir(mode=0o700)
+    staged.rename(runtime)
+    sync_dir(root)
+    names=(".env.local","uploads","backups")
+    try:
+        for index,name in enumerate(names,1):
+            (project/name).rename(retained/name)
+            (project/name).symlink_to(runtime/name,target_is_directory=name!=".env.local")
+            sync_dir(project)
+            sync_dir(retained)
+            if fail_after==index:
+                raise RuntimeError("Injected mapping failure.")
+        if verify_staged_storage(retained,runtime)!=digest:
+            raise ValueError("Runtime fingerprint mismatch.")
+        if any(not (project/n).is_symlink() or (project/n).resolve(strict=True)!=runtime/n for n in names):
+            raise ValueError("Runtime mapping mismatch.")
+        return {"mapped":True,"originalsRetained":True,"activationAllowed":False}
+    except Exception:
+        for name in reversed(names):
+            original=retained/name
+            link=project/name
+            if os.path.lexists(original):
+                if link.is_symlink() and link.resolve(strict=True)==runtime/name:
+                    link.unlink()
+                if os.path.lexists(link):
+                    raise RuntimeError("Unexpected rollback destination; preserve all files.")
+                original.rename(link)
+        sync_dir(project)
+        sync_dir(retained)
+        if verify_staged_storage(project,runtime)!=digest:
+            raise RuntimeError("Rollback verification failed.")
+        raise
+
 def stage_migration(project, folder, confirmation):
     """Retain a verified private copy under the maintenance hold; never activate."""
     import json
