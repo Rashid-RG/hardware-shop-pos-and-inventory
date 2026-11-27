@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('Mint maintenance backup acquires same application writer lease before table locks',()=>{
- const server=readFileSync(new URL('../server.ts',import.meta.url),'utf8');
- const backup=readFileSync(new URL('../scripts/mint/locked-backup.mjs',import.meta.url),'utf8');
+ const server=read('server.ts');
+ const backup=read('scripts/mint/locked-backup.mjs');
+ const session=read('scripts/database-maintenance-session.mjs');
+ const gate=read('scripts/database-handoff-gate.mjs');
+ const fence=read('scripts/database-maintenance-table-fence.mjs');
  assert.match(server,/SINGLE_WRITER_LOCK_CLASS = 1642958133/);
  assert.match(server,/SINGLE_WRITER_LOCK_ID = 1/);
- assert.match(backup,/pg_try_advisory_lock.*\[1642958133,1\]/);
- assert.ok(backup.indexOf('pg_try_advisory_lock')<backup.indexOf("client.query('BEGIN')"));
- assert.ok(backup.indexOf('await client.end()')>backup.indexOf('await client.query(\'ROLLBACK\')'));
+ assert.match(gate,/HANDOFF_CLASS=1642958133/);
+ assert.match(gate,/WRITER_ID=1/);
+ assert.match(session,/pg_try_advisory_lock.*\[HANDOFF_CLASS,WRITER_ID\]/);
+ assert.match(backup,/withMaintenanceSession\(client,'hardware_pos_ars',session=>withMaintenanceTableFence\(client,session,/);
+ assert.ok(session.indexOf('pg_try_advisory_lock')<session.indexOf('await work('));
+ assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
+ assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
 });
