@@ -53,7 +53,7 @@ def execute(project,script,*args):
             if progress.poll() is None: progress.terminate()
             progress.wait()
     if result.returncode==0:
-        notice(("Operation completed. Live installation remains disabled.\n" + ("Maintenance remains active; resume the POS before billing.\n" if (STATE/"maintenance-hold.json").exists() else ""))+"Local log: "+log.name)
+        notice(("Operation completed. Live installation remains disabled.\n" + ("Maintenance remains active. Resolve all blocking evidence before resuming billing.\n" if (STATE/"maintenance-hold.json").exists() else ""))+"Local log: "+log.name)
     else:
         notice("Preparation failed. Existing data was not deliberately removed.\nContact RS Nextward with local log: "+log.name,True)
 
@@ -95,6 +95,12 @@ def switch_intent_review(project):
 def activation_review(project):
     """Dedicated graphical proposal review; no activation or resume operation."""
     while True:
+        if os.path.lexists(STATE/"runtime-activation-interrupted.json"):
+            if dialog("--question","--no-markup","--text=Interrupted activation retained. Review recovery evidence without clearing the incident or starting the POS?").returncode!=0: return
+            folder=select_recovery()
+            if not folder: return
+            execute(project,"prepare-runtime-activation.py",str(folder),"--review-incident")
+            return
         target=STATE/"runtime-activation-proposal.json"
         exists=target.exists() or target.is_symlink()
         held=(STATE/"maintenance-hold.json").exists() or (STATE/"maintenance-hold.json").is_symlink()

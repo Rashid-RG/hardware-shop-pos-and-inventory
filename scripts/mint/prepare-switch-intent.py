@@ -59,6 +59,8 @@ def retain(folder,verify=False,confirmation="",cancel=False):
             if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
                 raise ValueError("Invalid lock.")
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if os.path.lexists(STATE/"runtime-activation-interrupted.json"):
+            raise ValueError("Interrupted activation requires recovery review.")
         binding=verified_binding(folder,proposal)
         if not verify and not cancel:
             if target.exists() or target.is_symlink():
