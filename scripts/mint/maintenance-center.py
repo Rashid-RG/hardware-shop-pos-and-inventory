@@ -59,7 +59,7 @@ def main():
             note=Gtk.Label(label="Diagnostics and isolated repair preparation. Repair activation and uninstall remain locked.")
             note.set_xalign(0)
             box.pack_start(note,False,False,0)
-            for label,code in (("Recovery Center",1),("Update Center",2),("Prepare repair",4),("Review backup",5),("Test repair",6),("Review readiness",7),("Refresh",3),("Close",0)):
+            for label,code in (("Recovery Center",1),("Update Center",2),("Prepare repair",4),("Review backup",5),("Test repair",6),("Review readiness",7),("Native test",8),("Refresh",3),("Close",0)):
                 win.add_button(label,code)
             win.show_all()
             action=win.run()
@@ -67,9 +67,9 @@ def main():
             win.destroy()
         if action==3:
             continue
-        if action not in (1,2,4,5,6,7):
+        if action not in (1,2,4,5,6,7,8):
             return
-        script=project/"scripts/mint"/({1:"recovery-center.py",2:"update-center.py",4:"prepare-repair.py",5:"repair-backup-review.py",6:"test-repair-restore.py",7:"repair-readiness.py"}[action])
+        script=project/"scripts/mint"/({1:"recovery-center.py",2:"update-center.py",4:"prepare-repair.py",5:"repair-backup-review.py",6:"test-repair-restore.py",7:"repair-readiness.py",8:"native-repair-rehearsal.py"}[action])
         if script.resolve(strict=True)!=script or not script.is_file():
             raise RuntimeError("Maintenance tool unavailable.")
         subprocess.run(["/usr/bin/python3",str(script)],cwd=project,check=True)
