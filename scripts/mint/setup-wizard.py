@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-TITLE = "ARS Distributor Setup | RS Nextward"
+TITLE = "RS Nextward | ARS Distributor Setup"
 ROOT = Path(__file__).resolve().parents[2]
 STATE = Path.home() / ".local/share/ars-hardware"
 
@@ -42,7 +42,7 @@ def main():
             return 1
         try:
             preflight()
-            if dialog("--question","--no-markup","--width=500","--text=Welcome to ARS Distributor 1.0 Pilot Setup.\n\nRS Nextward\n\nThis wizard prepares the local application and database. Internet access is required.","--ok-label=Next","--cancel-label=Cancel"):
+            if dialog("--question","--no-markup","--width=500","--text=Thank you for choosing RS Nextward.\n\nWelcome to ARS Distributor 1.0 Pilot Setup. This wizard prepares your wholesale distribution workspace and local database. Internet access is required.","--ok-label=Next","--cancel-label=Cancel"):
                 return 0
             if dialog("--text-info","--width=650","--height=450","--filename="+str(ROOT/"docs/pilot-installation-terms.txt"),"--checkbox=I accept these pilot installation conditions","--ok-label=Accept and continue","--cancel-label=Do not accept"):
                 return 0
@@ -56,7 +56,7 @@ def main():
                 if progress.poll() is None:
                     progress.terminate()
                 progress.wait()
-            if not dialog("--question","--no-markup","--width=480","--text=Installation steps completed. Launch ARS to verify database readiness and complete first-administrator setup.","--ok-label=Launch ARS Distributor","--cancel-label=Finish"):
+            if not dialog("--question","--no-markup","--width=480","--text=Thank you for choosing RS Nextward.\n\nInstallation steps completed. Launch ARS Distributor to verify database readiness and complete first-administrator setup.","--ok-label=Launch ARS Distributor","--cancel-label=Finish"):
                 subprocess.run(["python3",str(ROOT/"scripts/mint/open.py")],check=True)
             return 0
         except (OSError,RuntimeError,subprocess.CalledProcessError):
