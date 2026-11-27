@@ -4,7 +4,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot
 $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
-. (Join-Path $PSScriptRoot 'windows-repair-rehearsal.ps1')
+. (Join-Path $PSScriptRoot 'windows-repair-readiness.ps1')
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
@@ -45,6 +45,21 @@ function Get-ArsMaintenanceSummary {
 }
 try {
  while (Show-ArsSetupPage 'Maintenance Center' (Get-ArsMaintenanceSummary) 'Maintenance tools') {
+  if ([Windows.Forms.MessageBox]::Show('Review completed repair readiness evidence?',$title,'YesNo','Question') -eq 'Yes') {
+   $picker=New-Object Windows.Forms.FolderBrowserDialog
+   try {
+    $picker.Description='Select completed managed repair preparation'
+    if ($picker.ShowDialog() -ne 'OK') { continue }
+    $folder=$picker.SelectedPath
+   } finally { $picker.Dispose() }
+   try {
+    $review=Get-ArsRepairReadiness $root $folder
+    [void][Windows.Forms.MessageBox]::Show('Repair evidence and tested container image matched. Native Windows repair, writer exclusion and rollback are not certified. Activation remains locked.',$title,'OK','Information')
+   } catch {
+    [void][Windows.Forms.MessageBox]::Show('Repair readiness review blocked. Missing, stale or altered evidence. No repair applied.',$title,'OK','Error')
+   }
+   continue
+  }
   $choice=[Windows.Forms.MessageBox]::Show('Prepare new repair files? Choose Yes. To review existing repair backup evidence, choose No.',$title,'YesNoCancel','Question')
   if ($choice -eq 'Cancel') { continue }
   if ($choice -eq 'No') {
