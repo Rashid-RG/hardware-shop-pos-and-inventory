@@ -2,7 +2,7 @@
 
 Wholesale distribution and inventory management, release 1.0.0 (shop-opening pilot).
 
-**Release status:** automated validation passed at workflow #2766. Physical shop acceptance and owner authorization remain required. This is not a production deployment approval.
+**Release status:** automated validation passed at workflow #2777 (commit `9a0e8ad`), including zero reported npm audit findings for production and full dependencies. Physical shop acceptance and owner authorization remain required. This is not a production deployment approval.
 
 ## Application
 

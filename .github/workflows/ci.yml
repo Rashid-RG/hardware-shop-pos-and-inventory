@@ -130,6 +130,17 @@ jobs:
           path: security-audit/*.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Enforce zero reported dependency vulnerabilities
+        if: always()
+        run: |
+          node --input-type=commonjs -e '
+            const fs = require("node:fs");
+            for (const scope of ["production", "all"]) {
+              const r = JSON.parse(fs.readFileSync("security-audit/" + scope + ".json", "utf8"));
+              if (r.error || r.metadata?.vulnerabilities?.total !== 0) {
+                throw new Error("Dependency security gate failed: " + scope);
+              }
+            }'
       - name: TypeScript checks
         run: npm run lint
       - name: Regression tests
@@ -256,11 +267,11 @@ jobs:
         run: bash scripts/verify-hosted-container-ci.sh
   validate:
     if: ${{ always() }}
-    needs: [maintenance-validation, application-validation, database-validation, hosted-validation]
+    needs: [maintenance-validation, application-validation, database-validation, hosted-validation, windows-pilot-checks, mint-script-checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every validation job to pass
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
-        run: test "$RESULTS" = "success,success,success,success"
+        run: test "$RESULTS" = "success,success,success,success,success,success"

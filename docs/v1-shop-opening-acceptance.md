@@ -13,6 +13,7 @@ This checklist is an acceptance gate, not evidence that the checks have already 
 | A4 printing | Physical single and multipage print, ARS logo, product code, description, U/M, quantities, rate, amount, sales representative, RS Nextward footer | Pending printer test |
 | Purchasing | PO, import shipment, receiving, landed costs, supplier payment and reconciliation | Pending operator test |
 | Accounts | Customer statements, partial payments, returns, cash shift, partner capital and profit allocation; compare reports to ledger | Pending owner/accountant review |
+| Dependency security | Zero reported vulnerabilities in production and full npm audit for the exact release commit | Passed on 9a0e8ad (#2777); recheck release commit |
 | Security | First admin setup, unique credentials, role restrictions, password recovery with configured sender | Pending configured test |
 | Local recovery | Verified backup and isolated restore, compare records and uploaded files | Pending physical test |
 | Encrypted Drive | Owner-authorized remote, successful encrypted upload, download and isolated restore; separately held recovery keys | Pending configured test |
