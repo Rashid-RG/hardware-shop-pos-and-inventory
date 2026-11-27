@@ -50,18 +50,23 @@ try {
  Set-Location -LiteralPath $root
  . (Join-Path $PSScriptRoot 'windows-setup-resume.ps1')
  Consume-ArsSetupResume
- if (-not (Confirm-Step ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
+ . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+ if (-not (Show-ArsSetupPage 'Welcome to Setup' ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
  Assert-FreshFiles
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
- if ([System.Windows.Forms.MessageBox]::Show(($terms+[Environment]::NewLine+'Do you accept these pilot installation conditions?'),$title,'YesNo','Question') -ne 'Yes') { return }
+ if (-not (Show-ArsSetupPage 'Installation agreement' $terms 'Accept and continue' -Agreement)) { return }
  . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
  if (-not (Install-ArsMissingPrerequisites)) { return }
  Assert-Fresh
- if (-not (Confirm-Step ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage builds the application and prepares a fresh private database.'))) { return }
+ if (-not (Show-ArsSetupPage 'Ready to install' ('Prepare the application in the extracted folder? '+$root+[Environment]::NewLine+'Keep this folder permanently. This stage builds the application and prepares a fresh private database.'))) { return }
  Assert-Fresh
+ Open-ArsProgress
+ Set-ArsProgress 0 'Installing locked application dependencies...'
  Invoke-Checked 'npm.cmd' @('ci','--include=dev')
+ Set-ArsProgress 1 'Building the production application...'
  Invoke-Checked 'npm.cmd' @('run','build')
  Assert-Fresh
+ Set-ArsProgress 2 'Preparing private database credentials...'
  # Create configuration exclusively. Never replace credentials or use legacy defaults.
  $password=New-Secret
  $jwt=New-Secret
@@ -78,8 +83,10 @@ try {
   $data=[Text.Encoding]::UTF8.GetBytes(($lines -join [Environment]::NewLine)+[Environment]::NewLine)
   $stream.Write($data,0,$data.Length)
  } finally { $stream.Dispose() }
+ Set-ArsProgress 3 'Downloading and starting PostgreSQL...'
  # Separate Compose project and loopback-only port. No deletion on failure.
  Invoke-Checked 'docker' @('compose','-p','ars-windows-pilot','--env-file','.env.local','-f','scripts/windows-pilot-compose.yml','up','-d','--wait')
+ Set-ArsProgress 4 'Creating desktop and Start menu shortcuts...'
  # Create user shortcuts only if no existing shortcut would be overwritten.
  $desktop=[Environment]::GetFolderPath('DesktopDirectory')
  $programs=[Environment]::GetFolderPath('Programs')
@@ -94,10 +101,13 @@ try {
   $shortcut.Description='ARS Distributor | RS Nextward'
   $shortcut.Save()
  }
- if ([System.Windows.Forms.MessageBox]::Show('Thank you for choosing RS Nextward. Setup steps completed. Launch ARS now to verify readiness and register the first administrator?',$title,'YesNo','Information') -eq 'Yes') {
+ Set-ArsProgress 5 'Setup steps completed.'
+ Close-ArsProgress
+ if (Show-ArsSetupPage 'Setup completed' 'Thank you for choosing RS Nextward. Launch ARS to verify readiness and register the first administrator.' 'Launch ARS') {
   Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"')
  }
 } catch {
+ if (Get-Command Close-ArsProgress -ErrorAction SilentlyContinue) { Close-ArsProgress }
  [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message,$title,'OK','Error')
  exit 1
 } finally {
