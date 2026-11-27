@@ -8,7 +8,7 @@ $control=Join-Path $state 'desktop-control'
 $recovery=Join-Path $state 'update-recovery'
 $form=New-Object Windows.Forms.Form
 $form.Text='ARS Distributor | RS Nextward'
-$form.ClientSize=New-Object Drawing.Size(670,410)
+$form.ClientSize=New-Object Drawing.Size(670,466)
 $form.StartPosition='CenterScreen'
 $form.FormBorderStyle='FixedDialog'
 $form.MaximizeBox=$false
@@ -44,21 +44,31 @@ $incidentReview.Text='Review incident'
 $incidentReview.SetBounds(406,284,236,38)
 $incidentReview.Enabled=$false
 $form.Controls.Add($incidentReview)
+$authRecord=New-Object Windows.Forms.Button
+$authRecord.Text='Record admin review'
+$authRecord.SetBounds(26,330,290,38)
+$authRecord.Enabled=$false
+$form.Controls.Add($authRecord)
+$authVerify=New-Object Windows.Forms.Button
+$authVerify.Text='Verify admin review'
+$authVerify.SetBounds(326,330,316,38)
+$authVerify.Enabled=$false
+$form.Controls.Add($authVerify)
 $close=New-Object Windows.Forms.Button
 $close.Text='Close'
-$close.SetBounds(522,350,120,38)
+$close.SetBounds(522,404,120,38)
 $form.Controls.Add($close)
 $intent=New-Object Windows.Forms.Button
 $intent.Text='Retain intent'
-$intent.SetBounds(26,350,150,38)
+$intent.SetBounds(26,404,150,38)
 $form.Controls.Add($intent)
 $intentVerify=New-Object Windows.Forms.Button
 $intentVerify.Text='Verify intent'
-$intentVerify.SetBounds(186,350,150,38)
+$intentVerify.SetBounds(186,404,150,38)
 $form.Controls.Add($intentVerify)
 $intentCancel=New-Object Windows.Forms.Button
 $intentCancel.Text='Cancel intent'
-$intentCancel.SetBounds(346,350,166,38)
+$intentCancel.SetBounds(346,404,166,38)
 $form.Controls.Add($intentCancel)
 $close.Add_Click({$form.Close()})
 function Refresh-Choices {
@@ -79,6 +89,8 @@ function Refresh-Choices {
 }
 function Update-Buttons {
  $incidentReview.Enabled=$false
+ $authRecord.Enabled=$false
+ $authVerify.Enabled=$false
  # Any incident entry, including malformed evidence, requires support review.
  try {
   $cursor=$control
@@ -89,6 +101,8 @@ function Update-Buttons {
   }
   $blocked=@(Get-ChildItem -LiteralPath $control -Force | Where-Object { $_.Name -ieq 'runtime-activation-interrupted.json' }).Count -ne 0
   $incidentReview.Enabled=($blocked -and $select.SelectedIndex -ge 0)
+  $authRecord.Enabled=$incidentReview.Enabled
+  $authVerify.Enabled=$incidentReview.Enabled
  } catch { $blocked=$true }
  if ($blocked) {
   foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel)) {$button.Enabled=$false}
@@ -112,6 +126,8 @@ function Invoke-Review([bool]$Verification) {
   if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
  }
  $incidentReview.Enabled=$false
+ $authRecord.Enabled=$false
+ $authVerify.Enabled=$false
  $prepare.Enabled=$false
  $verify.Enabled=$false
  $select.Enabled=$false
@@ -146,7 +162,7 @@ function Invoke-Intent([string]$Mode) {
   $answer=[Windows.Forms.MessageBox]::Show($message,'ARS Distributor',[Windows.Forms.MessageBoxButtons]::YesNo,[Windows.Forms.MessageBoxIcon]::Question,[Windows.Forms.MessageBoxDefaultButton]::Button2)
   if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
  }
- foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$close,$select)) {$button.Enabled=$false}
+ foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$authRecord,$authVerify,$close,$select)) {$button.Enabled=$false}
  $status.Text='Verifying switch intent and retained update evidence...'
  $form.Refresh()
  try {
@@ -175,10 +191,90 @@ function Invoke-Intent([string]$Mode) {
   Update-Buttons
  }
 }
+function Invoke-AuthenticatedReview([string]$Mode) {
+ $id=[string]$select.SelectedItem
+ if ($Mode -cnotin @('record','verify') -or $id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') {return}
+ $dialog=New-Object Windows.Forms.Form
+ $dialog.Text='ARS Distributor | Administrator recovery review'
+ $dialog.ClientSize=New-Object Drawing.Size(480,328)
+ $dialog.StartPosition='CenterParent'
+ $dialog.FormBorderStyle='FixedDialog'
+ $dialog.MaximizeBox=$false
+ $dialog.MinimizeBox=$false
+ $fields=@()
+ $process=$null
+ try {
+  $names=@('Operator Super Admin email','Operator password','Reviewer Super Admin email','Reviewer password')
+  for ($n=0;$n -lt 4;$n++) {
+   $lab=New-Object Windows.Forms.Label
+   $lab.Text=$names[$n]
+   $lab.SetBounds(20,(12+64*$n),440,20)
+   $dialog.Controls.Add($lab)
+   $field=New-Object Windows.Forms.TextBox
+   $field.SetBounds(20,(34+64*$n),440,26)
+   $field.MaxLength=254
+   if ($n % 2 -eq 1) {$field.UseSystemPasswordChar=$true;$field.MaxLength=72;$field.ShortcutsEnabled=$false}
+   $dialog.Controls.Add($field)
+   $fields+= $field
+  }
+  $ok=New-Object Windows.Forms.Button
+  $ok.Text='Verify'
+  $ok.SetBounds(230,278,110,32)
+  $ok.DialogResult=[Windows.Forms.DialogResult]::OK
+  $dialog.Controls.Add($ok)
+  $cancel=New-Object Windows.Forms.Button
+  $cancel.Text='Cancel'
+  $cancel.SetBounds(350,278,110,32)
+  $cancel.DialogResult=[Windows.Forms.DialogResult]::Cancel
+  $dialog.Controls.Add($cancel)
+  $dialog.AcceptButton=$ok
+  $dialog.CancelButton=$cancel
+  if ($dialog.ShowDialog($form) -ne [Windows.Forms.DialogResult]::OK) {return}
+  foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$authRecord,$authVerify,$close,$select)) {$button.Enabled=$false}
+  $status.Text='Checking administrator credentials and retained evidence...'
+  $form.Refresh()
+  $payload=@{recoveryId=$id;mode=$Mode;confirmation='REVIEW ACTIVATION INCIDENT';operator=@{email=$fields[0].Text;password=$fields[1].Text};reviewer=@{email=$fields[2].Text;password=$fields[3].Text}} | ConvertTo-Json -Depth 4 -Compress
+  foreach ($field in $fields) {$field.Clear()}
+  $psi=New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName=(Get-Command node -CommandType Application -ErrorAction Stop).Source
+  $psi.Arguments='"'+(Join-Path $PSScriptRoot 'activation-incident-review-cli.mjs')+'"'
+  $psi.WorkingDirectory=Split-Path -Parent $PSScriptRoot
+  $psi.UseShellExecute=$false
+  $psi.CreateNoWindow=$true
+  $psi.RedirectStandardInput=$true
+  $psi.RedirectStandardOutput=$true
+  $psi.RedirectStandardError=$true
+  $process=[Diagnostics.Process]::Start($psi)
+  $out=$process.StandardOutput.ReadToEndAsync()
+  $err=$process.StandardError.ReadToEndAsync()
+  $bytes=[Text.Encoding]::UTF8.GetBytes($payload)
+  try {$process.StandardInput.BaseStream.Write($bytes,0,$bytes.Length)} finally {[Array]::Clear($bytes,0,$bytes.Length);$payload=$null;$process.StandardInput.Close()}
+  if (-not $process.WaitForExit(1900000)) {$process.Kill();throw 'Review timed out.'}
+  if ($process.ExitCode -ne 0) {throw 'Review blocked.'}
+  $data=$out.GetAwaiter().GetResult() | ConvertFrom-Json
+  $expected=if ($Mode -eq 'record') {'activation-observation-retained'} else {'activation-observation-matched'}
+  if ($data.state -cne $expected -or $data.freshCredentialsRequired -ne $true -or $data.recordDigest -cnotmatch '^[a-f0-9]{64}$') {throw 'Unexpected review result.'}
+  foreach ($flag in @('activationAllowed','startupAllowed','rollbackAllowed','runtimeActivated','recoveryAllowed','continuousExclusionVerified')) {
+   if ($data.$flag -isnot [bool] -or $data.$flag) {throw 'Unexpected authorization.'}
+  }
+  [void][Windows.Forms.MessageBox]::Show('Authenticated review retained or matched. Incident remains retained. Startup is locked.','ARS Distributor','OK','Information')
+ } catch {
+  [void][Windows.Forms.MessageBox]::Show('Authenticated review blocked. Contact RS Nextward support. No incident was cleared.','ARS Distributor','OK','Warning')
+ } finally {
+  foreach ($field in $fields) {$field.Clear()}
+  $dialog.Dispose()
+  if ($process) {$process.Dispose()}
+  $select.Enabled=$true
+  $close.Enabled=$true
+  Update-Buttons
+ }
+}
+$authRecord.Add_Click({Invoke-AuthenticatedReview 'record'})
+$authVerify.Add_Click({Invoke-AuthenticatedReview 'verify'})
 $incidentReview.Add_Click({
  $id=[string]$select.SelectedItem
  if ($id -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') {return}
- foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$close,$select)) {$button.Enabled=$false}
+ foreach ($button in @($prepare,$verify,$intent,$intentVerify,$intentCancel,$incidentReview,$authRecord,$authVerify,$close,$select)) {$button.Enabled=$false}
  $status.Text='Verifying incident evidence. No live changes will be made.'
  $form.Refresh()
  $message='Incident review blocked. Contact RS Nextward support. Evidence remains retained.'
