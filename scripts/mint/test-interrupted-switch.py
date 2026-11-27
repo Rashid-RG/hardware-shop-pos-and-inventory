@@ -261,6 +261,41 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(startup_allowed(root))
             (project/"uploads").unlink()
             self.assertFalse(startup_allowed(root))
+    def test_interrupted_mapping_can_finish_without_removing_hold(self):
+        import hashlib
+        import maintenance_backup
+        spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
+        layout=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(layout)
+        with tempfile.TemporaryDirectory() as tmp:
+            state=Path(tmp)
+            project=state/"release"
+            project.mkdir()
+            (state/"project").symlink_to(project)
+            (project/".env.local").write_text("fixture")
+            (project/"uploads").mkdir()
+            (project/"backups").mkdir()
+            runtime=state/"runtime"
+            layout.copy_legacy_storage(project,runtime)
+            digest=layout.verify_staged_storage(project,runtime)
+            hold=state/"maintenance-hold.json"
+            raw=json.dumps({"purpose":"pre-update backup","previousProject":str(project)}).encode()
+            hold.write_bytes(raw)
+            (runtime/"migration-receipt.json").write_text(json.dumps({"schema":1,"kind":"mint-runtime-migration-staged","source":str(project),"storageDigest":digest,"holdDigest":hashlib.sha256(raw).hexdigest(),"activationAllowed":False}))
+            marker=state/"runtime-migration-interrupted.json"
+            marker.write_text(json.dumps({"schema":1,"kind":"mint-runtime-mapping-interrupted","source":str(project),"storageDigest":digest,"startupAllowed":False}))
+            originals=state/"runtime-migration-originals"
+            originals.mkdir()
+            (project/".env.local").rename(originals/".env.local")
+            (project/".env.local").symlink_to(runtime/".env.local")
+            with patch.object(layout,"STATE",state), patch.object(layout,"RUNTIME",runtime), patch.object(layout.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
+                result=layout.recover_interrupted_mapping(project,"RECOVER RUNTIME MAPPING")
+            self.assertTrue(result["mapped"])
+            self.assertEqual(hold.read_bytes(),raw)
+            self.assertFalse(marker.exists())
+            self.assertFalse(startup_allowed(state))
+            self.assertEqual((originals/".env.local").read_text(),"fixture")
+            self.assertEqual((project/"uploads").resolve(),runtime/"uploads")
     def test_missing_journal(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(recovery_plan(tmp)["action"],"manual-review")

@@ -34,7 +34,7 @@ def migration_inventory(project):
         entries.append({"name":name,"status":status})
     return {"schema":1,"kind":"mint-runtime-migration-inventory","entries":entries,"migrationAllowed":False,"requiresVerifiedBackup":True}
 
-def storage_manifest(root):
+def storage_manifest(root, names=(".env.local","uploads","backups")):
     import hashlib
     import stat
     root=Path(root)
@@ -59,7 +59,7 @@ def storage_manifest(root):
             result[relative]=("file",info.st_size,digest)
         else:
             raise ValueError("Unsupported legacy storage entry.")
-    for name in (".env.local","uploads","backups"):
+    for name in names:
         visit(root/name,name)
     return result
 
@@ -317,6 +317,109 @@ def map_staged_runtime(project, confirmation):
         sync_dir(STATE)
         return {"mapped":True,"originalsRetained":True,"maintenanceRetained":True,"startupAllowed":False}
 
+def recover_interrupted_mapping(project, confirmation):
+    """Finish an interrupted offline mapping; preserve both copies and the hold."""
+    import json
+    import hashlib
+    import fcntl
+    from resume_maintenance import open_lock
+    from maintenance_backup import stopped, check_database_clients
+    from switch_journal import sync_dir
+    if os.geteuid()==0 or confirmation!="RECOVER RUNTIME MAPPING":
+        raise ValueError("Explicit recovery approval required.")
+    project=Path(project).resolve(strict=True)
+    marker=STATE/"runtime-migration-interrupted.json"
+    hold=STATE/"maintenance-hold.json"
+    staged=STATE/"runtime-migration-staged"
+    originals=STATE/"runtime-migration-originals"
+    def read(path):
+        if path.resolve(strict=True)!=path or not path.is_file() or path.stat().st_size>65536:
+            raise ValueError("Invalid recovery evidence.")
+        return path.read_bytes()
+    with open_lock(STATE/"maintenance.lock") as maintenance, open_lock(STATE/"update.lock") as update:
+        for lock in (maintenance,update):
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if STATE.resolve(strict=True)!=STATE or not (STATE/"project").is_symlink() or (STATE/"project").resolve(strict=True)!=project:
+            raise ValueError("Registered project required.")
+        for name in ("runtime-switch-intent.json","runtime-activation-interrupted.json","handoff-pending.json","switch-journal.json"):
+            if os.path.lexists(STATE/name):
+                raise ValueError("Unresolved update evidence.")
+        raw=read(marker)
+        hold_raw=read(hold)
+        incident,h=map(json.loads,(raw,hold_raw))
+        if incident.get("schema")!=1 or incident.get("kind")!="mint-runtime-mapping-interrupted" or incident.get("source")!=str(project) or incident.get("startupAllowed") is not False or h.get("purpose")!="pre-update backup" or h.get("previousProject")!=str(project):
+            raise ValueError("Migration incident mismatch.")
+        if os.path.lexists(staged)==os.path.lexists(RUNTIME):
+            raise ValueError("Ambiguous staged runtime location.")
+        copy=RUNTIME if os.path.lexists(RUNTIME) else staged
+        receipt_raw=read(copy/"migration-receipt.json")
+        receipt=json.loads(receipt_raw)
+        digest=incident.get("storageDigest")
+        if receipt.get("schema")!=1 or receipt.get("kind")!="mint-runtime-migration-staged" or receipt.get("source")!=str(project) or receipt.get("holdDigest")!=hashlib.sha256(hold_raw).hexdigest() or receipt.get("storageDigest")!=digest or receipt.get("activationAllowed") is not False:
+            raise ValueError("Migration receipt mismatch.")
+        # Validate the complete split original tree before changing any path.
+        names=(".env.local","uploads","backups")
+        if os.path.lexists(originals) and (originals.is_symlink() or not originals.is_dir()):
+            raise ValueError("Invalid originals directory.")
+        # Manifest each existing original directly; no extra copy is needed.
+        combined={}
+        for name in names:
+            original=originals/name
+            link=project/name
+            if os.path.lexists(original):
+                if os.path.lexists(link) and (not link.is_symlink() or link.resolve(strict=True)!=RUNTIME/name):
+                    raise ValueError("Conflicting original path.")
+                base=originals
+            else:
+                if link.is_symlink() or not link.exists():
+                    raise ValueError("Missing original runtime entry.")
+                base=project
+            combined.update(storage_manifest(base, names=(name,)))
+        actual=hashlib.sha256(json.dumps(combined,sort_keys=True,separators=(",",":")).encode()).hexdigest()
+        if actual!=digest or storage_manifest(copy)!=combined:
+            raise ValueError("Interrupted runtime contents changed.")
+        stopped()
+        # The configuration may be temporarily absent from the project.
+        # Check database clients through the verified copy when necessary.
+        if not (project/".env.local").is_file():
+            raise ValueError("Configuration link absent; RS Nextward manual recovery required.")
+        check_database_clients(project)
+        if not originals.exists():
+            originals.mkdir(mode=0o700)
+        if copy==staged:
+            staged.rename(RUNTIME)
+        sync_dir(STATE)
+        for name in names:
+            original=originals/name
+            link=project/name
+            if not os.path.lexists(original):
+                link.rename(original)
+                sync_dir(originals)
+                sync_dir(project)
+            if not os.path.lexists(link):
+                link.symlink_to(RUNTIME/name,target_is_directory=name!=".env.local")
+                sync_dir(project)
+        if verify_staged_storage(originals,RUNTIME)!=digest or any(not (project/n).is_symlink() or (project/n).resolve(strict=True)!=RUNTIME/n for n in names):
+            raise ValueError("Recovered runtime mapping mismatch.")
+        stopped()
+        check_database_clients(project)
+        if read(marker)!=raw or read(hold)!=hold_raw or read(RUNTIME/"migration-receipt.json")!=receipt_raw:
+            raise ValueError("Recovery evidence changed.")
+        complete=RUNTIME/"mapping-complete.json"
+        record={"schema":1,"storageDigest":digest,"originalsRetained":True,"startupAllowed":False}
+        if os.path.lexists(complete):
+            if json.loads(read(complete))!=record:
+                raise ValueError("Conflicting completion receipt.")
+        else:
+            with complete.open("x") as stream:
+                json.dump(record,stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+        sync_dir(RUNTIME)
+        marker.unlink()
+        sync_dir(STATE)
+        return {"mapped":True,"originalsRetained":True,"maintenanceRetained":True,"startupAllowed":False}
+
 def prepare(project):
     if os.geteuid()==0:
         raise ValueError("Run setup as the desktop user.")
@@ -381,6 +484,7 @@ if __name__=="__main__":
     mode.add_argument("--inventory",action="store_true")
     mode.add_argument("--stage",type=Path)
     mode.add_argument("--map-staged",action="store_true")
+    mode.add_argument("--recover-mapping",action="store_true")
     parser.add_argument("--confirmation",default="")
     args=parser.parse_args()
     try:
@@ -393,6 +497,9 @@ if __name__=="__main__":
         elif args.map_staged:
             import json
             print(json.dumps(map_staged_runtime(args.project,args.confirmation)))
+        elif args.recover_mapping:
+            import json
+            print(json.dumps(recover_interrupted_mapping(args.project,args.confirmation)))
         else:
             prepare(args.project)
     except (OSError,ValueError) as error:
