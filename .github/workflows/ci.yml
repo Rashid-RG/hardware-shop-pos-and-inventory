@@ -338,7 +338,7 @@ jobs:
           New-Item -ItemType Directory -Path native-package | Out-Null
           $exe=Join-Path (Resolve-Path native-package).Path 'ARS-Distributor-Setup.exe'
           $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-          & $csc /nologo /target:winexe /optimize+ "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll scripts/windows-native-setup.cs
+          & $csc /nologo /target:winexe /optimize+ "/out:$exe" "/resource:$($zip.FullName),ARS.Payload.zip" /reference:System.Windows.Forms.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll (Resolve-Path -LiteralPath "scripts/windows-native-setup.cs").Path
           if ($LASTEXITCODE -ne 0) { throw 'Native compilation failed.' }
           $process=Start-Process -FilePath $exe -ArgumentList '--verify-payload' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'Embedded payload verification failed.' }
@@ -346,5 +346,23 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ars-distributor-windows-native-pilot
+          path: native-package/
+          retention-days: 14
+
+  package-mint-deb:
+    needs: [package-pilot]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ars-distributor-v1-pilot
+          path: pilot-package
+      - name: Build and inspect Linux Mint native bootstrap package
+        run: python3 scripts/package-mint-deb.py pilot-package native-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ars-distributor-mint-native-pilot
           path: native-package/
           retention-days: 14
