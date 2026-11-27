@@ -132,6 +132,31 @@ def finish_activation_observation(marker, expected):
     marker.unlink()
     sync_state()
 
+def review_interrupted_activation(folder):
+    """Read-only recovery review; never clears the marker or grants startup."""
+    if os.geteuid()==0:
+        raise ValueError("Desktop user required.")
+    plain(STATE,True)
+    if not folder.is_absolute():
+        raise ValueError("Absolute managed recovery folder required.")
+    marker=STATE/"runtime-activation-interrupted.json"
+    with os.fdopen(os.open(STATE/"maintenance.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600),"a") as maintenance, os.fdopen(os.open(STATE/"update.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600),"a") as update:
+        for lock in (maintenance,update):
+            if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+                raise ValueError("Invalid lock.")
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        raw=read(marker)
+        record=json.loads(raw)
+        if record.get("schema")!=1 or record.get("kind")!="mint-interrupted-activation" or record.get("desktopUid")!=os.getuid() or any(record.get(k) is not False for k in FLAGS):
+            raise ValueError("Invalid incident evidence.")
+        observed=snapshot(folder)
+        if snapshot(folder)!=observed or read(marker)!=raw:
+            raise ValueError("Incident review evidence changed.")
+        return {"schema":1,"kind":"mint-activation-incident-review",
+                "incidentDigest":sha(raw),"snapshot":observed,
+                "incidentRetained":True,"administratorApprovalRequired":True,
+                "continuousExclusionVerified":False,"recoveryAllowed":False,**FLAGS}
+
 def prepare(folder, verify=False, confirmation=""):
     if os.geteuid()==0:
         raise ValueError("Desktop user required.")
@@ -170,10 +195,13 @@ def prepare(folder, verify=False, confirmation=""):
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder",type=Path)
-    parser.add_argument("--verify",action="store_true")
+    mode=parser.add_mutually_exclusive_group()
+    mode.add_argument("--verify",action="store_true")
+    mode.add_argument("--review-incident",action="store_true")
     parser.add_argument("--confirmation",default="")
     args=parser.parse_args()
     try:
-        print(json.dumps(prepare(args.folder,args.verify,args.confirmation)))
-    except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
+        result=review_interrupted_activation(args.folder) if args.review_incident else prepare(args.folder,args.verify,args.confirmation)
+        print(json.dumps(result))
+    except (OSError,ValueError,RuntimeError,KeyError,TypeError,AttributeError,subprocess.SubprocessError):
         sys.exit("ARS Distributor activation proposal blocked. Contact RS Nextward support.")
