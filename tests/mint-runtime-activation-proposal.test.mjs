@@ -25,3 +25,15 @@ test('Mint activation requires protected backup receipt and exact hold digest',(
  assert.match(s,/receipt\.get\("holdDigest"\)==sha\(raw\["hold"\]\)/);
  assert.match(s,/receipt\.get\("recoveryDigest"\)==sha\(raw\["recovery"\]\)/);
 });
+
+test('ordinary preflight rejection occurs before the durable incident marker is created',()=>{
+ const body=s.slice(s.indexOf('def prepare(folder,'));
+ const marker=body.indexOf('marker, marker_raw=begin_activation_observation()');
+ assert.ok(marker>0);
+ for(const check of ['if os.path.lexists(STATE/"runtime-activation-interrupted.json"):', 'if not verify and os.path.lexists(target):','observed=snapshot(folder)','if verify and not matches(json.loads(read(target)),observed):']){
+  const position=body.indexOf(check);
+  assert.ok(position>=0&&position<marker,check);
+ }
+ assert.ok(body.indexOf('if not verify:',marker)>marker);
+ assert.ok(body.indexOf('finish_activation_observation(marker,marker_raw)',marker)>marker);
+});

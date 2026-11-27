@@ -171,11 +171,17 @@ def prepare(folder, verify=False, confirmation=""):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if not verify and confirmation!="PREPARE MINT ACTIVATION":
             raise ValueError("Explicit confirmation required.")
-        marker, marker_raw=begin_activation_observation()
+        # Read-only validation failures must not manufacture an interrupted
+        # activation incident. Existing incidents still block every retry.
+        if os.path.lexists(STATE/"runtime-activation-interrupted.json"):
+            raise ValueError("Existing activation incident requires review.")
+        if not verify and os.path.lexists(target):
+            raise ValueError("Existing proposal must be retained.")
         observed=snapshot(folder)
+        if verify and not matches(json.loads(read(target)),observed):
+            raise ValueError("Activation proposal invalid or stale.")
+        marker, marker_raw=begin_activation_observation()
         if not verify:
-            if target.exists() or target.is_symlink():
-                raise ValueError("Existing proposal must be retained.")
             if snapshot(folder)!=observed:
                 raise ValueError("Activation evidence changed.")
             record={"schema":1,"kind":"mint-runtime-activation-proposal","observationOnly":True,"preparedAt":datetime.datetime.now(datetime.timezone.utc).isoformat(),"snapshot":observed}
