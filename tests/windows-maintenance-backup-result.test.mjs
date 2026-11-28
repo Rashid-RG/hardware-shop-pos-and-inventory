@@ -77,3 +77,18 @@ test('backup result rejects symbolic link archive',async t=>{
  catch(e){if(process.platform==='win32'&&['EPERM','EACCES'].includes(e.code)){t.skip('Windows symlink privilege unavailable');return;}throw e;}
  await assert.rejects(f.verify(),/Invalid maintenance result file/);
 });
+
+test('archive verifier accepts matching database names and rejects cross-database results',async t=>{
+ const f=await fixture(t);
+ const legacy=await verifyWindowsBackupResult(f.scope,f.dir,f.name,'hardware_pos');
+ assert.equal(legacy.archive,join(f.dir,f.archive));
+ await assert.rejects(verifyWindowsBackupResult(f.scope,f.dir,f.name,'hardware_pos_ars'),/Invalid non-authorizing/);
+ const pilot='ars-hardware_pos_ars-fixture.dump';
+ await writeFile(join(f.dir,pilot),f.data);
+ await f.save({...f.record,archive:pilot});
+ const result=await verifyWindowsBackupResult(f.scope,f.dir,f.name,'hardware_pos_ars');
+ assert.equal(result.archive,join(f.dir,pilot));
+ assert.equal(result.sha256,f.sha256);
+ await assert.rejects(verifyWindowsBackupResult(f.scope,f.dir,f.name,'hardware_pos'),/Invalid non-authorizing/);
+ await assert.rejects(verifyWindowsBackupResult(f.scope,f.dir,f.name,'hardware_pos_ci'),/Unsupported backup result database/);
+});
