@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { checkDesktopFeed, startDesktopUpdateMonitor } from './scripts/desktop-update-monitor.mjs';
 import buildPackage from './package.json';
 import { installTransactionFence } from './backend/transactionFence';
 import {payrollAccountingOverview} from './backend/payrollAccountingOverview';
@@ -125,6 +127,7 @@ const IS_PRODUCTION = NODE_ENV === 'production';
 const PORT = Number(process.env.PORT || 3000);
 const SHUTDOWN_WARNING_MS = 10_000;
 let shutdownRequested = false;
+let desktopUpdateMonitor: ReturnType<typeof startDesktopUpdateMonitor> | undefined;
 const PROCESS_STARTED_AT = Date.now();
 
 const parseCsvList = (value?: string) => (value || '')
@@ -2857,6 +2860,13 @@ app.get('/api/health', (_req, res) => {
     uptimeSeconds: Math.floor((Date.now() - PROCESS_STARTED_AT) / 1000),
     shopCount: db?.settings?.shopProfiles?.length || 0,
   });
+});
+
+app.get('/api/desktop-update/status', (req, res) => {
+  if (!desktopUpdateMonitor || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')) {
+    return res.status(404).end();
+  }
+  res.set('Cache-Control', 'no-store').json(desktopUpdateMonitor.status());
 });
 
 app.get('/api/ready', async (req, res) => {
@@ -8343,9 +8353,21 @@ async function startServer() {
     console.log(`Server fully functional on http://${listenHost}:${actualPort}`);
   });
 
+  if (IS_PRODUCTION && listenHost === '127.0.0.1') {
+    const platform = process.platform === 'win32' ? 'windows' : 'linux-mint';
+    const state = platform === 'windows'
+      ? (process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'RS Nextward', 'ARS Distributor'))
+      : path.join(homedir(), '.local', 'share', 'ars-hardware');
+    if (state && path.isAbsolute(state) && ['win32', 'linux'].includes(process.platform)) {
+      desktopUpdateMonitor = startDesktopUpdateMonitor(signal =>
+        checkDesktopFeed(state, process.cwd(), platform, buildPackage.version, signal));
+    }
+  }
+
   const shutdown = (signal: string) => {
     if (shutdownRequested) return;
     shutdownRequested = true;
+    desktopUpdateMonitor?.stop();
     console.log(`${signal} received. Rejecting new requests and closing application listener.`);
     // A slow request is not permission to terminate the process during business operations.
     const warning = setTimeout(() => {

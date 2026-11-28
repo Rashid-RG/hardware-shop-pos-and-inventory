@@ -53,6 +53,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [desktopUpdate, setDesktopUpdate] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
   const [setupName, setSetupName] = useState('');
@@ -75,6 +76,26 @@ export default function App() {
   const [recoveryDone, setRecoveryDone] = useState(false);
   const [recoveryRetryAt, setRecoveryRetryAt] = useState(0);
   const [recoveryNow, setRecoveryNow] = useState(Date.now());
+  useEffect(() => {
+    if (authUser || !['localhost', '127.0.0.1'].includes(window.location.hostname)) return;
+    const controller = new AbortController();
+    const refresh = async () => {
+      try {
+        const response = await fetch('/api/desktop-update/status', { signal: controller.signal });
+        if (!response.ok) return;
+        const update = await response.json();
+        if (!controller.signal.aborted) {
+          setDesktopUpdate(update.state === 'available' && typeof update.version === 'string' ? update.version : null);
+        }
+      } catch {
+        // Update checks must not interfere with sign-in or offline billing.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [authUser]);
+
   useEffect(() => {
     if (!isForgotModalOpen || !recoveryRequested || recoveryDone) return;
     const timer = window.setInterval(() => setRecoveryNow(Date.now()), 1000);
@@ -856,6 +877,9 @@ export default function App() {
               <div className="mb-4 lg:hidden"><ARSBrand dark featured subtitle="Imports • Wholesale • Distribution" /></div>
               <h2 className="font-heading text-2xl font-bold tracking-tight">Welcome to ARS Distributors</h2>
               <p className="mt-2 text-sm text-slate-500">Sign in to your branch workspace.</p>
+              {desktopUpdate && <p role="status" className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                Signed update {desktopUpdate} available. Open the desktop Update Center to review it.
+              </p>}
             </div>
             <form onSubmit={handleLogin} className="space-y-3">
 
