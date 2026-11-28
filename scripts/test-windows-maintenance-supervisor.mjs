@@ -326,3 +326,39 @@ await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_
 ),/Unsupported protected backup database/);
 assert.deepEqual(await readdir(unsupportedDestination),[]);
 console.log('Strict native backup database, container and user binding checks passed.');
+
+
+// Exercise cluster identity transmission across Node, native supervisor,
+// PowerShell worker and a disposable producer, without invoking Docker.
+await copyFile(fileURLToPath(new URL('./windows-docker-cluster-identity.ps1',import.meta.url)),join(stageScripts,'windows-docker-cluster-identity.ps1'));
+for(const database of ['hardware_pos','hardware_pos_ars']){
+ const destination=join(dir,'cluster-'+database);
+ await mkdir(destination);
+ const clusterIdentity=Object.freeze({database,systemIdentifier:'18446744073709551615',databaseOid:'12345'});
+ const archiveName='ars-'+database+'-cluster-fixture.dump';
+ await writeFile(producer,[
+  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser,[string]$ExpectedSystemIdentifier,[string]$ExpectedDatabaseOid)',
+  '$ErrorActionPreference="Stop"',
+  'if ($Database -cne "'+database+'" -or $ExpectedSystemIdentifier -cne "18446744073709551615" -or $ExpectedDatabaseOid -cne "12345") {throw "Cluster identity transmission mismatch"}',
+  'if (-not $OutputArchive -or -not $PreserveExistingArchives) {throw "Protected archive options required"}',
+  '$archive=Join-Path $Destination "'+archiveName+'"',
+  '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
+  'Write-Output ("ARS_ARCHIVE="+$archive)'
+ ].join('\r\n'));
+ const invoke=identity=>withMaintenanceSession(new FixtureDatabase(database),database,session=>
+  runProtectedWindowsBackup(session,{root:stageRoot,destination,supervisor,clusterIdentity:identity,timeoutMs:15000})
+ );
+ const result=await invoke(clusterIdentity);
+ assert.equal(result.archive,join(destination,archiveName));
+ assert.equal(result.sha256,createHash('sha256').update(Buffer.alloc(4096)).digest('hex'));
+ const files=await readdir(destination);
+ const evidence=await readFile(join(destination,result.resultName));
+ assert.equal(files.length,2);
+ await assert.rejects(invoke({...clusterIdentity,databaseOid:'12346'}),/Protected database identity mismatch/);
+ await assert.rejects(invoke({...clusterIdentity,systemIdentifier:'18446744073709551616'}),/Invalid maintenance cluster identity/);
+ await assert.rejects(invoke({...clusterIdentity,database:database==='hardware_pos'?'hardware_pos_ars':'hardware_pos'}),/Invalid maintenance cluster identity/);
+ await assert.rejects(invoke({...clusterIdentity,systemIdentifier:'1'}),/Native maintenance worker did not complete/);
+ assert.deepEqual(await readdir(destination),files);
+ assert.deepEqual(await readFile(join(destination,result.resultName)),evidence);
+}
+console.log('Native cluster identity parameter transmission and mismatch rejection checks passed.');
