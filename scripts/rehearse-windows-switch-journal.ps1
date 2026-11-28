@@ -136,6 +136,13 @@ try {
  [IO.File]::WriteAllBytes($retained,$original)
  $restored=Get-ArsSwitchInspection $root
  if ($restored.evidenceInventory -cne $final.evidenceInventory) {throw 'Stable evidence inventory mismatch.'}
+ $review=Confirm-ArsSwitchReview $root $final
+ if ($review.reviewMatched -ne $true -or $review.startupAllowed -ne $false -or $review.activationAllowed -ne $false -or $review.rollbackAllowed -ne $false) {throw 'Stable read-only review failed.'}
+ [IO.File]::AppendAllText($retained,' ')
+ try {
+  $stale=Confirm-ArsSwitchReview $root $final
+  if ($stale.reviewMatched -ne $false -or $stale.startupAllowed -ne $false) {throw 'Stale operator review accepted.'}
+ } finally {[IO.File]::WriteAllBytes($retained,$original)}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))

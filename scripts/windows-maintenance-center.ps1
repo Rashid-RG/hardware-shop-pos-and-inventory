@@ -79,9 +79,19 @@ try {
     'switch-review-required' {"Recorded phase: $($interruption.phase). Review is required before startup."}
     default {'Update evidence could not be verified.'}
    }
-   $null=Show-ArsSetupPage 'Interrupted update review' ($reason+[Environment]::NewLine+[Environment]::NewLine+
+   $reviewable=$interruption.historyVerified -eq $true -and -not [string]::IsNullOrWhiteSpace($interruption.evidenceInventory)
+   $button=if ($reviewable) {'Recheck evidence'} else {'Close'}
+   $confirmed=Show-ArsSetupPage 'Interrupted update review' ($reason+[Environment]::NewLine+[Environment]::NewLine+
     'Keep billing stopped. Contact RS Nextward support and retain the backup and update records.'+
-    [Environment]::NewLine+[Environment]::NewLine+'Update records: '+$control) 'Close'
+    [Environment]::NewLine+[Environment]::NewLine+'Update records: '+$control) $button
+   if ($confirmed -and $reviewable) {
+    $check=Confirm-ArsSwitchReview $control $interruption
+    if ($check.reviewMatched) {
+     [void][Windows.Forms.MessageBox]::Show('Reviewed evidence still matches. This is read-only verification; startup and rollback remain locked.',$title,'OK','Information')
+    } else {
+     [void][Windows.Forms.MessageBox]::Show('Evidence changed, is unavailable, or maintenance is busy. Reopen Maintenance Center for a fresh review. No recovery action performed.',$title,'OK','Warning')
+    }
+   }
    break
   }
   if ([Windows.Forms.MessageBox]::Show('Open the data-preserving Uninstall Wizard preview?',$title,'YesNo','Question') -eq 'Yes') {

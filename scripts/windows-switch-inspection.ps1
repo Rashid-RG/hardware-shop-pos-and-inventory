@@ -100,3 +100,24 @@ function Get-ArsSwitchInspection([string]$Control) {
     return [pscustomobject]$blocked
   } catch { return [pscustomobject]$blocked }
 }
+
+# Read-only comparison. Neither matching nor stale evidence authorizes startup.
+function Confirm-ArsSwitchReview([string]$Control,$Reviewed) {
+  $result=[ordered]@{schema=1;reviewMatched=$false;startupAllowed=$false;activationAllowed=$false;rollbackAllowed=$false}
+  if ($null -eq $Reviewed -or $Reviewed.historyVerified -ne $true -or
+      [string]::IsNullOrWhiteSpace($Reviewed.evidenceInventory)) {return [pscustomobject]$result}
+  $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
+  $owned=$false
+  try {
+    try {$owned=$mutex.WaitOne(0)} catch [System.Threading.AbandonedMutexException] {$owned=$true;return [pscustomobject]$result}
+    if (-not $owned) {return [pscustomobject]$result}
+    $current=Get-ArsSwitchInspection $Control
+    $result.reviewMatched=($current.historyVerified -eq $true -and
+      $current.state -ceq $Reviewed.state -and $current.phase -ceq $Reviewed.phase -and
+      $current.evidenceInventory -ceq $Reviewed.evidenceInventory)
+    return [pscustomobject]$result
+  } finally {
+    if ($owned) {$mutex.ReleaseMutex()}
+    $mutex.Dispose()
+  }
+}
