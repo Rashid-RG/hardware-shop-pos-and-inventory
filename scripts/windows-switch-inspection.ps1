@@ -109,6 +109,7 @@ function Get-ArsSwitchInspection([string]$Control) {
     $blocked['phase']=$j.phase
     $expected=if ($j.phase -cin @('prepared','rolled-back','manual-recovery-required')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}
     if ($p.digest -cnotin @($j.previousDigest,$j.candidateDigest) -or ($expected -and $p.digest -cne $expected)) { $blocked.state='pointer-conflict' }
+    elseif (@($pending | Where-Object {$_.Name -like 'runtime-switch-pending-*'}).Count -gt 0) { $blocked.state='pending-switch-evidence' }
     elseif ($j.phase -ceq 'manual-recovery-required') { $blocked.state='manual-recovery-required' }
     else { $blocked.state='switch-review-required' }
     return [pscustomobject]$blocked

@@ -157,6 +157,16 @@ try {
   $invalid=Get-ArsSwitchInspection $root
   if ($invalid.state -cne 'unreadable-or-invalid' -or $invalid.startupAllowed -ne $false) {throw 'Missing retained pointer accepted.'}
  } finally {[IO.File]::Move($missing,$retained)}
+ # An unfinished transaction must not be classified as ordinary review.
+ $pendingPath=Join-Path $root ('runtime-switch-pending-'+[guid]::NewGuid().ToString('N')+'.json')
+ Write-New $pendingPath ([ordered]@{schema=1;switchId=$id;digest=$old;activationAllowed=$false})
+ try {
+  $pendingReview=Get-ArsSwitchInspection $root
+  if ($pendingReview.state -cne 'pending-switch-evidence' -or $pendingReview.startupAllowed -ne $false -or $pendingReview.rollbackAllowed -ne $false) {throw 'Unfinished transaction misclassified.'}
+  $stale=Confirm-ArsSwitchReview $root $final
+  if ($stale.reviewMatched -ne $false) {throw 'Pending transaction did not invalidate earlier review.'}
+  if (-not [IO.File]::Exists($pendingPath)) {throw 'Read-only review removed pending evidence.'}
+ } finally {[IO.File]::Delete($pendingPath)}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))

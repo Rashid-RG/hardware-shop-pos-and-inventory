@@ -75,6 +75,7 @@ try {
    $reason=switch ($interruption.state) {
     'manual-recovery-required' {'The previous release did not pass readiness after rollback.'}
     'pointer-conflict' {'The selected release differs from the recorded switch phase.'}
+    'pending-switch-evidence' {'An unfinished update transaction is present. Retain all pending records; support must resolve the interruption.'}
     'incomplete-switch-evidence' {'The update journal or release selection record is missing.'}
     'switch-review-required' {"Recorded phase: $($interruption.phase). Review is required before startup."}
     default {'Update evidence could not be verified.'}
