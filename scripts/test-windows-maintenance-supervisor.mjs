@@ -142,7 +142,7 @@ await mkdir(stageDestination);
 await copyFile(fileURLToPath(new URL('./windows-maintenance-backup-worker.ps1',import.meta.url)),join(stageScripts,'windows-maintenance-backup-worker.ps1'));
 const producer=join(stageScripts,'backup-local-postgres.ps1');
 await writeFile(producer,[
- 'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)',
+ 'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)',
  '$ErrorActionPreference="Stop"',
  'if (-not $PreserveExistingArchives) { throw "Protected retention required" }',
  '$archive=Join-Path $Destination "ars-hardware_pos-ci-fixture.dump"',
@@ -168,7 +168,7 @@ const resultFiles=async()=>(await readdir(stageDestination)).filter(name=>name.s
 assert.deepEqual(await resultFiles(),[stageResult.resultName]);
 const retained=await readFile(join(stageDestination,stageResult.resultName));
 // A failed producer must not publish a second result or remove existing evidence.
-await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)\r\nthrow "Fixture backup failure"');
+await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)\r\nthrow "Fixture backup failure"');
 await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
  runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
 ),/Native maintenance worker did not complete/);
@@ -205,7 +205,7 @@ try{
  const destination=join(await realpath(dir),'verified-recovery');
  await mkdir(destination);
  await writeFile(producer,[
-  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)',
+  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)',
   '$ErrorActionPreference="Stop"',
  'if (-not $PreserveExistingArchives) { throw "Protected retention required" }',
   '$archive=Join-Path $Destination "ars-hardware_pos-verified-fixture.dump"',
