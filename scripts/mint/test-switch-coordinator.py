@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from switch_coordinator import simulate_switch
+from switch_coordinator import simulate_switch, resume_interrupted_switch
 from startup_guard import startup_allowed
 
 class Service:
@@ -207,6 +207,30 @@ class CoordinatorTests(unittest.TestCase):
                 self.assertFalse(startup_allowed(root))
             finally:
                 service.stop()
+
+    def test_resume_interrupted_switch_at_each_boundary(self):
+        from switch_journal import write_journal
+        for phase,active in (("backup-verified","old"),("backup-verified","new"),("switched","new"),("rollback-required","new"),("previous-selected","old")):
+            with self.subTest(phase=phase,active=active), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp).resolve()
+                (root/".ars-switch-test").touch()
+                for release in ("old","new"):
+                    dist=root/release/"dist"
+                    dist.mkdir(parents=True)
+                    (dist/"server.cjs").touch()
+                (root/"project").symlink_to(root/active)
+                (root/"business-data").write_text("original invoices")
+                write_journal(root,{"kind":"mint-switch-rehearsal","previous":str(root/"old"),"candidate":str(root/"new"),"phase":phase})
+                service=Service(root)
+                original=(root/"switch-journal.json").read_bytes()
+                with self.assertRaisesRegex(ValueError,"evidence mismatch"):
+                    resume_interrupted_switch(root,service,lambda:False,lambda _:True)
+                self.assertEqual((root/"switch-journal.json").read_bytes(),original)
+                self.assertEqual((root/"project").resolve(),root/active)
+                self.assertEqual(resume_interrupted_switch(root,service,lambda:True,lambda path:path==root/"old"),"rolled-back")
+                self.assertEqual((root/"project").resolve(),root/"old")
+                self.assertEqual((root/"business-data").read_text(),"original invoices")
+                self.assertFalse(startup_allowed(root))
 
 if __name__=="__main__":
     unittest.main()

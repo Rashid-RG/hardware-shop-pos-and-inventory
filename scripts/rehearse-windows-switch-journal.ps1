@@ -200,6 +200,22 @@ try {
   if ($stale.reviewMatched -ne $false) {throw 'Pending transaction did not invalidate earlier review.'}
   if (-not [IO.File]::Exists($pendingPath)) {throw 'Read-only review removed pending evidence.'}
  } finally {[IO.File]::Delete($pendingPath)}
+ # Verify the new recovery-tool review against disposable scripts and intent.
+ $toolRoot=Join-Path $root 'recovery-tools-test'
+ [void][IO.Directory]::CreateDirectory($toolRoot)
+ $tool=Join-Path $toolRoot 'helper.ps1'
+ [IO.File]::WriteAllText($tool,'original')
+ $trustPath=Join-Path $root 'runtime-switch-intent.json'
+ try {
+  Write-New $trustPath ([ordered]@{schema=1;kind='runtime-switch-intent';switchId=$id;observationOnly=$true;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false;binding=@{previousRecoveryToolsDigest=(Get-ArsRecoveryToolsFingerprint $toolRoot)}})
+  $trust=Get-ArsRecoveryTrustReview $root $toolRoot
+  if (-not $trust.toolsMatched -or $trust.startupAllowed -or $trust.rollbackAllowed) {throw 'Recovery trust review failed.'}
+  [IO.File]::AppendAllText($tool,'changed')
+  if ((Get-ArsRecoveryTrustReview $root $toolRoot).toolsMatched) {throw 'Changed recovery tool accepted.'}
+ } finally {
+  [IO.File]::Delete($trustPath)
+  Remove-Item -LiteralPath $toolRoot -Recurse -Force
+ }
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))

@@ -150,3 +150,33 @@ function Confirm-ArsSwitchReview([string]$Control,$Reviewed) {
     $mutex.Dispose()
   }
 }
+
+
+# Verify a retained local recovery-tool binding without granting execution.
+function Get-ArsRecoveryTrustReview([string]$Control,[string]$Scripts) {
+  $result=[ordered]@{schema=1;toolsMatched=$false;startupAllowed=$false;activationAllowed=$false;rollbackAllowed=$false}
+  try {
+    $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
+    $owned=$false
+    try {
+      try {$owned=$mutex.WaitOne(0)} catch [System.Threading.AbandonedMutexException] {$owned=$true;return [pscustomobject]$result}
+      if (-not $owned) {return [pscustomobject]$result}
+      $path=Join-Path $Control 'runtime-switch-intent.json'
+      $before=Read-ArsSwitchSnapshot $path
+      $intent=$before.record
+      if ($intent.schema -ne 1 -or $intent.kind -cne 'runtime-switch-intent' -or $intent.switchId -cnotmatch '^[a-f0-9]{32}$' -or $intent.observationOnly -isnot [bool] -or -not $intent.observationOnly) {return [pscustomobject]$result}
+      foreach ($flag in @('startupAllowed','activationAllowed','rollbackAllowed')) {
+        if ($intent.$flag -isnot [bool] -or $intent.$flag) {return [pscustomobject]$result}
+      }
+      $expected=$intent.binding.previousRecoveryToolsDigest
+      if ($expected -cnotmatch '^[a-f0-9]{64}$') {return [pscustomobject]$result}
+      $first=Get-ArsRecoveryToolsFingerprint $Scripts
+      $second=Get-ArsRecoveryToolsFingerprint $Scripts
+      $result.toolsMatched=($first -ceq $expected -and $second -ceq $first -and (Read-ArsSwitchSnapshot $path).digest -ceq $before.digest)
+      return [pscustomobject]$result
+    } finally {
+      if ($owned) {$mutex.ReleaseMutex()}
+      $mutex.Dispose()
+    }
+  } catch {return [pscustomobject]$result}
+}
