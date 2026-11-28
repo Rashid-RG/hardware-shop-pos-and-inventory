@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -11,6 +13,7 @@ spec = importlib.util.spec_from_file_location("release_signer", Path(__file__).w
 signer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signer)
 
+sys.path.insert(0, str(Path(__file__).parent / "mint"))
 mint_spec = importlib.util.spec_from_file_location("mint_updater", Path(__file__).parent / "mint/stage-update.py")
 mint_updater = importlib.util.module_from_spec(mint_spec)
 mint_spec.loader.exec_module(mint_updater)
@@ -53,6 +56,23 @@ class ReleaseSigningTests(unittest.TestCase):
             for wrong in ("1.2.2", "1.2.3-rc.1", "1.2.4"):
                 with self.subTest(version=wrong), self.assertRaisesRegex(ValueError, "does not match"):
                     mint_updater.verify_package_version(source, wrong)
+
+
+    def test_mint_recheck_rejects_changed_staged_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            staged = Path(temporary)
+            package = staged / "package.json"
+            package.write_text('{"version":"1.2.3"}')
+            archive = staged / mint_updater.ARCHIVE_NAME
+            with tarfile.open(archive, "w:gz") as bundle:
+                bundle.add(package, arcname="package.json")
+            expected = hashlib.sha256(archive.read_bytes()).hexdigest()
+            mint_updater.verify_signed_source(staged, expected)
+            package.write_text('{"version":"1.2.4"}')
+            with self.assertRaisesRegex(ValueError, "Staged source differs"):
+                mint_updater.verify_signed_source(staged, expected)
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                mint_updater.verify_signed_source(staged, "0" * 64)
 
 
 if __name__ == "__main__":

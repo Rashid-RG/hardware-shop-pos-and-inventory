@@ -12,11 +12,11 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from signed_release_source import ARCHIVE_NAME, MAX_BYTES, verify_signed_source
 
 STATE = Path.home() / ".local" / "share" / "ars-hardware"
 TRUST = STATE / "release-signing-public.pem"
 STAGING = STATE / "staged-releases"
-MAX_BYTES = 512 * 1024 * 1024
 MAX_FILES = 25000
 
 def digest(path):
@@ -34,7 +34,7 @@ def extract_verified(archive, target):
             path = PurePosixPath(member.name)
             if index >= MAX_FILES or not path.parts or path.is_absolute() or ".." in path.parts:
                 raise ValueError("Unsafe or oversized release archive.")
-            if any(part in (".git", "node_modules", "backups", "uploads", ".env", ".env.local") or part.startswith(".env.") for part in path.parts):
+            if any(part in (".git", "node_modules", "backups", "uploads", ".env", ".env.local") or part.startswith((".env.", ".ars-release")) for part in path.parts):
                 raise ValueError("Release contains prohibited runtime or private files.")
             if path in seen or not (member.isdir() or member.isfile()):
                 raise ValueError("Duplicate or unsupported release archive member.")
@@ -101,6 +101,8 @@ def stage(manifest, signature, archive):
                 raise ValueError("Release build did not produce the expected server.")
             shutil.copyfile(work/"manifest.json", source/".ars-release-manifest.json")
             shutil.copyfile(work/"manifest.sig", source/".ars-release-manifest.sig")
+            (work/"release.tar.gz").rename(source/ARCHIVE_NAME)
+            verify_signed_source(source, data["sha256"])
             source.rename(target)
             print("Verified staged release:", target)
             print("Active installation and database were not changed.")

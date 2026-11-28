@@ -11,6 +11,7 @@ import sys
 import tempfile
 import shutil
 from release_fingerprint import fingerprint
+from signed_release_source import verify_signed_source
 from startup_guard import migration_mapping_valid
 
 STATE=Path.home()/".local/share/ars-hardware"
@@ -54,6 +55,7 @@ def plan(folder, quiet=False):
     manifest=json.loads((staged/".ars-release-manifest.json").read_text())
     if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
         raise ValueError("Manifest mismatch.")
+    verify_signed_source(staged, manifest.get("sha256"))
     if receipt.get('buildFingerprint')!=fingerprint(staged,STATE/"runtime"):
         raise ValueError('Exact staged build differs from compatibility-tested files. Repeat compatibility test.')
     verify_backward_compatibility(receipt)

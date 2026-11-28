@@ -15,6 +15,7 @@ import time
 import uuid
 import zipfile
 from release_fingerprint import fingerprint
+from signed_release_source import verify_signed_source
 
 STATE = Path.home()/".local/share/ars-hardware"
 RECOVERY = STATE/"update-recovery"
@@ -130,6 +131,7 @@ def test(folder, compatibility=False, repair=None):
                     manifest=json.loads((staged/".ars-release-manifest.json").read_text())
                     if manifest.get("version")!=version or manifest.get("product")!="ARS Distributor" or manifest.get("platform")!="linux-mint":
                         raise ValueError("Release manifest mismatch.")
+                    verify_signed_source(staged, manifest.get("sha256"))
                     import tempfile
                     candidate_temp=tempfile.TemporaryDirectory(prefix="ars-isolated-candidate-")
                     isolated=Path(candidate_temp.name)/"build"
