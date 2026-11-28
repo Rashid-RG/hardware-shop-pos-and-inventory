@@ -440,6 +440,16 @@ test('combined activation transfer retains gate across candidate and rollback ch
  });
 });
 
+test('rollback acquires PostgreSQL writer protection after candidate dies holding both leases',{timeout:60000},async()=>{
+ const {rehearseActivationTransfer}=await import('../scripts/database-activation-transfer-rehearsal.mjs');
+ const binding={releaseDigest:'a'.repeat(64),runtimeDigest:'b'.repeat(64),maintenanceDigest:'c'.repeat(64)};
+ const result=await rehearseActivationTransfer(url.toString(),binding,{failCandidate:true});
+ assert.equal(result.candidateFailureObserved,true);
+ assert.equal(result.rollbackWriterRehearsed,true);
+ assert.equal(result.gateObservedAcrossTransitions,true);
+ assert.equal(result.liveStartupAllowed,false);
+});
+
 for(const failure of ['database-session-loss','ipc-disconnect','forced-child-exit']){
 test('disposable child releases leases after '+failure,{timeout:60000},async()=>{
  const {fork}=await import('node:child_process');

@@ -4,7 +4,7 @@ import pg from 'pg';
 import {randomInt} from 'node:crypto';
 import {assertGateOwner,HANDOFF_CLASS} from './database-handoff-gate.mjs';
 import {rehearseChildWriter} from './database-handoff-child-writer.mjs';
-export async function rehearseActivationTransfer(connection,binding){
+export async function rehearseActivationTransfer(connection,binding,{failCandidate=false}={}){
  const url=new URL(connection);
  if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci'||!['postgres:','postgresql:'].includes(url.protocol)||url.search||url.hash)throw Error('Disposable CI database required.');
  if(!['releaseDigest','runtimeDigest','maintenanceDigest'].every(k=>typeof binding?.[k]==='string'&&/^[a-f0-9]{64}$/.test(binding[k])))throw Error('Verified fixture binding required.');
@@ -49,13 +49,21 @@ export async function rehearseActivationTransfer(connection,binding){
    if(!registered)throw Error('Queued contender not registered.');
    await check();
   for(const purpose of ['candidate','rollback']){
-   const result=await rehearseChildWriter(coordinator,url.toString(),{gateId,writerId,fenceId},{...binding,purpose});
+   const result=await rehearseChildWriter(coordinator,url.toString(),{gateId,writerId,fenceId},{...binding,purpose},{failAfterAcquisition:failCandidate&&purpose==='candidate'});
+   if(failCandidate&&purpose==='candidate'&&result.forcedFailureObserved!==true)throw Error('Candidate failure was not observed.');
    if(result.childHeldWriterAndFence!==true||result.authorizationVerified!==true||result.liveStartupAllowed!==false)throw Error('Fixture writer transfer failed.');
    await check();
    await assertWaiting();
    // Both child leases must have been released before the next phase.
    for(const id of [writerId,fenceId]){
-    if(!await lock(coordinator,id))throw Error('Child lease remains held.');
+    let released=false;
+    for(let attempt=0;attempt<100;attempt++){
+     if(await lock(coordinator,id)){released=true;break;}
+     await check();
+     await assertWaiting();
+     await new Promise(resolve=>setTimeout(resolve,25));
+    }
+    if(!released)throw Error('Child lease remains held.');
     if((await coordinator.query('SELECT pg_advisory_unlock($1::integer,$2::integer) AS released',[HANDOFF_CLASS,id])).rows[0]?.released!==true)throw Error('Fixture lease release failed.');
    }
   }
@@ -67,6 +75,6 @@ export async function rehearseActivationTransfer(connection,binding){
   if(!acquired||failed||lost)throw Error('Queued contender did not acquire after release.');
   await assertGateOwner(observer,waiting,{lockClass:HANDOFF_CLASS,lockId:gateId});
   }finally{await observer.end();if(queued)await queued;}
-  return {candidateWriterRehearsed:true,rollbackWriterRehearsed:true,gateObservedAcrossTransitions:true,liveStartupAllowed:false,activationAllowed:false,continuousExclusionVerified:false};
+  return {candidateWriterRehearsed:true,rollbackWriterRehearsed:true,...(failCandidate?{candidateFailureObserved:true}:{}),gateObservedAcrossTransitions:true,liveStartupAllowed:false,activationAllowed:false,continuousExclusionVerified:false};
  }finally{await Promise.allSettled([rival.end(),coordinator.end()]);}
 }

@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {createHandoffAuthorization} from './database-handoff-authorization.mjs';
 import {assertGateOwner,HANDOFF_CLASS} from './database-handoff-gate.mjs';
 const fixture=fileURLToPath(new URL('./database-handoff-writer-child.mjs',import.meta.url));
-export async function rehearseChildWriter(coordinator,connection,keys,binding){
+export async function rehearseChildWriter(coordinator,connection,keys,binding,{failAfterAcquisition=false}={}){
  const u=new URL(connection);
  if(!['localhost','127.0.0.1'].includes(u.hostname)||u.pathname!=='/hardware_pos_ci'||!['postgres:','postgresql:'].includes(u.protocol)||u.search||u.hash)throw Error('Disposable database required.');
  const ids=[keys?.gateId,keys?.writerId,keys?.fenceId];
@@ -27,7 +27,14 @@ export async function rehearseChildWriter(coordinator,connection,keys,binding){
    const finish=(e,v)=>{if(settled)return;settled=true;clearTimeout(timer);e?reject(e):resolve(v);};
    timer=setTimeout(()=>finish(Error('Writer fixture timed out.')),15000);
    child.on('error',()=>finish(Error('Writer fixture failed.')));
-   child.on('exit',code=>finish(code===0&&phase==='released'?null:Error('Writer fixture exited early.'),{state:'child-writer-rehearsed',authorizationVerified:true,childHeldWriterAndFence:true,liveStartupAllowed:false,recoveryAllowed:false}));
+   child.on('exit',(code,signal)=>{
+    const forcedFailure=phase==='forced-failure'&&signal==='SIGKILL';
+    const cleanExit=code===0&&phase==='released';
+    finish(forcedFailure||cleanExit?null:Error('Writer fixture exited early.'),{
+     state:'child-writer-rehearsed',authorizationVerified:true,childHeldWriterAndFence:true,
+     liveStartupAllowed:false,recoveryAllowed:false,...(forcedFailure?{forcedFailureObserved:true}:{})
+    });
+   });
    const send=m=>child.send(m,e=>{if(e)finish(Error('IPC failed.'));});
    child.on('message',async m=>{
     try{
@@ -41,7 +48,12 @@ export async function rehearseChildWriter(coordinator,connection,keys,binding){
       if(m.owner?.pid===owner.pid||m.owner?.cluster!==owner.cluster||m.owner?.oid!==owner.oid)throw Error('Child database identity mismatch.');
       for(const lockId of [keys.writerId,keys.fenceId])await assertGateOwner(coordinator,m.owner,{lockClass:HANDOFF_CLASS,lockId});
       await assertGateOwner(coordinator,owner,{lockClass:HANDOFF_CLASS,lockId:keys.gateId});
-      phase='released';send({schema:1,type:'release'});
+      if(failAfterAcquisition){
+       phase='forced-failure';
+       if(!child.kill('SIGKILL'))throw Error('Could not terminate candidate fixture.');
+      }else{
+       phase='released';send({schema:1,type:'release'});
+      }
      }else throw Error('Unexpected message.');
     }catch(e){finish(e);}
    });
