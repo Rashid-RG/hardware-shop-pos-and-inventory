@@ -6,7 +6,8 @@ param(
   [string]$DbUser = 'postgres',
   [string]$Destination = 'backups',
   [int]$Keep = 30,
-  [switch]$OutputArchive
+  [switch]$OutputArchive,
+  [switch]$PreserveExistingArchives
 )
 $ErrorActionPreference = 'Stop'
 if ($Keep -lt 7 -or $Keep -gt 3650) { throw 'Keep must be between 7 and 3650 successful backups.' }
@@ -131,7 +132,9 @@ try {
   # The cloud runner holds its lock from before archive creation until remote verification.
   # Defer all pruning when that lock exists (including interrupted cloud runs).
   $driveEvidence=@(Get-ChildItem -LiteralPath $lockDirectory -Force -ErrorAction Stop | Where-Object { $_.Name -ieq '.ars-drive-backup.lock' })
-  if ($driveEvidence.Count -gt 0) {
+  if ($PreserveExistingArchives) {
+    Write-Warning 'Backup retention deferred for protected maintenance. Existing archives retained.'
+  } elseif ($driveEvidence.Count -gt 0) {
     Write-Warning 'Backup retention deferred while encrypted backup is running or interrupted.'
   } else {
     # Only completed backups have the companion SHA-256 file.
