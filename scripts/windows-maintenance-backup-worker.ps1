@@ -13,7 +13,7 @@ if (-not $folder.PSIsContainer -or ($folder.Attributes -band [IO.FileAttributes]
 $destinationPath=$folder.FullName
 $resultPath=Join-Path $destinationPath $ResultName
 if (Test-Path -LiteralPath $resultPath) {throw 'Result already exists.'}
-$records=@(& (Join-Path $PSScriptRoot 'backup-local-postgres.ps1') -Destination $destinationPath -OutputArchive)
+$records=@(& (Join-Path $PSScriptRoot 'backup-local-postgres.ps1') -Destination $destinationPath -OutputArchive -PreserveExistingArchives)
 $archives=@($records | Where-Object {$_ -is [string] -and $_.StartsWith('ARS_ARCHIVE=')})
 if ($archives.Count -ne 1) {throw 'Unique backup archive result required.'}
 $archive=Get-Item -LiteralPath $archives[0].Substring(12) -Force
