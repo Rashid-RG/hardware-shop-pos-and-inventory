@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_fingerprint import fingerprint
+from release_fingerprint import fingerprint, recovery_tools_fingerprint
 
 class FingerprintTests(unittest.TestCase):
     def test_deterministic_and_content_sensitive(self):
@@ -42,6 +42,41 @@ class FingerprintTests(unittest.TestCase):
             before=fingerprint(root)
             target.chmod(0o700 if target.stat().st_mode & 0o777 != 0o700 else 0o600)
             self.assertNotEqual(before,fingerprint(root))
+
+    def test_recovery_tools_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project=Path(tmp)
+            scripts=project/"scripts"
+            scripts.mkdir()
+            helper=scripts/"helper.py"
+            helper.write_text("original")
+            before=recovery_tools_fingerprint(project)
+            cache=scripts/"__pycache__"
+            cache.mkdir()
+            (cache/"helper.cpython-312.pyc").write_bytes(b"generated")
+            self.assertEqual(before,recovery_tools_fingerprint(project))
+            helper.write_text("changed")
+            self.assertNotEqual(before,recovery_tools_fingerprint(project))
+            helper.write_text("original")
+            self.assertEqual(before,recovery_tools_fingerprint(project))
+            helper.chmod(helper.stat().st_mode ^ 0o100)
+            self.assertNotEqual(before,recovery_tools_fingerprint(project))
+
+    def test_recovery_tools_reject_links_and_bytecode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project=Path(tmp)
+            scripts=project/"scripts"
+            scripts.mkdir()
+            outside=project/"outside"
+            outside.write_text("external")
+            link=scripts/"helper.py"
+            link.symlink_to(outside)
+            with self.assertRaises(ValueError):
+                recovery_tools_fingerprint(project)
+            link.unlink()
+            (scripts/"helper.pyc").write_bytes(b"unexpected")
+            with self.assertRaises(ValueError):
+                recovery_tools_fingerprint(project)
 
 if __name__=="__main__":
     unittest.main()
