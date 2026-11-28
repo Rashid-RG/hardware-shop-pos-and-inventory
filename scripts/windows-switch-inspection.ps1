@@ -65,6 +65,20 @@ function Get-ArsSwitchInspection([string]$Control) {
     $p=$pointerSnapshot.record
     if ($j.schema -ne 1 -or $p.schema -ne 1 -or $j.switchId -cnotmatch '^[a-f0-9]{32}$' -or $j.previousDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.candidateDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.previousDigest -ceq $j.candidateDigest -or $p.switchId -cne $j.switchId -or $p.digest -cnotmatch '^[a-f0-9]{64}$' -or $j.phase -cnotin @('prepared','switched','rollback-required','rolled-back','completed','manual-recovery-required') -or $j.activationAllowed -isnot [bool] -or $j.activationAllowed -or $p.activationAllowed -isnot [bool] -or $p.activationAllowed) { throw 'Invalid switch record.' }
     if ((Read-ArsSwitchSnapshot $journal[0].FullName).digest -cne $jhash -or (Read-ArsSwitchSnapshot $pointer[0].FullName).digest -cne $phash) { throw 'Switch evidence changed.' }
+    # Retained pointer records must describe the same switch and release.
+    # A prepared journal may legitimately have a previous pointer if power
+    # failed after pointer replacement but before the journal advanced.
+    foreach ($name in @('runtime-previous.json','runtime-failed-candidate.json')) {
+      $retained=@($pending | Where-Object {$_.Name -ieq $name})
+      $required=if ($name -eq 'runtime-previous.json') {$j.phase -cne 'prepared' -or $p.digest -ceq $j.candidateDigest} else {$j.phase -cin @('rolled-back','manual-recovery-required') -or ($j.phase -ceq 'rollback-required' -and $p.digest -ceq $j.previousDigest)}
+      if ($retained.Count -gt 1 -or ($required -and $retained.Count -ne 1)) {throw 'Missing or ambiguous retained pointer.'}
+      if ($retained.Count -eq 1) {
+        $r=(Read-ArsSwitchSnapshot $retained[0].FullName).record
+        $digest=if ($name -eq 'runtime-previous.json') {$j.previousDigest} else {$j.candidateDigest}
+        if ($r.schema -ne 1 -or $r.switchId -cne $j.switchId -or $r.digest -cne $digest -or $r.activationAllowed -isnot [bool] -or $r.activationAllowed) {throw 'Retained pointer binding mismatch.'}
+        if ($name -eq 'runtime-failed-candidate.json' -and $j.phase -cnotin @('rollback-required','rolled-back','manual-recovery-required')) {throw 'Unexpected failed candidate evidence.'}
+      }
+    }
     # Require the complete bounded sequence, including the retained old records.
     if ($j.sequence -isnot [int] -or $j.sequence -lt 1 -or $j.sequence -gt 4 -or $history.Count -ne ($j.sequence-1)) { throw 'Invalid switch history length.' }
     $transitions=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back','manual-recovery-required')}

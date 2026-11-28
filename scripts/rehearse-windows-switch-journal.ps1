@@ -143,6 +143,20 @@ try {
   $stale=Confirm-ArsSwitchReview $root $final
   if ($stale.reviewMatched -ne $false -or $stale.startupAllowed -ne $false) {throw 'Stale operator review accepted.'}
  } finally {[IO.File]::WriteAllBytes($retained,$original)}
+ # Reject a well-formed but unrelated retained pointer, not just changed bytes.
+ $retainedRecord=Get-Content -LiteralPath $retained -Raw|ConvertFrom-Json
+ $retainedRecord.switchId=[guid]::NewGuid().ToString('N')
+ try {
+  [IO.File]::WriteAllText($retained,($retainedRecord|ConvertTo-Json -Compress))
+  $invalid=Get-ArsSwitchInspection $root
+  if ($invalid.state -cne 'unreadable-or-invalid' -or $invalid.startupAllowed -ne $false) {throw 'Unrelated retained pointer accepted.'}
+ } finally {[IO.File]::WriteAllBytes($retained,$original)}
+ $missing=Join-Path $root 'temporary-retained-pointer.json'
+ [IO.File]::Move($retained,$missing)
+ try {
+  $invalid=Get-ArsSwitchInspection $root
+  if ($invalid.state -cne 'unreadable-or-invalid' -or $invalid.startupAllowed -ne $false) {throw 'Missing retained pointer accepted.'}
+ } finally {[IO.File]::Move($missing,$retained)}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))
