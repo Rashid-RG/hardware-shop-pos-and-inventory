@@ -326,6 +326,17 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs["cwd"],project)
                 self.assertEqual(cmd[cmd.index("-p")+1],"ars-mint")
                 self.assertFalse((project/".env.local").exists())
+    def test_update_preflight_requires_working_previous_version_reads_and_writes(self):
+        spec=importlib.util.spec_from_file_location("update_plan",Path(__file__).with_name("update-switch-plan.py"))
+        plan=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plan)
+        flags={"backwardStartupPassed":True,"backwardReadsPassed":True,"backwardWritesPassed":True}
+        plan.verify_backward_compatibility(flags)
+        for flag in flags:
+            for value in (None,False,"true"):
+                with self.subTest(flag=flag,value=value), self.assertRaisesRegex(ValueError,"Previous-version startup"):
+                    plan.verify_backward_compatibility({**flags,flag:value})
+
     def test_update_preflight_rejects_interrupted_runtime_migration(self):
         spec=importlib.util.spec_from_file_location("update_plan",Path(__file__).with_name("update-switch-plan.py"))
         plan=importlib.util.module_from_spec(spec)

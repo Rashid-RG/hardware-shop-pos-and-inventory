@@ -19,6 +19,12 @@ def sha(path):
     with path.open("rb") as f:
         return hashlib.file_digest(f,"sha256").hexdigest()
 
+def verify_backward_compatibility(receipt):
+    if any(receipt.get(flag) is not True for flag in
+           ("backwardStartupPassed", "backwardReadsPassed", "backwardWritesPassed")):
+        raise ValueError("Previous-version startup, authenticated reads and authenticated writes must pass.")
+
+
 def plan(folder, quiet=False):
     if os.path.lexists(STATE/"runtime-migration-interrupted.json") or not migration_mapping_valid(STATE):
         raise ValueError("Resolve runtime migration before preparing software updates.")
@@ -50,8 +56,7 @@ def plan(folder, quiet=False):
         raise ValueError("Manifest mismatch.")
     if receipt.get('buildFingerprint')!=fingerprint(staged,STATE/"runtime"):
         raise ValueError('Exact staged build differs from compatibility-tested files. Repeat compatibility test.')
-    if receipt.get("backwardStartupPassed") is not True:
-        raise ValueError("Successful previous-version startup test required.")
+    verify_backward_compatibility(receipt)
     with tempfile.TemporaryDirectory(prefix="ars-preflight-old-") as temp:
         old=Path(temp)
         for part in ("dist","node_modules"):

@@ -99,7 +99,7 @@ def snapshot(folder):
             raise ValueError("Database binding changed.")
     plan=load("update-switch-plan.py").plan(folder, quiet=True)
     receipt=json.loads(raw["restore"])
-    if plan.get("activationAllowed") is not False or plan.get("rollbackAllowed") is not False or plan.get("candidateVersion")!=version or any(receipt.get(k) is not True for k in ("authenticatedReadsPassed","authenticatedWritesPassed","backwardStartupPassed","migrationCompatibilityPassed","restoreTestPassed")):
+    if plan.get("activationAllowed") is not False or plan.get("rollbackAllowed") is not False or plan.get("candidateVersion")!=version or any(receipt.get(k) is not True for k in ("authenticatedReadsPassed","authenticatedWritesPassed","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed","migrationCompatibilityPassed","restoreTestPassed")):
         raise ValueError("Compatibility review incomplete.")
     stopped()
     check_database_clients(current)
