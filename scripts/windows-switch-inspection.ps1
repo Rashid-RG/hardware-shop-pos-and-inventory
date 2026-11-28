@@ -104,6 +104,19 @@ function Get-ArsSwitchInspection([string]$Control) {
     $again=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {$_.Name -like 'journal-history-*'})
     if ($again.Count -ne $history.Count -or (Read-ArsSwitchSnapshot $pointer[0].FullName).digest -cne $phash) {throw 'Switch evidence changed.'}
     if ((Get-ArsSwitchEvidenceInventory $Control) -cne $inventory) {throw 'Switch evidence inventory changed.'}
+    # Classify the two known atomic pointer-replacement interruption windows.
+    # This is diagnostic only; no journal advancement or pointer write.
+    $blocked['interruptionBoundary']='none'
+    $hasPrevious=@($pending | Where-Object {$_.Name -ieq 'runtime-previous.json'}).Count -eq 1
+    $hasFailed=@($pending | Where-Object {$_.Name -ieq 'runtime-failed-candidate.json'}).Count -eq 1
+    $hasPending=@($pending | Where-Object {$_.Name -like 'runtime-switch-pending-*'}).Count -gt 0
+    if (-not $hasPending -and $other.Count -eq 0) {
+      if ($j.phase -ceq 'prepared' -and $p.digest -ceq $j.candidateDigest -and $hasPrevious -and -not $hasFailed) {
+        $blocked.interruptionBoundary='forward-pointer-replaced'
+      } elseif ($j.phase -ceq 'rollback-required' -and $p.digest -ceq $j.previousDigest -and $hasPrevious -and $hasFailed) {
+        $blocked.interruptionBoundary='rollback-pointer-replaced'
+      }
+    }
     $blocked['evidenceInventory']=$inventory
     $blocked['historyVerified']=$true
     $blocked['phase']=$j.phase
@@ -129,6 +142,7 @@ function Confirm-ArsSwitchReview([string]$Control,$Reviewed) {
     $current=Get-ArsSwitchInspection $Control
     $result.reviewMatched=($current.historyVerified -eq $true -and
       $current.state -ceq $Reviewed.state -and $current.phase -ceq $Reviewed.phase -and
+      $current.interruptionBoundary -ceq $Reviewed.interruptionBoundary -and
       $current.evidenceInventory -ceq $Reviewed.evidenceInventory)
     return [pscustomobject]$result
   } finally {

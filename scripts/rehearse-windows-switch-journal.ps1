@@ -88,7 +88,7 @@ try {
  }
  Select-Pointer $old $new 'runtime-previous.json'
  $interrupted=Get-ArsSwitchInspection $root
- if ($interrupted.state -cne 'pointer-conflict') {throw 'Interrupted transition not detected.'}
+ if ($interrupted.state -cne 'pointer-conflict' -or $interrupted.interruptionBoundary -cne 'forward-pointer-replaced' -or $interrupted.startupAllowed -ne $false) {throw 'Interrupted transition not detected.'}
  Record-Phase 'switched'
  if ($HttpReadiness) {
   $candidateVersion=if ($Rollback) {'9.9.9'} else {'1.0.1'}
@@ -98,6 +98,8 @@ try {
  if ($Rollback) {
   Record-Phase 'rollback-required'
   Select-Pointer $new $old 'runtime-failed-candidate.json'
+  $rollbackInterrupted=Get-ArsSwitchInspection $root
+  if ($rollbackInterrupted.interruptionBoundary -cne 'rollback-pointer-replaced' -or $rollbackInterrupted.startupAllowed -ne $false -or $rollbackInterrupted.rollbackAllowed -ne $false) {throw 'Interrupted rollback boundary not detected.'}
   if ($RepairFixture) {
    $review=Read-ArsRepairInterruptionReview $state
    if ($review.startupAllowed -ne $false -or $review.rollbackReceiptMatched -ne $true) {throw 'Unsafe interrupted rollback review.'}
