@@ -47,14 +47,17 @@ async function collect(body) {
  return Buffer.concat(chunks);
 }
 
-export async function fetchSignedUpdate({feed, platform, currentVersion, publicKey, output}) {
+export async function fetchSignedUpdate({feed, platform, currentVersion, expectedVersion, publicKey, output}) {
  const base = new URL(feed);
  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || !base.pathname.endsWith('/')) {
   throw Error('Expected a trusted HTTPS release directory URL ending in /.');
  }
  const archive = archives.get(platform);
  if (!archive) throw Error('Unsupported update platform.');
- stableVersion(currentVersion);
+ if ((currentVersion === undefined) === (expectedVersion === undefined)) {
+  throw Error('Specify the installed version or the exact expected release version.');
+ }
+ stableVersion(currentVersion ?? expectedVersion);
  const key = await readFile(publicKey);
  const [manifest, signature] = await Promise.all([
   fetchAsset(base, 'manifest.json', 65536, collect, 15000),
@@ -66,7 +69,9 @@ export async function fetchSignedUpdate({feed, platform, currentVersion, publicK
      typeof release.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(release.sha256)) {
   throw Error('Update manifest does not match the requested product and platform.');
  }
- if (!isNewer(currentVersion, release.version)) return {available: false};
+ if (expectedVersion !== undefined) {
+  if (release.version !== expectedVersion) throw Error('Published update version does not match the approved release.');
+ } else if (!isNewer(currentVersion, release.version)) return {available: false};
  if (output === undefined) return {available: true, version: release.version};
 
  await mkdir(output, {mode: 0o700});

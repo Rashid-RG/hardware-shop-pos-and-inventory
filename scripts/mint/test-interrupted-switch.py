@@ -69,6 +69,47 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 resume.open_lock(lock)
             self.assertEqual(target.read_text(),"preserve")
+
+    def test_resume_keeps_original_hold_and_stops_a_wrong_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            release = state / "installed"
+            release.mkdir()
+            (release / "package.json").write_text('{"version":"1.2.3"}')
+            (state / "project").symlink_to(release)
+            hold = state / "maintenance-hold.json"
+            saved = json.dumps({"purpose":"pre-update backup", "previousProject":str(release)}).encode()
+            hold.write_bytes(saved)
+            with patch.object(resume, "STATE", state), patch.object(resume.os, "geteuid", return_value=1000), patch.object(resume, "stopped"), patch.object(resume, "check_database_clients"), patch.object(resume.subprocess, "run") as service:
+                with patch.object(resume, "wait_for_current_release", side_effect=RuntimeError("wrong release")) as verify:
+                    with self.assertRaisesRegex(RuntimeError, "wrong release"):
+                        resume.resume("RESUME CURRENT POS")
+                    verify.assert_called_once_with(release, "1.2.3")
+                self.assertEqual([call.args[0][2] for call in service.call_args_list], ["start", "stop"])
+            self.assertEqual(hold.read_bytes(), saved)
+
+    def test_readiness_requires_exact_version_pid_and_stable_service(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            release = state / "project"
+            release.mkdir()
+            body = {"ok": True, "status": "ready", "database": "reachable",
+                    "sourceOfTruth": "normalized", "buildVersion": "1.2.3", "processId": 101}
+            for observed, pids, error in (
+                (body, [(101, "1234"), (101, "1234")], None),
+                ({**body, "buildVersion": "1.9.0"}, [(101, "1234")], "another POS process or release"),
+                ({**body, "processId": 102}, [(101, "1234")], "another POS process or release"),
+                (body, [(101, "1234"), (101, "5678")], "changed during readiness"),
+            ):
+                with self.subTest(observed=observed, pids=pids), patch.object(resume, "STATE", state), patch.object(resume, "active_process", side_effect=pids), patch.object(resume, "build_opener") as opener:
+                    response = opener.return_value.open.return_value.__enter__.return_value
+                    response.read.return_value = json.dumps(observed).encode()
+                    if error:
+                        with self.assertRaisesRegex(RuntimeError, error):
+                            resume.wait_for_current_release(release, "1.2.3", timeout=1)
+                    else:
+                        resume.wait_for_current_release(release, "1.2.3", timeout=1)
+                    response.read.assert_called_once_with(16385)
     def test_fresh_installer_refuses_registered_installation_and_recovery_evidence(self):
         spec=importlib.util.spec_from_file_location("runtime_layout",Path(__file__).with_name("runtime-layout.py"))
         layout=importlib.util.module_from_spec(spec)

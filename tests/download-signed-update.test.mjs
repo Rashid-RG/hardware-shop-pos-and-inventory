@@ -65,6 +65,13 @@ test('signed downloads work over real TLS and reject an untrusted certificate', 
   version: '2.0.0', sha256: createHash('sha256').update(payload).digest('hex')}));
  const routes = new Map([['/manifest.json', manifest], ['/manifest.sig', sign('sha256', manifest, privateKey)],
   ['/release.tar.gz', payload]]);
+ for (const [platform, archive] of [['linux-mint', 'release.tar.gz'], ['windows', 'release.zip']]) {
+  const platformManifest = Buffer.from(JSON.stringify({product: 'ARS Distributor', platform, version: '2.0.0',
+   sha256: createHash('sha256').update(payload).digest('hex')}));
+  routes.set('/' + platform + '/manifest.json', platformManifest);
+  routes.set('/' + platform + '/manifest.sig', sign('sha256', platformManifest, privateKey));
+  routes.set('/' + platform + '/' + archive, payload);
+ }
  const server = createServer({key: await readFile(tlsKey), cert: await readFile(certificate)},
   (request, response) => {
    const body = routes.get(request.url);
@@ -81,6 +88,15 @@ test('signed downloads work over real TLS and reject an untrusted certificate', 
    env: {...process.env, NODE_EXTRA_CA_CERTS: certificate}});
   assert.equal(JSON.parse(stdout).version, '2.0.0');
   assert.deepEqual(await readFile(join(directory, 'bundle', 'release.tar.gz')), payload);
+  const verifier = fileURLToPath(new URL('../scripts/verify-published-update-feed.mjs', import.meta.url));
+  const trusted = {timeout: 10000, env: {...process.env, NODE_EXTRA_CA_CERTS: certificate}};
+  const report = await run(process.execPath, [verifier, url, '2.0.0', trust], trusted);
+  assert.deepEqual(JSON.parse(report.stdout), {
+   version: '2.0.0', platforms: ['windows', 'linux-mint'], signaturesVerified: true, archivesVerified: true
+  });
+  await assert.rejects(run(process.execPath, [verifier, url, '2.0.1', trust], trusted), /does not match the approved release/);
+  routes.set('/windows/release.zip', Buffer.from('tampered'));
+  await assert.rejects(run(process.execPath, [verifier, url, '2.0.0', trust], trusted), /windows: Update archive checksum mismatch/);
  } finally {
   await new Promise(resolve => server.close(resolve));
  }

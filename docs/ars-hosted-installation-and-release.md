@@ -192,3 +192,38 @@ journal, maintenance hold and release identity before returning the project
 pointer to the previous release. Billing stays stopped until an operator
 finalizes the rollback and resumes the POS. A fully selected offline candidate
 requires an explicit rollback decision.
+
+## Production update feed
+
+The dedicated Render static site publishes the `feed` directory from the
+`ars-production-update-feed` branch with manual deployments. Its base URL is
+`https://ars-distributors-updates.onrender.com/`. It serves public release
+files only. Keep the signing private key, credentials, and business data on
+their owner-controlled computers.
+
+On an owner-controlled Linux release workstation, create the signing key
+in a new private directory outside the source checkout. OpenSSL prompts for
+the key's encryption passphrase.
+
+```bash
+umask 077
+mkdir -m 700 "$HOME/ars-release-signing" &&
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -aes-256-cbc \
+  -out "$HOME/ars-release-signing/private.pem" &&
+openssl pkey -in "$HOME/ars-release-signing/private.pem" -pubout \
+  -out "$HOME/ars-release-signing/release-signing-public.pem"
+```
+
+Run these commands once for a new key. Keep an encrypted offline recovery copy,
+and verify the public key independently before installing it on shop computers.
+After owner approval, use `scripts/prepare-update-feed.py` on that workstation to
+build the signed Windows and Mint bundles from the approved commit.
+Publish both platform directories together in the same site deployment.
+Check the published archives with only the public key before provisioning the
+feed URL on shop computers.
+
+```bash
+node scripts/verify-published-update-feed.mjs \
+  https://ars-distributors-updates.onrender.com/ APPROVED_VERSION \
+  /path/to/release-signing-public.pem
+```

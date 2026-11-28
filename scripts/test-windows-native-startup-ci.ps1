@@ -51,6 +51,8 @@ try {
  $info.EnvironmentVariables['PORT']='30123'
  $info.EnvironmentVariables['ARS_LISTEN_HOST']='127.0.0.1'
  $info.EnvironmentVariables['JWT_SECRET']=[guid]::NewGuid().ToString('N')+[guid]::NewGuid().ToString('N')
+ $release=(Get-Content -LiteralPath (Join-Path $build 'package.json') -Raw | ConvertFrom-Json).version
+ $verifier=Join-Path $PSScriptRoot 'verify-installed-release-readiness.mjs'
  function Start-NativeApplication {
   $child=[Diagnostics.Process]::Start($info)
   $out=$child.StandardOutput.ReadToEndAsync()
@@ -58,10 +60,10 @@ try {
   try {
    for ($i=0;$i -lt 90;$i++) {
     if ($child.HasExited) { throw ('Native server exited: '+$err.GetAwaiter().GetResult()) }
-    try {
-     $response=Invoke-RestMethod -Uri 'http://127.0.0.1:30123/api/ready' -TimeoutSec 2
-     if ($response.ok -eq $true -and $response.status -eq 'ready' -and $response.database -eq 'reachable' -and $response.sourceOfTruth -eq 'normalized') { return $child }
-    } catch {}
+    $ErrorActionPreference='Continue'
+    $PSNativeCommandUseErrorActionPreference=$false
+    & $node $verifier $release $child.Id '30123' *> $null
+    if ($LASTEXITCODE -eq 0 -and -not $child.HasExited) { return $child }
     Start-Sleep -Seconds 1
    }
    throw 'Native application readiness not confirmed.'

@@ -269,14 +269,37 @@ if (-not $dockerAvailable -and -not $dbReady) {
   }
 }
 
+function Test-ArsDesktopReleaseReady([string]$Version, [int]$ProcessId) {
+  $ErrorActionPreference='Continue'
+  $PSNativeCommandUseErrorActionPreference=$false
+  & node (Join-Path $scriptDir 'verify-installed-release-readiness.mjs') $Version $ProcessId *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+if ($DesktopLaunch) {
+  $version=(Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
+  if ($version -isnot [string] -or $version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') {
+    throw 'Installed release version cannot be verified.'
+  }
+  $controlDir=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
+  $recordPath=Join-Path $controlDir 'instance.json'
+}
+
 $portProcess = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue |
   Select-Object -First 1 -ExpandProperty OwningProcess
 
 if ($portProcess) {
   if ($DesktopLaunch) {
     try {
-      $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 3
-      if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
+      $file=Get-Item -LiteralPath $recordPath -Force
+      if ($file.PSIsContainer -or $file.Length -gt 8192 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Invalid desktop process record.'
+      }
+      $existing=Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+      $owner=Get-Process -Id $portProcess
+      if ($existing.schema -eq 1 -and $existing.project -ieq (Get-Location).Path -and
+          $existing.pid -eq $owner.Id -and $existing.startedUtc -ceq $owner.StartTime.ToUniversalTime().Ticks.ToString() -and
+          (Test-ArsDesktopReleaseReady $version $owner.Id) -and -not $owner.HasExited) {
         Open-ArsDesktopWindow
         return
       }
@@ -301,10 +324,8 @@ if ($DesktopLaunch) {
   $env:ARS_LISTEN_HOST = '127.0.0.1'
   $env:PORT = '3000'
   $env:CORS_ALLOWED_ORIGINS = 'http://localhost:3000'
-  $controlDir=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
   New-Item -ItemType Directory -Path $controlDir -Force | Out-Null
   if ((Get-Item -LiteralPath $controlDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected desktop control directory.' }
-  $recordPath=Join-Path $controlDir 'instance.json'
   if (Test-Path -LiteralPath $recordPath) { throw 'Previous desktop control record exists. Verify previous shutdown with RS Nextward support before restarting.' }
   $pipeName='ars-pos-'+[guid]::NewGuid().ToString('N')
   $bytes=New-Object byte[] 32
@@ -333,13 +354,10 @@ if ($DesktopLaunch) {
   while ((Get-Date) -lt $deadline) {
     $process.Refresh()
     if ($process.HasExited) { throw 'ARS application exited before it became ready. Contact RS Nextward support.' }
-    try {
-      $ready = Invoke-RestMethod 'http://localhost:3000/api/ready' -TimeoutSec 2
-      if ($ready.ok -eq $true -and $ready.status -eq 'ready' -and $ready.database -eq 'reachable' -and $ready.sourceOfTruth -eq 'normalized') {
-        Open-ArsDesktopWindow
-        return
-      }
-    } catch { }
+    if ((Test-ArsDesktopReleaseReady $version $process.Id) -and -not $process.HasExited) {
+      Open-ArsDesktopWindow
+      return
+    }
     Start-Sleep -Seconds 1
   }
   throw 'ARS could not confirm readiness. The application may still be starting; no process was stopped. Contact support if the problem persists.'

@@ -83,8 +83,9 @@ export async function waitForInstalledRelease(version,pid,{port=3000,timeoutMs=6
 
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  try{
-  if(process.argv.length!==4)throw Error('Usage: node verify-installed-release-readiness.mjs VERSION PID');
-  await verifyInstalledRelease(process.argv[2],Number(process.argv[3]));
+  const [version, pid, port = '3000', ...extra] = process.argv.slice(2);
+  if (!pid || extra.length) throw Error('Usage: node verify-installed-release-readiness.mjs VERSION PID [PORT]');
+  await verifyInstalledRelease(version, Number(pid), Number(port));
   console.log('Expected POS release and process are ready.');
  }catch(error){
   console.error(error.message);
