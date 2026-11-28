@@ -2,8 +2,9 @@
 // Caller must first create the private recovery directory and verified shutdown hold.
 import pg from 'pg';
 import dotenv from 'dotenv';
-import {lstat,realpath,readFile,readdir} from 'node:fs/promises';
+import {lstat,realpath,readFile,readdir,open} from 'node:fs/promises';
 import {join,resolve,dirname,basename,isAbsolute} from 'node:path';
+import {createHash} from 'node:crypto';
 import {resolveWindowsMaintenanceDatabase} from './windows-maintenance-database-config.mjs';
 import {reviewCurrentWindowsMaintenanceInstallation} from './windows-maintenance-current-identity.mjs';
 import {withProtectedWindowsRecovery} from './windows-continuous-recovery.mjs';
@@ -18,8 +19,9 @@ async function canonical(path,directory){
  if(st.isSymbolicLink()||!(directory?st.isDirectory():st.isFile())||!same(await realpath(p),p))throw Error('Invalid recovery path.');
  return p;
 }
-export async function runInstalledWindowsContinuousRecovery({root,destination,signal}={}){
+export async function runInstalledWindowsContinuousRecovery({root,destination,signal,holdDigest,shutdownDigest}={}){
  if(process.platform!=='win32'||!signal||typeof signal.addEventListener!=='function'||signal.aborted||typeof process.env.LOCALAPPDATA!=='string'||!isAbsolute(process.env.LOCALAPPDATA)||['ARS_RUNTIME_ROOT','DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH'].some(k=>process.env[k]!==undefined))throw Error('Unsupported recovery environment.');
+ if(![holdDigest,shutdownDigest].every(x=>typeof x==='string'&&/^[A-F0-9]{64}$/.test(x)))throw Error('Original preparation digests required.');
  const runtime=await canonical(root,true);
  const folder=await canonical(destination,true);
  const state=await canonical(join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor'),true);
@@ -27,6 +29,26 @@ export async function runInstalledWindowsContinuousRecovery({root,destination,si
  const control=await canonical(join(state,'desktop-control'),true);
  if(!same(dirname(folder),recoveryRoot)||! /^[a-f0-9]{32}$/.test(basename(folder)))throw Error('Managed recovery directory required.');
  if((await readdir(folder)).length!==0)throw Error('Existing recovery evidence must be retained.');
+ const checkShutdown=async()=>{
+  if(signal.aborted)throw Error('Recovery interrupted.');
+  for(const [name,expected] of [['maintenance.json',holdDigest],['maintenance-shutdown.json',shutdownDigest]]){
+   const path=await canonical(join(control,name),false);
+   const before=await lstat(path);
+   if(before.size<1||before.size>65536)throw Error('Invalid shutdown evidence.');
+   const stable=(a,b)=>a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
+   const handle=await open(path,'r');
+   try{
+    if(!stable(before,await handle.stat()))throw Error('Prepared shutdown evidence changed.');
+    const raw=Buffer.alloc(before.size);
+    const {bytesRead}=await handle.read(raw,0,raw.length,0);
+    if(bytesRead!==raw.length||!stable(before,await handle.stat())||!stable(before,await lstat(path))||!same(await realpath(path),path)||createHash('sha256').update(raw).digest('hex').toUpperCase()!==expected)throw Error('Prepared shutdown evidence changed.');
+    const record=JSON.parse(raw.toString('utf8').replace(/^\uFEFF/,''));
+    if(record.uninstallId!==basename(folder)||typeof record.project!=='string'||!same(record.project,runtime)||record.shutdownVerified!==(name==='maintenance-shutdown.json')||['applicationRemovalAllowed','databaseDeletionAllowed','activationApproved'].some(k=>record[k]!==false))throw Error('Prepared shutdown identity mismatch.');
+   }finally{await handle.close();}
+  }
+  if(signal.aborted)throw Error('Recovery interrupted.');
+ };
+ await checkShutdown();
  const identity=await reviewCurrentWindowsMaintenanceInstallation(runtime);
  const checkIdentity=async()=>{
   if(signal.aborted)throw Error('Recovery interrupted.');
@@ -36,7 +58,7 @@ export async function runInstalledWindowsContinuousRecovery({root,destination,si
  const configPath=await canonical(join(runtime,'.env.local'),false);
  const config=resolveWindowsMaintenanceDatabase(dotenv.parse(await readFile(configPath)));
  const client=new pg.Client(config.connection);
- const check=async scope=>{await scope.assertActive();await checkIdentity();await scope.assertActive();};
+ const check=async scope=>{await scope.assertActive();await checkIdentity();await checkShutdown();await scope.assertActive();};
  return withProtectedWindowsRecovery(client,config.database,{
   signal,
   backup:async scope=>{
