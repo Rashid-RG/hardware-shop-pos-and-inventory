@@ -58,3 +58,32 @@ foreach ($key in @('proof','archive')) {
  try {New-ArsFinalUninstallEvidenceReview $bad $id $archive $evidence $members|Out-Null} catch {$blocked=$true}
  if (-not $blocked) {throw "Changed evidence accepted: $key"}
 }
+
+
+# Recovery metadata review for both supported Windows database names.
+foreach ($database in @('hardware_pos','hardware_pos_ars')) {
+ $candidate='ars-'+$database+'-20261127-120000-123-'+$id+'-with-uploads.dump'
+ $candidateMembers=@(Get-ArsUninstallArchiveMembers $candidate)
+ $base=$candidate.Substring(0,$candidate.Length-5)
+ $expectedMembers=@($candidate,($candidate+'.sha256'),($base+'-uploads.zip'),($base+'-uploads.zip.sha256'))
+ if ($candidateMembers.Count -ne 4 -or ($candidateMembers -join '|') -cne ($expectedMembers -join '|')) {throw 'Recovery archive companion mismatch.'}
+ $candidateHashes=[ordered]@{}
+ foreach ($member in ($candidateMembers+@('uninstall-table-manifest.json'))) {$candidateHashes[$member]='e'*64}
+ $candidateObservation=$json|ConvertFrom-Json
+ $candidateObservation.archiveSha256=$candidateHashes[$candidate]
+ $candidateObservation.archiveMemberDigests=($candidateHashes|ConvertTo-Json|ConvertFrom-Json)
+ $candidatePlan=New-ArsFinalUninstallEvidenceReview $candidateObservation $id $candidate $evidence $candidateHashes
+ if ($candidatePlan.restoreObservationMatched -ne $true) {throw 'Supported recovery archive rejected.'}
+ foreach ($flag in $flags) {if ($candidatePlan[$flag] -isnot [bool] -or $candidatePlan[$flag]) {throw 'Unexpected recovery authorization.'}}
+}
+foreach ($invalid in @(
+ ('ars-hardware_pos_ci-20261127-120000-123-'+$id+'-with-uploads.dump'),
+ ('ars-other-20261127-120000-123-'+$id+'-with-uploads.dump'),
+ ('ars-hardware_pos_ars-20261127-120000-123-'+$id+'-database-only.dump'),
+ ('ars-hardware_pos_ars-20261127-120000-123-invalid-with-uploads.dump')
+)) {
+ $blocked=$false
+ try {Get-ArsUninstallArchiveMembers $invalid|Out-Null} catch {$blocked=$true}
+ if (-not $blocked) {throw 'Unsupported recovery archive accepted.'}
+}
+Write-Host 'Legacy and fresh installer recovery archive compatibility checks passed.'
