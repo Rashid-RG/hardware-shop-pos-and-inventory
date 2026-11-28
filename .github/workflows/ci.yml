@@ -65,6 +65,7 @@ jobs:
           python3 scripts/mint/test-uninstall-preview.py
           python3 scripts/mint/test-uninstall-backup-review.py
           python3 scripts/mint/test-uninstall-backup-preparation.py
+          python3 scripts/mint/test-protected-backup-cluster.py
           python3 scripts/mint/test-uninstall-restore.py
           python3 scripts/mint/test-installation-identity.py
           python3 scripts/mint/test-desktop-registration.py

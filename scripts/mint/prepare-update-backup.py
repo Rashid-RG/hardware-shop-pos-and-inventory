@@ -15,7 +15,7 @@ import tempfile
 STATE = Path.home()/".local/share/ars-hardware"
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?")
 
-def prepare(version):
+def prepare(version, cluster=()):
     if os.geteuid() == 0 or not VERSION.fullmatch(version):
         raise ValueError("Use a valid staged release as the desktop user.")
     project = (STATE/"project").resolve(strict=True)
@@ -30,8 +30,10 @@ def prepare(version):
     recovery.mkdir(mode=0o700,parents=True,exist_ok=True)
     with (STATE/"update.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        # The existing backup command binds itself to the configured Mint database.
-        output=subprocess.run(["python3",str(project/"scripts/mint/backup.py")],cwd=project,stdout=subprocess.PIPE,text=True,check=True).stdout
+        command = ["python3",str(project/"scripts/mint/backup.py")]
+        if cluster:
+            command.extend(["--retain-all","--protected-cluster",*cluster])
+        output=subprocess.run(command,cwd=project,stdout=subprocess.PIPE,text=True,check=True).stdout
         paths=[line.split("=",1)[1] for line in output.splitlines() if line.startswith("ARS_ARCHIVE=")]
         if len(paths)!=1:
             raise ValueError("Backup did not return a unique archive path.")
@@ -67,8 +69,9 @@ if __name__=="__main__":
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
+    parser.add_argument("cluster", nargs="*")
     args=parser.parse_args()
     try:
-        prepare(args.version)
+        prepare(args.version, args.cluster)
     except (OSError,ValueError,subprocess.SubprocessError) as error:
         sys.exit("Update backup preparation failed: "+str(error))

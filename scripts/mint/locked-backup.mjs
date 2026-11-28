@@ -2,6 +2,7 @@
 import pg from 'pg';
 import {withMaintenanceSession} from '../database-maintenance-session.mjs';
 import {withMaintenanceTableFence} from '../database-maintenance-table-fence.mjs';
+import {readProtectedMaintenanceClusterIdentity} from '../maintenance-cluster-identity.mjs';
 import {runMaintenanceChild} from '../database-maintenance-child.mjs';
 import { readFileSync, realpathSync, lstatSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -49,7 +50,8 @@ try{
    if(signal.aborted)throw Error('Backup interrupted.');
   };
   const scope=Object.freeze({owner:fence.owner,signal,assertActive});
-  const output=await runMaintenanceChild(scope,'python3',[uninstall?'scripts/mint/prepare-uninstall-backup.py':'scripts/mint/prepare-update-backup.py',process.argv[2]],{cwd:project,timeoutMs:900000,maxOutput:65536});
+  const db=await readProtectedMaintenanceClusterIdentity(client,scope);
+  const output=await runMaintenanceChild(scope,'python3',[uninstall?'scripts/mint/prepare-uninstall-backup.py':'scripts/mint/prepare-update-backup.py',process.argv[2],db.systemIdentifier,db.databaseOid],{cwd:project,timeoutMs:900000,maxOutput:65536});
   await assertActive();
   const matches=output.split(/\r?\n/).filter(x=>x.startsWith('Pinned recovery archive: '));
   if(matches.length!==1)throw Error('Missing unique recovery archive');
@@ -58,13 +60,10 @@ try{
   const metaPath=resolve(folder,'recovery.json'),metaRaw=evidence(metaPath),meta=JSON.parse(metaRaw);
   if(meta.version!==hold.version||meta.previousProject!==project||meta.activationApproved!==false||!/^ars-mint-[A-Za-z0-9_-]+\.dump$/.test(meta.archive))throw Error('Recovery metadata mismatch.');
   if(uninstall&&(meta.kind!=='mint-final-uninstall-backup'||meta.uninstallId!==hold.uninstallId||meta.applicationRemovalAllowed!==false||meta.restoreTestPassed!==false||meta.shutdownDigest!==sha(shutdownRaw)))throw Error('Uninstall backup metadata mismatch.');
-  const identity=await client.query("SELECT current_database() AS database,system_identifier::text AS system_identifier,(SELECT oid::text FROM pg_database WHERE datname=current_database()) AS database_oid FROM pg_control_system()");
-  const db=identity.rows[0];
-  if(identity.rows.length!==1||db.database!=='hardware_pos_ars'||!/^\d{1,20}$/.test(db.system_identifier)||!/^\d{1,10}$/.test(db.database_oid))throw Error('Database identity unavailable.');
   const locks=await client.query("SELECT count(DISTINCT objid)::int AS count FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid() AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=1642958133 AND objid IN (1,2,3) AND objsubid=2 AND mode='ExclusiveLock' AND granted");
   if(locks.rows[0]?.count!==3||signal.aborted||sha(evidence(holdPath))!==sha(holdRaw)||sha(evidence(metaPath))!==sha(metaRaw))throw Error('Protected backup evidence changed.');
   await assertActive();
-  const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.system_identifier,databaseOid:db.database_oid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
+  const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.systemIdentifier,databaseOid:db.databaseOid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
   if(uninstall&&sha(evidence(shutdownPath))!==sha(shutdownRaw))throw Error('Shutdown evidence changed.');
   if(uninstall)Object.assign(receipt,{kind:'mint-uninstall-backup-observation',shutdownDigest:sha(shutdownRaw),uninstallId:hold.uninstallId,applicationRemovalAllowed:false,finalUninstallBackupVerified:false});
   const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);

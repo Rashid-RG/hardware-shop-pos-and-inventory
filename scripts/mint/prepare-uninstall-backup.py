@@ -34,7 +34,7 @@ def members(dump):
     uploads=dump.with_name(dump.stem+"-uploads.zip")
     return [p for item in (dump,manifest,uploads) for p in (item,Path(str(item)+".sha256"))]
 
-def prepare(version):
+def prepare(version, cluster):
     if os.geteuid()==0 or STATE.resolve(strict=True)!=STATE or STATE.stat().st_uid!=os.getuid():
         raise ValueError("Managed desktop user required.")
     assert_local_docker()
@@ -68,7 +68,7 @@ def prepare(version):
         for marker in ("repair-interrupted.json","runtime-switch-intent.json","runtime-activation-interrupted.json","runtime-migration-interrupted.json","switch-journal.json","handoff-pending.json"):
             if os.path.lexists(STATE/marker):
                 raise ValueError("Unresolved maintenance incident.")
-        output=subprocess.run(["python3",str(project/"scripts/mint/backup.py"),"--retain-all"],cwd=project,check=True,capture_output=True,text=True).stdout
+        output=subprocess.run(["python3",str(project/"scripts/mint/backup.py"),"--retain-all","--protected-cluster",*cluster],cwd=project,check=True,capture_output=True,text=True).stdout
         paths=[s.partition("=")[2] for s in output.splitlines() if s.startswith("ARS_ARCHIVE=")]
         if len(paths)!=1:
             raise ValueError("Unique backup required.")
@@ -105,6 +105,6 @@ def prepare(version):
 
 if __name__=="__main__":
     os.umask(0o077)
-    if len(sys.argv)!=2:
-        sys.exit("Version required.")
-    prepare(sys.argv[1])
+    if len(sys.argv)!=4:
+        sys.exit("Version and protected cluster identity required.")
+    prepare(sys.argv[1], sys.argv[2:])
