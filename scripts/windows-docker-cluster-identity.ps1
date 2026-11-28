@@ -34,3 +34,25 @@ function Get-ArsDockerClusterIdentity([string]$database) {
  if ($LASTEXITCODE -ne 0 -or $currentExit -ne 0 -or $current.Count -ne 1 -or $current[0] -cne $containerId -or $currentEndpoint.Count -ne 1 -or $currentEndpoint[0] -cne $endpoint[0]) {throw 'Docker identity changed during probe.'}
  return [pscustomobject]@{database=$identity.database;systemIdentifier=$identity.systemIdentifier;databaseOid=$identity.databaseOid;containerId=$containerId}
 }
+
+
+# Compare the caller's original protected session evidence with the observed
+# Docker identity. Keep identifiers as decimal strings across the JS/PS boundary.
+function Assert-ArsDockerClusterMatch($expected,$actual) {
+ if ($null -eq $expected -or $null -eq $actual) {throw 'PostgreSQL cluster identity mismatch.'}
+ foreach ($identity in @($expected,$actual)) {
+  if ($identity.database -isnot [string] -or $identity.systemIdentifier -isnot [string] -or $identity.databaseOid -isnot [string]) {throw 'Invalid cluster identity evidence.'}
+  $null=ConvertFrom-ArsDockerClusterIdentity @($identity.database+'|'+$identity.systemIdentifier+'|'+$identity.databaseOid) $identity.database
+ }
+ foreach ($key in @('database','systemIdentifier','databaseOid')) {
+  if ($expected.$key -cne $actual.$key) {throw 'PostgreSQL cluster identity mismatch.'}
+ }
+ if ($actual.containerId -isnot [string] -or $actual.containerId -cnotmatch '^[a-f0-9]{64}$') {throw 'Invalid Docker container identity.'}
+}
+function Confirm-ArsProtectedDockerCluster([string]$database,[string]$systemIdentifier,[string]$databaseOid) {
+ $ErrorActionPreference='Stop'
+ $expected=ConvertFrom-ArsDockerClusterIdentity @($database+'|'+$systemIdentifier+'|'+$databaseOid) $database
+ $actual=Get-ArsDockerClusterIdentity $database
+ Assert-ArsDockerClusterMatch $expected $actual
+ return $actual
+}
