@@ -13,7 +13,7 @@ function Assert-ArsUninstallManifestBinding($manifest,[string]$id,[string]$holdD
  if ($id -cnotmatch '^[a-f0-9]{32}$' -or $holdDigest -cnotmatch '^[A-F0-9]{64}$' -or $shutdownDigest -cnotmatch '^[A-F0-9]{64}$' -or $manifest.uninstallId -cne $id -or $manifest.holdDigest -cne $holdDigest -or $manifest.shutdownDigest -cne $shutdownDigest -or $manifest.continuousExclusionVerified -isnot [bool] -or $manifest.continuousExclusionVerified) {throw 'Protected manifest shutdown binding mismatch.'}
 }
 function Get-ArsUninstallArchiveMembers([string]$archive) {
- if ([IO.Path]::GetFileName($archive) -cnotmatch '^ars-hardware_pos-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$') { throw 'Complete database and upload archive required.' }
+ if ([IO.Path]::GetFileName($archive) -cnotmatch '^ars-hardware_pos(?:_ars)?-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$') { throw 'Complete database and upload archive required.' }
  $zip=$archive.Substring(0,$archive.Length-5)+'-uploads.zip'
  @($archive,($archive+'.sha256'),$zip,($zip+'.sha256'))
 }
