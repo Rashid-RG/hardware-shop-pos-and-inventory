@@ -64,13 +64,13 @@ import {withMaintenanceSession} from './database-maintenance-session.mjs';
 import {runWindowsMaintenanceWorker} from './windows-maintenance-supervisor-adapter.mjs';
 
 class FixtureDatabase extends EventEmitter{
- constructor(){super();this.closed=false;this.pid=123;}
+ constructor(database='hardware_pos_ci'){super();this.closed=false;this.pid=123;this.database=database;}
  async connect(){}
  async end(){this.closed=true;this.emit('end');}
  async query(sql){
-  if(sql==='SELECT current_database() AS name')return {rows:[{name:'hardware_pos_ci'}]};
+  if(sql==='SELECT current_database() AS name')return {rows:[{name:this.database}]};
   if(sql.includes('pg_try_advisory_lock'))return {rows:[{acquired:true}]};
-  return {rows:[{pid:this.pid,started:'2026-01-01 00:00:00.123456+00',database:'hardware_pos_ci',database_oid:'12345',locks:3}]};
+  return {rows:[{pid:this.pid,started:'2026-01-01 00:00:00.123456+00',database:this.database,database_oid:'12345',locks:3}]};
  }
 }
 const options={cwd:dir,timeoutMs:15000};
@@ -153,8 +153,8 @@ const oldArchive=join(stageDestination,'ars-hardware_pos-old-fixture.dump');
 const oldChecksum=oldArchive+'.sha256';
 await writeFile(oldArchive,'retained recovery archive');
 await writeFile(oldChecksum,'retained checksum evidence');
-const stageDb=new FixtureDatabase();
-const stageResult=await withMaintenanceSession(stageDb,'hardware_pos_ci',session=>
+const stageDb=new FixtureDatabase('hardware_pos');
+const stageResult=await withMaintenanceSession(stageDb,'hardware_pos',session=>
  runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
 );
 assert.equal(stageResult.archive,join(stageDestination,'ars-hardware_pos-ci-fixture.dump'));
@@ -169,7 +169,7 @@ assert.deepEqual(await resultFiles(),[stageResult.resultName]);
 const retained=await readFile(join(stageDestination,stageResult.resultName));
 // A failed producer must not publish a second result or remove existing evidence.
 await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)\r\nthrow "Fixture backup failure"');
-await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
+await assert.rejects(withMaintenanceSession(new FixtureDatabase('hardware_pos'),'hardware_pos',session=>
  runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
 ),/Native maintenance worker did not complete/);
 assert.deepEqual(await resultFiles(),[stageResult.resultName]);
@@ -212,7 +212,7 @@ try{
   '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
   'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
  ].join('\r\n'));
- const invoke=()=>withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
+ const invoke=()=>withMaintenanceSession(new FixtureDatabase('hardware_pos'),'hardware_pos',session=>
   runVerifiedInstalledWindowsBackup(session,{root:installedRoot,destination,timeoutMs:15000})
  );
  const result=await invoke();
