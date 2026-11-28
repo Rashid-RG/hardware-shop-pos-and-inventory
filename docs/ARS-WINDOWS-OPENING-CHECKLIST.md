@@ -112,6 +112,10 @@ Run `powershell -NoProfile -File scripts/verify-windows-staged-release.ps1 -Vers
 
 Do not label the system commercial-ready until physical Windows startup, actual A4 printing, user permissions, backup/restore, and end-to-end sales reconciliation have been checked and signed off. All automated CI tests passing is necessary but not sufficient.
 
+### Check the RS Nextward release feed
+
+Provision `release-feed-url.txt` next to the independently installed `release-signing-public.pem`. The file contains one HTTPS directory URL ending in `/`, with a separate directory per platform. Publish the verified archive, `manifest.json`, and `manifest.sig` to that directory. Windows offers a feed check from **Stage-ARS-Update.vbs**, and Mint offers **Check for signed updates** in the Update Center. The desktop workflow asks before downloading or staging.
+
 ### Prepare a signed update bundle
 
 On the release workstation, run `python3 scripts/sign-update-release.py --platform windows --version VERSION --archive PACKAGE.zip --private-key PRIVATE.pem --public-key TRUST.pem --output NEW_DIRECTORY`. For Mint, use `--platform linux-mint` and a compatible `.tar.gz` release archive. The output contains the release archive, manifest, and detached signature. Use the public trust key already provisioned on customer machines to verify the bundle. Keep the private key on the release workstation. Signing an update bundle does not sign the Windows installer executable.

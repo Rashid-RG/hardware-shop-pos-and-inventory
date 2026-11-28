@@ -13,6 +13,45 @@ function Select-ReleaseFile([string]$Title,[string]$Filter) {
     return $dialog.FileName
   } finally { $dialog.Dispose() }
 }
+function Get-SignedFeedRelease([string]$Node,[string[]]$Arguments,[string]$Caption) {
+  $form=New-Object System.Windows.Forms.Form
+  $form.Text='RS Nextward Update Center'
+  $form.Width=470
+  $form.Height=115
+  $form.StartPosition='CenterScreen'
+  $form.ControlBox=$false
+  $label=New-Object System.Windows.Forms.Label
+  $label.Text=$Caption
+  $label.Dock='Top'
+  $bar=New-Object System.Windows.Forms.ProgressBar
+  $bar.Style='Marquee'
+  $bar.Dock='Bottom'
+  $form.Controls.Add($label)
+  $form.Controls.Add($bar)
+  $job=$null
+  try {
+    $job=Start-Job -ScriptBlock {
+      param($request)
+      $exe=$request.Executable
+      $argv=@($request.Arguments)
+      $result=& $exe @argv
+      if ($LASTEXITCODE -ne 0) {throw 'Signed update feed could not be verified.'}
+      $result
+    } -ArgumentList ([pscustomobject]@{Executable=$Node;Arguments=$Arguments})
+    $form.Show()
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    while ($job.State -in @('NotStarted','Running') -and $clock.Elapsed.TotalSeconds -lt 340) {
+      [System.Windows.Forms.Application]::DoEvents()
+      Start-Sleep -Milliseconds 80
+    }
+    if ($job.State -ne 'Completed') {throw 'Signed update check or download did not complete.'}
+    $result=Receive-Job -Job $job -ErrorAction Stop
+    return ($result | Out-String | ConvertFrom-Json)
+  } finally {
+    if ($job) {Remove-Job -Job $job -Force}
+    $form.Dispose()
+  }
+}
 $temp = $null
 try {
   $root = Split-Path -Parent $PSScriptRoot
@@ -21,19 +60,52 @@ try {
   if (-not (Test-Path -LiteralPath $trust -PathType Leaf)) { throw 'No trusted RS Nextward release signing key is configured. Contact support. Never trust a key supplied with an update.' }
   $openssl = Get-Command openssl.exe -ErrorAction SilentlyContinue
   if (-not $openssl) { throw 'OpenSSL is required to verify releases. Contact RS Nextward support.' }
-  $manifest = Select-ReleaseFile 'Select signed Windows release manifest' 'JSON manifest (*.json)|*.json'
-  if (-not $manifest) { return }
-  $signature = Select-ReleaseFile 'Select manifest signature' 'Signature (*.sig)|*.sig'
-  if (-not $signature) { return }
-  $archive = Select-ReleaseFile 'Select Windows release archive' 'ZIP archive (*.zip)|*.zip'
-  if (-not $archive) { return }
-  $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('ars-inspect-' + [guid]::NewGuid().ToString('N'))
-  New-Item -ItemType Directory -Path $temp | Out-Null
-  foreach ($entry in @(@{source=$manifest;name='manifest.json';limit=65536},@{source=$signature;name='manifest.sig';limit=16384},@{source=$archive;name='release.zip';limit=536870912})) {
-    if ((Get-Item -LiteralPath $entry.source).Length -gt $entry.limit) { throw 'Release input exceeds size limit.' }
-    $dest = Join-Path $temp $entry.name
-    Copy-Item -LiteralPath $entry.source -Destination $dest
-    if ((Get-Item -LiteralPath $dest).Length -gt $entry.limit) { throw 'Copied release input exceeds size limit.' }
+  $state=Split-Path -Parent $trust
+  $feedFile=Join-Path $state 'release-feed-url.txt'
+  $useFeed=$false
+  if ($Stage -and (Test-Path -LiteralPath $feedFile -PathType Leaf)) {
+    $choice=[System.Windows.Forms.MessageBox]::Show('Check the configured signed update feed? Choose No to select local update files.','RS Nextward Update Center','YesNoCancel','Question')
+    if ($choice -eq 'Cancel') {return}
+    $useFeed=$choice -eq 'Yes'
+  }
+  if ($useFeed) {
+    foreach ($path in @($feedFile,$trust)) {
+      $item=Get-Item -LiteralPath $path -Force
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {throw 'Update trust configuration must be a local file.'}
+    }
+    if ((Get-Item -LiteralPath $feedFile).Length -gt 2048) {throw 'Invalid update feed configuration.'}
+    $feed=(Get-Content -LiteralPath $feedFile -Raw).Trim()
+    $node=(Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+    $arguments=@((Join-Path $PSScriptRoot 'download-signed-update.mjs'),$feed,'windows',$installed,$trust)
+    $release=Get-SignedFeedRelease $node $arguments 'Checking the signed update feed.'
+    if ($release.available -ne $true) {
+      [void][System.Windows.Forms.MessageBox]::Show('No newer signed update is available.','RS Nextward Update Center','OK','Information')
+      return
+    }
+    if ([System.Windows.Forms.MessageBox]::Show("Download verified update $($release.version)?",'RS Nextward Update Center','YesNo','Question') -ne 'Yes') {return}
+    $temp=Join-Path ([System.IO.Path]::GetTempPath()) ('ars-feed-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($temp)
+    $bundle=Join-Path $temp 'bundle'
+    $download=Get-SignedFeedRelease $node ($arguments+@($bundle)) 'Downloading and verifying the signed update.'
+    if ($download.available -ne $true -or $download.version -cne $release.version) {throw 'The update feed changed. Check for updates again.'}
+    foreach ($name in @('manifest.json','manifest.sig','release.zip')) {
+      [IO.File]::Move((Join-Path $bundle $name),(Join-Path $temp $name))
+    }
+  } else {
+    $manifest = Select-ReleaseFile 'Select signed Windows release manifest' 'JSON manifest (*.json)|*.json'
+    if (-not $manifest) { return }
+    $signature = Select-ReleaseFile 'Select manifest signature' 'Signature (*.sig)|*.sig'
+    if (-not $signature) { return }
+    $archive = Select-ReleaseFile 'Select Windows release archive' 'ZIP archive (*.zip)|*.zip'
+    if (-not $archive) { return }
+    $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('ars-inspect-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $temp | Out-Null
+    foreach ($entry in @(@{source=$manifest;name='manifest.json';limit=65536},@{source=$signature;name='manifest.sig';limit=16384},@{source=$archive;name='release.zip';limit=536870912})) {
+      if ((Get-Item -LiteralPath $entry.source).Length -gt $entry.limit) { throw 'Release input exceeds size limit.' }
+      $dest = Join-Path $temp $entry.name
+      Copy-Item -LiteralPath $entry.source -Destination $dest
+      if ((Get-Item -LiteralPath $dest).Length -gt $entry.limit) { throw 'Copied release input exceeds size limit.' }
+    }
   }
   $m = Join-Path $temp 'manifest.json'
   $sig = Join-Path $temp 'manifest.sig'
