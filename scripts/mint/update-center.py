@@ -475,6 +475,11 @@ def offline_release_center(project):
             except (OSError,ValueError,RuntimeError):
                 notice("Switch evidence changed. Reopen the Update Center for review.",True)
                 return
+        if observed is not None:
+            review={path.name:hashlib.sha256(original).hexdigest()
+                    for path,original,_ in observed if path!=selector}
+            review["activeProject"]=str(project)
+            args.extend(["--reviewed-evidence",json.dumps(review,separators=(",",":"))])
         execute(tool_project,"select-offline-release.py",*args)
         # Exit this center so subsequent operations re-resolve the active project.
 

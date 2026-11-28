@@ -528,7 +528,12 @@ class RecoveryTests(unittest.TestCase):
                 run.assert_not_called()
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
                 center.offline_release_center(candidate)
-                run.assert_called_once_with(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE")
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[:5],(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE"))
+                self.assertEqual(run.call_args.args[5],"--reviewed-evidence")
+                review=json.loads(run.call_args.args[6])
+                self.assertEqual(review["switch-journal.json"],hashlib.sha256(journal.read_bytes()).hexdigest())
+                self.assertEqual(review["activeProject"],str(candidate))
             # Each change occurs after the menu opens, while the confirmation
             # dialog is being answered. No recovery command may be dispatched.
             for changed in (journal,root/"maintenance-hold.json",root/"runtime-switch-intent.json",selector):
@@ -563,6 +568,20 @@ class RecoveryTests(unittest.TestCase):
                 center.offline_release_center(candidate)
                 run.assert_not_called()
                 notice.assert_called_once()
+    def test_recovery_command_rejects_stale_operator_review(self):
+        import hashlib
+        spec=importlib.util.spec_from_file_location("selector",Path(__file__).with_name("select-offline-release.py"))
+        selector=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        path=Path("switch-journal.json")
+        active=Path("/fixture/previous")
+        review={path.name:hashlib.sha256(b"original").hexdigest(),"activeProject":str(active)}
+        selector.verify_reviewed_evidence(review,((path,b"original"),),active)
+        with self.assertRaisesRegex(ValueError,"Operator-reviewed"):
+            selector.verify_reviewed_evidence(review,((path,b"changed"),),active)
+        with self.assertRaisesRegex(ValueError,"Operator-reviewed"):
+            selector.verify_reviewed_evidence(review,((path,b"original"),),Path("/fixture/candidate"))
+
     def test_recovery_evidence_reader_rejects_links_and_nonregular_entries(self):
         spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
         center=importlib.util.module_from_spec(spec)
@@ -616,7 +635,10 @@ class RecoveryTests(unittest.TestCase):
             yes=SimpleNamespace(returncode=0,stdout="Finalize offline rollback")
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
                 center.offline_release_center(previous)
-                run.assert_called_once_with(previous,"select-offline-release.py","--finalize-rollback","--confirmation","FINALIZE OFFLINE ROLLBACK")
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[:5],(previous,"select-offline-release.py","--finalize-rollback","--confirmation","FINALIZE OFFLINE ROLLBACK"))
+                review=json.loads(run.call_args.args[6])
+                self.assertEqual(review[archive.name],hashlib.sha256(intent).hexdigest())
             for phase in ("switched","offline-rollback-pending"):
                 journal.write_text(json.dumps({**record,"phase":phase}))
                 with patch.object(center,"STATE",root), patch.object(center,"notice"), patch.object(center,"execute") as run:

@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import importlib.util
 import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -60,7 +61,17 @@ def select_offline_release(folder, confirmation):
             raise ValueError("Offline selection evidence changed; retain startup protection.")
         return {"selected":True,"maintenanceRetained":True,"startupAllowed":False,"rollbackAllowed":False,"continuousExclusionVerified":False}
 
-def rollback_offline_release(confirmation):
+def verify_reviewed_evidence(review, records, active):
+    """Compare the operator's review after acquiring both maintenance locks."""
+    if review is None:
+        return  # Existing explicitly confirmed command-line recovery remains available.
+    expected={path.name:hashlib.sha256(raw).hexdigest() for path,raw in records}
+    expected["activeProject"]=str(active)
+    if review!=expected:
+        raise ValueError("Operator-reviewed recovery evidence changed.")
+
+
+def rollback_offline_release(confirmation, reviewed_evidence=None):
     """Reverse offline selection only; never restore SQL or authorize startup."""
     from switch_journal import write_journal, switch_pointer
     from maintenance_backup import stopped, check_database_clients
@@ -89,6 +100,7 @@ def rollback_offline_release(confirmation):
         binding=record["binding"]
         journal_raw=proposal.read(journal_path)
         journal=json.loads(journal_raw)
+        verify_reviewed_evidence(reviewed_evidence,((target,raw),(hold,hold_raw),(journal_path,journal_raw)),(STATE/"project").resolve(strict=True))
         if not intent.matches(record,binding) or binding.get("desktopUid")!=os.getuid() or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?",binding["candidateVersion"]):
             raise ValueError("Invalid switch intent.")
         previous=Path(binding["previousProject"])
@@ -128,7 +140,7 @@ def rollback_offline_release(confirmation):
         write_journal(STATE,journal)
         return {"previousSelected":True,"maintenanceRetained":True,"startupAllowed":False,"databaseRestored":False}
 
-def finalize_offline_rollback(confirmation):
+def finalize_offline_rollback(confirmation, reviewed_evidence=None):
     """Archive an offline rollback's blockers; leave ordinary resume separate."""
     from resume_maintenance import open_lock
     from maintenance_backup import stopped, check_database_clients
@@ -163,7 +175,9 @@ def finalize_offline_rollback(confirmation):
         journal_archive=STATE/("rolled-back-journal-"+switch_id+".json")
         # Retain exact evidence before removing any blocker. A retry can use
         # the archived intent if a crash happened after its unlink.
-        intent_raw=proposal.read(target if os.path.lexists(target) else archive)
+        intent_path=target if os.path.lexists(target) else archive
+        intent_raw=proposal.read(intent_path)
+        verify_reviewed_evidence(reviewed_evidence,((intent_path,intent_raw),(hold,hold_raw),(journal,raw)),(STATE/"project").resolve(strict=True))
         record=json.loads(intent_raw)
         binding=record["binding"]
         if not intent.matches(record,binding) or record.get("switchId")!=switch_id or binding.get("desktopUid")!=os.getuid() or binding.get("previousProject")!=str(previous) or binding.get("maintenanceDigest")!=proposal.sha(hold_raw) or proposal.sha(intent_raw)!=j.get("intentDigest"):
@@ -203,12 +217,16 @@ if __name__=="__main__":
     mode.add_argument("--rollback-offline",action="store_true")
     mode.add_argument("--finalize-rollback",action="store_true")
     parser.add_argument("--confirmation",required=True)
+    parser.add_argument("--reviewed-evidence",default=None)
     args=parser.parse_args()
     try:
+        review=json.loads(args.reviewed_evidence) if args.reviewed_evidence is not None else None
+        if args.reviewed_evidence is not None and (not isinstance(review,dict) or not (args.finalize_rollback or args.rollback_offline)):
+            raise ValueError("Invalid reviewed evidence.")
         if args.finalize_rollback:
-            print(json.dumps(finalize_offline_rollback(args.confirmation)))
+            print(json.dumps(finalize_offline_rollback(args.confirmation,review)))
         elif args.rollback_offline:
-            print(json.dumps(rollback_offline_release(args.confirmation)))
+            print(json.dumps(rollback_offline_release(args.confirmation,review)))
         elif args.folder is not None:
             print(json.dumps(select_offline_release(args.folder,args.confirmation)))
         else:
