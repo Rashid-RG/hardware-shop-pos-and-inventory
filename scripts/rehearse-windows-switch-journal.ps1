@@ -219,6 +219,21 @@ try {
   [IO.File]::WriteAllText($tool,'original')
   [IO.File]::AppendAllText($trustPath,' ')
   if ((Confirm-ArsRecoveryEvidenceReview $root $toolRoot $combined $trust).reviewMatched) {throw 'Stale intent review accepted.'}
+  # An intent-only review must not accept new maintenance evidence or an
+  # invalid journal simply because the local scripts still match.
+  $intentOnly=Join-Path $toolRoot 'intent-only'
+  [void][IO.Directory]::CreateDirectory($intentOnly)
+  $isolatedScripts=Join-Path $intentOnly 'scripts'
+  [void][IO.Directory]::CreateDirectory($isolatedScripts)
+  [IO.File]::WriteAllText((Join-Path $isolatedScripts 'helper.ps1'),'original')
+  $isolatedControl=Join-Path $intentOnly 'control'
+  [void][IO.Directory]::CreateDirectory($isolatedControl)
+  Write-New (Join-Path $isolatedControl 'runtime-switch-intent.json') ([ordered]@{schema=1;kind='runtime-switch-intent';switchId=$id;observationOnly=$true;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false;binding=@{previousRecoveryToolsDigest=(Get-ArsRecoveryToolsFingerprint $isolatedScripts)}})
+  $only=Get-ArsSwitchInspection $isolatedControl
+  $onlyTrust=Get-ArsRecoveryTrustReview $isolatedControl $isolatedScripts
+  if (-not (Confirm-ArsRecoveryEvidenceReview $isolatedControl $isolatedScripts $only $onlyTrust).reviewMatched) {throw 'Stable intent-only review failed.'}
+  Write-New (Join-Path $isolatedControl 'maintenance.json') @{schema=1;activationAllowed=$false}
+  if ((Confirm-ArsRecoveryEvidenceReview $isolatedControl $isolatedScripts $only $onlyTrust).reviewMatched) {throw 'Changed intent-only inventory accepted.'}
  } finally {
   [IO.File]::Delete($trustPath)
   Remove-Item -LiteralPath $toolRoot -Recurse -Force

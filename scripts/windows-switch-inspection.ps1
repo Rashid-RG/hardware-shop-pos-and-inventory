@@ -161,6 +161,13 @@ function Get-ArsRecoveryTrustReview([string]$Control,[string]$Scripts) {
     try {
       try {$owned=$mutex.WaitOne(0)} catch [System.Threading.AbandonedMutexException] {$owned=$true;return [pscustomobject]$result}
       if (-not $owned) {return [pscustomobject]$result}
+      $cursor=[IO.Path]::GetFullPath($Control)
+      while ($cursor) {
+        $item=Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'Invalid recovery evidence directory.'}
+        $cursor=Split-Path -Parent $cursor
+      }
+      $inventory=Get-ArsSwitchEvidenceInventory $Control
       $path=Join-Path $Control 'runtime-switch-intent.json'
       $before=Read-ArsSwitchSnapshot $path
       $intent=$before.record
@@ -173,7 +180,9 @@ function Get-ArsRecoveryTrustReview([string]$Control,[string]$Scripts) {
       $first=Get-ArsRecoveryToolsFingerprint $Scripts
       $second=Get-ArsRecoveryToolsFingerprint $Scripts
       $result.toolsMatched=($first -ceq $expected -and $second -ceq $first -and (Read-ArsSwitchSnapshot $path).digest -ceq $before.digest)
+      if ($result.toolsMatched -and (Get-ArsSwitchEvidenceInventory $Control) -cne $inventory) {$result.toolsMatched=$false}
       if ($result.toolsMatched) {
+        $result['evidenceInventory']=$inventory
         $result['intentDigest']=$before.digest
         $result['toolsDigest']=$first
       }
@@ -205,8 +214,10 @@ function Confirm-ArsRecoveryEvidenceReview([string]$Control,[string]$Scripts,$Re
     if ((Get-ArsSwitchEvidenceInventory $Control) -cne $inventory) {return [pscustomobject]$result}
     if ($Reviewed.historyVerified -eq $true) {
       $result.reviewMatched=($current.evidenceInventory -ceq $inventory)
-    } elseif ($result.toolsMatched) {
-      $result.reviewMatched=$true
+    } elseif ($result.toolsMatched -and $current.state -ceq 'incomplete-switch-evidence') {
+      # Intent-only review must also match every retained evidence record
+      # observed before the operator confirmed. Never accept invalid journals.
+      $result.reviewMatched=($Trust.evidenceInventory -ceq $inventory -and $again.evidenceInventory -ceq $inventory)
     }
     return [pscustomobject]$result
   } catch {return [pscustomobject]$result} finally {
