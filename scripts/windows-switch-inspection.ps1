@@ -173,10 +173,44 @@ function Get-ArsRecoveryTrustReview([string]$Control,[string]$Scripts) {
       $first=Get-ArsRecoveryToolsFingerprint $Scripts
       $second=Get-ArsRecoveryToolsFingerprint $Scripts
       $result.toolsMatched=($first -ceq $expected -and $second -ceq $first -and (Read-ArsSwitchSnapshot $path).digest -ceq $before.digest)
+      if ($result.toolsMatched) {
+        $result['intentDigest']=$before.digest
+        $result['toolsDigest']=$first
+      }
       return [pscustomobject]$result
     } finally {
       if ($owned) {$mutex.ReleaseMutex()}
       $mutex.Dispose()
     }
   } catch {return [pscustomobject]$result}
+}
+
+
+# One locked comparison binds the operator review to both journal evidence and
+# recovery tools. A missing or legacy intent cannot authenticate recovery code.
+function Confirm-ArsRecoveryEvidenceReview([string]$Control,[string]$Scripts,$Reviewed,$Trust) {
+  $result=[ordered]@{schema=1;reviewMatched=$false;toolsMatched=$false;startupAllowed=$false;activationAllowed=$false;rollbackAllowed=$false}
+  if ($null -eq $Reviewed -or $null -eq $Trust) {return [pscustomobject]$result}
+  $mutex=New-Object System.Threading.Mutex($false,'Local\ARSDistributorPOSLauncher')
+  $owned=$false
+  try {
+    try {$owned=$mutex.WaitOne(0)} catch [System.Threading.AbandonedMutexException] {$owned=$true;return [pscustomobject]$result}
+    if (-not $owned) {return [pscustomobject]$result}
+    $inventory=Get-ArsSwitchEvidenceInventory $Control
+    $current=Get-ArsSwitchInspection $Control
+    if ($current.state -cne $Reviewed.state -or $current.phase -cne $Reviewed.phase -or $current.interruptionBoundary -cne $Reviewed.interruptionBoundary -or $current.historyVerified -ne $Reviewed.historyVerified -or $current.evidenceInventory -cne $Reviewed.evidenceInventory) {return [pscustomobject]$result}
+    $again=Get-ArsRecoveryTrustReview $Control $Scripts
+    $result.toolsMatched=($Trust.toolsMatched -eq $true -and $again.toolsMatched -eq $true -and $again.intentDigest -ceq $Trust.intentDigest -and $again.toolsDigest -ceq $Trust.toolsDigest)
+    if ($Trust.toolsMatched -eq $true -and -not $result.toolsMatched) {return [pscustomobject]$result}
+    if ((Get-ArsSwitchEvidenceInventory $Control) -cne $inventory) {return [pscustomobject]$result}
+    if ($Reviewed.historyVerified -eq $true) {
+      $result.reviewMatched=($current.evidenceInventory -ceq $inventory)
+    } elseif ($result.toolsMatched) {
+      $result.reviewMatched=$true
+    }
+    return [pscustomobject]$result
+  } catch {return [pscustomobject]$result} finally {
+    if ($owned) {$mutex.ReleaseMutex()}
+    $mutex.Dispose()
+  }
 }

@@ -210,8 +210,15 @@ try {
   Write-New $trustPath ([ordered]@{schema=1;kind='runtime-switch-intent';switchId=$id;observationOnly=$true;activationAllowed=$false;startupAllowed=$false;rollbackAllowed=$false;binding=@{previousRecoveryToolsDigest=(Get-ArsRecoveryToolsFingerprint $toolRoot)}})
   $trust=Get-ArsRecoveryTrustReview $root $toolRoot
   if (-not $trust.toolsMatched -or $trust.startupAllowed -or $trust.rollbackAllowed) {throw 'Recovery trust review failed.'}
+  $combined=Get-ArsSwitchInspection $root
+  $check=Confirm-ArsRecoveryEvidenceReview $root $toolRoot $combined $trust
+  if (-not $check.reviewMatched -or -not $check.toolsMatched -or $check.startupAllowed) {throw 'Combined recovery evidence review failed.'}
   [IO.File]::AppendAllText($tool,'changed')
   if ((Get-ArsRecoveryTrustReview $root $toolRoot).toolsMatched) {throw 'Changed recovery tool accepted.'}
+  if ((Confirm-ArsRecoveryEvidenceReview $root $toolRoot $combined $trust).reviewMatched) {throw 'Stale tool review accepted.'}
+  [IO.File]::WriteAllText($tool,'original')
+  [IO.File]::AppendAllText($trustPath,' ')
+  if ((Confirm-ArsRecoveryEvidenceReview $root $toolRoot $combined $trust).reviewMatched) {throw 'Stale intent review accepted.'}
  } finally {
   [IO.File]::Delete($trustPath)
   Remove-Item -LiteralPath $toolRoot -Recurse -Force

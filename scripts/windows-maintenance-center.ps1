@@ -8,13 +8,14 @@ $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-repair-activation-plan.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
 . (Join-Path $PSScriptRoot 'windows-switch-inspection.ps1')
+. (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
 function Get-ArsUpdateInterruption([string]$Control) {
  if (-not (Test-Path -LiteralPath $Control)) {return}
  $entries=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop)
  $markers=@($entries | Where-Object {
   $_.Name -in @('runtime-switch-journal.json','runtime-switch-intent.json','runtime-active.json',
     'runtime-previous.json','runtime-failed-candidate.json','handoff-pending.json',
-    'runtime-activation-interrupted.json') -or $_.Name -like 'runtime-switch-pending-*' -or
+    'runtime-activation-interrupted.json','maintenance-shutdown.json') -or $_.Name -like 'runtime-switch-pending-*' -or
     $_.Name -like 'journal-history-*'
  })
  if ($markers.Count) {Get-ArsSwitchInspection $Control}
@@ -81,12 +82,14 @@ try {
     default {'Update evidence could not be verified.'}
    }
    $reviewable=$interruption.historyVerified -eq $true -and -not [string]::IsNullOrWhiteSpace($interruption.evidenceInventory)
-   $button=if ($reviewable) {'Recheck evidence'} else {'Close'}
+   $trust=Get-ArsRecoveryTrustReview $control $PSScriptRoot
+   $trustText=if ($trust.toolsMatched) {'Recovery tool fingerprint: matches retained intent (local integrity only).'} else {'Recovery tool fingerprint: missing, modified, or unverifiable. Recovery execution is not authorized.'}
+   $button=if ($reviewable -or $trust.toolsMatched) {'Recheck evidence'} else {'Close'}
    $confirmed=Show-ArsSetupPage 'Interrupted update review' ($reason+[Environment]::NewLine+[Environment]::NewLine+
     'Keep billing stopped. Contact RS Nextward support and retain the backup and update records.'+
-    [Environment]::NewLine+[Environment]::NewLine+'Update records: '+$control) $button
-   if ($confirmed -and $reviewable) {
-    $check=Confirm-ArsSwitchReview $control $interruption
+    [Environment]::NewLine+[Environment]::NewLine+$trustText+[Environment]::NewLine+'Update records: '+$control) $button
+   if ($confirmed -and ($reviewable -or $trust.toolsMatched)) {
+    $check=Confirm-ArsRecoveryEvidenceReview $control $PSScriptRoot $interruption $trust
     if ($check.reviewMatched) {
      [void][Windows.Forms.MessageBox]::Show('Reviewed evidence still matches. This is read-only verification; startup and rollback remain locked.',$title,'OK','Information')
     } else {
