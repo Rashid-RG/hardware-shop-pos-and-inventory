@@ -18,3 +18,21 @@ test('readiness requires a live writer before and after database probe',()=>{
  assert.match(route,/await assertWriterBeforeCommit\(\);\s*await pool.query\('SELECT 1'\);\s*await assertWriterBeforeCommit\(\);/);
  assert.match(route,/if \(shutdownRequested\).*503/);
 });
+
+test('installed readiness refuses another release or process on the POS port',async()=>{
+ const {createServer}=await import('node:http');
+ const {verifyInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ const ready={ok:true,status:'ready',database:'reachable',sourceOfTruth:'normalized',buildVersion:'1.2.3',processId:4123};
+ const server=createServer((_req,res)=>res.end(JSON.stringify(ready)));
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const {port}=server.address();
+  await verifyInstalledRelease('1.2.3',4123,port);
+  await assert.rejects(verifyInstalledRelease('1.2.4',4123,port),/does not match/);
+  await assert.rejects(verifyInstalledRelease('1.2.3',4124,port),/does not match/);
+  ready.database='unreachable';
+  await assert.rejects(verifyInstalledRelease('1.2.3',4123,port),/does not match/);
+ }finally{
+  await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+ }
+});

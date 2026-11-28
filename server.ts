@@ -1,3 +1,4 @@
+import buildPackage from './package.json';
 import { installTransactionFence } from './backend/transactionFence';
 import {payrollAccountingOverview} from './backend/payrollAccountingOverview';
 import {reconcileSalaryPayable} from './backend/salaryPayableReconciliation';
@@ -2858,7 +2859,7 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-app.get('/api/ready', async (_req, res) => {
+app.get('/api/ready', async (req, res) => {
   if (shutdownRequested) return res.status(503).json({ ok: false, status: 'maintenance' });
   if (!databaseWriteHealthy || interruptedWriteRequiresReview || !singleWriterLease) {
     return res.status(503).json({
@@ -2877,6 +2878,9 @@ app.get('/api/ready', async (_req, res) => {
       status: 'ready',
       database: 'reachable',
       sourceOfTruth: 'normalized',
+      ...(['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')
+        ? { buildVersion: buildPackage.version, processId: process.pid }
+        : {}),
     });
   } catch (error) {
     console.error('Readiness check failed:', error);
