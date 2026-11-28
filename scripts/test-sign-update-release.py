@@ -135,5 +135,38 @@ class ReleaseSigningTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     feed.prepare(commit,"1.2.4",private,public,root/"wrong")
 
+    def test_retained_mint_publisher_source(self):
+        from signed_release_source import verify_publisher_source
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            private,public=root/"key.pem",root/"trust.pem"
+            subprocess.run(["openssl","genpkey","-algorithm","EC","-pkeyopt","ec_paramgen_curve:P-256","-out",str(private)],check=True)
+            subprocess.run(["openssl","pkey","-in",str(private),"-pubout","-out",str(public)],check=True)
+            project=root/"project"
+            (project/"scripts").mkdir(parents=True)
+            package=project/"package.json"
+            package.write_text('{"version":"1.2.3"}')
+            helper=project/"scripts/recover.py"
+            helper.write_text("original")
+            archive=root/"release.tar.gz"
+            with tarfile.open(archive,"w:gz") as bundle:
+                bundle.add(package,arcname="package.json")
+                bundle.add(helper,arcname="scripts/recover.py")
+            output=root/"signed"
+            signer.sign_release("linux-mint","1.2.3",archive,private,public,output)
+            for source,target in (("manifest.json",".ars-release-manifest.json"),("manifest.sig",".ars-release-manifest.sig"),("release.tar.gz",".ars-release.tar.gz")):
+                (project/target).write_bytes((output/source).read_bytes())
+            result=verify_publisher_source(project,public)
+            self.assertTrue(result["publisherSourceVerified"])
+            self.assertFalse(result["executionAllowed"])
+            helper.write_text("modified")
+            with self.assertRaisesRegex(ValueError,"Staged source differs"):
+                verify_publisher_source(project,public)
+            helper.write_text("original")
+            sig=project/".ars-release-manifest.sig"
+            sig.write_bytes(b"invalid")
+            with self.assertRaises(subprocess.CalledProcessError):
+                verify_publisher_source(project,public)
+
 if __name__ == "__main__":
     unittest.main()
