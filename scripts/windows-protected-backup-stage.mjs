@@ -16,7 +16,12 @@ async function canonical(path,directory){
 }
 export async function runProtectedWindowsBackup(scope,{root,destination,supervisor,timeoutMs=900000}={}){
  if(process.platform!=='win32'||typeof scope?.assertActive!=='function'||!scope.signal)throw Error('Protected Windows backup scope required.');
- const verify=async()=>{await scope.assertActive();if(scope.signal.aborted)throw Error('Maintenance interrupted.');};
+ const ownerDatabase=scope.owner?.database;
+ // Only the disposable hosted native fixture may use the CI database identity.
+ const fixture=ownerDatabase==='hardware_pos_ci'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted';
+ const database=fixture?'hardware_pos':ownerDatabase;
+ if(!['hardware_pos','hardware_pos_ars'].includes(database))throw Error('Unsupported protected backup database.');
+ const verify=async()=>{await scope.assertActive();if(scope.signal.aborted||scope.owner?.database!==ownerDatabase)throw Error('Maintenance interrupted or database identity changed.');};
  await verify();
  const runtime=await canonical(root,true);
  const folder=await canonical(destination,true);
@@ -29,8 +34,8 @@ export async function runProtectedWindowsBackup(scope,{root,destination,supervis
   throw Error('Maintenance result already exists.');
  }catch(error){if(error.code!=='ENOENT')throw error;}
  await verify();
- await runWindowsMaintenanceWorker(scope,executable,powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',worker,'-Destination',folder,'-ResultName',resultName],{cwd:runtime,timeoutMs});
- const result=await verifyWindowsBackupResult(scope,folder,resultName);
+ await runWindowsMaintenanceWorker(scope,executable,powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',worker,'-Destination',folder,'-ResultName',resultName,'-Database',database],{cwd:runtime,timeoutMs});
+ const result=await verifyWindowsBackupResult(scope,folder,resultName,database);
  await verify();
  // Keep the result record for recovery review. No automatic deletion or retry.
  return Object.freeze({...result,resultName});
