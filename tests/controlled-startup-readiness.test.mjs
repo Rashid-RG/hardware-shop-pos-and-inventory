@@ -60,3 +60,29 @@ test('installed readiness bounds response size and rejects malformed or failed r
   mode='valid';await verifyInstalledRelease('1.2.3',4123,port);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+
+test('protected startup wait retries 503 but fails immediately on wrong identity',async()=>{
+ const {createServer}=await import('node:http');
+ const {waitForInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ let requests=0,checks=0,mode='starting';
+ const server=createServer((_req,res)=>{
+  requests++;
+  if(mode==='starting'&&requests<3){res.statusCode=503;res.end();return;}
+  res.end(JSON.stringify({ok:true,status:'ready',database:'reachable',sourceOfTruth:'normalized',buildVersion:'1.2.3',processId:mode==='wrong'?99:4123}));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const options={port:server.address().port,timeoutMs:3000,intervalMs:20,assertActive:async()=>{checks++;}};
+  await waitForInstalledRelease('1.2.3',4123,options);
+  assert.equal(requests,3);assert.ok(checks>=6);
+  mode='wrong';requests=0;
+  await assert.rejects(waitForInstalledRelease('1.2.3',4123,options),/does not match/);
+  assert.equal(requests,1);
+  await assert.rejects(waitForInstalledRelease('1.2.3',4123,{...options,assertActive:async()=>{throw Error('Protection lost');}}),/Protection lost/);
+  assert.equal(requests,1);
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(waitForInstalledRelease('1.2.3',4123,{...options,signal:controller.signal}),/cancelled/);
+  assert.equal(requests,1);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
