@@ -60,4 +60,4 @@ def rehearse(confirmation):
             "uninstallId": uid, "finalReviewMatched": True,
             "maintenanceHoldObserved": True, **{k: False for k in FLAGS}}
 
-# Internal only. No GUI/CLI exposure; failures retain recovery files and hold.
+# Failures retain recovery files and the maintenance hold.

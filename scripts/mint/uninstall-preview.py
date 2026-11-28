@@ -1,4 +1,4 @@
-"""Read-only uninstall planning. No deletion, service control or database access."""
+"""Uninstall planning and explicitly approved isolated recovery rehearsal."""
 import os
 from pathlib import Path
 import stat
@@ -91,6 +91,23 @@ def main():
         identity="Fresh-install tree, shortcuts and service registration matched. Exclusive ownership is not yet certified."
     except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
         identity="Fresh-install identity missing or changed. No removal permitted."
+    else:
+        if ui.page("Protected recovery rehearsal",
+            "Save open work before continuing. The rehearsal stops the POS, blocks startup, creates a protected backup, and restores it into a disposable database. The POS stays stopped for maintenance review after the test.",
+            "Stop POS and run rehearsal"):
+            try:
+                from uninstall_coordinator import rehearse, CONFIRMATION
+                result=rehearse(CONFIRMATION)
+                folder=STATE/"uninstall-recovery"/result["uninstallId"]
+                ui.page("Isolated restore verified",
+                    "Recovery evidence is saved here:\n"+str(folder)+
+                    "\n\nThe POS is held for maintenance review. Application removal is locked.",
+                    "Finish")
+            except (OSError,ValueError,RuntimeError,KeyError,TypeError,subprocess.SubprocessError):
+                ui.page("Recovery rehearsal could not finish",
+                    "Review the maintenance state before reopening the POS. Any recovery evidence created by the rehearsal is retained.",
+                    "Close")
+            return
     ui.page("Removal is not yet enabled",
         identity+"\n\nPermanent runtime mappings matched. A verified final backup, installation ownership certification and service shutdown verification are still required before removal can be enabled.\n\nNo application, service, file or database was removed.","Finish")
 
