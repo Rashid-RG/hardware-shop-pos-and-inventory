@@ -239,3 +239,42 @@ foreach ($database in @('hardware_pos','hardware_pos_ars')) {
  if (-not $blocked) {throw 'Numeric cluster evidence accepted.'}
 }
 Write-Host 'Protected session and Docker cluster identity matching checks passed.'
+
+
+# Exercise the actual producer's early guards. No Docker commands or runtime
+# directory creation are permitted in these negative cases.
+$producer=Join-Path $PSScriptRoot 'backup-local-postgres.ps1'
+$unusedDestination=Join-Path ([IO.Path]::GetTempPath()) ('ars-cluster-refused-'+[guid]::NewGuid().ToString('N'))
+$cases=@(
+ @{params=@{Database='hardware_pos';ExpectedSystemIdentifier='1';PreserveExistingArchives=$true};error='Complete protected backup identity required.'},
+ @{params=@{Database='hardware_pos';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Complete protected backup identity required.'},
+ @{params=@{Database='hardware_pos';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='1'};error='Complete protected backup identity required.'},
+ @{params=@{Database='hardware_pos';ExpectedSystemIdentifier='';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Invalid Docker cluster identity.'},
+ @{params=@{Database='hardware_pos';ExpectedSystemIdentifier='18446744073709551616';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Invalid Docker cluster identity.'},
+ @{params=@{Database='hardware_pos';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='4294967296';PreserveExistingArchives=$true};error='Invalid Docker cluster identity.'},
+ @{params=@{Database='hardware_pos_ci';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Unique managed cluster identity required.'},
+ @{params=@{Database='hardware_pos_ars';Container='hardware-pos-postgres';DbUser='ars';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Protected backup configuration mismatch.'},
+ @{params=@{Database='hardware_pos';Container='hardware-pos-postgres';DbUser='ars';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Protected backup configuration mismatch.'},
+ @{params=@{Database='hardware_pos_ars';Container='ars-windows-pilot-postgres';DbUser='postgres';ExpectedSystemIdentifier='1';ExpectedDatabaseOid='1';PreserveExistingArchives=$true};error='Protected backup configuration mismatch.'}
+)
+foreach ($case in $cases) {
+ $parameters=$case.params
+ $parameters.Destination=$unusedDestination
+ $blocked=$false
+ try {& $producer @parameters|Out-Null} catch {
+  if ($_.Exception.Message -cne $case.error) {throw}
+  $blocked=$true
+ }
+ if (-not $blocked -or (Test-Path -LiteralPath $unusedDestination)) {throw 'Invalid protected backup request reached archive creation.'}
+}
+# Source-order contract complements executable early guards, without pretending
+# to execute pg_dump against a real database in this test.
+$producerSource=Get-Content -LiteralPath $producer -Raw
+$bind=$producerSource.IndexOf('$Container=$originalCluster.containerId')
+$port=$producerSource.IndexOf('docker port $Container')
+$dump=$producerSource.IndexOf('docker exec $Container pg_dump -w')
+$restore=$producerSource.IndexOf('docker exec $Container pg_restore --list')
+$publish=$producerSource.IndexOf('Move-Item -LiteralPath $tempFile -Destination $backupFile')
+$checks=[regex]::Matches($producerSource,'(?m)^\s+Assert-ProtectedBackupCluster\s*$')
+if ($checks.Count -ne 3 -or $bind -lt 0 -or $port -le $bind -or $checks[0].Index -le $port -or $dump -le $checks[0].Index -or $checks[1].Index -le $dump -or $restore -le $checks[1].Index -or $checks[2].Index -le $restore -or $publish -le $checks[2].Index) {throw 'Protected backup cluster verification order changed.'}
+Write-Host 'Protected backup producer early rejection and verification ordering checks passed.'
