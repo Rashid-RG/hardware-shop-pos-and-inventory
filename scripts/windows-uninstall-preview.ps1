@@ -1,4 +1,4 @@
-# Read-only Windows uninstall planning. Never removes files, services or database volumes.
+# Windows uninstall planning and opt-in recovery rehearsal.
 . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
 . (Join-Path $PSScriptRoot 'windows-uninstall-backup-review.ps1')
 . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
@@ -65,6 +65,21 @@ function Show-ArsUninstallPreview([string]$project) {
   $null=Review-ArsInstallationIdentity $project $state
   $null=Review-ArsDesktopRegistration $project $state ([Environment]::GetFolderPath('DesktopDirectory')) ([Environment]::GetFolderPath('Programs'))
   $identity='Fresh-install application and desktop registration matched. Exclusive ownership is not certified.'
- } catch {$identity='Fresh-install identity missing or changed. No removal permitted.'}
+  $verifiedIdentity=$true
+ } catch {
+  $identity='Fresh-install identity missing or changed. No removal permitted.'
+  $verifiedIdentity=$false
+ }
+ if ($verifiedIdentity -and (Show-ArsSetupPage 'Protected recovery rehearsal' 'Save open work before continuing. Starting this rehearsal stops the POS, blocks startup, creates a recovery backup, and restores it into a disposable database. The POS stays stopped for maintenance review after the test.' 'Stop POS and run rehearsal')) {
+  try {
+   . (Join-Path $PSScriptRoot 'windows-continuous-recovery-rehearsal.ps1')
+   $result=Invoke-ArsContinuousRecoveryRehearsal $project 'STOP POS FOR UNINSTALL BACKUP'
+   $folder=Join-Path (Join-Path $state 'uninstall-recovery') $result.uninstallId
+   $null=Show-ArsSetupPage 'Isolated restore verified' ('Recovery evidence is saved here:'+[Environment]::NewLine+$folder+[Environment]::NewLine+[Environment]::NewLine+'The POS is held for maintenance review. Application removal is locked.') 'Finish'
+  } catch {
+   $null=Show-ArsSetupPage 'Recovery rehearsal could not finish' 'Open the Maintenance Center to review the current state before reopening the POS. Any recovery evidence created by the rehearsal is retained.' 'Close'
+  }
+  return
+ }
  $null=Show-ArsSetupPage 'Removal is not yet enabled' ($identity+[Environment]::NewLine+[Environment]::NewLine+'Permanent storage separation, verified final backup, installation ownership and service shutdown are required. Permanent business data deletion is disabled. No application, service, file or database was removed.') 'Finish'
 }

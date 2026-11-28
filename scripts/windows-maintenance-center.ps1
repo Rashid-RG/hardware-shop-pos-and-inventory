@@ -1,4 +1,4 @@
-# Read-only maintenance overview. Never starts/stops services or modifies data.
+# Windows Maintenance Center for diagnostics and explicitly approved maintenance tools.
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Windows.Forms
 $root=Split-Path -Parent $PSScriptRoot

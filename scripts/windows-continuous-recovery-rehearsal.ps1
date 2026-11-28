@@ -1,4 +1,4 @@
-# Internal opt-in continuous recovery rehearsal. Not wired into the GUI.
+# Explicitly approved continuous recovery rehearsal for the Windows uninstall preview.
 # Never removes software, restarts POS or restores the live database.
 . (Join-Path $PSScriptRoot 'windows-continuous-recovery-preparation.ps1')
 function Invoke-ArsContinuousRecoveryRehearsal([string]$project,[string]$confirmation) {
