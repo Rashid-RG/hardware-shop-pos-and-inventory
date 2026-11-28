@@ -14,7 +14,7 @@ test('server and maintenance acquire gate before writer lease and fail closed',(
  const mint=read('scripts/mint/locked-backup.mjs');
  const session=read('scripts/database-maintenance-session.mjs');
  const fence=read('scripts/database-maintenance-table-fence.mjs');
- for(const s of [windows,session]){
+ for(const s of [session]){
   const gate=s.indexOf('await acquireHandoffGate(client)');
   const writer=s.indexOf('pg_try_advisory_lock');
   assert.ok(gate>=0&&writer>gate);
@@ -22,5 +22,7 @@ test('server and maintenance acquire gate before writer lease and fail closed',(
  assert.match(mint,/withMaintenanceSession\(client,'hardware_pos_ars',session=>withMaintenanceTableFence\(client,session,/);
  assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
  assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
- assert.ok(windows.indexOf('await client.end()')>windows.indexOf("client.query('ROLLBACK')"));
+ assert.match(windows,/withMaintenanceSession\(client,config\.database,session=>withMaintenanceTableFence\(client,session,/);
+ assert.match(windows,/await runVerifiedInstalledWindowsBackup\(scope,\{root,destination\}\)/);
+ assert.doesNotMatch(windows,/\bspawn\s*\(/);
 });
