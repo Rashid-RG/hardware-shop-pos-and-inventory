@@ -47,6 +47,7 @@ try{
   const assertActive=async()=>{
    if(signal.aborted)throw Error('Backup interrupted.');
    await fence.assertActive();
+   if(!evidence(holdPath).equals(holdRaw)||(uninstall&&!evidence(shutdownPath).equals(shutdownRaw)))throw Error('Maintenance evidence changed.');
    if(signal.aborted)throw Error('Backup interrupted.');
   };
   const scope=Object.freeze({owner:fence.owner,signal,assertActive});

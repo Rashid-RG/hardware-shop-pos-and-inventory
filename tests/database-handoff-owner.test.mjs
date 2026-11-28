@@ -274,3 +274,14 @@ test('maintenance table fence rejects changed tables, lost locks, owner changes 
   assert.equal(client.closed,1);
  }
 });
+
+test('a running maintenance child stops when a protection check fails',async()=>{
+ const fixture=childFixture();
+ let checks=0;
+ fixture.session.assertActive=async()=>{
+  if(++checks===2)throw Error('Protection lost during operation.');
+ };
+ await assert.rejects(fixture.run('setInterval(()=>{},1000)',{timeoutMs:10000}),/Maintenance protection lost/);
+ assert.equal(checks,2);
+ assert.equal(getEventListeners(fixture.controller.signal,'abort').length,0);
+});
