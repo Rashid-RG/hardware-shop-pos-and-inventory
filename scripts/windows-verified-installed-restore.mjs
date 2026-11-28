@@ -4,6 +4,7 @@ import {lstat,realpath} from 'node:fs/promises';
 import {join,resolve,isAbsolute,basename,dirname} from 'node:path';
 import {reviewCurrentWindowsMaintenanceInstallation} from './windows-maintenance-current-identity.mjs';
 import {runWindowsMaintenanceWorker} from './windows-maintenance-supervisor-adapter.mjs';
+import {verifyWindowsRestoreEvidence} from './windows-maintenance-restore-result.mjs';
 
 const same=(a,b)=>a.toLowerCase()===b.toLowerCase();
 async function canonical(path,directory){
@@ -36,6 +37,7 @@ export async function runVerifiedInstalledWindowsRestore(scope,{root,destination
  const folder=await canonical(destination,true);
  const recoveryRoot=await canonical(join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor','uninstall-recovery'),true);
  if(!same(dirname(folder),recoveryRoot)||! /^[a-f0-9]{32}$/.test(basename(folder)))throw Error('Managed recovery directory required.');
+ const control=await canonical(join(dirname(recoveryRoot),'desktop-control'),true);
  const worker=await canonical(join(runtime,'scripts','windows-maintenance-restore-worker.ps1'),false);
  const executable=await canonical(identity.executable,false);
  const powershell=await canonical(join(process.env.SystemRoot||'','System32','WindowsPowerShell','v1.0','powershell.exe'),false);
@@ -47,9 +49,10 @@ export async function runVerifiedInstalledWindowsRestore(scope,{root,destination
  await checkIdentity();
  await runWindowsMaintenanceWorker(verifiedScope,executable,powershell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',worker,'-RecoveryFolder',folder,'-SourceDatabase',database],{cwd:runtime,timeoutMs});
  await checkIdentity();
- // Observation existence is not a verified restore result. A separate verifier
- // must independently check the record and all recovery evidence before use.
+ // Worker completion alone is insufficient. Independently hash and compare
+ // the recovery evidence while the original protection scope is still active.
  const observation=await canonical(observationPath,false);
+ const evidence=await verifyWindowsRestoreEvidence(verifiedScope,{destination:folder,control});
  await checkIdentity();
- return Object.freeze({observation,database,installationIdentityDigest:identity.identityDigest,packageManifestDigest:identity.manifestDigest,supervisorSha256:identity.sha256,workerCompleted:true,restoreObservationVerified:false,signatureVerified:false,applicationTreeReverified:false,applicationRemovalAllowed:false,databaseDeletionAllowed:false,activationAllowed:false,continuousExclusionVerified:false});
+ return Object.freeze({...evidence,observation,database,installationIdentityDigest:identity.identityDigest,packageManifestDigest:identity.manifestDigest,supervisorSha256:identity.sha256,workerCompleted:true,signatureVerified:false,applicationTreeReverified:false,applicationRemovalAllowed:false,databaseDeletionAllowed:false,activationAllowed:false,continuousExclusionVerified:false});
 }
