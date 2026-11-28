@@ -8,6 +8,8 @@
 
 Developed by **RS Nextward**
 
+<img src="docs/branding/rs-nextward.png" alt="RS Nextward corporate logo" width="210">
+
 [![CI](https://github.com/Rashid-RG/hardware-shop-pos-and-inventory/actions/workflows/ci.yml/badge.svg?branch=codex%2Fshop-opening-pilot)](https://github.com/Rashid-RG/hardware-shop-pos-and-inventory/actions/workflows/ci.yml)
 ![Version](https://img.shields.io/badge/version-1.0.0--pilot-334155)
 ![Windows](https://img.shields.io/badge/Windows-target-0078D4)
