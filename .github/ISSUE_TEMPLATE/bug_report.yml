@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible ARS Distributors defect using redacted test data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include customer records, passwords, database dumps, private configuration or recovery keys. Report security vulnerabilities privately according to SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version or exact commit
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux Mint Cinnamon
+        - Development / CI
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Billing and printing
+        - Inventory and warehouse
+        - Purchasing and imports
+        - Customer and supplier accounts
+        - Accounting and reports
+        - Login and permissions
+        - Setup and updates
+        - Backup and recovery
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use synthetic data and identify relevant prerequisites.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs or screenshots
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I have removed sensitive information from this report.
+          required: true

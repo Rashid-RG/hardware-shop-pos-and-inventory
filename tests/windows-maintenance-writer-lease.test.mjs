@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const read=n=>readFileSync(new URL('../scripts/'+n,import.meta.url),'utf8');
+test('Windows final backup holds application writer lease and table locks through archive subprocess',()=>{
+ const s=read('windows-locked-maintenance-backup.mjs');
+ const p=read('prepare-windows-final-backup.ps1');
+ const session=read('database-maintenance-session.mjs');
+ const gate=read('database-handoff-gate.mjs');
+ const fence=read('database-maintenance-table-fence.mjs');
+ assert.match(gate,/HANDOFF_CLASS=1642958133/);
+ assert.match(gate,/WRITER_ID=1/);
+ assert.match(session,/pg_try_advisory_lock.*\[HANDOFF_CLASS,WRITER_ID\]/);
+ assert.match(s,/withMaintenanceSession\(client,config\.database,session=>withMaintenanceTableFence\(client,session,/);
+ assert.ok(session.indexOf('pg_try_advisory_lock')<session.indexOf('await work('));
+ assert.ok(fence.indexOf('IN SHARE MODE NOWAIT')<fence.indexOf('await work('));
+ assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
+ assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
+ assert.match(s,/await runVerifiedInstalledWindowsBackup\(client,scope,\{root,destination\}\)/);
+ assert.match(p,/windows-locked-maintenance-backup\.mjs/);
+ assert.match(p,/externalWritersExcluded=\$false/);
+ assert.match(p,/activationApproved=\$false/);
+});

@@ -231,6 +231,46 @@ const applyProductStockDelta = (product: Product, delta: number): Product => {
   return nextProduct;
 };
 
+// Prevent accidental duplicate scans within the active shop, including codes
+// held by variants. This is an application-level guard; a later migration should
+// enforce race-safe uniqueness at the database layer.
+const findConflictingProductCode = async (
+  shopId: string,
+  product: Omit<Product, 'id' | 'shopId'>,
+  excludeId = ''
+): Promise<string | null> => {
+  const rows = await pool.query(
+    'SELECT id, name, sku, barcode, variants_json FROM products WHERE shop_id = $1 AND id <> $2',
+    [shopId, excludeId]
+  );
+  const normalized = (code: unknown) => String(code || '').trim().toLowerCase();
+  const incoming = [
+    { kind: 'SKU', value: product.sku },
+    { kind: 'barcode', value: product.barcode },
+    ...(product.variants || []).flatMap((variant) => [
+      { kind: 'SKU', value: variant.sku },
+      { kind: 'barcode', value: variant.barcode },
+    ]),
+  ].filter((entry) => normalized(entry.value));
+
+  for (const row of rows.rows) {
+    const variants: any[] = Array.isArray(row.variants_json)
+      ? row.variants_json
+      : typeof row.variants_json === 'string'
+        ? (() => { try { const parsed = JSON.parse(row.variants_json); return Array.isArray(parsed) ? parsed : []; } catch { return []; } })()
+        : [];
+    const existing = [row.sku, row.barcode, ...variants.flatMap((item) => [item.sku, item.barcode])]
+      .map(normalized)
+      .filter(Boolean);
+    for (const code of incoming) {
+      if (existing.includes(normalized(code.value))) {
+        return `This ${code.kind} is already used by "${row.name}". Choose a different code or edit that product.`;
+      }
+    }
+  }
+  return null;
+};
+
 // Endpoints
 router.post('/', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']), async (req, res) => {
   const authUser = (req as AppRequest).authUser;
@@ -239,6 +279,14 @@ router.post('/', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff']
   const payloadError = validateProductPayload(normalizedPayload);
   if (payloadError) {
     return res.status(400).json({ error: payloadError });
+  }
+
+  try {
+    const conflict = await findConflictingProductCode(activeShopId, normalizedPayload);
+    if (conflict) return res.status(409).json({ error: conflict });
+  } catch (err) {
+    console.error('Could not validate duplicate product codes:', err);
+    return res.status(500).json({ error: 'Could not verify product codes. Please try again.' });
   }
 
   const newProduct: Product = {
@@ -322,6 +370,8 @@ router.put('/:id', requireRole(['Super Admin', 'Store Manager', 'Inventory Staff
     if (payloadError) {
       return res.status(400).json({ error: payloadError });
     }
+    const conflict = await findConflictingProductCode(activeShopId, normalizedPayload, productId);
+    if (conflict) return res.status(409).json({ error: conflict });
     const newQty = Number(normalizedPayload.quantity);
 
     // If quantity differs, log a quick audit log

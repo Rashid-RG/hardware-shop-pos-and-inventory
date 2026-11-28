@@ -1,0 +1,164 @@
+# Fresh Windows pilot preparation only. Never updates an existing installation.
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+$root = Split-Path -Parent $PSScriptRoot
+$title = 'RS Nextward | ARS Distributor Setup'
+$mutex = New-Object System.Threading.Mutex($false,'Local\ARSDistributorFreshSetup')
+$owned = $false
+function Confirm-Step([string]$message) {
+ return [System.Windows.Forms.MessageBox]::Show($message,$title,'OKCancel','Information') -eq 'OK'
+}
+function Invoke-Checked([string]$program,[string[]]$arguments) {
+ & $program @arguments
+ if ($LASTEXITCODE -ne 0) { throw "$program failed (exit $LASTEXITCODE)." }
+}
+function New-Secret {
+ $bytes = New-Object byte[] 48
+ $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+ try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+ return [BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
+}
+function Get-ArsReleaseTrustBytes {
+ $pem=Get-Content -LiteralPath (Join-Path $root 'release-trust\release-signing-public.pem') -Raw
+ if ($pem -notmatch '\A-----BEGIN PUBLIC KEY-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END PUBLIC KEY-----\s*\z') { throw 'Invalid RS Nextward public key.' }
+ $der=[Convert]::FromBase64String($Matches[1])
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try { $fingerprint=[BitConverter]::ToString($sha.ComputeHash($der)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+ if ($fingerprint -cne '5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6') { throw 'RS Nextward public key fingerprint mismatch.' }
+ return [Text.Encoding]::ASCII.GetBytes($pem)
+}
+function Assert-FreshFiles {
+ foreach ($name in @('.env.local','uploads','backups')) {
+  if (Test-Path -LiteralPath (Join-Path $root $name)) { throw 'Existing runtime detected. Fresh setup is blocked.' }
+ }
+ $state = Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
+ if (Test-Path -LiteralPath $state) { throw 'Existing installation or recovery state detected. Contact support.' }
+ foreach ($folder in @([Environment]::GetFolderPath('DesktopDirectory'),[Environment]::GetFolderPath('Programs'))) {
+  if (Test-Path -LiteralPath (Join-Path $folder 'ARS Distributor.lnk')) { throw 'Existing shortcut detected. Fresh setup is blocked.' }
+ }
+}
+function Assert-Fresh {
+ Assert-FreshFiles
+ foreach ($tool in @('node','npm.cmd','docker')) {
+  if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Missing prerequisite: $tool." }
+ }
+ Invoke-Checked 'node' @('-e',"const [a,b]=process.versions.node.split('.').map(Number);if(a!==22||b<12)process.exit(1)")
+ Invoke-Checked 'docker' @('info','--format','{{.ServerVersion}}')
+ Invoke-Checked 'docker' @('compose','version')
+ $volumes = @(docker volume ls --format '{{.Name}}')
+ if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Docker volumes.' }
+ if ($volumes | Where-Object { $_ -match 'hardware_pos_pgdata|ars-mint|ars-windows-pilot' }) { throw 'Existing ARS database volume detected. No setup changes made.' }
+ $containers = @(docker ps -a --format '{{.Names}}')
+ if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Docker containers.' }
+ if ($containers -contains 'hardware-pos-postgres' -or $containers -contains 'ars-windows-pilot-postgres') { throw 'Existing ARS container detected.' }
+ if (Get-NetTCPConnection -LocalPort 3000,5433 -State Listen -ErrorAction SilentlyContinue) { throw 'Required local ports are already occupied.' }
+}
+try {
+ try { $owned=$mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned=$true }
+ if (-not $owned) { return }
+ Set-Location -LiteralPath $root
+ . (Join-Path $PSScriptRoot 'windows-setup-resume.ps1')
+ Consume-ArsSetupResume
+ . (Join-Path $PSScriptRoot 'windows-setup-ui.ps1')
+ . (Join-Path $PSScriptRoot 'windows-desktop-registration.ps1')
+ . (Join-Path $PSScriptRoot 'windows-setup-stage.ps1')
+ if (-not (Show-ArsSetupPage 'Welcome to Setup' ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
+ Assert-FreshFiles
+ [void](Get-ArsReleaseTrustBytes)
+ $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
+ if (-not (Show-ArsSetupPage 'Installation agreement' $terms 'Accept and continue' -Agreement)) { return }
+ . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
+ Open-ArsProgress
+ Set-ArsProgress 0 'Checking and preparing system prerequisites...'
+ try { $prerequisitesReady=Install-ArsMissingPrerequisites } finally { Close-ArsProgress }
+ if (-not $prerequisitesReady) { return }
+ Assert-Fresh
+ . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
+ $picker=New-Object Windows.Forms.FolderBrowserDialog
+ try {
+  $picker.Description='Select the parent folder for ARS Distributor'
+  $picker.SelectedPath=$env:LOCALAPPDATA
+  if ($picker.ShowDialog() -ne [Windows.Forms.DialogResult]::OK) { return }
+  $destination=Join-Path $picker.SelectedPath 'ARS Distributor'
+ } finally { $picker.Dispose() }
+ if (-not (Show-ArsSetupPage 'Ready to install' ('Install permanently in: '+$destination+[Environment]::NewLine+'Setup copies verified files and prepares a fresh private database.'))) { return }
+ Assert-Fresh
+ Copy-ArsPilotRelease $root $destination
+ $root=$destination
+ Set-Location -LiteralPath $root
+ Assert-Fresh
+ Open-ArsProgress
+ Set-ArsProgress 0 'Installing locked application dependencies...'
+ Invoke-ArsSetupStage 'dependencies'
+ Set-ArsProgress 1 'Building the production application...'
+ Invoke-ArsSetupStage 'build'
+ Assert-Fresh
+ Set-ArsProgress 2 'Preparing private database credentials...'
+ # Create configuration exclusively. Never replace credentials or use legacy defaults.
+ $password=New-Secret
+ $jwt=New-Secret
+ $config=Join-Path $root '.env.local'
+ $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User
+ $acl=New-Object Security.AccessControl.FileSecurity
+ $acl.SetAccessRuleProtection($true,$false)
+ $rule=New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow')
+ $acl.AddAccessRule($rule)
+ $stream=[IO.File]::Open($config,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ try {
+  $stream.SetAccessControl($acl)
+  $lines=@('ARS_WINDOWS_PILOT=1',"ARS_WINDOWS_DB_PASSWORD=$password","DATABASE_URL=postgresql://ars:$password@127.0.0.1:5433/hardware_pos_ars","JWT_SECRET=$jwt")
+  $data=[Text.Encoding]::UTF8.GetBytes(($lines -join [Environment]::NewLine)+[Environment]::NewLine)
+  $stream.Write($data,0,$data.Length)
+ } finally { $stream.Dispose() }
+ Set-ArsProgress 3 'Downloading and starting PostgreSQL...'
+ # Separate Compose project and loopback-only port. No deletion on failure.
+ Invoke-ArsSetupStage 'database'
+ Set-ArsProgress 4 'Creating desktop and Start menu shortcuts...'
+ # Create user shortcuts only if no existing shortcut would be overwritten.
+ $desktop=[Environment]::GetFolderPath('DesktopDirectory')
+ $programs=[Environment]::GetFolderPath('Programs')
+ Assert-ArsRegistrationVacant $desktop $programs
+ $shell=New-Object -ComObject WScript.Shell
+ foreach ($folder in @($desktop,$programs)) {
+  $link=Join-Path $folder 'ARS Distributor.lnk'
+  if (Test-Path -LiteralPath $link) { throw 'Existing ARS shortcut detected. Retain it and contact support.' }
+  $shortcut=$shell.CreateShortcut($link)
+  $shortcut.TargetPath=Join-Path $env:WINDIR 'System32\wscript.exe'
+  $shortcut.Arguments='"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"'
+  $shortcut.WorkingDirectory=$root
+  $shortcut.Description='ARS Distributor | RS Nextward'
+  $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
+  $shortcut.Save()
+ }
+ $maintenanceLink=Join-Path $programs 'RS Nextward Maintenance Center.lnk'
+ if (Test-Path -LiteralPath $maintenanceLink) { throw 'Existing maintenance shortcut retained.' }
+ $shortcut=$shell.CreateShortcut($maintenanceLink)
+ $shortcut.TargetPath=Join-Path $env:WINDIR 'System32\wscript.exe'
+ $shortcut.Arguments='"'+(Join-Path $root 'Maintenance-ARS-Distributor.vbs')+'"'
+ $shortcut.WorkingDirectory=$root
+ $shortcut.IconLocation=(Join-Path $root 'public\ars-desktop.ico')+',0'
+ $shortcut.Save()
+ # Record the application only, separately from mutable business storage.
+ . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
+ $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
+ [void][IO.Directory]::CreateDirectory($state)
+ $trustBytes=[byte[]](Get-ArsReleaseTrustBytes)
+ $trustStream=[IO.File]::Open((Join-Path $state 'release-signing-public.pem'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ try { $trustStream.Write($trustBytes,0,$trustBytes.Length) } finally { $trustStream.Dispose() }
+ . (Join-Path $PSScriptRoot 'windows-install-recovery-tools.ps1')
+ Install-ArsRecoveryTools $root $state
+ Write-ArsDesktopRegistration $root $state $desktop $programs
+ Write-ArsInstallationIdentity $root $state
+ Set-ArsProgress 5 'Setup steps completed.'
+ Close-ArsProgress
+ if (Show-ArsSetupPage 'Setup completed' 'Thank you for choosing RS Nextward. Launch ARS to verify readiness and register the first administrator.' 'Launch ARS') {
+  Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('"'+(Join-Path $root 'Launch-Hardware-POS.vbs')+'"')
+ }
+} catch {
+ if (Get-Command Close-ArsProgress -ErrorAction SilentlyContinue) { Close-ArsProgress }
+ [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message,$title,'OK','Error')
+ exit 1
+} finally {
+ if ($owned) { $mutex.ReleaseMutex() }
+ $mutex.Dispose()
+}

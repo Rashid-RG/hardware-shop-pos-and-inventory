@@ -1,11 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import {printDeliveryNote} from '../utils/deliveryNote';
+import { ReportExportMenu } from './ReportExportMenu';
+import { reportTime } from '../utils/reporting';
+import type { BusinessReport } from '../utils/businessReport';
+import { arsPrintLogoUrl, isArsPrintBrand, arsDisplayName } from '../utils/arsPrintLogo';
+import { invoiceFooter } from '../utils/invoiceFooter';
+import { notify } from '../utils/notifications';
+import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
+import { invoiceTotals, roundMoney } from '../utils/invoiceTotals';
+import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   ShoppingCart,
   Trash2,
   Plus,
   Minus,
-  Sparkles,
   Ticket,
   UserCheck,
   CreditCard,
@@ -13,7 +22,6 @@ import {
   DollarSign,
   Printer,
   X,
-  PlusSquare,
   BadgeAlert,
   ScanLine,
   BookUser,
@@ -22,14 +30,57 @@ import {
   Mail,
   MessageCircle,
   Filter,
+  Package,
 } from 'lucide-react';
-import { Product, ProductVariant, Customer, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
+import { Product, ProductVariant, Customer, Employee, CartItem, SalesTransaction, StoreSettings, InvoiceCopyType, InvoicePrintAuditRow, InvoicePrintAuditResponse } from '../types';
 import { QRFeatureView } from './QRFeatureView';
+
+function BillingProductPhoto({ product, compact = false }: { product: Product; compact?: boolean }) {
+  const src = sanitizeImageSrc(product.imageUrl);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  return <div className={(compact ? 'h-10 w-10' : 'h-16 w-16 sm:h-[72px] sm:w-[72px]') + ' relative shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center'}>
+    {src && failedSrc !== src ? <img src={src} alt={product.name} loading="lazy" decoding="async" onError={()=>setFailedSrc(src)} className="h-full w-full object-contain p-0.5"/> : <div className="flex flex-col items-center text-slate-400"><Package aria-hidden="true" className="h-5 w-5"/>{!compact && <span className="mt-0.5 text-[9px]">No photo</span>}</div>}
+  </div>;
+}
+
+function A4InvoicePreview({ id, request }: {
+  id: string;
+  request: (url: string, init?: RequestInit) => Promise<Response>;
+}) {
+  const [url, setUrl] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl = '';
+    const load = async () => {
+      try {
+        const response = await request('/api/transactions/' + encodeURIComponent(id) + '/pdf', { signal: controller.signal });
+        if (!response.ok || !response.headers.get('Content-Type')?.includes('application/pdf')) throw new Error();
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [id, request]);
+  return url
+    ? <iframe title="A4 customer invoice" src={url + '#view=FitH'} className="w-full h-[65vh] rounded border border-slate-200" />
+    : <p role="status">{failed ? 'Preview unavailable. Use Download PDF below to open this invoice.' : 'Loading invoice…'}</p>;
+}
 
 interface POSViewProps {
   products: Product[];
   customers: Customer[];
+  employees: Employee[];
   cashierName: string;
+  draftOwner: string;
   currentRole: 'Super Admin' | 'Store Manager' | 'Cashier' | 'Inventory Staff';
   taxConfig?: StoreSettings;
   onRefreshDb: () => void;
@@ -39,9 +90,11 @@ interface POSViewProps {
 export default function POSView({
   products,
   customers,
+  employees,
   cashierName,
+  draftOwner,
   currentRole,
-  taxConfig = { taxRate: 18, storeName: 'Lanka Smart Hardware', currency: 'LKR', invoicePrefix: 'SL-INV' },
+  taxConfig = { taxRate: 18, storeName: 'ARS Distributors', currency: 'LKR', invoicePrefix: 'SL-INV' },
   onRefreshDb,
   authToken,
 }: POSViewProps) {
@@ -66,12 +119,12 @@ export default function POSView({
   const currencySymbol = 'Rs.';
   const formatMoney = (amount: number) => `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const activeShopProfile = (taxConfig.shopProfiles || []).find((shop) => shop.id === taxConfig.activeShopId) || taxConfig.shopProfiles?.[0];
-  const activeShopName = activeShopProfile?.name || taxConfig.storeName;
-  const shopAddress = activeShopProfile?.address || '150 Galle Road, Colombo 03, Sri Lanka';
-  const shopPhone = activeShopProfile?.phone || '+94 11 234 5678';
+  const activeShopName = (activeShopProfile?.name || taxConfig.storeName).replace(/^ARS (?:Hardware|Distribution|Distributor)$/i, 'ARS Distributors');
+  const shopAddress = (activeShopProfile ? activeShopProfile.address : taxConfig.address) || '';
+  const shopPhone = (activeShopProfile ? activeShopProfile.phone : taxConfig.phone) || '';
   const invoiceCompanyMeta = {
-    companyLegalName: activeShopProfile?.invoiceCompanyMeta?.companyLegalName || 'ARS (PVT) LTD',
-    companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Hardware Wholesale & Retail',
+    companyLegalName: arsDisplayName(activeShopProfile?.invoiceCompanyMeta?.companyLegalName || activeShopName),
+    companyTagline: activeShopProfile?.invoiceCompanyMeta?.companyTagline || 'Imports & Wholesale Distribution',
     businessRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.businessRegistrationNo || '',
     vatRegistrationNo: activeShopProfile?.invoiceCompanyMeta?.vatRegistrationNo || '',
     tinNo: activeShopProfile?.invoiceCompanyMeta?.tinNo || '',
@@ -86,9 +139,9 @@ export default function POSView({
   const normalizedShopName = String(activeShopName || '').toLowerCase();
   const isWholesaleShop = String(activeShopProfile?.id || '') === 'shop-2'
     || normalizedShopName.includes('wholesale')
-    || normalizedShopName.includes('ars pvt');
+    || normalizedShopName.includes('ars pvt') || isArsPrintBrand(activeShopName);
   const effectivePrintFormat: 'a4' | 'thermal' = isWholesaleShop ? 'a4' : (printFormat === 'thermal' ? 'thermal' : 'a4');
-  const printableShopLogoUrl = shopLogoUrl
+  const printableShopLogoUrl = isArsPrintBrand(activeShopName) ? arsPrintLogoUrl : shopLogoUrl
     ? (() => {
         try {
           return new URL(shopLogoUrl, window.location.origin).href;
@@ -103,7 +156,7 @@ export default function POSView({
   const thermalShopLogoMarkup = printableShopLogoUrl
     ? `<img src="${escapeHtml(printableShopLogoUrl)}" alt="Store logo" style="display:block;max-width:72px;max-height:36px;object-fit:contain;margin:0 auto 6px;" />`
     : '';
-  const authFetch = (url: string, init?: RequestInit) => {
+  const authFetch = useCallback((url: string, init?: RequestInit) => {
     const headers = new Headers(init?.headers || {});
     headers.set('Authorization', `Bearer ${authToken}`);
     if (taxConfig.activeShopId) {
@@ -113,32 +166,77 @@ export default function POSView({
       headers.set('Content-Type', 'application/json');
     }
     return fetch(url, { ...init, headers });
-  };
+  }, [authToken, taxConfig.activeShopId]);
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('catalog');
+  const [expandedInvoice, setExpandedInvoice] = useState(true);
+  const [showInvoiceProducts, setShowInvoiceProducts] = useState(false);
+  const [activeMobileView, setActiveMobileView] = useState<'catalog' | 'cart'>('cart');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedVariantByProduct, setSelectedVariantByProduct] = useState<Record<string, string>>({});
+  const [unitPickerProductId, setUnitPickerProductId] = useState<string | null>(null);
+  const [unitPickerUnitId, setUnitPickerUnitId] = useState('');
+  const [unitPickerQty, setUnitPickerQty] = useState('1');
+  const [priceEditKey, setPriceEditKey] = useState<string | null>(null);
+  const [priceDraft, setPriceDraft] = useState('');
+  const [priceReason, setPriceReason] = useState('');
+  const [pickerCustomPrice, setPickerCustomPrice] = useState('');
+  const [pickerPriceReason, setPickerPriceReason] = useState('');
 
+  // Drafts are tab-local and scoped to the authenticated operator and shop.
+  const draftKey = taxConfig.activeShopId && draftOwner ? `ars:invoice-draft:v1:${encodeURIComponent(draftOwner)}:${encodeURIComponent(taxConfig.activeShopId)}` : '';
+  const [restoredDraft] = useState(() => {
+    try {
+      const raw = draftKey && sessionStorage.getItem(draftKey);
+      const value = raw ? JSON.parse(raw) : null;
+      return value && Array.isArray(value.cart) ? value : null;
+    } catch { return null; }
+  });
+  const [checkoutUncertain, setCheckoutUncertain] = useState<boolean>(Boolean(restoredDraft?.pending));
+  const [pendingCheckoutBody,setPendingCheckoutBody]=useState<string|null>(typeof restoredDraft?.requestBody==='string'?restoredDraft.requestBody:null);
+  const checkoutLock=React.useRef(false);
+  const [draftSaved, setDraftSaved] = useState(false);
   // Customer & Cart states
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer>(
-    customers.find((c) => c.id === 'cust-walkin') || {
-      id: 'cust-walkin',
-      name: 'Walk-in Customer',
-      phone: '-',
-      email: '-',
-      address: '-',
-      loyaltyBalance: 0,
-      purchaseCount: 0,
-    }
-  );
-  const [billingCustomerName, setBillingCustomerName] = useState<string>((customers.find((c) => c.id === 'cust-walkin')?.name || 'Walk-in Customer'));
+  // Never silently assign an invoice to the first customer in the database.
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer>(() => restoredDraft?.customer || {
+    id: '', name: '', phone: '', email: '', address: '',
+    loyaltyBalance: 0, purchaseCount: 0,
+  });
+  const [billingCustomerName, setBillingCustomerName] = useState<string>('');
+  const [customerSearch, setCustomerSearch] = useState('');
   const [billingCustomerPhone, setBillingCustomerPhone] = useState<string>('');
   const [billingCustomerAddress, setBillingCustomerAddress] = useState<string>('');
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [cashDiscount, setCashDiscount] = useState<number>(0); // manual absolute currency amount off
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Cash');
-  const [cashReceived, setCashReceived] = useState<string>('');
+  const [selectedSalesRepId, setSelectedSalesRepId] = useState<string>(restoredDraft?.repId || '');
+  const activeSalesReps = employees.filter(rep => rep.shopId === taxConfig.activeShopId && rep.name.trim());
+  const [cart, setCart] = useState<CartItem[]>(restoredDraft?.cart || []);
+  const [editingDescriptionKey, setEditingDescriptionKey] = useState<string | null>(null);
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [discountMode, setDiscountMode] = useState<'amount' | 'percent'>(restoredDraft?.discountMode === 'percent' ? 'percent' : 'amount');
+  const [discountInput, setDiscountInput] = useState<string>(restoredDraft?.discountInput || '0');
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Credit Card' | 'Debit Card' | 'QR Code' | 'Bank Transfer' | 'Mobile Wallet' | 'Credit Account'>('Credit Account');
+  const managerFinancialPosting=['Super Admin','Store Manager'].includes(currentRole);
+  const [creditDueDate,setCreditDueDate]=useState<string>(typeof restoredDraft?.creditDueDate==='string'?restoredDraft.creditDueDate:'');
+  const [creditEvidence,setCreditEvidence]=useState<string>(typeof restoredDraft?.creditEvidence==='string'?restoredDraft.creditEvidence:'');
+  const creditToday=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Colombo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+  const activeCreditTerms=managerFinancialPosting&&paymentMethod==='Credit Account';
+  const invalidCreditTerms=activeCreditTerms&&Boolean(creditDueDate||creditEvidence.trim())&&(!creditDueDate||creditDueDate<creditToday||!creditEvidence.trim()||creditEvidence.trim().length>500);
+  const [invoiceAccounts,setInvoiceAccounts]=useState<{id:string;name:string;kind:string;active:boolean;balance:number}[]>([]);
+  const [invoiceAccountId,setInvoiceAccountId]=useState('');
+  const [invoiceAccountsLoading,setInvoiceAccountsLoading]=useState(false);
+  const [invoiceAccountsError,setInvoiceAccountsError]=useState('');
+  const needsInvoiceAccount=managerFinancialPosting&&['Cash','Bank Transfer'].includes(paymentMethod);
+  const matchingInvoiceAccounts=invoiceAccounts.filter(a=>a.active&&a.kind===(paymentMethod==='Cash'?'Office Cash':'Bank'));
+  const selectedInvoiceAccount=matchingInvoiceAccounts.find(a=>a.id===invoiceAccountId);
+  useEffect(()=>{
+    setInvoiceAccountId('');setInvoiceAccounts([]);setInvoiceAccountsError('');
+    if(!needsInvoiceAccount){setInvoiceAccountsLoading(false);return;}
+    const controller=new AbortController();setInvoiceAccountsLoading(true);
+    authFetch('/api/financial-accounts',{signal:controller.signal,cache:'no-store'}).then(async r=>{
+      const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load financial accounts.');
+      if(!controller.signal.aborted)setInvoiceAccounts(data);
+    }).catch(e=>{if(!controller.signal.aborted)setInvoiceAccountsError(e.message);}).finally(()=>{if(!controller.signal.aborted)setInvoiceAccountsLoading(false);});
+    return ()=>controller.abort();
+  },[needsInvoiceAccount,paymentMethod,authFetch]);
   const [wholesaleMetaDraft, setWholesaleMetaDraft] = useState({
     transportCharges: '',
     deliveryCharges: '',
@@ -149,19 +247,91 @@ export default function POSView({
     batchNumber: '',
     supplierReference: '',
     deliveryStatus: '',
+    ...restoredDraft?.wholesaleMeta,
   });
+  const persistDraft = (pending = checkoutUncertain, requestBody = pendingCheckoutBody) => {
+    if (!draftKey) return false;
+    try {
+      if (cart.length === 0 && !requestBody) sessionStorage.removeItem(draftKey);
+      else sessionStorage.setItem(draftKey, JSON.stringify({
+        cart, customer: selectedCustomer, repId: selectedSalesRepId,
+        discountMode, discountInput, creditDueDate, creditEvidence, wholesaleMeta: wholesaleMetaDraft, pending, requestBody:pending?requestBody:null,
+      }));
+      return true;
+    } catch { return false; }
+  };
+  useEffect(() => {
+    setDraftSaved(persistDraft());
+  }, [draftKey, cart, selectedCustomer, selectedSalesRepId, discountMode, discountInput, wholesaleMetaDraft, creditDueDate,creditEvidence,checkoutUncertain,pendingCheckoutBody]);
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
   const [barcodeNotification, setBarcodeNotification] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
   const [lastScannedItem, setLastScannedItem] = useState<{ label: string; code: string } | null>(null);
   const [showQRFeature, setShowQRFeature] = useState(false);
 
-  // AI Cross sell state
-  const [aiCrossSells, setAiCrossSells] = useState<any[]>([]);
-  const [isLoadingCross, setIsLoadingCross] = useState(false);
-
   // Completed transaction receipt modal
   const [receiptModel, setReceiptModel] = useState<SalesTransaction | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  // A portal escapes the animated workspace's containing block and stacking context.
+  useEffect(() => {
+    if (!isReviewOpen) return;
+    const body = document.body;
+    const root = document.getElementById('root');
+    const main = root?.querySelector('main');
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const bodyOverflow = body.style.overflow;
+    const mainOverflow = main?.style.overflow;
+    const previousInert = root?.inert;
+    body.style.overflow = 'hidden';
+    if (main) main.style.overflow = 'hidden';
+    if (root) root.inert = true;
+    document.getElementById('pos-review-dialog')?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const dialog = document.getElementById('pos-review-dialog');
+      if (!dialog) return;
+      const controls = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex="0"]')).filter(el => el.getClientRects().length > 0);
+      if (!controls.length) { event.preventDefault(); dialog.focus(); return; }
+      const first = controls[0], last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', trapFocus);
+    return () => {
+      document.removeEventListener('keydown', trapFocus);
+      body.style.overflow = bodyOverflow;
+      if (main) main.style.overflow = mainOverflow || '';
+      if (root) root.inert = previousInert ?? false;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [isReviewOpen]);
+  useEffect(() => {
+    if (!isReviewOpen || isSubmitting) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsReviewOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [isReviewOpen, isSubmitting]);
+  const [setupDialog, setSetupDialog] = useState<'customer' | 'representative' | null>(null);
+  const [draftCustomerId, setDraftCustomerId] = useState('');
+  const [draftRepId, setDraftRepId] = useState('');
+  useEffect(() => {
+    const startNewInvoice=()=>{
+      if(isSubmitting || checkoutUncertain){notify.warning('Resolve the current checkout before starting a new invoice.');return;}
+      if(cart.length && !window.confirm('Discard the current unpaid invoice draft and start a new invoice?'))return;
+      try{if(draftKey)sessionStorage.removeItem(draftKey);}catch{notify.error('Unable to clear the saved draft.');return;}
+      setCart([]);setSelectedCustomer({id:'',name:'',phone:'',email:'',address:'',loyaltyBalance:0,purchaseCount:0});
+      setSelectedSalesRepId('');setBillingCustomerName('');setBillingCustomerPhone('');setBillingCustomerAddress('');
+      setDiscountMode('amount');setDiscountInput('0');setPaymentMethod('Credit Account');setCreditDueDate('');setCreditEvidence('');
+      setWholesaleMetaDraft({transportCharges:'',deliveryCharges:'',warrantyInformation:'',dispatchMethod:'',vehicleNumber:'',deliveryNoteNumber:'',batchNumber:'',supplierReference:'',deliveryStatus:''});
+      setIsReviewOpen(false);setReceiptModel(null);setEditingDescriptionKey(null);setDescriptionDraft('');
+      setDraftCustomerId('');setDraftRepId('');setCustomerSearch('');setSetupDialog('customer');
+      notify.success('New invoice started.');
+    };
+    window.addEventListener('ars:new-invoice',startNewInvoice);
+    return ()=>window.removeEventListener('ars:new-invoice',startNewInvoice);
+  },[isSubmitting,checkoutUncertain,cart.length,draftKey]);
   const [selectedCopyType, setSelectedCopyType] = useState<InvoiceCopyType>('Duplicate Copy');
   const [isLoggingPrint, setIsLoggingPrint] = useState(false);
   const [invoicePrintHistory, setInvoicePrintHistory] = useState<Array<{ copyType: InvoiceCopyType; printSequence: number; printedBy: string; printedAt: string }>>([]);
@@ -179,7 +349,6 @@ export default function POSView({
   const [shareWhatsAppTo, setShareWhatsAppTo] = useState('');
   const [isSharingEmail, setIsSharingEmail] = useState(false);
   const [isSharingWhatsApp, setIsSharingWhatsApp] = useState(false);
-  const [isExportingAuditCsv, setIsExportingAuditCsv] = useState(false);
   const [printAuditFilters, setPrintAuditFilters] = useState({
     fromDate: '',
     toDate: '',
@@ -194,10 +363,12 @@ export default function POSView({
       const text = String(value || '').trim();
       return text === '-' ? '' : text;
     };
-    setBillingCustomerName(normalize(selectedCustomer.name) || 'Walk-in Customer');
+    setBillingCustomerName(normalize(selectedCustomer.name));
     setBillingCustomerPhone(normalize(selectedCustomer.phone));
     setBillingCustomerAddress(normalize(selectedCustomer.address));
   }, [selectedCustomer.id]);
+
+  const availableWholesaleCustomers = customers.filter((c) => c.id !== 'cust-walkin' && c.shopId === taxConfig.activeShopId && [c.name, c.id, c.phone, c.email, c.address].some((value) => String(value || '').toLowerCase().includes(customerSearch.trim().toLowerCase())));
 
   const categories = [
     'All',
@@ -230,38 +401,6 @@ export default function POSView({
     return matchesSearch && matchesCategory;
   });
 
-  // Fetch AI cross sells when the cart contents change
-  useEffect(() => {
-    if (cart.length === 0) {
-      setAiCrossSells([]);
-      return;
-    }
-
-    const fetchCrossSells = async () => {
-      setIsLoadingCross(true);
-      try {
-        const itemIds = cart.map((i) => i.product.id);
-        const res = await authFetch('/api/ai/predict-complementary', {
-          method: 'POST',
-          body: JSON.stringify({ currentCartIds: itemIds }),
-        });
-        const data = await res.json();
-        setAiCrossSells(data.suggestions || []);
-      } catch (err) {
-        console.error('Failed to generate complementary products suggestions:', err);
-      } finally {
-        setIsLoadingCross(false);
-      }
-    };
-
-    // Debounce a little bit
-    const delay = setTimeout(() => {
-      fetchCrossSells();
-    }, 450);
-
-    return () => clearTimeout(delay);
-  }, [cart]);
-
   useEffect(() => {
     let lastKeyAt = 0;
     let buffer = '';
@@ -292,7 +431,7 @@ export default function POSView({
           setBarcodeBuffer(scannedCode);
           const match = resolveScanMatch(scannedCode);
           if (match) {
-            addToCart(match.product, match.variant);
+            openUnitPicker(match.product, match.variant);
             const label = match.variant ? `${match.product.name} (${match.variant.name})` : match.product.name;
             resetNotification(`Scanned: ${label}`, 'ok');
             setLastScannedItem({ label, code: scannedCode });
@@ -317,7 +456,74 @@ export default function POSView({
     return () => window.removeEventListener('keydown', handler);
   }, [products, cart, selectedVariantByProduct]);
 
-  const getCartKey = (item: CartItem) => `${item.product.id}::${item.variantId || 'base'}`;
+  const getCartKey = (item: CartItem) => `${item.product.id}::${item.sellingUnitId ? 'unit:'+item.sellingUnitId : item.variantId || 'base'}`;
+
+  const getDefaultSellingUnit = (product: Product) => product.sharedStockUnits?.units.find(unit => unit.baseUnits === 1);
+  const fitsSharedStock = (product: Product, lines: CartItem[]) => {
+    let required = 0;
+    for (const line of lines.filter(entry=>entry.product.id===product.id)) {
+      const unit = product.sharedStockUnits?.units.find(entry=>entry.id===line.sellingUnitId);
+      if (!unit || !Number.isSafeInteger(line.quantity) || line.quantity<=0 || !Number.isSafeInteger(unit.baseUnits) || unit.baseUnits<=0) return false;
+      required += line.quantity * unit.baseUnits;
+      if (!Number.isSafeInteger(required) || required > product.quantity) return false;
+    }
+    return true;
+  };
+
+  // All quantities are checked against the latest catalog, including stock already in the draft.
+  const availableToAdd = (product: Product, variant?: ProductVariant, lines: CartItem[] = cart, sellingUnitId?: string) => {
+    if (product.sharedStockUnits) {
+      const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
+      if (!unit || product.variants?.length) return 0;
+      let used = 0;
+      for (const line of lines.filter(entry => entry.product.id === product.id)) {
+        const selected = product.sharedStockUnits.units.find(u => u.id === line.sellingUnitId);
+        if (!selected) return 0;
+        used += line.quantity * selected.baseUnits;
+      }
+      return Math.max(0, Math.floor((product.quantity - used) / unit.baseUnits));
+    }
+    const stock = Number(variant?.quantity ?? product.quantity);
+    const used = lines.filter(entry => entry.product.id === product.id && (entry.variantId || '') === (variant?.id || '')).reduce((sum, entry) => sum + entry.quantity, 0);
+    return Math.max(0, Math.floor(stock - used));
+  };
+
+  const stockIssue = (lines: CartItem[]): string | undefined => {
+    for (const line of lines) {
+      const product = products.find(p => p.id === line.product.id);
+      if (!product) return line.product.name + ': product is no longer available.';
+      if (!Number.isSafeInteger(line.quantity) || line.quantity <= 0) return product.name + ': invalid quantity.';
+      if (product.sharedStockUnits) {
+        if (!fitsSharedStock(product, lines)) return product.name + ': insufficient shared stock (Box/Piece). Reduce the quantity.';
+      } else {
+        const variant = product.variants?.find(v => v.id === line.variantId);
+        if ((line.variantId && !variant) || (product.variants?.length && !variant)) return product.name + ': selling unit is no longer available.';
+        const stock = Number(variant?.quantity ?? product.quantity);
+        const required = lines.filter(entry => entry.product.id === product.id && (entry.variantId || '') === (line.variantId || '')).reduce((sum, entry) => sum + entry.quantity, 0);
+        if (!Number.isFinite(stock) || required > stock) return product.name + ': only ' + stock + ' available; ' + required + ' requested.';
+      }
+    }
+  };
+  const currentStockIssue = stockIssue(cart);
+  const maxLineQuantity = (line: CartItem) => {
+    const product = products.find(p => p.id === line.product.id);
+    if (!product) return 0;
+    const others = cart.filter(entry => getCartKey(entry) !== getCartKey(line));
+    if (product.sharedStockUnits) {
+      const unit = product.sharedStockUnits.units.find(u => u.id === line.sellingUnitId);
+      if (!unit) return 0;
+      let used = 0;
+      for (const other of others.filter(entry => entry.product.id === product.id)) {
+        const selected = product.sharedStockUnits.units.find(u => u.id === other.sellingUnitId);
+        if (!selected) return 0;
+        used += other.quantity * selected.baseUnits;
+      }
+      return Math.max(0, Math.floor((product.quantity - used) / unit.baseUnits));
+    }
+    const variant = product.variants?.find(v => v.id === line.variantId);
+    if ((line.variantId && !variant) || (product.variants?.length && !variant)) return 0;
+    return availableToAdd(product, variant, others);
+  };
 
   const getSelectedVariant = (product: Product): ProductVariant | undefined => {
     if (!Array.isArray(product.variants) || product.variants.length === 0) {
@@ -354,36 +560,125 @@ export default function POSView({
   };
 
   // Handle adding a product (or variant) to register cart
-  const addToCart = (product: Product, variant?: ProductVariant) => {
+  const addToCart = (product: Product, variant?: ProductVariant, sellingUnitId?: string, requestedQty = 1, customPrice?: number, reason?: string) => {
+    if (customPrice !== undefined && (!isAdminSeller || !Number.isFinite(customPrice) || customPrice <= 0 || customPrice > 1_000_000_000 || roundMoney(customPrice)!==customPrice || !reason?.trim() || reason.trim().length>250)) { notify.warning('Enter a valid custom price and reason.'); return false; }
+    const latest = products.find(p => p.id === product.id);
+    if (!latest) { notify.warning(product.name + ': product unavailable.'); return; }
+    product = latest;
+    const requestedVariantId = variant?.id;
+    variant = requestedVariantId ? product.variants?.find(v => v.id === requestedVariantId) : getSelectedVariant(product);
+    if (requestedVariantId && !variant) { notify.warning(product.name + ': selected variant is no longer available.'); return false; }
+    const available = availableToAdd(product, variant, cart, sellingUnitId);
+    if (!Number.isSafeInteger(requestedQty) || requestedQty < 1 || requestedQty > available) { notify.warning(product.name + ': only ' + available + ' available to add.'); return false; }
+    if (product.sharedStockUnits) {
+      const unit = sellingUnitId ? product.sharedStockUnits.units.find(u=>u.id===sellingUnitId) : getDefaultSellingUnit(product);
+      if (!unit || product.variants?.length) { notify.warning('Invalid shared selling-unit configuration.'); return false; }
+      const existing = cart.find(entry=>entry.product.id===product.id && entry.sellingUnitId===unit.id);
+      if (existing && (existing.customUnitPrice ?? unit.sellingPrice)!==(customPrice ?? unit.sellingPrice)) { notify.warning('This unit is already on the invoice at another price. Use the same rate or edit its existing line price and quantity.'); return false; }
+      const next: CartItem[] = existing ? cart.map(entry=>entry===existing?{...entry,quantity:entry.quantity+requestedQty}:entry) : [...cart,{
+        product, quantity:requestedQty, discount:0, sellingUnitId:unit.id, variantUnit:unit.label,
+        unitPrice:unit.sellingPrice, customUnitPrice:customPrice, priceOverrideReason:customPrice!==undefined?reason?.trim():undefined, unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,
+        invoiceDescription:String(product.description || product.longDescription || '').trim().slice(0,250)
+      }];
+      if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock.'); return; }
+      setCart(next);
+      return true;
+    }
     const resolvedVariant = variant || getSelectedVariant(product);
     const productStock = Number(product.quantity || 0);
     const variantStock = resolvedVariant ? Number(resolvedVariant.quantity || 0) : productStock;
-    if (variantStock <= 0) {
-      return;
-    }
+    if (variantStock <= 0) { notify.warning(product.name + ': out of stock.'); return; }
 
     const existing = cart.find((item) => item.product.id === product.id && (item.variantId || '') === (resolvedVariant?.id || ''));
     const key = `${product.id}::${resolvedVariant?.id || 'base'}`;
     if (existing) {
-      updateCartQty(key, existing.quantity + 1);
-      return;
+      const standardRate = resolvedVariant?.sellingPrice ?? product.sellingPrice;
+      if ((existing.customUnitPrice ?? existing.unitPrice ?? existing.product.sellingPrice) !== (customPrice ?? standardRate)) {
+        notify.warning('This item is already on the invoice at another price. Use the same rate or edit its existing line price and quantity.'); return false;
+      }
+      updateCartQty(key, existing.quantity + requestedQty);
+      return true;
     }
 
     setCart([
       ...cart,
       {
         product,
-        quantity: 1,
+        invoiceDescription: String(product.description || product.longDescription || '').trim().slice(0, 250),
+        quantity: requestedQty,
         discount: 0,
         variantId: resolvedVariant?.id,
         variantName: resolvedVariant?.name,
         variantUnit: resolvedVariant?.unit,
         variantSku: resolvedVariant?.sku,
         variantBarcode: resolvedVariant?.barcode,
-        unitPrice: resolvedVariant?.sellingPrice,
+        unitPrice: resolvedVariant?.sellingPrice ?? product.sellingPrice,
+        customUnitPrice: customPrice,
+        priceOverrideReason: customPrice !== undefined ? reason?.trim() : undefined,
         unitCostPrice: resolvedVariant?.costPrice,
       },
     ]);
+    return true;
+  };
+
+  // Display each unit independently; a full box can be unavailable while pieces remain.
+  const sellingUnitAvailability = (product: Product) => (product.sharedStockUnits?.units || []).map(unit=>({unit,remaining:availableToAdd(product,undefined,cart,unit.id)}));
+  const openUnitPicker = (product: Product, variant?: ProductVariant) => {
+    if (!product.sharedStockUnits) return addToCart(product, variant);
+    const units = product.sharedStockUnits.units;
+    const unit = units.find(u=>u.baseUnits===1 && availableToAdd(product, undefined, cart, u.id)>0) || units.find(u=>availableToAdd(product, undefined, cart, u.id)>0);
+    if (!unit) { notify.warning(product.name + ': no more stock available to add.'); return false; }
+    setUnitPickerProductId(product.id);
+    setUnitPickerUnitId(unit.id);
+    setUnitPickerQty('1');
+    setPickerCustomPrice(''); setPickerPriceReason('');
+    return true;
+  };
+  const pickerProduct = products.find(p=>p.id===unitPickerProductId);
+  const pickerUnit = pickerProduct?.sharedStockUnits?.units.find(u=>u.id===unitPickerUnitId);
+  const pickerAvailable = pickerProduct && pickerUnit ? availableToAdd(pickerProduct, undefined, cart, pickerUnit.id) : 0;
+
+  const validCustomPrice = (value:string, reason:string) => value.trim()!=='' && Number.isFinite(Number(value)) && Number(value)>0 && Number(value)<=1_000_000_000 && roundMoney(Number(value))===Number(value) && !!reason.trim() && reason.trim().length<=250;
+  const priceLine = cart.find(item=>getCartKey(item)===priceEditKey);
+  const openPriceEditor = (item:CartItem) => { if(!isAdminSeller) return; setPriceEditKey(getCartKey(item)); setPriceDraft(String(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice)); setPriceReason(item.priceOverrideReason || ''); };
+  // A customer-specific description applies to this invoice line only.
+  const saveInvoiceLineDescription = () => {
+    if (!editingDescriptionKey) return;
+    const clean = descriptionDraft.replace(/[\r\n\t]+/g, ' ').trim().slice(0, 250);
+    setCart(current => current.map(item =>
+      getCartKey(item) === editingDescriptionKey ? { ...item, invoiceDescription: clean } : item));
+    setEditingDescriptionKey(null);
+    setDescriptionDraft('');
+  };
+
+  // Switch between existing independently stocked variants. Shared packaging conversion is a separate inventory migration.
+  const changeCartVariant = (itemKey: string, variantId: string) => {
+    const item = cart.find(entry => getCartKey(entry) === itemKey);
+    const product = products.find(entry => entry.id === item?.product.id);
+    const variant = product?.variants?.find(entry => entry.id === variantId);
+    if (!item || !product || !variant || item.variantId === variant.id) return;
+    const existing = cart.find(entry => entry.product.id === product.id && entry.variantId === variant.id);
+    if (existing) { notify.warning('This selling unit is already on the invoice. Adjust its quantity separately.'); return; }
+    if (Number(variant.quantity) < item.quantity) { notify.warning('Insufficient stock for the selected selling unit.'); return; }
+    setCart(current => current.map(entry => getCartKey(entry) === itemKey ? {
+      ...entry, product, variantId: variant.id, variantName: variant.name, variantUnit: variant.unit,
+      variantSku: variant.sku, variantBarcode: variant.barcode, unitPrice: variant.sellingPrice, customUnitPrice:undefined, priceOverrideReason:undefined,
+      unitCostPrice: variant.costPrice, discount: 0, discountAmount: 0,
+    } : entry));
+  };
+
+  const changeSharedSellingUnit = (itemKey: string, unitId: string) => {
+    const item = cart.find(entry=>getCartKey(entry)===itemKey);
+    const product = products.find(entry=>entry.id===item?.product.id);
+    const unit = product?.sharedStockUnits?.units.find(entry=>entry.id===unitId);
+    if (!item || !product || !unit || item.sellingUnitId===unit.id) return;
+    if (cart.some(entry=>entry!==item && entry.product.id===product.id && entry.sellingUnitId===unit.id)) {
+      notify.warning('This selling unit is already on the invoice. Adjust its quantity separately.'); return;
+    }
+    const next = cart.map(entry=>entry===item?{...entry,product,sellingUnitId:unit.id,variantUnit:unit.label,
+      unitPrice:unit.sellingPrice,customUnitPrice:undefined,priceOverrideReason:undefined,unitCostPrice:Math.round(product.costPrice*unit.baseUnits*100)/100,discount:0,discountAmount:0}:entry);
+    if (!fitsSharedStock(product,next)) { notify.warning('Insufficient shared stock for this unit.'); return; }
+    setCart(next);
   };
 
   // Modify cart item quantity
@@ -399,6 +694,10 @@ export default function POSView({
       }
       return item;
     });
+    const product = products.find(entry=>entry.id===cart.find(item=>getCartKey(item)===itemKey)?.product.id);
+    const line = cart.find(item=>getCartKey(item)===itemKey);
+    if (!line || !product) { notify.warning('Product stock unavailable.'); return; }
+    if (nextQty > maxLineQuantity(line) && nextQty >= line.quantity) { notify.warning(product.name + ': maximum available quantity is ' + maxLineQuantity(line) + '.'); return; }
     setCart(updated);
   };
 
@@ -430,7 +729,7 @@ export default function POSView({
   };
 
   const getLinePricing = (item: CartItem) => {
-    const unitPrice = Number(item.unitPrice ?? item.product.sellingPrice) || 0;
+    const unitPrice = Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice) || 0;
     const gross = unitPrice * item.quantity;
     const percentDiscount = Math.min(100, Math.max(0, item.discount || 0));
     const percentAdjusted = gross * (1 - percentDiscount / 100);
@@ -448,14 +747,18 @@ export default function POSView({
 
   const grossSubtotal = cart.reduce((acc, item) => acc + getLinePricing(item).gross, 0);
   const itemDiscountTotal = cart.reduce((acc, item) => acc + getLinePricing(item).lineDiscountTotal, 0);
-  const subtotal = cart.reduce((acc, item) => acc + getLinePricing(item).lineTotal, 0);
+  const subtotal = cart.reduce((acc, item) => acc + roundMoney(getLinePricing(item).lineTotal), 0);
 
-  const tax = Math.round(subtotal * (taxConfig.taxRate / 100) * 100) / 100; // dynamic VAT/sales tax from settings
-  const discountedSub = Math.max(0, subtotal - cashDiscount);
-  const total = Math.round((discountedSub + tax) * 100) / 100;
-  const numericCashReceived = Number(cashReceived) || 0;
-  const changeDue = paymentMethod === 'Cash' ? Math.max(0, Math.round((numericCashReceived - total) * 100) / 100) : 0;
-  const cashShortage = paymentMethod === 'Cash' && numericCashReceived < total;
+  // The API and A4 invoice always receive an actual rupee discount.
+  // Percentage is applied to the already item-discounted subtotal, never compounded on tax.
+  const requestedDiscount = Number(discountInput);
+  const normalizedDiscountInput = Number.isFinite(requestedDiscount) ? Math.max(0, requestedDiscount) : 0;
+  const cashDiscount = roundMoney(Math.min(subtotal,
+    discountMode === 'percent'
+      ? subtotal * Math.min(100, normalizedDiscountInput) / 100
+      : normalizedDiscountInput));
+  const { tax, total } = invoiceTotals(subtotal, taxConfig.taxRate, cashDiscount);
+
   const creditLimit = Number(selectedCustomer.creditLimit || 0);
   const currentCreditBalance = Number(selectedCustomer.creditBalance || 0);
   const projectedCreditBalance = currentCreditBalance + total;
@@ -494,6 +797,8 @@ export default function POSView({
 
   const inferUnitLabel = (productName: string) => {
     const name = String(productName || '').toLowerCase();
+    const packaging = /(?:^|[·–-]\s*)(box|pack|pair|piece|carton|bundle|roll|set)(?:\s+of\s+\d+)?\s*$/.exec(name);
+    if(packaging)return packaging[1][0].toUpperCase()+packaging[1].slice(1);
     if (name.includes('bag')) return 'Bag';
     if (name.includes('pipe') || name.includes('bulb') || name.includes('hammer')) return 'Piece';
     if (name.includes('kg')) return 'Kg';
@@ -559,7 +864,7 @@ export default function POSView({
 
     const blob = await response.blob();
     const downloadUrl = URL.createObjectURL(blob);
-    const fileName = 'invoice.pdf';
+    const fileName = tx.invoiceNumber + '.pdf';
     const link = document.createElement('a');
     link.href = downloadUrl;
     link.download = fileName;
@@ -599,7 +904,7 @@ export default function POSView({
     return data;
   };
 
-  const exportInvoicePrintAuditCsv = async (filters?: typeof printAuditFilters) => {
+  const printAuditReport = async (filters?: typeof printAuditFilters): Promise<BusinessReport> => {
     const activeFilters = filters || printAuditFilters;
     const query = new URLSearchParams();
     if (activeFilters.fromDate) query.set('fromDate', activeFilters.fromDate);
@@ -609,19 +914,9 @@ export default function POSView({
     if (activeFilters.printedBy) query.set('printedBy', activeFilters.printedBy);
     if (activeFilters.invoiceNumber) query.set('invoiceNumber', activeFilters.invoiceNumber.trim());
 
-    const response = await authFetch(`/api/invoice-print-audit/export.csv?${query.toString()}`);
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({ error: 'Failed to export CSV' }));
-      throw new Error(data.error || 'Failed to export CSV');
-    }
-
-    const blob = await response.blob();
-    const downloadUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = 'invoice-print-audit.csv';
-    link.click();
-    URL.revokeObjectURL(downloadUrl);
+    const response = await authFetch(`/api/invoice-print-audit/export-report?${query.toString()}`);
+    if (!response.ok) throw new Error('Unable to export the invoice print audit.');
+    return response.json();
   };
 
   const loadInvoicePrintAudit = async (filters?: typeof printAuditFilters) => {
@@ -673,7 +968,7 @@ export default function POSView({
   const createPrintWindow = () => {
     const printWindow = window.open('', '_blank', 'width=900,height=900');
     if (!printWindow) {
-      alert('Popup blocked. Please allow popups and try printing again.');
+      notify.warning('Popup blocked. Please allow popups and try printing again.');
       return null;
     }
 
@@ -703,7 +998,7 @@ export default function POSView({
     return printWindow;
   };
 
-  const printReceiptInvoice = (
+  const printReceiptInvoice = async (
     tx: SalesTransaction,
     existingWindow?: Window | null,
     printMeta?: {
@@ -737,6 +1032,7 @@ export default function POSView({
           return `
             <div class="item-row">
               <div class="item-name">${escapeHtml(itm.productName)}</div>
+              ${itm.invoiceDescription ? `<div class="item-meta">${escapeHtml(itm.invoiceDescription)}</div>` : ''}
               <div class="item-meta">${lineQty} x ${escapeHtml(formatMoney(lineUnit))} ${discountPct > 0 ? `@-${discountPct.toFixed(0)}%` : ''} ${lineDiscountAmount > 0 ? `@-${escapeHtml(formatMoney(lineDiscountAmount))}` : ''}</div>
               <div class="item-line-total">${escapeHtml(formatMoney(lineTotal))}</div>
             </div>
@@ -893,7 +1189,7 @@ export default function POSView({
               <div class="meta-grid">
                 <div><strong>Invoice:</strong> ${escapeHtml(tx.invoiceNumber)}</div>
                 <div><strong>Date:</strong> ${escapeHtml(new Date(tx.date).toLocaleString())}</div>
-                <div><strong>Cashier:</strong> ${escapeHtml(tx.cashierName)}</div>
+                <div><strong>Sales Representative:</strong> ${escapeHtml(tx.salesRepName || 'Not recorded')}</div>
               </div>
               <div class="customer-line">
                 <div><strong>Customer:</strong> ${escapeHtml(tx.customerName)}</div>
@@ -910,13 +1206,12 @@ export default function POSView({
               ${tx.discountAmount > 0 ? `<div class="sum-row"><span>Discount</span><strong>-${escapeHtml(formatMoney(tx.discountAmount))}</strong></div>` : ''}
               <div class="sum-row"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
               <div class="sum-row grand"><span>Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-              ${tx.paymentMethod === 'Cash' ? `<div class="sum-row"><span>Cash Received</span><strong>${escapeHtml(formatMoney(tx.cashReceived ?? tx.total))}</strong></div><div class="sum-row"><span>Change Due</span><strong>${escapeHtml(formatMoney(tx.changeDue ?? 0))}</strong></div>` : ''}
 
               <div class="sign-wrap">
                 <div class="sig-box">
                   <div class="sig-line">________________</div>
-                  <div>Cashier Signature</div>
-                  <div>${escapeHtml(tx.cashierName)}</div>
+                  <div>Sales Representative</div>
+                  <div>${escapeHtml(tx.salesRepName || 'Not recorded')}</div>
                 </div>
                 <div class="stamp-box">
                   <div>SHOP</div>
@@ -925,7 +1220,7 @@ export default function POSView({
                 </div>
               </div>
 
-              <div class="center muted" style="margin-top: 8px;">Thank you for choosing ${escapeHtml(activeShopName)}. We value your trust and look forward to serving you again.</div>
+              <div class="center muted" style="margin-top: 8px;">${invoiceFooter.goods}<br>${invoiceFooter.thanks}<br><small>${invoiceFooter.credit}</small></div>
             </section>
             <script>
               setTimeout(() => {
@@ -943,523 +1238,64 @@ export default function POSView({
       printWindow.focus();
       return;
     }
-
-      if (isWholesaleShop) {
-        const issueDate = new Date(tx.date);
-        const dueDate = new Date(issueDate);
-        dueDate.setDate(dueDate.getDate() + 30);
-        const formatDate = (date: Date) => date.toLocaleDateString('en-GB');
-        const customerRecord = customers.find((customer) => customer.id === tx.customerId);
-        const previousBalance = Number(customerRecord?.creditBalance || 0);
-        const creditLimit = Number(customerRecord?.creditLimit || 0);
-        const currentPayment = tx.paymentMethod === 'Credit Account' ? 0 : Number(tx.cashReceived ?? tx.total);
-        const remainingBalance = Math.max(0, previousBalance + Number(tx.total) - currentPayment);
-        const availableCreditLimit = Math.max(0, creditLimit - previousBalance);
-        const wholesaleMeta = tx.wholesaleMeta || {};
-        const statusLabel = tx.paymentStatus || resolvePaymentStatus(tx);
-        const statusClass = statusLabel === 'PAID'
-          ? 'status-paid'
-          : statusLabel === 'PARTIALLY PAID'
-            ? 'status-partial'
-            : statusLabel === 'UNPAID'
-              ? 'status-unpaid'
-              : statusLabel === 'CREDIT SALE'
-                ? 'status-credit'
-                : 'status-cancelled';
-        const secondaryWatermark = copyLabel === 'Reprinted Invoice' ? 'DUPLICATE COPY' : '';
-        const watermarkOpacity = 0.12;
-
-        const wholesaleRowsHtml = tx.items
-          .map((itm) => {
-            const productRef = products.find((product) => product.id === itm.productId);
-            const variantRef = productRef?.variants?.find((variant) => variant.id === itm.variantId);
-            const discountPct = Number(itm.discount || 0);
-            const lineUnit = Number(itm.sellingPrice || 0);
-            const lineQty = Number(itm.quantity || 0);
-            const gross = lineUnit * lineQty;
-            const percentAdjusted = gross * (1 - discountPct / 100);
-            const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-            const lineTotal = Math.max(0, percentAdjusted - lineDiscountAmount);
-            const variantLabel = itm.variantName || variantRef?.name || '-';
-            const unitLabel = itm.variantUnit || variantRef?.unit || inferUnitLabel(itm.productName);
-            const brandLabel = productRef?.brand || '-';
-            const itemCode = itm.variantSku || variantRef?.sku || itm.productId || '-';
-            const discountLabel = discountPct > 0
-              ? `${discountPct.toFixed(0)}%`
-              : (lineDiscountAmount > 0 ? formatMoney(lineDiscountAmount) : '-');
-            return `
-              <tr>
-                <td>${escapeHtml(itemCode)}</td>
-                <td>${escapeHtml(itm.productName)}</td>
-                <td>${escapeHtml(brandLabel)}</td>
-                <td>${escapeHtml(variantLabel)}</td>
-                <td>${escapeHtml(unitLabel)}</td>
-                <td class="right">${lineQty}</td>
-                <td class="right">${escapeHtml(formatMoney(lineUnit))}</td>
-                <td class="right">${escapeHtml(discountLabel)}</td>
-                <td class="right">${escapeHtml(formatMoney(lineTotal))}</td>
-              </tr>
-            `;
-          })
-          .join('');
-
-        const wholesaleHtml = `
-          <!doctype html>
-          <html>
-            <head>
-              <meta charset="utf-8" />
-              <title>Wholesale Invoice ${escapeHtml(tx.invoiceNumber)}</title>
-              <style>
-                @page { size: A4; margin: 8mm; }
-                * { box-sizing: border-box; }
-                body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #ffffff; }
-                .sheet { border: 1px solid #cbd5e1; border-radius: 10px; position: relative; overflow: hidden; }
-                .header { padding: 14px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; }
-                .header-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; align-items: start; }
-                .company h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
-                .company p { margin: 2px 0; font-size: 12px; color: #334155; }
-                .legal { margin-top: 6px; padding: 8px; border: 1px dashed #cbd5e1; border-radius: 8px; font-size: 11px; }
-                .meta { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; background: #fff; }
-                .meta .row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 4px; }
-                .badge { display: inline-block; margin-top: 6px; padding: 6px 11px; border-radius: 999px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; }
-                .status-paid { background: #dcfce7; color: #166534; }
-                .status-partial { background: #fef9c3; color: #854d0e; }
-                .status-unpaid { background: #fee2e2; color: #991b1b; }
-                .status-credit { background: #dbeafe; color: #1d4ed8; }
-                .status-cancelled { background: #e5e7eb; color: #374151; }
-                .body { padding: 12px 16px 16px; }
-                .section-title { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #334155; font-weight: 800; }
-                .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-                .box { border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px; background: #fff; }
-                .line { display: flex; justify-content: space-between; gap: 8px; margin: 4px 0; font-size: 12px; }
-                table { width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; }
-                thead th { background: #eff6ff; color: #334155; padding: 7px 6px; border-bottom: 1px solid #cbd5e1; font-size: 10px; text-transform: uppercase; }
-                tbody td { padding: 6px; border-bottom: 1px solid #eef2f7; font-size: 11px; }
-                tbody tr:last-child td { border-bottom: none; }
-                .right { text-align: right; }
-                .footer { margin-top: 12px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 8px; font-size: 11px; color: #475569; }
-                .watermark-wrap { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-                .wm { transform: rotate(-28deg); font-size: 62px; letter-spacing: 0.18em; font-weight: 800; color: rgba(15, 23, 42, ${watermarkOpacity}); text-transform: uppercase; white-space: nowrap; }
-                .wm.secondary { margin-top: 80px; font-size: 42px; color: rgba(30, 58, 138, ${watermarkOpacity}); }
-                .reprint-note { margin-top: 4px; font-size: 10px; color: #334155; }
-                .qr-wrap { text-align: right; margin-top: 8px; }
-                .qr-wrap img { width: 76px; height: 76px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 6px; }
-                @media (max-width: 900px) {
-                  .header-grid, .grid-2 { grid-template-columns: 1fr; }
-                  .qr-wrap { text-align: left; }
-                }
-              </style>
-            </head>
-            <body>
-              <section class="sheet">
-                <div class="watermark-wrap">
-                  <div>
-                    <div class="wm">${escapeHtml(watermarkLabel)}</div>
-                    ${secondaryWatermark ? `<div class="wm secondary">${escapeHtml(secondaryWatermark)}</div>` : ''}
-                  </div>
-                </div>
-                <div class="header">
-                  <div class="header-grid">
-                    <div class="company">
-                      ${printableShopLogoMarkup}
-                      <h1>${escapeHtml(invoiceCompanyMeta.companyLegalName)}</h1>
-                      <p>${escapeHtml(invoiceCompanyMeta.companyTagline)}</p>
-                      <p>${escapeHtml(shopAddress)} | ${escapeHtml(shopPhone)}</p>
-                      <div class="legal">
-                        <div>BR No: <strong>${escapeHtml(invoiceCompanyMeta.businessRegistrationNo || '-')}</strong></div>
-                        <div>VAT No: <strong>${escapeHtml(invoiceCompanyMeta.vatRegistrationNo || '-')}</strong></div>
-                        <div>TIN No: <strong>${escapeHtml(invoiceCompanyMeta.tinNo || '-')}</strong></div>
-                      </div>
-                    </div>
-                    <div class="meta">
-                      <div class="row"><span>Invoice No</span><strong>${escapeHtml(tx.invoiceNumber)}</strong></div>
-                      <div class="row"><span>Invoice Date</span><strong>${escapeHtml(formatDate(issueDate))}</strong></div>
-                      <div class="row"><span>Due Date</span><strong>${escapeHtml(formatDate(dueDate))}</strong></div>
-                      <div class="row"><span>Sales Rep</span><strong>${escapeHtml(tx.cashierName)}</strong></div>
-                      <span class="badge ${statusClass}">${escapeHtml(statusLabel)}</span>
-                      <div class="reprint-note">${escapeHtml(copyLabel)}${printMeta?.isReprint ? ` | Reprint: ${escapeHtml(new Date(printMeta?.printedAt || new Date().toISOString()).toLocaleString())} by ${escapeHtml(printMeta?.printedBy || tx.cashierName)}` : ''}</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="body">
-                  <div class="grid-2">
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Customer Details</div>
-                      <div class="line"><span>Name</span><strong>${escapeHtml(tx.customerName || '-')}</strong></div>
-                      <div class="line"><span>Customer ID</span><strong>${escapeHtml(tx.customerId || '-')}</strong></div>
-                      <div class="line"><span>Phone</span><strong>${escapeHtml(tx.customerPhone || '-')}</strong></div>
-                      <div class="line"><span>Address</span><strong>${escapeHtml(tx.customerAddress || '-')}</strong></div>
-                    </div>
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Customer Credit Information</div>
-                      <div class="line"><span>Outstanding Balance</span><strong>${escapeHtml(formatMoney(previousBalance))}</strong></div>
-                      <div class="line"><span>Current Invoice Amount</span><strong>${escapeHtml(formatMoney(Number(tx.total || 0)))}</strong></div>
-                      <div class="line"><span>Available Credit Limit</span><strong>${escapeHtml(formatMoney(availableCreditLimit))}</strong></div>
-                      <div class="line"><span>Credit Limit</span><strong>${escapeHtml(formatMoney(creditLimit))}</strong></div>
-                      <div class="line"><span>Current Payment</span><strong>${escapeHtml(formatMoney(currentPayment))}</strong></div>
-                      <div class="line"><span>Remaining Balance</span><strong>${escapeHtml(formatMoney(remainingBalance))}</strong></div>
-                    </div>
-                  </div>
-
-                  <div class="section-title">Product Table</div>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Item Code</th>
-                        <th>Product Name</th>
-                        <th>Brand</th>
-                        <th>Variant</th>
-                        <th>Unit</th>
-                        <th class="right">Quantity</th>
-                        <th class="right">Unit Price</th>
-                        <th class="right">Discount</th>
-                        <th class="right">Total Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>${wholesaleRowsHtml}</tbody>
-                  </table>
-
-                  <div class="grid-2" style="margin-top: 10px;">
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Hardware Business Information</div>
-                      <div class="line"><span>Transport Charges</span><strong>${escapeHtml(formatMoney(Number(wholesaleMeta.transportCharges || 0)))}</strong></div>
-                      <div class="line"><span>Delivery Charges</span><strong>${escapeHtml(formatMoney(Number(wholesaleMeta.deliveryCharges || 0)))}</strong></div>
-                      <div class="line"><span>Warranty Information</span><strong>${escapeHtml(wholesaleMeta.warrantyInformation || '-')}</strong></div>
-                      <div class="line"><span>Dispatch Method</span><strong>${escapeHtml(wholesaleMeta.dispatchMethod || '-')}</strong></div>
-                      <div class="line"><span>Vehicle Number</span><strong>${escapeHtml(wholesaleMeta.vehicleNumber || '-')}</strong></div>
-                      <div class="line"><span>Delivery Note Number</span><strong>${escapeHtml(wholesaleMeta.deliveryNoteNumber || '-')}</strong></div>
-                      <div class="line"><span>Batch Number</span><strong>${escapeHtml(wholesaleMeta.batchNumber || '-')}</strong></div>
-                      <div class="line"><span>Supplier Reference</span><strong>${escapeHtml(wholesaleMeta.supplierReference || '-')}</strong></div>
-                      <div class="line"><span>Delivery Status</span><strong>${escapeHtml(wholesaleMeta.deliveryStatus || '-')}</strong></div>
-                    </div>
-                    <div class="box">
-                      <div class="section-title" style="margin-top:0;">Invoice Summary</div>
-                      <div class="line"><span>Subtotal</span><strong>${escapeHtml(formatMoney(tx.subtotal))}</strong></div>
-                      <div class="line"><span>Discount</span><strong>${escapeHtml(formatMoney(tx.discountAmount || 0))}</strong></div>
-                      <div class="line"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
-                      <div class="line" style="font-size:14px;font-weight:800;border-top:1px solid #cbd5e1;padding-top:6px;"><span>Grand Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-                      ${invoiceQrData ? `<div class="qr-wrap"><img src="${escapeHtml(invoiceQrData)}" alt="Invoice QR" /><div style="font-size:10px;color:#64748b;margin-top:4px;">Invoice QR</div></div>` : ''}
-                    </div>
-                  </div>
-
-                  <div class="footer">
-                    <div><strong>Thank You For Your Business</strong></div>
-                    <div>Software Powered By ARS POS System</div>
-                    <div style="margin-top:4px;">Support: ${escapeHtml(invoiceCompanyMeta.supportPhone || '-')} | ${escapeHtml(invoiceCompanyMeta.supportEmail || '-')}</div>
-                    <div>${escapeHtml(invoiceCompanyMeta.websiteUrl || '-')} ${invoiceCompanyMeta.socialLinks ? `| ${escapeHtml(invoiceCompanyMeta.socialLinks)}` : ''}</div>
-                  </div>
-                </div>
-              </section>
-              <script>
-                setTimeout(() => {
-                  window.print();
-                  setTimeout(() => window.close(), 250);
-                }, 180);
-              <\/script>
-            </body>
-          </html>
-        `;
-
-        printWindow.document.open();
-        printWindow.document.write(wholesaleHtml);
-        printWindow.document.close();
-        printWindow.focus();
-        return;
-      }
-
-    const rowsHtml = tx.items
-      .map((itm) => {
-        const discountPct = Number(itm.discount || 0);
-        const lineUnit = Number(itm.sellingPrice || 0);
-        const lineQty = Number(itm.quantity || 0);
-        const gross = lineUnit * lineQty;
-        const percentAdjusted = gross * (1 - discountPct / 100);
-        const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-        const lineTotal = Math.max(0, percentAdjusted - lineDiscountAmount);
-        return `
-          <tr>
-            <td>${escapeHtml(itm.productName)}${isWholesaleShop ? `<div class="item-code">Product Code: ${escapeHtml(itm.productId)}</div>` : ''}</td>
-            <td class="right">${lineQty}</td>
-            <td class="right">${escapeHtml(formatMoney(lineUnit))}</td>
-            <td class="right">${discountPct > 0 ? `${discountPct.toFixed(0)}%` : '-'}${lineDiscountAmount > 0 ? ` / ${escapeHtml(formatMoney(lineDiscountAmount))}` : ''}</td>
-            <td class="right total">${escapeHtml(formatMoney(lineTotal))}</td>
-          </tr>
-        `;
-      })
-      .join('');
-
-    const itemDiscountTotal = tx.items.reduce((acc, itm) => {
-      const gross = Number(itm.sellingPrice || 0) * Number(itm.quantity || 0);
-      const percentAdjusted = gross * (1 - Number(itm.discount || 0) / 100);
-      const lineDiscountAmount = Math.min(percentAdjusted, Number(itm.discountAmount || 0));
-      return acc + (gross - Math.max(0, percentAdjusted - lineDiscountAmount));
-    }, 0);
-
-    const totalUnits = tx.items.reduce((acc, itm) => acc + Number(itm.quantity || 0), 0);
-    const wholesaleTermNote = tx.paymentMethod === 'Credit Account'
-      ? 'Credit settlement is governed by your wholesale credit agreement.'
-      : 'Payment is due as per agreed wholesale purchase terms.';
-
-    const discountBlock = tx.discountAmount > 0
-      ? `
-        <div class="row discount">
-          <span>Manual Discount</span>
-          <strong>-${escapeHtml(formatMoney(tx.discountAmount))}</strong>
-        </div>
-      `
-      : '';
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Invoice ${escapeHtml(tx.invoiceNumber)}</title>
-          <style>
-              @page { size: auto; margin: 12mm; }
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #ffffff; }
-            .bill { border: 1px solid #dbe4f0; border-radius: 18px; overflow: hidden; }
-            .hero { padding: 22px 24px 18px; background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 55%, #fff7ed 100%); border-bottom: 1px solid #dbe4f0; }
-            .top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
-            .eyebrow { display: inline-block; margin-bottom: 10px; padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
-            .eyebrow.wholesale { background: #ffedd5; color: #c2410c; }
-            .brand h1 { margin: 0; font-size: 26px; letter-spacing: 0.02em; }
-            .brand p { margin: 3px 0; color: #475569; font-size: 12px; }
-            .meta { min-width: 220px; padding: 14px 16px; background: rgba(255,255,255,0.85); border: 1px solid #dbe4f0; border-radius: 14px; }
-            .meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
-            .meta .label { color: #64748b; font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
-            .meta .value { font-weight: 700; margin-top: 3px; font-size: 13px; }
-            .content { padding: 18px 24px 22px; }
-            .sub { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 18px; }
-            .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px; }
-            .card .k { color: #64748b; font-size: 10px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.08em; }
-            .card .v { font-size: 13px; font-weight: 700; }
-            .wholesale-panel {
-              margin: 0 0 16px;
-              border: 1px solid #fed7aa;
-              background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%);
-              border-radius: 12px;
-              padding: 12px 14px;
-              display: grid;
-              grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 10px;
-            }
-            .wholesale-panel .k { color: #9a3412; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
-            .wholesale-panel .v { color: #7c2d12; font-size: 13px; font-weight: 700; }
-            table { width: 100%; border-collapse: collapse; margin-top: 8px; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; }
-            thead th { text-align: left; font-size: 11px; color: #475569; background: #eff6ff; border-bottom: 1px solid #dbe4f0; padding: 10px 12px; text-transform: uppercase; letter-spacing: 0.06em; }
-            tbody td { border-bottom: 1px solid #eef2f7; padding: 12px; font-size: 12px; vertical-align: top; }
-            tbody tr:nth-child(even) { background: #fcfdff; }
-            tbody tr:last-child td { border-bottom: none; }
-            .item-code { margin-top: 3px; color: #64748b; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; }
-            .right { text-align: right; }
-            .total { font-weight: 700; }
-            .summary-wrap { display: flex; justify-content: space-between; gap: 18px; margin-top: 18px; align-items: flex-start; }
-            .notes { flex: 1; padding: 14px 16px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; color: #7c2d12; }
-            .notes h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-            .notes p { margin: 0; font-size: 12px; line-height: 1.6; }
-            .summary { width: 320px; border: 1px solid #dbe4f0; border-radius: 14px; padding: 14px 16px; background: #ffffff; }
-            .row { display: flex; justify-content: space-between; font-size: 12px; padding: 5px 0; }
-            .discount { color: #059669; }
-            .grand { border-top: 1px solid #dbe4f0; margin-top: 8px; padding-top: 10px; font-size: 16px; font-weight: 800; color: #1e3a8a; }
-              .sign-row { display: grid; grid-template-columns: 1fr 140px; gap: 12px; margin-top: 14px; align-items: end; }
-              .signature-box { border-top: 1px solid #94a3b8; padding-top: 8px; text-align: center; color: #475569; font-size: 10px; }
-              .signature-line { font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 18px; color: #0f172a; margin-bottom: 3px; }
-              .stamp-box {
-                width: 140px;
-                height: 92px;
-                border: 2px dashed #ef4444;
-                border-radius: 16px;
-                color: #ef4444;
-                text-align: center;
-                padding: 10px 8px;
-                box-sizing: border-box;
-                transform: rotate(-8deg);
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
-                gap: 6px;
-                font-weight: 800;
-              }
-              .stamp-title { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
-              .stamp-shop { font-size: 13px; line-height: 1.1; }
-              .stamp-note { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
-            .foot { margin-top: 18px; color: #64748b; font-size: 11px; text-align: center; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
-            .brand-note { margin-top: 8px; color: #475569; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-          </style>
-        </head>
-        <body>
-          <section class="bill">
-            <div class="hero">
-              <header class="top">
-                <div class="brand">
-                  <span class="eyebrow ${isWholesaleShop ? 'wholesale' : ''}">${isWholesaleShop ? 'Wholesale Tax Invoice' : 'Customer Invoice'}</span>
-                  ${printableShopLogoMarkup}
-                  <h1>${escapeHtml(activeShopName)}</h1>
-                  <p>${escapeHtml(shopAddress)}</p>
-                  <p>Phone: ${escapeHtml(shopPhone)}</p>
-                </div>
-                <div class="meta">
-                  <div class="meta-grid">
-                    <div>
-                      <div class="label">Invoice No</div>
-                      <div class="value">${escapeHtml(tx.invoiceNumber)}</div>
-                    </div>
-                    <div>
-                      <div class="label">Issued At</div>
-                      <div class="value">${escapeHtml(new Date(tx.date).toLocaleString())}</div>
-                    </div>
-                    <div>
-                      <div class="label">Customer</div>
-                      <div class="value">${escapeHtml(tx.customerName)}</div>
-                    </div>
-                    <div>
-                      <div class="label">Phone</div>
-                      <div class="value">${escapeHtml(tx.customerPhone || '-')}</div>
-                    </div>
-                    <div style="grid-column: span 2;">
-                      <div class="label">Address</div>
-                      <div class="value">${escapeHtml(tx.customerAddress || '-')}</div>
-                    </div>
-                    <div>
-                      <div class="label">Payment</div>
-                      <div class="value">${escapeHtml(tx.paymentMethod)}</div>
-                    </div>
-                  </div>
-                </div>
-              </header>
-            </div>
-
-            <div class="content">
-              <div class="sub">
-                <div class="card"><div class="k">Cashier</div><div class="v">${escapeHtml(tx.cashierName)}</div></div>
-                <div class="card"><div class="k">Line Items</div><div class="v">${escapeHtml(String(tx.items.length))}</div></div>
-                <div class="card"><div class="k">Total Units</div><div class="v">${escapeHtml(String(totalUnits))}</div></div>
-                <div class="card"><div class="k">Tax Rate</div><div class="v">${escapeHtml(`${taxConfig.taxRate.toFixed(1)}%`)}</div></div>
-                <div class="card"><div class="k">Currency</div><div class="v">LKR / Rs.</div></div>
-              </div>
-
-              ${isWholesaleShop ? `
-                <div class="wholesale-panel">
-                  <div>
-                    <div class="k">Buyer Phone</div>
-                    <div class="v">${escapeHtml(tx.customerPhone || '-')}</div>
-                  </div>
-                  <div>
-                    <div class="k">Buyer Address</div>
-                    <div class="v">${escapeHtml(tx.customerAddress || '-')}</div>
-                  </div>
-                  <div>
-                    <div class="k">Trade Terms</div>
-                    <div class="v">${escapeHtml(wholesaleTermNote)}</div>
-                  </div>
-                </div>
-              ` : ''}
-
-              <table>
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th class="right">Qty</th>
-                    <th class="right">Unit</th>
-                    <th class="right">Discount</th>
-                    <th class="right">Line Total</th>
-                  </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-              </table>
-
-              <div class="summary-wrap">
-                <div class="notes">
-                  <h3>${isWholesaleShop ? 'Wholesale Notes' : 'Billing Notes'}</h3>
-                  <p>${isWholesaleShop ? `This invoice is generated for wholesale supply. ${escapeHtml(wholesaleTermNote)} Goods once delivered are subject to agreed return and shortage policies.` : 'Thank you for your business. Please keep this invoice for warranty claims, returns, and accounting reference.'}</p>
-                </div>
-                <div class="summary">
-                  ${itemDiscountTotal > 0 ? `<div class="row discount"><span>Item Discounts</span><strong>-${escapeHtml(formatMoney(itemDiscountTotal))}</strong></div>` : ''}
-                  <div class="row"><span>Subtotal</span><strong>${escapeHtml(formatMoney(tx.subtotal))}</strong></div>
-                  ${discountBlock}
-                  <div class="row"><span>Tax</span><strong>${escapeHtml(formatMoney(tx.tax))}</strong></div>
-                  <div class="row grand"><span>Total</span><strong>${escapeHtml(formatMoney(tx.total))}</strong></div>
-                  ${tx.paymentMethod === 'Cash' ? `<div class="row"><span>Cash Received</span><strong>${escapeHtml(formatMoney(tx.cashReceived ?? tx.total))}</strong></div><div class="row"><span>Change Due</span><strong>${escapeHtml(formatMoney(tx.changeDue ?? 0))}</strong></div>` : ''}
-                  <div class="sign-row">
-                    <div class="signature-box">
-                      <div class="signature-line">__________________</div>
-                      <div>Authorized Signature</div>
-                      <div>${escapeHtml(activeShopName)}</div>
-                    </div>
-                    <div class="stamp-box">
-                      <div class="stamp-title">Shop Stamp</div>
-                      <div class="stamp-shop">${escapeHtml(activeShopName)}</div>
-                      <div class="stamp-note">PAID / AUTHORIZED</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <footer class="foot">
-                ${isWholesaleShop ? 'Wholesale supply invoice generated on A4 format. Please validate delivered quantities and terms at receipt.' : 'Returns accepted within 14 days with valid receipt.'} Printed by ${escapeHtml(activeShopName)}.
-              </footer>
-
-              <div style="display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px;">
-                <div style="border-top: 1px solid #64748b; padding-top: 6px; text-align: center; font-size: 10px; color: #475569;">
-                  <div style="font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 18px; color: #111827; line-height: 1; margin-bottom: 2px;">__________________</div>
-                  <div>Authorized Signature</div>
-                  <div>${escapeHtml(activeShopName)}</div>
-                </div>
-                <div style="border: 2px dashed #ef4444; border-radius: 14px; color: #ef4444; text-align: center; padding: 10px 8px; font-weight: 800; transform: rotate(-4deg);">
-                  <div style="font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;">Shop Stamp</div>
-                  <div style="font-size: 12px; line-height: 1.1; margin: 4px 0;">${escapeHtml(activeShopName)}</div>
-                  <div style="font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;">PAID / AUTHORIZED</div>
-                </div>
-              </div>
-            </div>
-          </section>
-          <script>
-            setTimeout(() => {
-              window.print();
-              setTimeout(() => window.close(), 250);
-            }, 180);
-          <\/script>
-        </body>
-      </html>
-    `;
-
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
+    // A4 uses the persisted invoice PDF only. Never fall back to dashboard HTML.
+    const query=new URLSearchParams({
+      copyType:printMeta?.copyType||'Original Copy',
+      printSequence:String(printMeta?.printSequence||1),
+      watermark:printMeta?.watermarkText||'ORIGINAL COPY',
+      secondaryWatermark:printMeta?.secondaryWatermarkText||'',
+      printedBy:printMeta?.printedBy||'',
+      printedAt:printMeta?.printedAt||'',
+    });
+    try {
+      const response=await authFetch(`/api/transactions/${tx.id}/pdf?${query.toString()}`);
+      if(!response.ok || !response.headers.get('Content-Type')?.includes('application/pdf')) throw new Error('Unable to generate invoice PDF');
+      const blob=await response.blob();
+      const url=URL.createObjectURL(blob);
+      if(printWindow.closed){URL.revokeObjectURL(url);notify.warning('Invoice saved. Open its PDF from invoice history.');return;}
+      printWindow.location.replace(url);
+      printWindow.focus();
+      const release=window.setInterval(()=>{if(printWindow.closed){URL.revokeObjectURL(url);window.clearInterval(release);}},5000);
+    } catch(error) {
+      printWindow.close();
+      notify.warning('Invoice saved, but PDF could not open. Use Download PDF from invoice history; do not create another sale.');
+    }
   };
 
   // Process core checkout
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
-    if (paymentMethod === 'Cash' && numericCashReceived < total) {
-      alert(`Cash received must be at least ${formatMoney(total)}.`);
+    if (cart.length === 0 || isSubmitting || checkoutUncertain) return;
+    const issue = stockIssue(cart);
+    if (issue) { notify.warning(issue); setIsReviewOpen(false); return; }
+    if (!selectedCustomer.id || !customers.some((customer) => customer.id === selectedCustomer.id && customer.id !== 'cust-walkin' && customer.shopId === taxConfig.activeShopId)) {
+      notify.warning('Select a registered wholesale customer shop before creating the invoice. Add new shops in Customers.');
       return;
     }
-    const printWindow = createPrintWindow();
-    setIsSubmitting(true);
-
-    try {
-      const response = await authFetch('/api/transactions', {
-        method: 'POST',
-        body: JSON.stringify({
+    if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
+      notify.warning('Select the Sales Representative responsible for this invoice.');
+      return;
+    }
+    if (paymentMethod === 'Credit Account' && !creditAccountAllowed) { notify.warning('Customer credit limit must cover this invoice.'); return; }
+    if(invalidCreditTerms){notify.warning('Enter a valid agreed due date and payment agreement reference, or leave both blank.');return;}
+    if(needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0)){notify.warning('Select an active receiving account for the paid invoice.');return;}
+    if (paymentMethod !== 'Credit Account' && !window.confirm('Confirm full payment of '+formatMoney(total)+' has already been received. Otherwise choose Pay later.')) return;
+    const requestBody=JSON.stringify({requestId:crypto.randomUUID(),
           cartItems: cart,
           customerId: selectedCustomer.id,
           customerName: (billingCustomerName || '').trim() || selectedCustomer.name,
           customerPhone: (billingCustomerPhone || '').trim() || undefined,
           customerAddress: (billingCustomerAddress || '').trim() || undefined,
-          cashierName: cashierName,
+          salesRepId: selectedSalesRepId,
           paymentMethod: paymentMethod,
+          destinationAccountId:needsInvoiceAccount?selectedInvoiceAccount?.id:undefined,
+          creditTerms:activeCreditTerms&&creditDueDate?{dueDate:creditDueDate,evidence:creditEvidence.trim()}:undefined,
           paymentStatus: paymentMethod === 'Credit Account'
             ? 'CREDIT SALE'
-            : ((Number(cashReceived || 0) <= 0 && paymentMethod === 'Cash')
-              ? 'UNPAID'
-              : ((paymentMethod === 'Cash' && Number(cashReceived || 0) < total) ? 'PARTIALLY PAID' : 'PAID')),
-          wholesaleMeta: isWholesaleShop
-            ? {
+            : 'PAID',
+          wholesaleMeta: {
+            invoiceDiscountMode: discountMode,
+            invoiceDiscountPercent: discountMode === 'percent' ? Math.min(100, normalizedDiscountInput) : undefined,
+            ...(isWholesaleShop ? {
                 transportCharges: Number(wholesaleMetaDraft.transportCharges || 0),
                 deliveryCharges: Number(wholesaleMetaDraft.deliveryCharges || 0),
                 warrantyInformation: wholesaleMetaDraft.warrantyInformation.trim() || undefined,
@@ -1469,15 +1305,40 @@ export default function POSView({
                 batchNumber: wholesaleMetaDraft.batchNumber.trim() || undefined,
                 supplierReference: wholesaleMetaDraft.supplierReference.trim() || undefined,
                 deliveryStatus: wholesaleMetaDraft.deliveryStatus.trim() || undefined,
-              }
-            : undefined,
+              } : {}),
+          },
           discountAmount: cashDiscount,
-          cashReceived: paymentMethod === 'Cash' ? numericCashReceived : undefined,
-        }),
+          cashReceived: paymentMethod === 'Cash' ? total : undefined,
+
+    });
+    if (!persistDraft(true,requestBody)) {
+      notify.error('Unable to protect this invoice draft. Check browser storage before checkout.');
+      return;
+    }
+    setPendingCheckoutBody(requestBody);
+    await submitCheckout(requestBody);
+  };
+  const submitCheckout=async(requestBody:string)=>{
+    if(checkoutLock.current)return;
+    checkoutLock.current=true;
+    setCheckoutUncertain(true);
+    const printWindow = createPrintWindow();
+    setIsSubmitting(true);
+
+    try {
+      const response = await authFetch('/api/transactions', {
+        method: 'POST',
+        body: requestBody,
       });
 
       if (response.ok) {
+        // The sale is committed; never restore it as an unfinished invoice.
         const completedTx = await response.json();
+        if(!completedTx?.id||!completedTx?.invoiceNumber)throw Error('Invalid invoice confirmation.');
+        try { sessionStorage.removeItem(draftKey); } catch { /* exact replay remains safe */ }
+        setPendingCheckoutBody(null);
+        setCart([]);
+        setCheckoutUncertain(false);
         let invoiceQrData = '';
         try {
           const qrRes = await authFetch('/api/qr/generate-invoice', {
@@ -1497,12 +1358,14 @@ export default function POSView({
         }
 
         const txWithQr: SalesTransaction = { ...completedTx, invoiceQrData };
+        setIsReviewOpen(false);
         setReceiptModel(txWithQr);
+        notify.success(`Invoice ${completedTx.invoiceNumber} saved for ${completedTx.customerName}.`);
         setSelectedCopyType('Duplicate Copy');
         try {
           const printAudit = await logInvoicePrint(txWithQr, 'Original Copy');
           await loadInvoicePrintHistory(txWithQr);
-          printReceiptInvoice(txWithQr, printWindow, {
+          await printReceiptInvoice(txWithQr, printWindow, {
             copyType: printAudit.printLog.copyType,
             watermarkText: printAudit.printSummary.watermarkText,
             secondaryWatermarkText: printAudit.printSummary.secondaryWatermarkText,
@@ -1512,46 +1375,43 @@ export default function POSView({
             printedAt: printAudit.printLog.printedAt,
           });
         } catch {
-          printReceiptInvoice(txWithQr, printWindow);
-          alert('Sale saved, but print audit log failed. Printed without tracked copy label.');
+          await printReceiptInvoice(txWithQr, printWindow);
+          notify.warning('Sale saved, but print audit log failed. Printed without tracked copy label.');
         }
+        // Require an explicit representative for each new invoice; another rep may handle the next sale.
+        setSelectedSalesRepId('');
         // Clear active cart states
         setCart([]);
-        setCashDiscount(0);
-        setCashReceived('');
+        setDiscountMode('amount');
+        setDiscountInput('0');
+        setPaymentMethod('Credit Account');setCreditDueDate('');setCreditEvidence('');
         onRefreshDb(); // Reload stock amounts parent state
       } else {
+        // Keep the exact request until confirmed or manually reconciled; a retry must never create a new ID.
         if (printWindow) {
           printWindow.close();
         }
         const data = await response.json();
-        alert('POS Checkout error: ' + data.error);
+        notify.error('POS Checkout error: ' + data.error);
       }
     } catch (err) {
       if (printWindow) {
         printWindow.close();
       }
-      alert('Network failure processing transaction');
+      notify.error('Network failure processing transaction');
     } finally {
+      checkoutLock.current=false;
       setIsSubmitting(false);
     }
   };
 
-  // Quick action: quick add complementary suggestion item
-  const handleAddSuggested = (productId: string) => {
-    const match = products.find((p) => p.id === productId);
-    if (match) {
-      addToCart(match, match.variants?.[0]);
-    }
-  };
-
   return (
-    <div className="flex flex-col space-y-4 min-h-[calc(100vh-140px)] select-none motion-safe:animate-fade-in">
+    <div className="flex flex-col gap-3 min-h-0 select-none motion-safe:animate-fade-in">
       {/* Mobile view selector (visible only on lg:hidden) */}
       <div className="lg:hidden flex border border-slate-200 bg-white rounded-xl p-1 shadow-2xs shrink-0">
         <button
           type="button"
-          onClick={() => setActiveMobileView('catalog')}
+          onClick={() => { setExpandedInvoice(false); setActiveMobileView('catalog'); }}
           className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 ${
             activeMobileView === 'catalog'
               ? 'bg-indigo-600 text-white shadow-xs'
@@ -1575,17 +1435,17 @@ export default function POSView({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-0">
-        {/* LEFT: Products, Searches, Filters (7 Cols) */}
-        <div className={`lg:col-span-7 flex flex-col space-y-4 ${activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0 items-start">
+        {/* Primary product workspace: 8 of 12 desktop columns */}
+        <div className={`lg:col-span-7 min-w-0 flex-col space-y-3 ${expandedInvoice ? 'hidden' : activeMobileView === 'catalog' ? 'flex' : 'hidden lg:flex'}`}>
         {/* Search header bar */}
-        <div className="bg-white p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row gap-3 items-center justify-between">
-          <div className="relative w-full sm:w-80">
+        <div className="bg-white px-3 py-2 rounded-xl border border-slate-100 flex flex-wrap gap-2 items-center justify-between">
+          <div className="relative min-w-[190px] flex-1">
             <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
             <input
               id="pos-search-input"
               type="text"
-              placeholder="Search Name, SKU, or Barcode..."
+              placeholder="Find a product, SKU or barcode..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 bg-slate-50 text-slate-800 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-sans"
@@ -1642,21 +1502,23 @@ export default function POSView({
         </div>
 
         {/* Dynamic Products Grid */}
-        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto max-h-[580px] pr-1">
+        <div id="pos-product-grid" className="grid grid-cols-2 sm:grid-cols-3 2xl:grid-cols-4 gap-2 auto-rows-min overflow-y-auto max-h-[min(72dvh,850px)] pr-1">
           {filteredProducts.map((p) => {
             const selectedVariant = getSelectedVariant(p);
-            const activeStock = Number(selectedVariant?.quantity ?? p.quantity);
+            const unitAvailability = sellingUnitAvailability(p);
+            const displayUnit = unitAvailability.find(row=>row.unit.id===getDefaultSellingUnit(p)?.id && row.remaining>0) || unitAvailability.find(row=>row.remaining>0) || unitAvailability[0];
+            const activeStock = displayUnit ? displayUnit.remaining : availableToAdd(p, selectedVariant);
             const activeReorderLevel = Number(selectedVariant?.reorderLevel ?? p.reorderLevel);
-            const activePrice = Number(selectedVariant?.sellingPrice ?? p.sellingPrice);
-            const isLowStock = activeStock <= activeReorderLevel;
+            const activePrice = Number(displayUnit?.unit.sellingPrice ?? selectedVariant?.sellingPrice ?? p.sellingPrice);
+            const isLowStock = (p.sharedStockUnits ? unitAvailability.reduce((max,row)=>Math.max(max,row.remaining*row.unit.baseUnits),0) : activeStock) <= activeReorderLevel;
             const isOut = activeStock <= 0;
 
             return (
               <div
                 key={p.id}
                 id={`pos-product-${p.id}`}
-                onClick={() => !isOut && addToCart(p, selectedVariant)}
-                className={`bg-white rounded-xl border p-3 flex flex-col justify-between cursor-pointer group transition-all duration-150 relative ${
+                onClick={() => openUnitPicker(p, selectedVariant)}
+                className={`bg-white rounded-xl border p-2.5 flex flex-col justify-between cursor-pointer group transition-colors duration-150 relative min-w-0 ${
                   isOut
                     ? 'border-slate-200 bg-slate-50 opacity-55 cursor-not-allowed'
                     : isLowStock
@@ -1672,15 +1534,17 @@ export default function POSView({
                   </span>
                 ) : null}
 
-                <div>
-                  <span className="text-[9px] font-mono font-medium text-slate-400 uppercase">
+                <div className="flex items-start gap-2 min-w-0">
+                  <BillingProductPhoto product={p}/>
+                  <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-semibold text-slate-500 uppercase">
                     {p.category}
                   </span>
-                  <h5 className="font-sans font-semibold text-slate-900 text-xs mt-1 leading-snug group-hover:text-indigo-600 transition line-clamp-2">
+                  <h5 className="font-sans font-bold text-slate-900 text-xs mt-0.5 leading-snug group-hover:text-indigo-600 transition line-clamp-2">
                     {p.name}
                   </h5>
-                  <p className="font-mono text-[9px] text-slate-400 mt-1">
-                    {p.brand} | SKU: {p.sku}
+                  <p className="text-[10px] text-slate-500 mt-1 break-all line-clamp-2">
+                    {p.sku}
                     {isAdminSeller && p.internalCode && (
                       <span className="ml-2 px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded font-bold flex items-center gap-1 inline-flex">
                         <Eye className="w-3 h-3" />
@@ -1707,14 +1571,16 @@ export default function POSView({
                       </select>
                     </div>
                   )}
+                  {p.sharedStockUnits && <span className="mt-1 block text-[10px] font-semibold text-indigo-600">{p.sharedStockUnits.units.map(u=>u.label).join(' / ')}</span>}
+                  </div>
                 </div>
 
-                <div className="mt-4 pt-2 border-t border-slate-50 flex items-center justify-between">
+                <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-1 items-center justify-between">
                   <span className="text-sm font-bold text-slate-950 font-mono">
-                    {formatMoney(activePrice)}
+                    {formatMoney(activePrice)}{displayUnit && <span className="ml-1 text-[10px] font-normal">/ {displayUnit.unit.label}</span>}
                   </span>
                   <span
-                    className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold ${
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
                       isOut
                         ? 'bg-rose-100 text-rose-700'
                         : isLowStock
@@ -1722,7 +1588,7 @@ export default function POSView({
                         : 'bg-slate-100 text-slate-600'
                     }`}
                   >
-                    {isOut ? 'Out of Stock' : `Qty: ${activeStock}`}
+                    {isOut ? 'No stock left to add' : unitAvailability.length ? unitAvailability.map(row=>`${row.unit.label}: ${row.remaining}`).join(' · ') : `Available: ${activeStock}`}
                   </span>
                 </div>
               </div>
@@ -1732,72 +1598,34 @@ export default function POSView({
           {filteredProducts.length === 0 && (
             <div className="col-span-full py-16 text-center bg-white rounded-xl border border-dashed border-slate-200 text-slate-400">
               <BadgeAlert className="w-8 h-8 mx-auto text-slate-300" />
-              <p className="text-xs font-semibold mt-2">No matching products found</p>
-              <p className="text-[10px] text-slate-500 mt-1">Refine your search parameters or check your filters</p>
+              <p className="text-sm font-semibold mt-2 text-slate-700">{products.length === 0 ? 'No products registered yet' : 'No matching products found'}</p>
+              <p className="mt-1 text-xs text-slate-500">{products.length === 0
+                ? 'Add the first product in Products before creating an invoice.'
+                : 'Try clearing the search or selecting All categories.'}</p>
+              {products.length > 0 && (searchTerm || selectedCategory !== 'All') && (
+                <button type="button" onClick={() => {setSearchTerm('');setSelectedCategory('All');}}
+                  className="mt-3 rounded-lg border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">
+                  Clear product filters
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {/* AI Cross Selling Widget (Only shows up when items are in cart) */}
-        {cart.length > 0 && (
-          <div id="ai-smart-suggest-section" className="bg-slate-900 text-slate-100 rounded-xl p-4 border border-slate-800 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full pointer-events-none"></div>
-
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
-              <h4 className="text-xs font-sans font-bold text-slate-100 uppercase tracking-wider">
-                Partner AI Companion Sales Matches
-              </h4>
-            </div>
-
-            {isLoadingCross ? (
-              <div className="text-center py-3 text-slate-400 text-xs flex items-center justify-center gap-2 font-mono">
-                <div className="h-3 w-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
-                Analyzing customer builder cycle trends...
-              </div>
-            ) : aiCrossSells.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                {aiCrossSells.map((sug: any) => (
-                  <div
-                    key={sug.productId}
-                    onClick={() => handleAddSuggested(sug.productId)}
-                    className="p-2.5 bg-slate-950/70 hover:bg-slate-950 rounded-lg border border-slate-800 shadow-xs hover:border-indigo-400/40 cursor-pointer text-left transition group"
-                  >
-                    <p className="font-sans font-semibold text-slate-200 text-[11px] truncate group-hover:text-indigo-400">
-                      {sug.name}
-                    </p>
-                    <p className="text-[9px] text-slate-500 font-mono mt-0.5 line-clamp-2">
-                      {sug.reason}
-                    </p>
-                    <div className="mt-2 flex items-center justify-between text-[10px]">
-                      <span className="font-mono text-indigo-400 font-bold">{formatMoney(Number(sug.sellingPrice || 0))}</span>
-                      <span className="text-slate-400 uppercase font-bold tracking-tight text-[8px] flex items-center gap-0.5">
-                        <PlusSquare className="w-3 h-3 text-indigo-400" /> Quick Add
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[11px] text-slate-400 font-sans">
-                Cart contains specialized builder elements. Cross-selling predictions standby.
-              </p>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* RIGHT: Register Cart panel & Checkout Checkout (5 Cols) */}
-      <div className={`lg:col-span-5 bg-white rounded-xl border border-slate-200 shadow-lg p-4 flex flex-col justify-between min-h-[550px] ${activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
-        <div>
+      {/* Compact order summary: 4 of 12 desktop columns */}
+      <div className={`${expandedInvoice ? 'lg:col-span-12' : 'lg:col-span-5'} min-w-0 bg-white rounded-xl border border-slate-200 shadow-sm p-3 flex-col min-h-[400px] lg:h-[calc(100dvh-115px)] lg:min-h-[440px] lg:overflow-hidden ${expandedInvoice || activeMobileView === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className="shrink-0">
           {/* Active Operator Banner */}
-          <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 mb-4 text-xs font-sans">
+          <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 mb-2 text-xs font-sans">
             <div>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Terminal Register 01</p>
-              <p className="font-medium text-slate-800">Cashier: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
+              <p className="text-xs font-bold text-slate-900">Current invoice</p>
+              <p className="font-medium text-slate-800">Operator: <span className="text-indigo-600 font-semibold">{cashierName}</span></p>
             </div>
             <div className="p-1 px-2.5 bg-slate-50 rounded-md border border-slate-150 text-slate-600 text-[11px] font-mono">
-              Mode: Check-out
+              <button type="button" aria-pressed={expandedInvoice} onClick={() => { setExpandedInvoice(v => !v); setSelectedCategory('All'); setSearchTerm(''); setShowInvoiceProducts(false); }} className="hidden lg:inline-flex font-semibold text-indigo-700 hover:underline">{expandedInvoice ? 'Quick billing' : 'Professional invoice'}</button>
+              <span className="lg:hidden">Invoice</span>
             </div>
           </div>
 
@@ -1808,120 +1636,77 @@ export default function POSView({
             </div>
           )}
 
-          {/* Customer Selector dropdown & Balance */}
-          <div className="bg-slate-50 p-3 rounded-lg border border-slate-150 mb-4 grid grid-cols-1 gap-2.5 text-xs font-sans">
-            <div>
-              <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">
-                Link Customer profile
-              </label>
-              <select
-                id="pos-customer-select"
-                value={selectedCustomer.id}
-                onChange={(e) => {
-                  const cust = customers.find((c) => c.id === e.target.value);
-                  if (cust) setSelectedCustomer(cust);
-                }}
-                className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-              >
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} {c.phone && `(${c.phone})`}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 gap-2">
-              <div>
-                <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Customer Name</label>
-                <input
-                  id="pos-billing-customer-name"
-                  type="text"
-                  value={billingCustomerName}
-                  onChange={(e) => setBillingCustomerName(e.target.value)}
-                  placeholder="Enter customer name"
-                  className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Phone Number</label>
-                  <input
-                    id="pos-billing-customer-phone"
-                    type="text"
-                    value={billingCustomerPhone}
-                    onChange={(e) => setBillingCustomerPhone(e.target.value)}
-                    placeholder="e.g. +94 77 123 4567"
-                    className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] uppercase font-mono tracking-wider text-slate-500 mb-1">Home Address</label>
-                  <input
-                    id="pos-billing-customer-address"
-                    type="text"
-                    value={billingCustomerAddress}
-                    onChange={(e) => setBillingCustomerAddress(e.target.value)}
-                    placeholder="Customer home address"
-                    className="w-full bg-white border border-slate-250 p-1.5 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {selectedCustomer.id !== 'cust-walkin' && (
-              <div className="space-y-2 bg-slate-100 p-2 rounded text-[11px] text-slate-700">
-                <div className="flex justify-between items-center">
-                  <span>Loyalty Balance: <strong className="font-mono text-indigo-600">{selectedCustomer.loyaltyBalance} pts</strong></span>
-                  <span>Prior Transactions: <strong>{selectedCustomer.purchaseCount}</strong></span>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
-                  <span className="flex items-center gap-1 text-slate-600">
-                    <BookUser className="w-3.5 h-3.5 text-amber-500" /> Credit Limit: <strong className="font-mono">{formatMoney(creditLimit)}</strong>
-                  </span>
-                  <span className={`font-mono font-semibold ${currentCreditBalance > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    Balance: {formatMoney(currentCreditBalance)}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === 'Credit Account' && (
-              <div className={`rounded-lg border px-3 py-2 text-[11px] ${creditAccountAllowed ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
-                {selectedCustomer.id === 'cust-walkin'
-                  ? 'Credit account requires a saved customer profile.'
-                  : creditLimit <= 0
-                  ? 'This customer has no credit limit configured.'
-                  : creditExceeded
-                  ? `Credit limit exceeded. Projected balance ${formatMoney(projectedCreditBalance)} is above limit ${formatMoney(creditLimit)}.`
-                  : `This sale will post to customer credit. Projected balance: ${formatMoney(projectedCreditBalance)} of ${formatMoney(creditLimit)}.`}
-              </div>
-            )}
+          {/* Required bill assignment is shown in summary, edited in focused dialogs. */}
+          <div className="mb-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2" aria-label="Invoice assignment">
+            <button type="button" id="pos-open-customer" onClick={() => {setCustomerSearch('');setDraftCustomerId(selectedCustomer.id === 'cust-walkin' ? '' : selectedCustomer.id);setSetupDialog('customer');}}
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">1 · Customer shop *</span>
+              <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? selectedCustomer.name : 'Choose customer shop'}</span>
+              <span className="mt-0.5 block text-[10px] text-indigo-600">{selectedCustomer.id && selectedCustomer.id !== 'cust-walkin' ? 'Change shop' : 'Tap to select shop'} →</span>
+            </button>
+            <button type="button" id="pos-open-representative" onClick={() => {setDraftRepId(selectedSalesRepId);setSetupDialog('representative');}}
+              className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left transition hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-500">
+              <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">2 · Sales Representative *</span>
+              <span className="mt-0.5 block break-words text-xs font-semibold text-slate-900">{activeSalesReps.find(rep=>rep.id===selectedSalesRepId)?.name || 'Choose representative'}</span>
+              <span className="mt-0.5 block text-[10px] text-indigo-600">{selectedSalesRepId ? 'Change representative' : 'Tap to select rep'} →</span>
+            </button>
           </div>
-
-          {/* Cart Header */}
-          <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-50 pb-2.5 font-sans mb-3">
-            <span>Product</span>
-            <div className="flex items-center gap-12">
-              <span>Qty</span>
-              <span>Total</span>
+          {expandedInvoice && (
+            <div className="relative mb-2 flex gap-2">
+              <input id="pos-invoice-product-search" aria-label="Find product for invoice" placeholder="Search product, SKU or barcode..." value={searchTerm}
+                onFocus={() => { setSelectedCategory('All'); setShowInvoiceProducts(true); }}
+                onChange={event => { setSearchTerm(event.target.value); setShowInvoiceProducts(true); }}
+                onKeyDown={event => { if (event.key === 'Escape') setShowInvoiceProducts(false); }}
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-xs focus:border-amber-500" />
+              <button type="button" onClick={() => { setSelectedCategory('All'); setShowInvoiceProducts(v => !v); }} className="rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white">Browse</button>
+              <button type="button" onClick={() => { setShowInvoiceProducts(false); setShowQRFeature(true); }} className="rounded-lg border border-slate-200 px-3 text-xs font-semibold"><QrCode className="inline h-4 w-4" /> Scan</button>
+              {showInvoiceProducts && (
+                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 shadow-xl">
+                  <div className="flex justify-between items-center px-2 py-1 text-xs text-slate-500"><span>{filteredProducts.length} matching products</span><button type="button" onClick={() => setShowInvoiceProducts(false)} aria-label="Close product results"><X className="h-4 w-4" /></button></div>
+                  {filteredProducts.slice(0, 30).map(product => {
+                    const variant = getSelectedVariant(product);
+                    const unitAvailability = sellingUnitAvailability(product);
+                    const displayUnit = unitAvailability.find(row=>row.unit.id===getDefaultSellingUnit(product)?.id && row.remaining>0) || unitAvailability.find(row=>row.remaining>0) || unitAvailability[0];
+                    const stock = displayUnit ? displayUnit.remaining : availableToAdd(product, variant);
+                    return <div key={product.id} className="flex flex-wrap items-center gap-2 border-t border-slate-100 p-2 text-xs">
+                      <BillingProductPhoto product={product} compact/><span className="flex-1 min-w-[120px] font-medium">{product.name}<span className="block text-slate-500">{product.sku} · {stock > 0 ? (unitAvailability.length ? unitAvailability.map(row=>`${row.unit.label}: ${row.remaining}`).join(' · ') : 'Available to add: '+stock) : 'No stock left to add'}</span></span>
+                      {!!product.variants?.length && <select aria-label={`Variant for ${product.name}`} value={variant?.id || ''} onChange={event => setSelectedVariantByProduct(old => ({...old, [product.id]: event.target.value}))} className="max-w-[160px] rounded border px-1 py-1">{product.variants.map(v => <option key={v.id} value={v.id}>{v.name} ({v.unit})</option>)}</select>}
+                      <span>{formatMoney(Number(displayUnit?.unit.sellingPrice ?? variant?.sellingPrice ?? product.sellingPrice))}{displayUnit && ` / ${displayUnit.unit.label}`}</span>
+                      <button type="button" disabled={stock <= 0} onClick={() => { if(openUnitPicker(product, variant)) { setSearchTerm(''); setShowInvoiceProducts(false); } }} className="rounded bg-amber-400 px-3 py-1.5 font-semibold text-slate-900 disabled:opacity-40">{stock <= 0 ? "Unavailable" : "Add"}</button>
+                    </div>;
+                  })}
+                  {filteredProducts.length === 0 && <p className="p-3 text-xs text-slate-500">No matching products.</p>}
+                  {filteredProducts.length > 30 && <p className="p-2 text-xs text-slate-500">Refine search to see more results.</p>}
+                </div>
+              )}
             </div>
+          )}
+        </div>
+          {checkoutUncertain && !isSubmitting && <div role="alert" className="mb-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+            Previous checkout outcome is uncertain. Retry the original protected request, or reconcile it in Sales Reports.
+            <div className="mt-1 flex flex-wrap gap-2">
+              {pendingCheckoutBody?<button type="button" className="underline font-semibold" onClick={()=>void submitCheckout(pendingCheckoutBody)}>Retry exact invoice</button>:<button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Confirm you checked Sales Reports and this invoice was NOT saved.')) setCheckoutUncertain(false); }}>Invoice not saved — resume</button>}
+              <button type="button" className="underline font-semibold" onClick={() => { if (window.confirm('Discard this draft after confirming the sale was already saved?')) { setPendingCheckoutBody(null); setCart([]); setCheckoutUncertain(false); } }}>Already saved — discard draft</button>
+            </div>
+          </div>}
+          {/* Cart Header */}
+          <div className={`shrink-0 grid gap-2 text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2 mb-2 ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_110px_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
+            <span>Invoice items · {cart.length} lines</span>
+            {expandedInvoice && <><span className="hidden lg:block text-center">U/M</span><span className="hidden lg:block text-right">Unit price</span><span className="hidden lg:block text-center">Quantity</span><span className="hidden lg:block text-center">Disc %</span><span className="hidden lg:block text-center">Disc Rs.</span><span className="hidden lg:block text-right">Line total</span></>}
           </div>
 
           {/* Cart Scroll list */}
-          <div id="pos-cart-scroller" className="space-y-3.5 max-h-[290px] overflow-y-auto pr-1">
+          <div id="pos-cart-scroller" className="min-h-0 flex-1 overflow-y-auto space-y-1 pr-1">
             {cart.map((item) => {
               const lineKey = getCartKey(item);
-              const basePrice = Number(item.unitPrice ?? item.product.sellingPrice);
+              const basePrice = Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice);
               const pricing = getLinePricing(item);
 
               return (
-                <div key={lineKey} className="flex items-center justify-between text-xs font-sans">
+                <div key={lineKey} className={`grid gap-2 items-center border-b border-slate-100 py-1 text-xs font-sans ${expandedInvoice ? "lg:grid-cols-[minmax(0,1fr)_110px_105px_100px_75px_90px_115px]" : "grid-cols-1"}`}>
                   {/* description */}
-                  <div className="min-w-0 flex-1 pr-4">
-                    <p className="font-semibold text-slate-800 truncate" title={item.product.name}>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-800 break-words" title={item.product.name}>
                       {item.product.name}
                     </p>
                     {item.variantName && (
@@ -1929,40 +1714,28 @@ export default function POSView({
                         {item.variantName}{item.variantUnit ? ` (${item.variantUnit})` : ''}
                       </p>
                     )}
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono mt-0.5">
-                      <span>{formatMoney(basePrice)} ea</span>
+                    <button type="button"
+                      aria-label={`Edit invoice description for ${item.product.name}`}
+                      onClick={() => {setEditingDescriptionKey(lineKey);setDescriptionDraft(item.invoiceDescription || '');}}
+                      className="mt-1 block max-w-full break-words whitespace-normal text-left text-xs font-medium text-indigo-600 hover:underline">
+                      {item.invoiceDescription ? `Description: ${item.invoiceDescription}` : '+ Add invoice description'}
+                    </button>
+                    <div className={`flex items-center gap-1.5 text-xs text-slate-500 font-mono mt-0.5 ${expandedInvoice ? "lg:hidden" : ""}`}>
+                      <button type="button" disabled={!isAdminSeller} onClick={()=>openPriceEditor(item)} className="font-semibold text-indigo-700 disabled:text-slate-500">{formatMoney(basePrice)} / unit {isAdminSeller && "· Edit rate"}</button>{item.customUnitPrice!==undefined && <span className="text-amber-700">Custom</span>}
                       {pricing.percentDiscount > 0 && <span className="text-emerald-600">(-{pricing.percentDiscount}%)</span>}
                       {pricing.rupeeDiscount > 0 && <span className="text-emerald-600">(-{formatMoney(pricing.rupeeDiscount)})</span>}
                     </div>
 
-                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      <Ticket className="w-3 h-3 text-slate-400 shrink-0" />
-                      <span className="text-[9px] text-slate-400 uppercase">Disc%:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={item.discount}
-                        onChange={(e) => updateItemDiscount(lineKey, Number(e.target.value))}
-                        className="w-11 px-1 py-0.5 border border-slate-200 bg-white rounded text-[9px] text-slate-700 focus:outline-none"
-                      />
-                      <span className="text-[9px] text-slate-400 uppercase">Disc Rs:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.discountAmount || 0}
-                        onChange={(e) => updateItemDiscountAmount(lineKey, Number(e.target.value))}
-                        className="w-16 px-1 py-0.5 border border-slate-200 bg-white rounded text-[9px] text-slate-700 focus:outline-none"
-                      />
-                    </div>
                   </div>
 
+                  <div className="min-w-0"><label className="block text-[10px] text-slate-500 lg:sr-only">U/M</label>{item.product.sharedStockUnits ? <select aria-label={`Shared selling unit for ${item.product.name}`} value={item.sellingUnitId || ''} onChange={e=>changeSharedSellingUnit(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs">{item.product.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits})</option>)}</select> : item.product.variants?.length ? <select aria-label={`Selling unit for ${item.product.name}`} value={item.variantId || ''} onChange={e=>changeCartVariant(lineKey,e.target.value)} className="w-full rounded-md border border-slate-200 bg-white px-1 py-1.5 text-xs"><option value="" disabled>Select unit</option>{item.product.variants.map(v=><option key={v.id} value={v.id}>{v.unit || v.name} · {v.name}</option>)}</select> : <span className="text-xs text-slate-600">{item.variantUnit && item.variantUnit !== 'Unit' ? item.variantUnit : inferUnitLabel(item.product.name)} <span className="block text-[10px] text-slate-400" title="Configure shared selling units in Product Catalog to enable Box/Piece conversion">Fixed U/M</span></span>}</div>
+                  {expandedInvoice && <div className="hidden lg:block text-right font-mono pt-2"><button type="button" disabled={!isAdminSeller} onClick={()=>openPriceEditor(item)} className="text-indigo-700 disabled:text-slate-700">{formatMoney(basePrice)}{isAdminSeller && <span className="block text-[10px]">Edit rate</span>}</button>{item.customUnitPrice!==undefined && <span className="block text-[10px] text-amber-700">Custom</span>}</div>}
                   {/* selectors and quantities */}
-                  <div className="flex items-center gap-6 shrink-0">
-                    <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-md p-1">
+                  <div className={`flex flex-wrap items-center justify-between gap-2 min-w-0 ${expandedInvoice ? "lg:contents" : ""}`}>
+                    <div className={`flex items-center justify-center gap-1 bg-slate-50 border border-slate-200 rounded-md p-0.5 ${expandedInvoice ? "lg:bg-white lg:border-0" : ""}`}>
                       <button
                         type="button"
+                        aria-label={`Decrease quantity for ${item.product.name}`}
                         onClick={() => updateCartQty(lineKey, item.quantity - 1)}
                         className="p-0.5 text-slate-500 hover:text-slate-800"
                       >
@@ -1972,23 +1745,48 @@ export default function POSView({
                         type="number"
                         min="1"
                         step="1"
+                        max={maxLineQuantity(item)}
+                        aria-label={`Quantity for ${item.product.name}`}
                         value={item.quantity}
                         onChange={(e) => updateCartQty(lineKey, Number(e.target.value))}
                         onFocus={(e) => e.currentTarget.select()}
-                        className="h-7 w-14 rounded border border-slate-200 bg-white px-1 text-center font-mono text-xs font-bold text-slate-800 focus:border-amber-500 focus:outline-none"
+                        className="h-7 w-12 rounded border border-slate-200 bg-white px-1 text-center font-mono text-xs font-bold text-slate-800 focus:border-amber-500 focus:outline-none"
                       />
                       <button
                         type="button"
+                        aria-label={`Increase quantity for ${item.product.name}`}
+                        disabled={item.quantity >= maxLineQuantity(item)}
+                        title={item.quantity >= maxLineQuantity(item) ? "Maximum available stock reached" : "Add one unit"}
                         onClick={() => updateCartQty(lineKey, item.quantity + 1)}
-                        className="p-0.5 text-slate-500 hover:text-slate-800"
+                        className="p-0.5 text-slate-500 hover:text-slate-800 disabled:opacity-35 disabled:cursor-not-allowed"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    <div className="text-right w-18 font-mono font-bold text-slate-900">
+                    <label className="flex flex-col gap-0.5 min-w-0"><span className={expandedInvoice ? "lg:sr-only" : "text-[10px] text-slate-500"}>Disc %</span><input
+                        type="number"
+                        min="0"
+                        max="100"
+                        aria-label={`Percentage discount for ${item.product.name}`}
+                        value={item.discount}
+                        onChange={(e) => updateItemDiscount(lineKey, Number(e.target.value))}
+                        className="w-full min-w-0 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
+                      /></label>
+                    <label className="flex flex-col gap-0.5 min-w-0"><span className={expandedInvoice ? "lg:sr-only" : "text-[10px] text-slate-500"}>Disc Rs.</span><input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        aria-label={`Fixed discount for ${item.product.name}`}
+                        value={item.discountAmount || 0}
+                        onChange={(e) => updateItemDiscountAmount(lineKey, Number(e.target.value))}
+                        className="w-full min-w-0 px-1 py-1 border border-slate-200 bg-white rounded text-xs text-slate-700 focus:outline-none"
+                      /></label>
+                    <div className="text-right min-w-[76px] font-mono font-bold text-slate-900">
                       {formatMoney(pricing.lineTotal)}
                       <button
+                        type="button"
+                        aria-label={`Remove ${item.product.name} from invoice`}
                         onClick={() => removeFromCart(lineKey)}
                         className="block text-slate-400 hover:text-rose-500 mt-1 ml-auto"
                       >
@@ -2001,119 +1799,243 @@ export default function POSView({
             })}
 
             {cart.length === 0 && (
-              <div className="py-12 text-center text-slate-400 flex flex-col items-center justify-center border border-dashed border-slate-100 rounded-xl">
+              <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center border border-dashed border-slate-100 rounded-xl">
                 <ShoppingCart className="w-8 h-8 text-slate-200" />
                 <p className="text-xs font-semibold mt-1">Cash Register is Empty</p>
-                <p className="text-[10px] text-slate-500 mt-1">Click on products on the left to add items</p>
+                <p className="text-[10px] text-slate-500 mt-1">Search or browse products to add invoice lines</p>
               </div>
             )}
           </div>
+
+        {currentStockIssue && <div role="alert" className="shrink-0 mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"><strong>Stock correction required:</strong> {currentStockIssue}</div>}
+        <div className="shrink-0 border-t border-slate-200 bg-white pt-2 lg:flex lg:items-center lg:gap-4">
+          <div className="flex flex-1 items-center justify-between gap-3 pb-2 lg:pb-0">
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft invoice · {cart.length} {cart.length === 1 ? "line" : "lines"}</p>
+              <strong id="pos-total-price" className="text-xl font-bold text-slate-900">{formatMoney(total)}</strong></div>
+            <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-[11px] font-semibold text-indigo-700">{draftSaved && cart.length > 0 ? 'Draft saved locally' : 'Not saved'}</span>
+          </div>
+          <button type="button" id="pos-review-trigger" disabled={cart.length === 0 || isSubmitting || checkoutUncertain || !!currentStockIssue}
+            onClick={() => {
+              if (!selectedCustomer.id || selectedCustomer.id === 'cust-walkin' ||
+                  !customers.some(c => c.id === selectedCustomer.id && c.shopId === taxConfig.activeShopId)) {
+                notify.warning('Select a registered customer shop before reviewing this invoice.'); return;
+              }
+              if (!activeSalesReps.some(rep => rep.id === selectedSalesRepId)) {
+                notify.warning('Select the Sales Representative before reviewing this invoice.'); return;
+              }
+              const issue = stockIssue(cart);
+              if (issue) { notify.warning(issue); return; }
+              setIsReviewOpen(true);
+            }}
+            className="w-full lg:w-auto rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-semibold text-slate-900 hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+            Review invoice & payment →
+          </button>
         </div>
+      </div>
 
-        {/* Ledger Bottom checkout math */}
-        <div className="border-t border-slate-100 pt-4 space-y-3 mt-4">
-          <div className="space-y-1.5 text-xs text-slate-600 font-sans">
-            <div className="flex justify-between">
-              <span>Items Total</span>
-              <span className="font-mono">{formatMoney(grossSubtotal)}</span>
-            </div>
-
-            {itemDiscountTotal > 0 && (
-              <div className="flex justify-between text-emerald-600">
-                <span>Item Discounts</span>
-                <span className="font-mono">-{formatMoney(itemDiscountTotal)}</span>
+      {pickerProduct && pickerUnit && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/60 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Choose selling unit" className="w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-2xl bg-white shadow-xl">
+            <header className="flex items-start justify-between bg-[#182a45] p-4 text-white rounded-t-2xl"><div><p className="text-xs font-semibold text-amber-300">ARS DISTRIBUTORS · SELLING UNITS</p><h3 className="mt-1 text-lg font-bold">{pickerProduct.name}</h3><p className="text-xs text-slate-300">Choose Box, Piece or another configured unit.</p></div><button type="button" aria-label="Close selling unit selection" onClick={()=>setUnitPickerProductId(null)}><X className="h-5 w-5"/></button></header>
+            <div className="space-y-3 p-4">
+              <div className="flex items-center gap-3"><BillingProductPhoto product={pickerProduct}/><div className="min-w-0"><p className="text-xs text-slate-500">Product code</p><p className="break-all text-sm font-semibold">{pickerProduct.sku}</p><p className="text-xs text-slate-500">Select an available selling unit below.</p></div></div>
+              <div className="grid grid-cols-2 gap-2">{pickerProduct.sharedStockUnits?.units.map(u=>{const remaining=availableToAdd(pickerProduct,undefined,cart,u.id);return <button key={u.id} type="button" aria-pressed={u.id===pickerUnit.id} disabled={remaining<1} onClick={()=>{setUnitPickerUnitId(u.id);setUnitPickerQty('1');setPickerCustomPrice('');setPickerPriceReason('');}} className={'rounded-xl border p-3 text-left disabled:opacity-40 '+(u.id===pickerUnit.id?'border-indigo-600 bg-indigo-50':'border-slate-200')}><strong className="block">{u.label}</strong><span className="block text-xs text-slate-500">{u.baseUnits} base units · {remaining} available</span><span className="block font-semibold">{formatMoney(u.sellingPrice)}</span></button>;})}</div>
+              <label className="block text-sm font-semibold">Quantity ({pickerUnit.label})<input autoFocus type="number" min="1" max={pickerAvailable} step="1" value={unitPickerQty} onChange={e=>setUnitPickerQty(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-3"/></label>
+              <div className="flex flex-wrap gap-2" aria-label="Quick quantity">
+                {[1, 2, 5, 10].filter(q=>q<=pickerAvailable).map(q=><button key={q} type="button" aria-pressed={Number(unitPickerQty)===q} onClick={()=>setUnitPickerQty(String(q))} className={'rounded-lg border px-3 py-2 text-sm font-semibold '+(Number(unitPickerQty)===q?'border-indigo-600 bg-indigo-50 text-indigo-800':'border-slate-200')}>{q}</button>)}
+                {pickerAvailable>0 && <button type="button" onClick={()=>setUnitPickerQty(String(pickerAvailable))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold">Max ({pickerAvailable})</button>}
               </div>
-            )}
-
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span className="font-mono">{formatMoney(subtotal)}</span>
+              <p className="text-xs text-slate-600">Available to add: {pickerAvailable} {pickerUnit.label}. Stock is shared across all selling units.</p>
+              {Number.isSafeInteger(Number(unitPickerQty)) && Number(unitPickerQty)>0 && Number(unitPickerQty)<=pickerAvailable && <div className="flex items-center justify-between rounded-lg bg-slate-100 px-3 py-2 text-sm"><span>Line subtotal before discounts</span><strong>{formatMoney(Number(unitPickerQty)*(pickerCustomPrice.trim()!=='' && validCustomPrice(pickerCustomPrice,pickerPriceReason)?Number(pickerCustomPrice):pickerUnit.sellingPrice))}</strong></div>}
+              {(!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable) && <p role="alert" className="text-sm text-rose-700">Enter a whole quantity between 1 and {pickerAvailable}.</p>}
+              {isAdminSeller && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2"><div className="flex justify-between text-sm"><strong>Invoice rate</strong><span>Standard: {formatMoney(pickerUnit.sellingPrice)}</span></div><label className="block text-xs font-semibold">Custom rate (optional)<input type="number" min="0.01" step="0.01" value={pickerCustomPrice} onChange={e=>setPickerCustomPrice(e.target.value)} placeholder={String(pickerUnit.sellingPrice)} className="mt-1 w-full rounded-lg border p-2"/></label>{pickerCustomPrice!=='' && <label className="block text-xs font-semibold">Reason for custom rate<input maxLength={250} value={pickerPriceReason} onChange={e=>setPickerPriceReason(e.target.value)} placeholder="Agreed wholesale price" className="mt-1 w-full rounded-lg border p-2"/></label>}<p className="text-xs text-slate-500">Applies only to this invoice.</p></div>}
+              <div className="flex justify-between rounded-xl bg-slate-900 p-3 text-white"><span>Line total</span><strong>{formatMoney(Math.max(0,Number(unitPickerQty)||0)*(pickerCustomPrice===''?pickerUnit.sellingPrice:Number(pickerCustomPrice)||0))}</strong></div>
+              <button type="button" disabled={!Number.isSafeInteger(Number(unitPickerQty)) || Number(unitPickerQty)<1 || Number(unitPickerQty)>pickerAvailable || (pickerCustomPrice!=="" && !validCustomPrice(pickerCustomPrice,pickerPriceReason))} onClick={()=>{if(addToCart(pickerProduct,undefined,pickerUnit.id,Number(unitPickerQty),pickerCustomPrice===""?undefined:Number(pickerCustomPrice),pickerPriceReason))setUnitPickerProductId(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Add to invoice</button>
+              <p className="text-xs text-slate-500">To sell another unit of the same item, select the product again. Each unit appears on a separate invoice line.</p>
             </div>
+          </section>
+        </div>, document.body
+      )}
 
-            {/* General Checkout Discount */}
-            <div className="flex justify-between items-center py-0.5">
-              <span className="flex items-center gap-1 text-slate-500 text-[11px]">
-                <Ticket className="w-3.5 h-3.5 text-indigo-500" /> Manual Cart Discount ({currencySymbol})
-              </span>
-              <input
-                id="pos-cart-discount-input"
-                type="number"
-                min="0"
-                value={cashDiscount}
-                onChange={(e) => setCashDiscount(Number(e.target.value) || 0)}
-                className="w-18 border border-slate-200 p-1 text-right text-xs bg-white text-slate-700 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded font-mono"
-              />
+      {priceLine && isAdminSeller && createPortal(
+        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-slate-950/60 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Edit invoice rate" className="w-full max-w-md rounded-2xl bg-white shadow-xl overflow-hidden">
+            <header className="bg-[#182a45] p-4 text-white"><div className="flex justify-between"><p className="text-xs font-bold text-amber-300">ARS DISTRIBUTORS · INVOICE PRICING</p><button type="button" aria-label="Close" onClick={()=>setPriceEditKey(null)}><X className="h-5 w-5"/></button></div><h3 className="mt-2 text-lg font-bold">Edit selling rate</h3><p className="text-sm text-slate-300">{priceLine.product.name} · {priceLine.variantUnit || 'Unit'}</p></header>
+            <div className="space-y-3 p-4"><p className="text-sm">Standard rate: <strong>{formatMoney(priceLine.unitPrice ?? priceLine.product.sellingPrice)}</strong></p><label className="block text-sm font-semibold">Agreed price per unit<input autoFocus type="number" min="0.01" step="0.01" value={priceDraft} onChange={e=>setPriceDraft(e.target.value)} className="mt-1 w-full rounded-lg border p-3"/></label><label className="block text-sm font-semibold">Reason<input value={priceReason} maxLength={250} onChange={e=>setPriceReason(e.target.value)} className="mt-1 w-full rounded-lg border p-3" placeholder="Customer negotiated price"/></label><div className="rounded-xl bg-slate-100 p-3 text-sm flex justify-between"><span>Line subtotal before discounts</span><strong>{formatMoney((Number(priceDraft)||0)*priceLine.quantity)}</strong></div><p className="text-xs text-slate-500">Catalog price remains unchanged. Changes are recorded in the invoice audit.</p><button type="button" disabled={!validCustomPrice(priceDraft,priceReason)} onClick={()=>{setCart(old=>old.map(line=>getCartKey(line)===priceEditKey?{...line,customUnitPrice:Number(priceDraft),priceOverrideReason:priceReason.trim()}:line));setPriceEditKey(null);}} className="w-full rounded-lg bg-amber-400 p-3 font-bold disabled:opacity-40">Apply custom rate</button><button type="button" onClick={()=>{setCart(old=>old.map(line=>getCartKey(line)===priceEditKey?{...line,customUnitPrice:undefined,priceOverrideReason:undefined}:line));setPriceEditKey(null);}} className="w-full rounded-lg border p-2 text-sm">Restore standard rate</button></div>
+          </section>
+        </div>,document.body
+      )}
+      {editingDescriptionKey && (
+        <div id="pos-description-backdrop" className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-description-title"
+            className="flex max-h-[85dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">This invoice only</p>
+                <h2 id="pos-description-title" className="text-base font-bold text-slate-900">Edit product description</h2>
+                <p className="mt-1 text-xs text-slate-500">{cart.find(item => getCartKey(item) === editingDescriptionKey)?.product.name || 'Product'}</p>
+              </div>
+              <button type="button" aria-label="Cancel description changes"
+                onClick={() => setEditingDescriptionKey(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+                <X className="h-5 w-5"/>
+              </button>
+            </header>
+            <div className="px-4 py-4">
+              <label htmlFor="pos-description-input" className="mb-2 block text-xs font-semibold text-slate-700">
+                Description shown below the item name on the A4 invoice
+              </label>
+              <textarea id="pos-description-input" rows={3} maxLength={250} value={descriptionDraft}
+                onChange={event => setDescriptionDraft(event.target.value)}
+                placeholder="Example: 50mm, 4m length, heavy duty"
+                className="w-full resize-none rounded-xl border border-slate-300 p-3 text-sm text-slate-900 outline-none focus:border-indigo-500"/>
+              <p className="mt-2 text-[11px] text-slate-500">
+                {descriptionDraft.length}/250 characters. Editing this invoice never changes the product catalog.
+              </p>
             </div>
+            <footer className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
+              <button type="button" onClick={() => setEditingDescriptionKey(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700">Cancel</button>
+              <button type="button" id="pos-description-save" onClick={saveInvoiceLineDescription}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white">Apply to invoice</button>
+            </footer>
+          </section>
+        </div>
+      )}
 
-            <div className="flex justify-between text-[11px] text-slate-500">
-              <span>Sales Tax ({taxConfig.taxRate.toFixed(1)}% standard)</span>
-              <span className="font-mono">{currencySymbol}{tax.toFixed(2)}</span>
-            </div>
-
-            <div className="flex justify-between text-base font-bold text-slate-950 border-t border-slate-100 pt-2 font-sans">
-              <span>Total Bill</span>
-              <span id="pos-total-price" className="font-mono text-indigo-600">{currencySymbol}{total.toFixed(2)}</span>
-            </div>
-
-            {paymentMethod === 'Cash' && (
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                  <span>Cash Received ({currencySymbol})</span>
-                  <span className="font-mono">Change Due: {formatMoney(changeDue)}</span>
+      {setupDialog && (
+        <div id="pos-setup-backdrop" className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/60 p-3 sm:p-5">
+          <section role="dialog" aria-modal="true" aria-labelledby="pos-setup-title"
+            className="flex max-h-[min(88dvh,700px)] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 sm:px-5">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-600">Invoice setup</p>
+                <h2 id="pos-setup-title" className="text-base font-bold text-slate-900">
+                  {setupDialog === 'customer' ? 'Select customer shop' : 'Select Sales Representative'}
+                </h2>
+              </div>
+              <button type="button" aria-label="Close invoice setup" onClick={() => setSetupDialog(null)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+              {setupDialog === 'customer' ? (
+                <div className="space-y-3">
+                  <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-search">
+                    Search shop by name, customer ID, phone, email or address
+                  </label>
+                  <input id="pos-customer-search" type="search" autoComplete="off" value={customerSearch}
+                    onChange={event => setCustomerSearch(event.target.value)}
+                    placeholder="Search registered customer shops..."
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500"/>
+                  <label className="block text-xs font-semibold text-slate-700" htmlFor="pos-customer-select">Registered customer shop *</label>
+                  <select id="pos-customer-select" required value={draftCustomerId}
+                    onChange={event => {
+                      const customer=customers.find(c=>c.id===event.target.value && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
+                      if(customer) setDraftCustomerId(customer.id);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Choose a shop...</option>
+                    {availableWholesaleCustomers.map(customer=>(
+                      <option key={customer.id} value={customer.id}>{customer.name}{customer.phone && customer.phone !== '-' ? ` · ${customer.phone}` : ''}</option>
+                    ))}
+                    {draftCustomerId &&
+                      !availableWholesaleCustomers.some(c=>c.id===draftCustomerId) && (
+                        <option value={draftCustomerId}>{customers.find(c=>c.id===draftCustomerId)?.name || 'Selected shop'} · selected</option>
+                      )}
+                  </select>
+                  {customers.filter(c=>c.id!=='cust-walkin'&&c.shopId===taxConfig.activeShopId).length===0 && (
+                    <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                      No registered customer shops. Add a shop in Customers before creating an invoice.
+                    </p>
+                  )}
+                  {draftCustomerId && customers.some(c => c.id === draftCustomerId && c.shopId === taxConfig.activeShopId) && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                      <p className="font-semibold text-slate-900">{customers.find(c=>c.id===draftCustomerId)?.name}</p>
+                      <p className="mt-1">{customers.find(c=>c.id===draftCustomerId)?.phone || 'No phone saved'} · {customers.find(c=>c.id===draftCustomerId)?.address || 'No address saved'}</p>
+                      <p className="mt-2 text-slate-500">The invoice will use the registered customer details when you confirm.</p>
+                    </div>
+                  )}
                 </div>
-                <input
-                  id="pos-cash-received-input"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={cashReceived}
-                  onChange={(e) => setCashReceived(e.target.value)}
-                  placeholder={total.toFixed(2)}
-                  className={`w-full border p-2 rounded-lg text-sm font-mono outline-none focus:ring-1 ${cashShortage ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-200 bg-rose-50' : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500 bg-white'}`}
-                />
-                {cashShortage && (
-                  <p className="text-[11px] text-rose-600 font-medium">Cash received is less than the bill total.</p>
-                )}
+              ) : (
+                <div className="space-y-3">
+                  <label htmlFor="pos-sales-representative" className="block text-xs font-semibold text-slate-700">
+                    Representative responsible for this invoice *
+                  </label>
+                  <select id="pos-sales-representative" required aria-label="Select Sales Representative"
+                    value={draftRepId} onChange={event=>setDraftRepId(event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-indigo-500">
+                    <option value="">Choose representative...</option>
+                    {activeSalesReps.map(rep=><option key={rep.id} value={rep.id}>{rep.name}</option>)}
+                  </select>
+                  {activeSalesReps.length===0 && (
+                    <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                      No representatives registered. Add one in Staff before billing.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">
+              <button type="button" onClick={()=>setSetupDialog(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700">Close</button>
+              <button type="button" id="pos-setup-confirm"
+                disabled={setupDialog === 'customer'
+                  ? !customers.some(c=>c.id===draftCustomerId && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin')
+                  : !activeSalesReps.some(rep=>rep.id===draftRepId)}
+                onClick={()=>{
+                  if(setupDialog === 'customer'){
+                    const buyer=customers.find(c=>c.id===draftCustomerId && c.shopId===taxConfig.activeShopId && c.id!=='cust-walkin');
+                    if(!buyer)return;
+                    if(buyer.id!==selectedCustomer.id){setCreditDueDate('');setCreditEvidence('');}
+                    setSelectedCustomer(buyer);
+                  } else {
+                    if(!activeSalesReps.some(rep=>rep.id===draftRepId))return;
+                    setSelectedSalesRepId(draftRepId);
+                  }
+                  setSetupDialog(null);
+                }}
+                className="rounded-lg bg-slate-900 px-5 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500">
+                Confirm selection
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {isReviewOpen && createPortal(
+        <div id="pos-review-backdrop" className="fixed inset-0 z-[1000] flex items-center justify-center overflow-hidden bg-slate-950/60 p-3 sm:p-5">
+          <section id="pos-review-dialog" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="pos-review-title"
+            className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-2 sm:px-5">
+              <div><p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Final review · no invoice saved yet</p>
+                <h2 id="pos-review-title" className="text-lg font-bold text-slate-900">Review & issue invoice</h2>
+                <p className="mt-0.5 text-xs text-slate-600">{selectedCustomer.name} · {activeSalesReps.find(rep => rep.id === selectedSalesRepId)?.name || 'Representative not selected'}</p></div>
+              <button type="button" aria-label="Close payment review" disabled={isSubmitting} onClick={() => setIsReviewOpen(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 disabled:opacity-50"><X className="h-5 w-5"/></button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:overflow-hidden overscroll-contain">
+              <div className="min-w-0 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain lg:border-r lg:border-slate-200">
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Invoice items ({cart.length} lines)</p>
+                <div className="grid grid-cols-[minmax(0,1fr)_48px_36px_85px_95px] gap-2 border-b border-slate-200 pb-2 text-[10px] font-semibold text-slate-500"><span>Product / description</span><span>U/M</span><span className="text-right">Qty</span><span className="text-right">Rate</span><span className="text-right">Amount</span></div>
+                <div className="divide-y divide-slate-100">
+                  {cart.map(item => {
+                    const line = getLinePricing(item);
+                    return <div key={getCartKey(item)} className="grid grid-cols-[minmax(0,1fr)_48px_36px_85px_95px] items-start gap-2 py-2 text-xs text-slate-700">
+                      <span className="min-w-0 flex-1">
+                        <span className="block break-words font-semibold">{item.product.name}</span>
+                        {item.invoiceDescription && <span className="mt-0.5 block break-words text-[11px] text-slate-500">{item.invoiceDescription}</span>}
+                      </span>
+                      <span className="break-words">{item.product.sharedStockUnits?.units.find(u=>u.id===item.sellingUnitId)?.label || (item.variantUnit && item.variantUnit!=='Unit' ? item.variantUnit : inferUnitLabel(item.product.name))}</span><span className="text-right tabular-nums">{item.quantity}</span><span className="text-right tabular-nums">{formatMoney(Number(item.customUnitPrice ?? item.unitPrice ?? item.product.sellingPrice))}</span><strong className="text-right tabular-nums">{formatMoney(line.lineTotal)}</strong>
+                    </div>;
+                  })}
+                </div>
               </div>
-            )}
-          </div>
-
-          {/* Payment Method Selector Grid */}
-          <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
-            {[
-              { id: 'Cash', label: 'Cash', icon: DollarSign },
-              { id: 'Credit Card', label: 'Card', icon: CreditCard },
-              { id: 'QR Code', label: 'QR Pay', icon: QrCode },
-              { id: 'Credit Account', label: 'On Credit', icon: BookUser },
-            ].map((pm) => {
-              const Icon = pm.icon;
-              const isSel = paymentMethod === pm.id;
-              return (
-                <button
-                  key={pm.id}
-                  id={`paymethod-${pm.id.replace(/\s+/g, '-').toLowerCase()}`}
-                  onClick={() => {
-                    setPaymentMethod(pm.id as any);
-                    if (pm.id === 'Cash' && (!cashReceived || Number(cashReceived) === 0)) {
-                      setCashReceived(total.toFixed(2));
-                    }
-                  }}
-                  className={`py-1.5 rounded-lg text-xs font-sans font-medium flex items-center justify-center gap-1 border transition-all ${
-                    isSel
-                      ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs'
-                      : 'bg-white text-slate-600 border-slate-250 hover:bg-slate-50'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {pm.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {isWholesaleShop && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">Hardware Business Information (Optional)</p>
+              <div className="mt-3">          {isWholesaleShop && (
+            <details className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+              <summary className="cursor-pointer text-[11px] font-semibold text-amber-800">
+                Delivery, transport and warranty details (optional)
+              </summary>
+              <div className="mt-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="number"
@@ -2183,18 +2105,144 @@ export default function POSView({
                   className="col-span-2 w-full rounded border border-amber-200 bg-white px-2 py-1.5 text-[11px]"
                 />
               </div>
-            </div>
+              </div>
+            </details>
           )}
 
-          {/* Checkout Submit Trigger */}
+</div>
+              </div>
+        {/* Payment and invoice totals */}
+        <div className="min-w-0 space-y-2 bg-slate-50/60 p-3 sm:p-4 lg:overflow-y-auto overscroll-contain">
+          <h3 className="text-sm font-bold text-slate-900">Invoice & payment arrangement</h3>
+                    {/* Payment Method Selector Grid */}
+          <div className="grid grid-cols-2 gap-1.5 pt-1 sm:grid-cols-4">
+            {[
+              { id: 'Credit Account', label: 'Pay later', icon: BookUser },
+              { id: 'Cash', label: 'Paid cash', icon: DollarSign },
+              { id: 'Credit Card', label: 'Card', icon: CreditCard },
+              { id: 'QR Code', label: 'QR Pay', icon: QrCode },
+              { id: 'Bank Transfer', label: 'Bank transfer', icon: DollarSign },
+            ].filter(pm=>!managerFinancialPosting||['Credit Account','Cash','Bank Transfer'].includes(pm.id)).map((pm) => {
+              const Icon = pm.icon;
+              const isSel = paymentMethod === pm.id;
+              return (
+                <button
+                  key={pm.id}
+                  id={`paymethod-${pm.id.replace(/\s+/g, '-').toLowerCase()}`}
+                  onClick={() => {
+                    setPaymentMethod(pm.id as any);
+
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-sans font-medium flex items-center justify-center gap-1 border transition-all ${
+                    isSel
+                      ? 'bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs'
+                      : 'bg-white text-slate-600 border-slate-250 hover:bg-slate-50'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {pm.label}
+                </button>
+              );
+            })}
+          </div>
+
+
+          {needsInvoiceAccount&&<div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2 text-xs"><label className="block font-semibold" htmlFor="invoice-financial-account">Received into *</label><select id="invoice-financial-account" required value={invoiceAccountId} disabled={invoiceAccountsLoading||isSubmitting||checkoutUncertain} onChange={e=>setInvoiceAccountId(e.target.value)} className="w-full rounded border border-slate-300 p-2"><option value="">{invoiceAccountsLoading?'Loading accounts…':'Select receiving account'}</option>{matchingInvoiceAccounts.map(a=><option key={a.id} value={a.id}>{a.name} · {formatMoney(a.balance)}</option>)}</select>{invoiceAccountsError&&<p role="alert" className="text-red-700">{invoiceAccountsError}</p>}{!invoiceAccountsLoading&&!invoiceAccountsError&&!matchingInvoiceAccounts.length&&<p className="text-amber-800">Create a matching account in Accounting first, or choose Pay later if payment has not been received.</p>}{selectedInvoiceAccount&&<p>Estimated balance after receipt: <strong>{formatMoney(selectedInvoiceAccount.balance+total)}</strong></p>}</div>}
+                        {paymentMethod === 'Credit Account' && (
+                <div role="status" className={`mb-3 rounded-lg border px-3 py-2 text-xs ${creditAccountAllowed?'border-amber-200 bg-amber-50 text-amber-900':'border-rose-200 bg-rose-50 text-rose-800'}`}>
+                  {creditLimit <= 0 ? 'This customer has no credit limit configured.'
+                    : creditExceeded ? `Credit limit exceeded: ${formatMoney(projectedCreditBalance)} above allowed ${formatMoney(creditLimit)}.`
+                    : `Invoice will be posted to customer credit. New balance: ${formatMoney(projectedCreditBalance)} / ${formatMoney(creditLimit)}.`}
+                </div>
+              )}
+
+          {activeCreditTerms&&<fieldset disabled={isSubmitting||checkoutUncertain} className="rounded-xl border border-slate-200 p-3 space-y-2 text-xs"><legend className="font-semibold px-1">Agreed payment terms (optional)</legend><label className="block font-semibold" htmlFor="credit-due-date">Payment due date</label><input id="credit-due-date" type="date" min={creditToday} max="9999-12-31" value={creditDueDate} onChange={e=>{setCreditDueDate(e.target.value);if(!e.target.value)setCreditEvidence('');}} className="w-full rounded border border-slate-300 p-2"/><label className="block font-semibold" htmlFor="credit-evidence">Payment agreement reference {creditDueDate?'*':''}</label><input id="credit-evidence" value={creditEvidence} maxLength={500} disabled={!creditDueDate||isSubmitting||checkoutUncertain} onChange={e=>setCreditEvidence(e.target.value)} placeholder="Agreed with customer / order reference" className="w-full rounded border border-slate-300 p-2"/><p className="text-slate-500">Leave blank if no due date has been agreed. No money is collected now.</p>{invalidCreditTerms&&<p role="alert" className="text-rose-700">Enter a valid due date and agreement reference.</p>}</fieldset>}
+
+          <div className="space-y-1.5 text-xs text-slate-600 font-sans">
+            <div className="flex justify-between">
+              <span>Items Total</span>
+              <span className="font-mono">{formatMoney(grossSubtotal)}</span>
+            </div>
+
+            {itemDiscountTotal > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Item Discounts</span>
+                <span className="font-mono">-{formatMoney(itemDiscountTotal)}</span>
+              </div>
+            )}
+
+            <div className="flex justify-between">
+              <span>Subtotal</span>
+              <span className="font-mono">{formatMoney(subtotal)}</span>
+            </div>
+
+            {/* One invoice-level discount: switch between fixed rupees and percentage. */}
+            <div className="rounded-xl border border-slate-200 bg-white p-2 space-y-1.5" id="pos-invoice-discount">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="pos-cart-discount-input" className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <Ticket className="h-4 w-4 text-indigo-600" /> Invoice discount
+                </label>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Invoice discount type">
+                  <button type="button" id="pos-discount-amount"
+                    aria-pressed={discountMode === 'amount'} onClick={() => {setDiscountMode('amount');setDiscountInput('0');}}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'amount' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    {currencySymbol} Fixed
+                  </button>
+                  <button type="button" id="pos-discount-percent"
+                    aria-pressed={discountMode === 'percent'} onClick={() => {setDiscountMode('percent');setDiscountInput('0');}}
+                    className={`rounded-md px-3 py-1.5 text-xs font-semibold ${discountMode === 'percent' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    % Percent
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <input id="pos-cart-discount-input" type="number" min="0" step="0.01"
+                  max={discountMode === 'percent' ? 100 : subtotal}
+                  value={discountInput}
+                  onChange={e => setDiscountInput(e.target.value)}
+                  className="min-w-0 w-32 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold tabular-nums outline-none focus:border-indigo-500"
+                  aria-label={discountMode === 'percent' ? 'Invoice discount percentage' : 'Invoice discount amount in rupees'}/>
+                <span className="text-xs text-slate-600">
+                  {discountMode === 'percent' ? `${Math.min(100,normalizedDiscountInput)}% = ` : 'Discount = '}
+                  <strong className="font-mono text-emerald-700">{formatMoney(cashDiscount)}</strong>
+                </span>
+              </div>
+              {normalizedDiscountInput > (discountMode === 'percent' ? 100 : subtotal) && (
+                <p role="status" className="text-xs text-amber-800">
+                  Discount is limited to {discountMode === 'percent' ? '100%' : 'the item subtotal'}.
+                </p>
+              )}
+            </div>
+
+            <div className="flex justify-between text-[11px] text-slate-500">
+              <span>Sales Tax ({taxConfig.taxRate.toFixed(1)}% standard)</span>
+              <span className="font-mono">{currencySymbol}{tax.toFixed(2)}</span>
+            </div>
+
+            <div className="flex justify-between items-center rounded-lg bg-slate-900 px-3 py-2 text-lg font-bold text-white">
+              <span>Total Bill</span>
+              <span className="tabular-nums text-amber-300">{formatMoney(total)}</span>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700">
+              {paymentMethod==='Credit Account' ? <><strong>Payment due: {formatMoney(total)}</strong><p className="mt-1">Issue the invoice now and record payments later in the customer account. No cash is collected at this step.</p></> : <><strong>Paid in full: {formatMoney(total)}</strong><p className="mt-1">Select this arrangement only if the full amount has already been received.</p></>}
+            </div>
+          </div>
+
+              </div>
+            </div>
+            <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 sm:px-5">
+              <button type="button" onClick={() => setIsReviewOpen(false)} disabled={isSubmitting}
+                className="rounded-lg border border-slate-200 px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Back to invoice</button>
+                        {/* Checkout Submit Trigger */}
           <button
-            id="pos-pay-trigger"
-            disabled={cart.length === 0 || isSubmitting || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)}
+            id="pos-pay-trigger" type="button"
+            disabled={cart.length === 0 || isSubmitting || checkoutUncertain || !!currentStockIssue || invalidCreditTerms || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (needsInvoiceAccount&&(!selectedInvoiceAccount||invoiceAccountsLoading||total<=0))}
             onClick={handleCheckout}
-            className={`w-full py-3 rounded-xl text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
-              cart.length === 0 || (paymentMethod === 'Credit Account' && !creditAccountAllowed) || (paymentMethod === 'Cash' && cashShortage)
+            className={`w-full sm:w-auto px-5 py-2.5 rounded-lg text-sm font-sans font-bold transition flex items-center justify-center gap-2 shadow-sm ${
+              cart.length === 0 || isSubmitting || checkoutUncertain || (paymentMethod === 'Credit Account' && !creditAccountAllowed)
                 ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200'
-                : 'bg-slate-900 border border-slate-900 text-slate-100 hover:bg-slate-950'
+                : 'bg-amber-400 border border-amber-400 text-slate-900 hover:bg-amber-500'
             }`}
           >
             {isSubmitting ? (
@@ -2204,12 +2252,15 @@ export default function POSView({
               </>
             ) : (
               <>
-                Complete Checkout & Receipt ({currencySymbol}{total.toFixed(2)})
+                Save Invoice & Print A4 ({formatMoney(total)})
               </>
             )}
           </button>
-        </div>
-      </div>
+
+            </footer>
+          </section>
+        </div>, document.body
+      )}
 
       {/* RECEIPT DIALOG MODAL ON CHECKOUT SUCCESS */}
         {receiptModel && (
@@ -2224,7 +2275,11 @@ export default function POSView({
               </button>
 
               <div className="overflow-y-auto">
-                {/* Enterprise Invoice Preview */}
+                {effectivePrintFormat === 'a4' && (
+                  <div key={taxConfig.activeShopId + ':' + receiptModel.id}><A4InvoicePreview id={receiptModel.id} request={authFetch} /></div>
+                )}
+                <details key={receiptModel.id} open={effectivePrintFormat === 'thermal'}>
+                  <summary className="my-2 cursor-pointer text-sm font-semibold text-slate-700">Transaction details</summary>
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   <div className="bg-slate-50 p-4 border-b border-slate-200">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2235,7 +2290,7 @@ export default function POSView({
                         <h3 className="font-heading font-black text-slate-900 text-sm uppercase tracking-wider">{invoiceCompanyMeta.companyLegalName}</h3>
                         <p className="text-[10px] text-slate-500">{invoiceCompanyMeta.companyTagline}</p>
                         <p className="text-[10px] text-slate-500 mt-1">{shopAddress}</p>
-                        <p className="text-[10px] text-slate-500">Phone: {shopPhone}</p>
+                        {shopPhone && <p className="text-[10px] text-slate-500">Phone: {shopPhone}</p>}
                         <p className="text-[10px] text-slate-500">BR: {invoiceCompanyMeta.businessRegistrationNo || '-'} | VAT: {invoiceCompanyMeta.vatRegistrationNo || '-'} | TIN: {invoiceCompanyMeta.tinNo || '-'}</p>
                       </div>
                       <div className="rounded-lg border border-slate-200 bg-white p-3">
@@ -2244,8 +2299,8 @@ export default function POSView({
                           <span className="text-right font-bold text-slate-900">{receiptModel.invoiceNumber}</span>
                           <span>DATE</span>
                           <span className="text-right">{new Date(receiptModel.date).toLocaleDateString()} {new Date(receiptModel.date).toLocaleTimeString()}</span>
-                          <span>CASHIER</span>
-                          <span className="text-right truncate">{receiptModel.cashierName}</span>
+                          <span>SALES REPRESENTATIVE</span>
+                          <span className="text-right truncate">{receiptModel.salesRepName || 'Not recorded'}</span>
                           <span>PAYMENT</span>
                           <span className="text-right font-semibold text-indigo-600">{receiptModel.paymentMethod}</span>
                         </div>
@@ -2282,7 +2337,7 @@ export default function POSView({
                           <p className="flex justify-between"><span>Remaining Balance</span><strong>{formatMoney(receiptRemainingBalance)}</strong></p>
                         </div>
                         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-[11px]">
-                          <p className="font-semibold uppercase tracking-wide text-slate-700 mb-1">Hardware Business Information</p>
+                          <p className="font-semibold uppercase tracking-wide text-slate-700 mb-1">Business Information</p>
                           <p className="flex justify-between"><span>Transport Charges</span><strong>{formatMoney(Number(receiptModel.wholesaleMeta?.transportCharges || 0))}</strong></p>
                           <p className="flex justify-between"><span>Delivery Charges</span><strong>{formatMoney(Number(receiptModel.wholesaleMeta?.deliveryCharges || 0))}</strong></p>
                           <p className="flex justify-between"><span>Warranty Information</span><strong>{receiptModel.wholesaleMeta?.warrantyInformation || '-'}</strong></p>
@@ -2339,6 +2394,7 @@ export default function POSView({
                           <div key={i} className="grid grid-cols-3 text-[11px] leading-tight">
                             <span className="col-span-2 text-slate-900">
                               {itm.productName} <br />
+                              {itm.invoiceDescription && <span className="block text-[10px] text-slate-500">{itm.invoiceDescription}</span>}
                               <span className="text-[10px] text-slate-500 font-mono">
                                 {itm.quantity} x {currencySymbol}{itm.sellingPrice.toFixed(2)}
                                 {itm.discount > 0 && ` (Disc: -${itm.discount}%)`}
@@ -2393,28 +2449,36 @@ export default function POSView({
                     <span className="font-mono text-indigo-600">{currencySymbol}{receiptModel.total.toFixed(2)}</span>
                   </div>
 
-                  {receiptModel.paymentMethod === 'Cash' && (
-                    <>
-                      <div className="flex justify-between text-[11px] text-slate-600 pt-1">
-                        <span>Customer Gave</span>
-                        <span className="font-mono font-semibold">{currencySymbol}{Number(receiptModel.cashReceived ?? receiptModel.total).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
-                        <span>Balance Amount (Change)</span>
-                        <span className="font-mono">{currencySymbol}{Number(receiptModel.changeDue ?? 0).toFixed(2)}</span>
-                      </div>
-                    </>
-                  )}
+
                 </div>
 
+                {/* Goods receipt proof is shown in preview and on the printed A4 invoice. */}
+                <div className="mt-5 border-t border-slate-300 pt-3">
+                  <h4 className="text-center text-[10px] font-extrabold tracking-wider text-slate-700">GOODS VERIFICATION &amp; RECEIPT</h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 text-center">
+                    {['Prepared By', 'Checked By', 'Authorized By', 'Received By'].map((label) => (
+                      <div key={label} className="min-w-0">
+                        <div className="border-b border-slate-400 h-5" />
+                        <p className="text-[9px] text-slate-600 mt-1">{label} / Signature</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 text-[9px] text-slate-600 mt-4">
+                    <span>Receiving Date / Time: __________________</span>
+                    <span>Customer Stamp: __________________</span>
+                  </div>
+                  <p className="text-center text-[9px] text-slate-600 mt-3">{invoiceFooter.acknowledgement}</p>
+                </div>
                 {/* Footer notes */}
                 <div className="text-center pt-4 border-t border-dashed border-slate-200 text-[10px] text-slate-500">
-                  <p className="font-semibold">Thank You For Your Business</p>
-                  <p className="mt-1">Software Powered By ARS POS System</p>
+                  <p>{invoiceFooter.goods}</p>
+                  <p className="font-semibold">{invoiceFooter.thanks}</p>
+                  <p className="mt-1">{invoiceFooter.credit}</p>
                   <p className="mt-1">Support: {invoiceCompanyMeta.supportPhone || '-'} | {invoiceCompanyMeta.supportEmail || '-'}</p>
                   <p>{invoiceCompanyMeta.websiteUrl || '-'}{invoiceCompanyMeta.socialLinks ? ` | ${invoiceCompanyMeta.socialLinks}` : ''}</p>
                 </div>
 
+                </details>
                 <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-600">Invoice Copy History</h4>
                   {isLoadingPrintHistory ? (
@@ -2427,7 +2491,7 @@ export default function POSView({
                         <div key={`${log.printSequence}-${log.printedAt}`} className="grid grid-cols-[auto_1fr_auto] gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-slate-600">
                           <span className="font-mono text-indigo-600">#{log.printSequence}</span>
                           <span className="truncate">{log.copyType} • {log.printedBy}</span>
-                          <span className="font-mono">{new Date(log.printedAt).toLocaleString()}</span>
+                          <span className="font-mono">{reportTime(log.printedAt)}</span>
                         </div>
                       ))}
                     </div>
@@ -2510,23 +2574,7 @@ export default function POSView({
                     >
                       Apply Filters
                     </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          setIsExportingAuditCsv(true);
-                          await exportInvoicePrintAuditCsv(printAuditFilters);
-                        } catch (error: any) {
-                          alert(error?.message || 'Unable to export audit CSV');
-                        } finally {
-                          setIsExportingAuditCsv(false);
-                        }
-                      }}
-                      className="text-[10px] px-2.5 py-1.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-100"
-                      disabled={isExportingAuditCsv}
-                    >
-                      {isExportingAuditCsv ? 'Exporting CSV...' : 'Export CSV'}
-                    </button>
+                    <ReportExportMenu report={() => printAuditReport()} settings={taxConfig}/>
                     <button
                       type="button"
                       onClick={() => {
@@ -2570,7 +2618,7 @@ export default function POSView({
                         <tbody>
                           {printAuditRows.map((row) => (
                             <tr key={row.id} className="border-t border-indigo-50 text-slate-700">
-                              <td className="px-2 py-1">{new Date(row.printedAt).toLocaleString()}</td>
+                              <td className="px-2 py-1">{reportTime(row.printedAt)}</td>
                               <td className="px-2 py-1 font-mono">{row.invoiceNumber}</td>
                               <td className="px-2 py-1">{row.copyType} #{row.printSequence}</td>
                               <td className="px-2 py-1">{row.printedBy}</td>
@@ -2585,6 +2633,7 @@ export default function POSView({
                 </div>
               </div>
 
+              {receiptModel.shopId===taxConfig.activeShopId&&receiptModel.status==='Completed'&&<button type="button" className="mt-3 w-full rounded-lg border border-slate-300 py-2 text-xs font-bold" onClick={()=>{try{printDeliveryNote(receiptModel,taxConfig);}catch(e){notify.warning(e instanceof Error?e.message:'Unable to print delivery note');}}}>Print delivery note (no prices)</button>}
               {/* Action options */}
               <div className="mt-6 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-center">
@@ -2623,10 +2672,12 @@ export default function POSView({
                     onClick={async () => {
                       try {
                         setIsLoggingPrint(true);
+                        const invoiceWindow = createPrintWindow();
+                        if(!invoiceWindow) return;
                         const printAudit = await logInvoicePrint(receiptModel, selectedCopyType);
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
-                        printReceiptInvoice(receiptModel, undefined, {
+                        await printReceiptInvoice(receiptModel, invoiceWindow, {
                           copyType: printAudit.printLog.copyType,
                           watermarkText: printAudit.printSummary.watermarkText,
                           secondaryWatermarkText: printAudit.printSummary.secondaryWatermarkText,
@@ -2636,7 +2687,7 @@ export default function POSView({
                           printedAt: printAudit.printLog.printedAt,
                         });
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to print invoice copy');
+                        notify.warning(error?.message || 'Unable to print invoice copy');
                       } finally {
                         setIsLoggingPrint(false);
                       }
@@ -2663,7 +2714,7 @@ export default function POSView({
                           printedAt: printAudit.printLog.printedAt,
                         });
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to download invoice PDF');
+                        notify.warning(error?.message || 'Unable to download invoice PDF');
                       } finally {
                         setIsDownloadingPdf(false);
                       }
@@ -2682,9 +2733,9 @@ export default function POSView({
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
                         await sendInvoiceWhatsApp(receiptModel, printAudit.printLog.copyType, printAudit.printLog.printSequence);
-                        alert('Invoice PDF shared successfully via WhatsApp API.');
+                        notify.warning('Invoice PDF shared successfully via WhatsApp API.');
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to share invoice PDF via WhatsApp');
+                        notify.warning(error?.message || 'Unable to share invoice PDF via WhatsApp');
                       } finally {
                         setIsSharingWhatsApp(false);
                       }
@@ -2703,9 +2754,9 @@ export default function POSView({
                         await loadInvoicePrintHistory(receiptModel);
                         await loadInvoicePrintAudit();
                         await sendInvoiceEmail(receiptModel, printAudit.printLog.copyType, printAudit.printLog.printSequence);
-                        alert('Invoice emailed successfully.');
+                        notify.warning('Invoice emailed successfully.');
                       } catch (error: any) {
-                        alert(error?.message || 'Unable to email invoice');
+                        notify.warning(error?.message || 'Unable to email invoice');
                       } finally {
                         setIsSharingEmail(false);
                       }
@@ -2731,7 +2782,7 @@ export default function POSView({
         {showQRFeature && (
           <QRFeatureView
             onClose={() => setShowQRFeature(false)}
-            onProductFound={(product) => addToCart(product, getSelectedVariant(product))}
+            onProductFound={(product) => openUnitPicker(product, getSelectedVariant(product))}
             products={products}
             userRole={currentRole}
             authToken={authToken}

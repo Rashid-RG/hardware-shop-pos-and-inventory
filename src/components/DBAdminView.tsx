@@ -2,10 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Database, RefreshCcw, Table2, ShieldAlert, Users, UserPlus, PencilLine, Trash2, KeyRound } from 'lucide-react';
 
 interface DBAdminViewProps {
+  shopId: string;
+  shopName: string;
+  onSamplesAdded: () => Promise<void>;
   authToken: string;
 }
 
-export default function DBAdminView({ authToken }: DBAdminViewProps) {
+export default function DBAdminView({ authToken, shopId, shopName, onSamplesAdded }: DBAdminViewProps) {
   const [tables, setTables] = useState<string[]>([]);
   const [tableSearch, setTableSearch] = useState('');
   const [selectedTable, setSelectedTable] = useState<string>('');
@@ -34,6 +37,26 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
     }
     return fetch(url, { ...init, headers });
   };
+
+  const [addingSamples, setAddingSamples] = useState(false);
+  const [adminWorkspace,setAdminWorkspace]=useState<'accounts'|'editor'|'samples'>('accounts');
+  async function addSamples() {
+    if (!window.confirm('Add 8 labeled test records to ' + shopName + '? Sample stock will count toward this branch’s inventory.')) return;
+    setAddingSamples(true);
+    try {
+      const response = await authFetch('/api/admin/sample-records', {
+        method: 'POST', headers: { 'X-Shop-Id': shopId }, body: JSON.stringify({ shopId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Sample setup failed.');
+      window.alert(result.added ? result.added + ' sample records added to ' + shopName + '.' : 'The sample records already exist in this branch.');
+      await onSamplesAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not add sample records.');
+    } finally {
+      setAddingSamples(false);
+    }
+  }
 
   const loadTables = async () => {
     setIsLoadingTables(true);
@@ -173,8 +196,9 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
       if (!res.ok) {
         throw new Error(data.error || 'Failed to save user');
       }
-      setUserStatus(editingUserId ? 'User updated successfully.' : 'User created successfully.');
+      setUserStatus(editingUserId ? (payload.password ? 'Password reset successfully. Existing sessions are no longer valid. Ask the user to sign in again.' : 'User updated successfully.') : 'User created successfully.');
       resetUserForm();
+      setAdminWorkspace('accounts');
       await loadUsers();
     } catch (err: any) {
       setError(err.message || 'Failed to save user');
@@ -213,10 +237,6 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
       setError(err.message || 'Failed to delete user');
     }
   };
-
-  useEffect(() => {
-    loadTables();
-  }, []);
 
   useEffect(() => {
     loadUsers();
@@ -364,52 +384,25 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
   const totalPages = limit === 'all' ? 1 : Math.max(1, Math.ceil(totalRows / Number(limit)));
 
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in">
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900 flex items-center gap-2">
-            <Database className="w-5 h-5 text-indigo-500" /> Database Admin Browser
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">Inspect local PostgreSQL tables and records in-app.</p>
-        </div>
-
-        <div className="flex gap-2">
-          <button
-            onClick={loadTables}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5"
-          >
-            <RefreshCcw className="w-3.5 h-3.5" /> Refresh Tables
-          </button>
-
-          <button
-            onClick={handleSyncFromAppState}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5"
-          >
-            <Table2 className="w-3.5 h-3.5" /> Sync app_state to normalized
-          </button>
-
-          <button
-            onClick={handleClearTestData}
-            className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Clear Test Data
-          </button>
-        </div>
-      </div>
-
-      {syncStatus && (
-        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2 rounded-lg text-xs font-semibold">
-          {syncStatus}
-        </div>
-      )}
-
+    <div className="space-y-3">
+      <nav aria-label="Administration workspaces" className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {([['accounts','User accounts'],['editor','Create / edit account'],['samples','Test records']] as const).map(([id,label])=><button key={id} type="button" aria-pressed={adminWorkspace===id} onClick={()=>setAdminWorkspace(id)} className={adminWorkspace===id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg px-3 py-2 text-xs font-semibold text-slate-600'}>{label}</button>)}
+      </nav>
+      <section hidden={adminWorkspace!=='samples'} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <h3 className="font-semibold text-slate-900">Test records</h3>
+        <p className="my-2 text-sm text-slate-600">Add four stocked products, two customer shops, one supplier and one sales representative to {shopName}. Search for [TEST] to find them.</p>
+        <button type="button" disabled={addingSamples || !shopId} onClick={addSamples}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
+          {addingSamples ? 'Adding records…' : 'Add sample records'}
+        </button>
+      </section>
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-lg text-xs flex items-center gap-2">
           <ShieldAlert className="w-4 h-4" /> {error}
         </div>
       )}
 
-      <div className="bg-white border border-slate-100 rounded-xl p-5 shadow-sm space-y-4">
+      <div hidden={adminWorkspace==='samples'} className="bg-white border border-slate-100 rounded-xl p-3 shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -433,7 +426,7 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
           </div>
         )}
 
-        <form onSubmit={handleUserSubmit} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+        <div hidden={adminWorkspace!=='editor'}><form onSubmit={handleUserSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
           <div className="md:col-span-1 space-y-1">
             <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Email</label>
             <input
@@ -472,7 +465,7 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
               type="password"
               value={userForm.password}
               onChange={(e) => setUserForm((current) => ({ ...current, password: e.target.value }))}
-              placeholder={editingUserId ? 'Leave blank to keep current password' : 'Minimum 8 characters'}
+              placeholder={editingUserId ? 'Leave blank to keep current password' : 'Minimum 12 characters'}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
               required={!editingUserId}
             />
@@ -488,18 +481,18 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
             {editingUserId && (
               <button
                 type="button"
-                onClick={resetUserForm}
+                onClick={()=>{resetUserForm();setAdminWorkspace('accounts');}}
                 className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
               >
                 Cancel
               </button>
             )}
           </div>
-        </form>
+        </form></div>
 
-        <div className="overflow-x-auto rounded-lg border border-slate-100">
+        <div hidden={adminWorkspace!=='accounts'} className="max-h-[65dvh] overflow-auto rounded-lg border border-slate-100">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50">
+            <thead className="sticky top-0 z-10 bg-slate-50">
               <tr>
                 <th className="px-3 py-2 font-semibold text-slate-500">Name</th>
                 <th className="px-3 py-2 font-semibold text-slate-500">Email</th>
@@ -528,7 +521,7 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => handleEditUser(user)}
+                          onClick={() => {handleEditUser(user);setAdminWorkspace('editor');}}
                           className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           <PencilLine className="w-3 h-3" /> Edit
@@ -550,132 +543,9 @@ export default function DBAdminView({ authToken }: DBAdminViewProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-3 bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
-          <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wider mb-3">Tables</h3>
-          <input
-            type="text"
-            value={tableSearch}
-            onChange={(e) => setTableSearch(e.target.value)}
-            placeholder="Search table..."
-            className="w-full text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 mb-3"
-          />
-          <div className="space-y-1 max-h-[540px] overflow-y-auto pr-1">
-            {isLoadingTables ? (
-              <p className="text-xs text-slate-400">Loading tables...</p>
-            ) : (
-              filteredTables.map((table) => (
-                <button
-                  key={table}
-                  onClick={() => setSelectedTable(table)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-mono transition ${
-                    selectedTable === table
-                      ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                      : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-transparent'
-                  }`}
-                >
-                  {table}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="lg:col-span-9 bg-white border border-slate-100 rounded-xl shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900">{selectedTable || 'Select a table'}</h3>
-              <p className="text-[11px] text-slate-500">Showing {rows.length} rows (total {totalRows}) | Page {currentPage} of {totalPages}</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={rowSearch}
-                onChange={(e) => setRowSearch(e.target.value)}
-                placeholder="Search rows..."
-                className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1"
-              />
-              <label className="text-[11px] text-slate-500">Limit</label>
-              <select
-                value={limit}
-                onChange={(e) => {
-                  const nextLimit = e.target.value;
-                  setLimit(nextLimit);
-                  setOffset(0);
-                  loadRows(selectedTable, nextLimit, 0);
-                }}
-                className="text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1"
-              >
-                <option value="all">All</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-                <option value={500}>500</option>
-              </select>
-              <button
-                onClick={handleExportCsv}
-                className="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded px-2 py-1"
-              >
-                Export CSV
-              </button>
-            </div>
-          </div>
-
-          <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-end gap-2 text-[11px]">
-            <button
-              onClick={handlePrevPage}
-              disabled={limit === 'all' || offset === 0 || isLoadingRows}
-              className="px-2 py-1 rounded border border-slate-200 text-slate-700 disabled:opacity-50"
-            >
-              Prev
-            </button>
-            <button
-              onClick={handleNextPage}
-              disabled={limit === 'all' || offset + Number(limit) >= totalRows || isLoadingRows}
-              className="px-2 py-1 rounded border border-slate-200 text-slate-700 disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
-
-          <div className="overflow-auto max-h-[580px]">
-            {isLoadingRows ? (
-              <p className="text-xs text-slate-400 p-4">Loading rows...</p>
-            ) : sortedRows.length === 0 ? (
-              <p className="text-xs text-slate-400 p-4">No rows found for this table.</p>
-            ) : (
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 border-b border-slate-100 sticky top-0">
-                  <tr>
-                    {columnNames.map((col) => (
-                      <th key={col} className="p-3 text-[11px] font-semibold text-slate-600 whitespace-nowrap">
-                        <button
-                          onClick={() => handleSortClick(col)}
-                          className="hover:text-indigo-600"
-                        >
-                          {col}{sortColumn === col ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {sortedRows.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/60 align-top">
-                      {columnNames.map((col) => (
-                        <td key={col} className="p-3 text-[11px] text-slate-700 font-mono whitespace-pre-wrap break-all">
-                          {formatCellValue(col, row[col])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-      </div>
+      <p className="text-xs text-slate-500">
+        For system recovery and database maintenance, use the documented Windows procedures with a verified backup.
+      </p>
     </div>
   );
 }

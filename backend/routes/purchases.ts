@@ -12,15 +12,20 @@ router.post('/', async (req, res) => {
   const { supplierId, supplierName, items, orderUser } = req.body;
   const { activeShopId } = getActiveShopContext(req);
 
-  if (!items || items.length === 0) {
+  if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Purchase items list cannot be empty' });
   }
 
+  if (items.some(item => !item || !Number.isSafeInteger(item.quantity) || item.quantity <= 0 ||
+    !Number.isFinite(item.costPrice) || item.costPrice < 0)) {
+    return res.status(400).json({ error: 'Each purchase line needs a positive whole quantity and a valid cost.' });
+  }
   let totalWeightCost = 0;
   const parts = items.map((itm: any) => {
     totalWeightCost += itm.costPrice * itm.quantity;
     return {
       productId: itm.productId,
+      variantId: itm.variantId,
       productName: itm.productName,
       quantity: Number(itm.quantity),
       costPrice: Number(itm.costPrice),
@@ -67,20 +72,15 @@ router.put('/:id/status', async (req, res) => {
       return res.status(404).json({ error: 'Purchase Order not found' });
     }
     const po = poRes.rows[0];
-    const oldStatus = po.status;
-
-    if (status === 'Received' && oldStatus !== 'Received') {
+    if (status === 'Received') {
       await receivePurchaseOrder(poId, activeShopId, receiveUser || 'Inventory Officer');
-
-      const actId = 'act-' + Date.now();
-      await pool.query(
-        `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
-         VALUES ($1, $2, NOW(), $3, 'Inventory Staff', 'Received Materials', $4)`,
-        [actId, activeShopId, receiveUser || 'Inventory Officer', `Confirmed delivery receipt for ${po.po_number} and restocked products.`]
-      );
     } else {
-      await pool.query('UPDATE purchase_orders SET status = $1 WHERE id = $2', [status, poId]);
-
+      if (!['Pending', 'Ordered', 'Cancelled'].includes(status)) return res.status(400).json({ error: 'Unknown order status' });
+      const changed = await pool.query(
+        "UPDATE purchase_orders SET status = $1 WHERE id = $2 AND shop_id = $3 AND status IN ('Pending', 'Ordered')",
+        [status, poId, activeShopId]
+      );
+      if (!changed.rowCount) return res.status(409).json({ error: 'This order is already closed.' });
       const actId = 'act-' + Date.now();
       await pool.query(
         `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)

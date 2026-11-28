@@ -1,0 +1,20 @@
+# Prevent any secrets or local business data from entering the Docker build context.
+.git
+.github
+node_modules
+dist
+build
+coverage
+.env
+.env.*
+!.env.example
+uploads
+backups
+*.log
+*.dump
+*.sql
+*.bak
+docker-compose.yml
+tests
+docs
+README.md

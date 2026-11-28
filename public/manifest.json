@@ -1,16 +1,12 @@
 {
-  "short_name": "Smart POS",
-  "name": "Hardware Shop POS & Inventory",
+  "short_name": "ARS POS",
+  "name": "ARS Distributors | Business Workspace",
   "icons": [
     {
-      "src": "/logo.png",
-      "type": "image/png",
-      "sizes": "192x192"
-    },
-    {
-      "src": "/logo.png",
-      "type": "image/png",
-      "sizes": "512x512"
+      "src": "/ars-official.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
     }
   ],
   "start_url": "/",

@@ -1,16 +1,53 @@
+param([switch]$DesktopLaunch)
 $ErrorActionPreference = 'Stop'
+$launchMutex = $null
+$ownsLaunch = $false
+try {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location (Join-Path $scriptDir '..')
+if ($DesktopLaunch) {
+  . (Join-Path $scriptDir 'windows-desktop-window.ps1')
+  $launchMutex = New-Object System.Threading.Mutex($false, 'Local\ARSDistributorPOSLauncher')
+  try { $ownsLaunch = $launchMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsLaunch = $true }
+  if (-not $ownsLaunch) { return }
+}
 
+# Block both desktop and development launcher paths during retained maintenance.
+$maintenancePath=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control\maintenance.json'
+$controlPath=Split-Path -Parent $maintenancePath
+if (Test-Path -LiteralPath $controlPath) {
+  $controlItem=Get-Item -LiteralPath $controlPath -Force
+  if (-not $controlItem.PSIsContainer -or ($controlItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid desktop control directory.' }
+  $blocking=@(Get-ChildItem -LiteralPath $controlPath -Force | Where-Object {
+    $_.Name -in @('runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json',
+      'repair-interrupted.json','maintenance-shutdown.json','activation.json','runtime-switch-journal.json',
+      'runtime-active.json','runtime-previous.json','runtime-failed-candidate.json') -or
+    $_.Name -like 'runtime-switch-pending-*' -or $_.Name -like 'journal-history-*'
+  })
+  if ($blocking.Count -gt 0) { throw 'Unresolved update or activation incident. Contact RS Nextward support before restarting.' }
+}
+if (Test-Path -LiteralPath $maintenancePath) {
+  throw 'ARS is in retained maintenance mode. Do not restart until recovery or update preparation has been reviewed.'
+}
+
+# Resolve external configuration explicitly, but keep external startup gated until
+# the existing Docker volume identity and activation protocol are verified.
+. (Join-Path $scriptDir 'windows-runtime-paths.ps1')
+$runtimeRoot=Get-ArsWindowsRuntimeRoot (Get-Location).Path
+$configPath=Join-Path $runtimeRoot '.env.local'
+$externalRuntime=$null -ne [Environment]::GetEnvironmentVariable('ARS_RUNTIME_ROOT','Process')
+if ($externalRuntime) {
+  throw 'External runtime startup is disabled until stable database binding and activation are verified.'
+}
 if (-not (Test-Path '.env.local')) {
   Write-Host '.env.local not found. Creating it from .env.example...'
   Copy-Item '.env.example' '.env.local'
-  Write-Host '.env.local created. Update credentials if needed.'
+  Write-Host '.env.local created. Configure JWT_SECRET before shop use. Create administrator through first-time setup.'
 }
 
 function Get-DatabaseUrlFromEnvFile {
-  $dbLine = Get-Content '.env.local' | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
+  $dbLine = Get-Content -LiteralPath $configPath | Where-Object { $_ -match '^\s*DATABASE_URL\s*=' } | Select-Object -First 1
   if (-not $dbLine) {
     return ''
   }
@@ -70,6 +107,14 @@ function Wait-ForDockerCompose([int]$timeoutSeconds = 180) {
 }
 
 function Try-StartDockerCompose {
+  if ($externalRuntime) { throw 'Release-relative Docker startup is prohibited with external runtime.' }
+  if ($windowsPilot) {
+    # Start only the already provisioned container. Never create or replace a database on launch.
+    try {
+      docker start ars-windows-pilot-postgres *> $null
+      return ($LASTEXITCODE -eq 0)
+    } catch { return $false }
+  }
   try {
     cmd /c "docker compose up -d" *> $null
     return ($LASTEXITCODE -eq 0)
@@ -103,7 +148,41 @@ function Test-PostgresAuth([string]$connectionString) {
   }
 }
 
-Write-Host 'Checking Docker daemon...'
+# Never silently start with demo login credentials or placeholder session secrets.
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  throw 'Node.js is not installed or not on PATH. Install Node.js 22 LTS before starting ARS POS.'
+}
+if (-not (Test-Path 'node_modules')) {
+  throw 'Node dependencies are missing. Run npm ci from the project folder first.'
+}
+$envLines = Get-Content -LiteralPath $configPath
+$pilotLines=@($envLines | Where-Object { $_ -match '^ARS_WINDOWS_PILOT=' })
+$windowsPilot=$pilotLines.Count -gt 0
+if ($windowsPilot) {
+  if ($pilotLines.Count -ne 1 -or $pilotLines[0] -cne 'ARS_WINDOWS_PILOT=1') { throw 'Invalid Windows pilot configuration.' }
+  $passwordLines=@($envLines | Where-Object { $_ -match '^ARS_WINDOWS_DB_PASSWORD=' })
+  if ($passwordLines.Count -ne 1 -or $passwordLines[0] -cnotmatch '^ARS_WINDOWS_DB_PASSWORD=[0-9a-f]{96}$') { throw 'Invalid pilot database credential.' }
+  $password=$passwordLines[0].Substring('ARS_WINDOWS_DB_PASSWORD='.Length)
+  if ((Get-DatabaseUrlFromEnvFile) -cne "postgresql://ars:$password@127.0.0.1:5433/hardware_pos_ars") { throw 'Pilot database configuration mismatch.' }
+  # Bind startup to the expected existing Compose container and named data volume.
+  $raw=@(docker inspect ars-windows-pilot-postgres 2>$null)
+  if ($LASTEXITCODE -ne 0 -or -not $raw) { throw 'Pilot database container missing. Use recovery support; setup must not recreate it.' }
+  $db=($raw -join [Environment]::NewLine | ConvertFrom-Json)
+  if ($db.Config.Labels.'com.docker.compose.project' -cne 'ars-windows-pilot' -or $db.Config.Labels.'com.docker.compose.service' -cne 'postgres') { throw 'Unexpected pilot container identity.' }
+  $mount=@($db.Mounts | Where-Object { $_.Destination -eq '/var/lib/postgresql/data' })
+  if ($mount.Count -ne 1 -or $mount[0].Type -ne 'volume' -or $mount[0].Name -cne 'ars-windows-pilot_pilot_pgdata') { throw 'Pilot database volume binding mismatch.' }
+  $ports=@($db.HostConfig.PortBindings.'5432/tcp')
+  if ($ports.Count -ne 1 -or $ports[0].HostIp -cne '127.0.0.1' -or $ports[0].HostPort -cne '5433') { throw 'Pilot database network binding mismatch.' }
+}
+
+$jwtLine = $envLines | Where-Object { $_ -match '^\s*JWT_SECRET\s*=' } | Select-Object -First 1
+$jwtValue = if ($jwtLine) { (($jwtLine -replace '^\s*JWT_SECRET\s*=\s*', '').Trim().Trim('"').Trim("'")) } else { '' }
+if ($jwtValue.Length -lt 32 -or $jwtValue -match '(?i)replace.with|change.?me|example|password') {
+  throw 'Set a strong random JWT_SECRET of at least 32 characters in .env.local before starting.'
+}
+Write-Host 'Employee credentials are managed in PostgreSQL; no role passwords are required in .env.local.'
+
+Write-Host 'Checking database configuration...'
 $dockerAvailable = $false
 
 $dbUrl = Get-DatabaseUrlFromEnvFile
@@ -127,7 +206,19 @@ if ($dbUrl) {
 }
 
 if (-not $dbReady) {
-  Write-Host 'Starting PostgreSQL container...'
+  if (-not $dbUrl) {
+    throw 'DATABASE_URL is missing in .env.local.'
+  }
+  try {
+    $parsedUrl = [System.Uri]$dbUrl
+    $dbHost = $parsedUrl.Host
+  } catch {
+    throw 'DATABASE_URL in .env.local is invalid.'
+  }
+  if ($dbHost -notin @('localhost', '127.0.0.1', '::1', '[::1]')) {
+    throw 'Configured remote PostgreSQL is not reachable. Refusing to start unrelated local Docker database.'
+  }
+  Write-Host 'Starting local PostgreSQL container...'
   if (Try-StartDockerCompose) {
     $dockerAvailable = $true
   } else {
@@ -178,18 +269,109 @@ if (-not $dockerAvailable -and -not $dbReady) {
   }
 }
 
+function Test-ArsDesktopReleaseReady([string]$Version, [int]$ProcessId) {
+  $ErrorActionPreference='Continue'
+  $PSNativeCommandUseErrorActionPreference=$false
+  & node (Join-Path $scriptDir 'verify-installed-release-readiness.mjs') $Version $ProcessId *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
+if ($DesktopLaunch) {
+  $version=(Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json).version
+  if ($version -isnot [string] -or $version -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') {
+    throw 'Installed release version cannot be verified.'
+  }
+  $controlDir=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
+  $recordPath=Join-Path $controlDir 'instance.json'
+}
+
 $portProcess = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue |
   Select-Object -First 1 -ExpandProperty OwningProcess
 
 if ($portProcess) {
-  Write-Host 'Port 3000 is in use. Stopping existing process...'
-  try {
-    Stop-Process -Id $portProcess -Force
-  } catch {
-    Write-Warning 'Failed to stop process on port 3000. Start may fail if port remains occupied.'
+  if ($DesktopLaunch) {
+    try {
+      $file=Get-Item -LiteralPath $recordPath -Force
+      if ($file.PSIsContainer -or $file.Length -gt 8192 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Invalid desktop process record.'
+      }
+      $existing=Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+      $owner=Get-Process -Id $portProcess
+      if ($existing.schema -eq 1 -and $existing.project -ieq (Get-Location).Path -and
+          $existing.pid -eq $owner.Id -and $existing.startedUtc -ceq $owner.StartTime.ToUniversalTime().Ticks.ToString() -and
+          (Test-ArsDesktopReleaseReady $version $owner.Id) -and -not $owner.HasExited) {
+        Open-ArsDesktopWindow
+        return
+      }
+    } catch { }
   }
+  throw "Port 3000 is already in use by PID $portProcess. Close the existing process yourself if appropriate; no process was stopped."
 }
 
-Write-Host 'Starting application in development mode...'
-Start-Process 'http://localhost:3000' | Out-Null
-npm run dev
+# A successful Docker startup does not prove credentials match the configured DB.
+$dbUrl = Get-DatabaseUrlFromEnvFile
+if (-not (Test-PostgresAuth $dbUrl)) {
+  throw 'PostgreSQL authentication failed. Confirm DATABASE_URL credentials and Windows port (Docker Compose default: 5433).'
+}
+Write-Host 'Database connection verified. Starting application...'
+Write-Host 'Open http://localhost:3000 after the server reports ready.'
+if ($DesktopLaunch) {
+  # Desktop business use runs only a prepared production build, never a development server.
+  if (-not (Test-Path 'dist/server.cjs' -PathType Leaf) -or -not (Test-Path 'dist/index.html' -PathType Leaf)) {
+    throw 'Production build is missing. Run npm run build during approved installation or update preparation.'
+  }
+  $env:NODE_ENV = 'production'
+  $env:ARS_LISTEN_HOST = '127.0.0.1'
+  $env:PORT = '3000'
+  $env:CORS_ALLOWED_ORIGINS = 'http://localhost:3000'
+  New-Item -ItemType Directory -Path $controlDir -Force | Out-Null
+  if ((Get-Item -LiteralPath $controlDir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected desktop control directory.' }
+  if (Test-Path -LiteralPath $recordPath) { throw 'Previous desktop control record exists. Verify previous shutdown with RS Nextward support before restarting.' }
+  $pipeName='ars-pos-'+[guid]::NewGuid().ToString('N')
+  $bytes=New-Object byte[] 32
+  $rng=[Security.Cryptography.RandomNumberGenerator]::Create()
+  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+  $secret=[BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
+  # DPAPI protects the stored token for the current Windows account.
+  $secure=ConvertTo-SecureString $secret -AsPlainText -Force
+  $encrypted=ConvertFrom-SecureString $secure
+  $env:ARS_DESKTOP_SHUTDOWN_PIPE='\\.\pipe\'+$pipeName
+  $env:ARS_DESKTOP_SHUTDOWN_SECRET=$secret
+  try {
+  $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList 'dist/server.cjs' -WindowStyle Hidden -PassThru
+  } finally {
+    Remove-Item Env:ARS_DESKTOP_SHUTDOWN_PIPE -ErrorAction SilentlyContinue
+    Remove-Item Env:ARS_DESKTOP_SHUTDOWN_SECRET -ErrorAction SilentlyContinue
+  }
+  $record=[ordered]@{schema=1;project=(Get-Location).Path;pid=$process.Id;startedUtc=$process.StartTime.ToUniversalTime().Ticks.ToString();pipe=$pipeName;protectedSecret=$encrypted}
+  $stream=[IO.File]::Open($recordPath,[IO.FileMode]::CreateNew)
+  try {
+    $encoded=[Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json))
+    $stream.Write($encoded,0,$encoded.Length)
+  } finally { $stream.Dispose() }
+
+  $deadline = (Get-Date).AddSeconds(150)
+  while ((Get-Date) -lt $deadline) {
+    $process.Refresh()
+    if ($process.HasExited) { throw 'ARS application exited before it became ready. Contact RS Nextward support.' }
+    if ((Test-ArsDesktopReleaseReady $version $process.Id) -and -not $process.HasExited) {
+      Open-ArsDesktopWindow
+      return
+    }
+    Start-Sleep -Seconds 1
+  }
+  throw 'ARS could not confirm readiness. The application may still be starting; no process was stopped. Contact support if the problem persists.'
+} else {
+  npm run dev
+}
+} catch {
+  if ($DesktopLaunch) {
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'ARS Distributor POS', 'OK', 'Error')
+    exit 1
+  }
+  throw
+} finally {
+  if ($ownsLaunch -and $launchMutex) { $launchMutex.ReleaseMutex() }
+  if ($launchMutex) { $launchMutex.Dispose() }
+}

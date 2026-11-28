@@ -1,15 +1,20 @@
 import React, { useState } from 'react';
-import { Calculator, Paintbrush, Hammer, Layers, ShieldAlert, BadgePercent, Coins, ClipboardList, Trash2, ArrowRight } from 'lucide-react';
+import { Paintbrush, Hammer, Layers, ShieldAlert, BadgePercent, Coins, ClipboardList } from 'lucide-react';
+
+import type { Product, QuotationItem } from '../types';
+
+export type EstimateDraft = { item: QuotationItem; notes: string };
 
 interface CalculatorsViewProps {
-  products?: any[];
+  products?: Product[];
+  onQuote?: (draft: EstimateDraft) => void;
   taxConfig?: {
     taxRate: number;
     currency: string;
   };
 }
 
-export default function CalculatorsView({ products = [], taxConfig = { taxRate: 18, currency: 'LKR' } }: CalculatorsViewProps) {
+export default function CalculatorsView({ products = [], onQuote, taxConfig = { taxRate: 18, currency: 'LKR' } }: CalculatorsViewProps) {
   const [subTab, setSubTab] = useState<'tile' | 'concrete' | 'paint' | 'brick-steel-timber' | 'business'>('tile');
 
   // --- 1. Tile Calculator States ---
@@ -19,7 +24,12 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
   const [customTileLength, setCustomTileLength] = useState<number>(2); // in feet
   const [customTileWidth, setCustomTileWidth] = useState<number>(2); // in feet
   const [tilesPerBox, setTilesPerBox] = useState<number>(4);
-  const [pricePerBox, setPricePerBox] = useState<number>(2500);
+  const [productId, setProductId] = useState('');
+  const [stockUnit, setStockUnit] = useState<'' | 'box' | 'tile'>('');
+  const catalog = products.filter(product => product.status !== 'Inactive' && !product.variants?.length);
+  const product = catalog.find(entry => entry.id === productId);
+  const unitPrice = product && (product.wholesalePrice || product.sellingPrice);
+  const [manualPrice, setPricePerBox] = useState<number>(2500);
   const [tileWaste, setTileWaste] = useState<number>(10); // in percent
   const [tileDeductions, setTileDeductions] = useState<number>(0); // non-tiled areas (sq.ft)
 
@@ -86,11 +96,18 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
 
   const tileArea = tileLength * tileWidth; // sq.ft
   const rawTilesRequired = tileArea > 0 ? roomArea / tileArea : 0;
-  const tileWasteQty = rawTilesRequired * (tileWaste / 100);
-  const totalTilesRequired = rawTilesRequired + tileWasteQty;
+  const netTiles = Math.ceil(rawTilesRequired);
+  const totalTilesRequired = Math.ceil(rawTilesRequired * (100 + tileWaste) / 100);
+  const tileWasteQty = totalTilesRequired - netTiles;
+  const pricePerBox = product
+    ? (unitPrice ?? 0) * (stockUnit === 'tile' ? tilesPerBox : 1)
+    : manualPrice;
   const boxesRequired = tilesPerBox > 0 ? Math.ceil(totalTilesRequired / tilesPerBox) : 0;
   const tileTotalCost = boxesRequired * pricePerBox;
   const remainingStock = (boxesRequired * tilesPerBox) - totalTilesRequired;
+
+  const stockNeeded = stockUnit === 'tile' ? boxesRequired * tilesPerBox : boxesRequired;
+  const priceReady = !product || !!stockUnit;
 
   // Adhesive & Grout Estimates (Standard builders' formula)
   // Thinset mortar / adhesive: ~0.15 bags per sq.ft (25kg bags)
@@ -162,79 +179,111 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
   const reorderPoint = Math.ceil((dailyDemand * leadTimeDays) + avgSafetyStock);
 
   return (
-    <div className="p-6 space-y-6 max-h-screen overflow-y-auto w-full text-slate-800">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-200 pb-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Calculator className="w-6 h-6 text-indigo-600" />
-            Premium Builders & Business Calculators
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Compute materials estimation and financial metrics instantly to speed up checkouts and quotes.
-          </p>
-        </div>
-      </div>
-
-      {/* Main Tabs */}
-      <div className="flex gap-2 border-b border-slate-200 pb-2">
+    <div className="w-full min-w-0 space-y-2 text-slate-800">
+      <nav aria-label="Calculator categories" className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-sm">
         <button
+          aria-pressed={subTab === 'tile'}
           onClick={() => setSubTab('tile')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-            subTab === 'tile' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-600 hover:bg-slate-200/80'
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+            subTab === 'tile' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
           <Layers className="w-4 h-4" />
-          Premium Tile Calculator
+          Tiles
         </button>
         <button
+          aria-pressed={subTab === 'concrete'}
           onClick={() => setSubTab('concrete')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-            subTab === 'concrete' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-600 hover:bg-slate-200/80'
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+            subTab === 'concrete' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
           <Hammer className="w-4 h-4" />
           Cement & Concrete
         </button>
         <button
+          aria-pressed={subTab === 'paint'}
           onClick={() => setSubTab('paint')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-            subTab === 'paint' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-600 hover:bg-slate-200/80'
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+            subTab === 'paint' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
           <Paintbrush className="w-4 h-4" />
-          Paint Calculator
+          Paint
         </button>
         <button
+          aria-pressed={subTab === 'brick-steel-timber'}
           onClick={() => setSubTab('brick-steel-timber')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-            subTab === 'brick-steel-timber' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-600 hover:bg-slate-200/80'
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+            subTab === 'brick-steel-timber' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
           <ClipboardList className="w-4 h-4" />
           Bricks, Steel & Timber
         </button>
         <button
+          aria-pressed={subTab === 'business'}
           onClick={() => setSubTab('business')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
-            subTab === 'business' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-600 hover:bg-slate-200/80'
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+            subTab === 'business' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-200/80'
           }`}
         >
           <BadgePercent className="w-4 h-4" />
           Business & Inventory
         </button>
-      </div>
+      </nav>
+
+      {subTab === 'tile' && (
+        <section aria-label="Tile order estimate" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <div>
+            <h2 className="text-base font-bold">{boxesRequired} boxes · {boxesRequired * tilesPerBox} tiles</h2>
+            <p className="text-sm text-slate-700">{priceReady
+              ? `${taxConfig.currency} ${tileTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} before tax and transport`
+              : 'Select the stock unit to calculate the price.'}</p>
+            {product && stockUnit && <p className="mt-1 text-sm">
+              {product.wholesalePrice ? 'Wholesale price' : 'Selling price'} · {product.quantity} {stockUnit === 'box' ? 'boxes' : 'tiles'} in stock · {Math.max(0, stockNeeded - product.quantity)} short
+            </p>}
+          </div>
+          {onQuote && product && stockUnit && (
+            <button type="button" disabled={!Number.isSafeInteger(stockNeeded) || stockNeeded < 1 || stockNeeded > 1e9 || !Number.isFinite(tileTotalCost) || tileTotalCost > 9e9}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              onClick={() => onQuote({
+                item: { productId: product.id, productName: product.name, quantity: stockNeeded, sellingPrice: unitPrice ?? 0, discount: 0 },
+                notes: `Tile estimate. Quantity and unit price are per ${stockUnit}. Pack size: ${tilesPerBox} tiles per box.`,
+              })}>Add to quotation</button>
+          )}
+        </section>
+      )}
 
       {/* Calculator Body */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-start">
 
         {/* Inputs (Left Panel) */}
-        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 shadow-xl">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">Input Parameters</h2>
+        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-3 shadow-sm lg:max-h-[70dvh] lg:overflow-y-auto overscroll-contain">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400 mb-2">Estimate inputs</h2>
 
           {/* TILE CALCULATOR INPUTS */}
           {subTab === 'tile' && (
             <>
+              <label className="block space-y-1 text-xs text-slate-300">
+                <span>Stock product</span>
+                <select className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+                  value={product?.id ?? ''} onChange={event => { setProductId(event.target.value); setStockUnit(''); }}>
+                  <option value="">Manual estimate</option>
+                  {catalog.map(entry => <option key={entry.id} value={entry.id}>{entry.name} · {entry.sku}</option>)}
+                </select>
+              </label>
+              {product && (
+                <label className="block space-y-1 text-xs text-slate-300">
+                  <span>How is this product counted in stock?</span>
+                  <select className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+                    value={stockUnit} onChange={event => setStockUnit(event.target.value as typeof stockUnit)}>
+                    <option value="">Select the stock unit</option>
+                    <option value="box">One stock unit is one box</option>
+                    <option value="tile">One stock unit is one tile</option>
+                  </select>
+                </label>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="text-xs text-slate-300">Room Length (ft)</label>
@@ -304,7 +353,7 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
                   <input
                     type="number"
                     value={tilesPerBox}
-                    onChange={(e) => setTilesPerBox(Math.max(1, Number(e.target.value)))}
+                    onChange={(e) => setTilesPerBox(Math.max(1, Math.floor(Number(e.target.value))))}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
@@ -324,7 +373,8 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
                   <label className="text-xs text-slate-300">Price Per Box ({taxConfig.currency})</label>
                   <input
                     type="number"
-                    value={pricePerBox}
+                    value={priceReady ? pricePerBox : ''}
+                    readOnly={!!product}
                     onChange={(e) => setPricePerBox(Math.max(0, Number(e.target.value)))}
                     className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none"
                   />
@@ -700,18 +750,16 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
         </div>
 
         {/* Output Results (Right Panel) */}
-        <div className="lg:col-span-7 space-y-6">
+        <div className="lg:col-span-7 space-y-3 lg:max-h-[70dvh] lg:overflow-y-auto overscroll-contain">
 
           {/* Results Summary Box */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="font-semibold text-slate-200 flex items-center gap-2">
                 <Coins className="w-5 h-5 text-indigo-400" />
                 Calculation Estimates
               </h3>
-              <span className="text-[10px] font-mono bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20 uppercase">
-                {subTab} mix
-              </span>
+
             </div>
 
             {/* TILE CALCULATOR RESULTS */}
@@ -728,21 +776,11 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
                 </div>
                 <div className="space-y-1 p-3 bg-slate-800/40 rounded-lg border border-slate-800/80">
                   <p className="text-xs text-slate-400">Net Tiles Required</p>
-                  <p className="text-xl font-bold text-slate-100">{rawTilesRequired.toFixed(0)} pieces</p>
+                  <p className="text-xl font-bold text-slate-100">{netTiles} pieces</p>
                 </div>
                 <div className="space-y-1 p-3 bg-slate-800/40 rounded-lg border border-slate-800/80">
                   <p className="text-xs text-slate-400">Waste Allocation ({tileWaste}%)</p>
-                  <p className="text-xl font-bold text-amber-400">+{tileWasteQty.toFixed(0)} pieces</p>
-                </div>
-                <div className="space-y-1 p-3 bg-indigo-500/5 rounded-lg border border-indigo-500/20">
-                  <p className="text-xs text-indigo-400 font-semibold">Boxes Required</p>
-                  <p className="text-2xl font-black text-indigo-300">{boxesRequired} Boxes</p>
-                  <p className="text-[10px] text-slate-400 font-mono mt-1">({boxesRequired * tilesPerBox} tiles total)</p>
-                </div>
-                <div className="space-y-1 p-3 bg-indigo-500/5 rounded-lg border border-indigo-500/20">
-                  <p className="text-xs text-indigo-400 font-semibold">Estimated Cost</p>
-                  <p className="text-2xl font-black text-indigo-300">{taxConfig.currency} {tileTotalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Excl. taxes and transport fees</p>
+                  <p className="text-xl font-bold text-amber-400">+{tileWasteQty} pieces</p>
                 </div>
                 <div className="space-y-1 p-3 bg-slate-800/40 rounded-lg border border-slate-800/80">
                   <p className="text-xs text-slate-400">Adhesive / Thinset Bags</p>
@@ -754,8 +792,8 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
                 </div>
                 <div className="md:col-span-2 p-3 bg-slate-800/40 rounded-lg border border-slate-800/80 flex items-center justify-between">
                   <div>
-                    <p className="text-xs text-slate-400">Remaining Cuts / Extra Loose Stock</p>
-                    <p className="text-sm font-semibold text-slate-300">{remainingStock.toFixed(1)} tile pieces</p>
+                    <p className="text-xs text-slate-400">Whole tiles left after waste allowance</p>
+                    <p className="text-sm font-semibold text-slate-300">{remainingStock} tile pieces</p>
                   </div>
                   <span className="text-xs bg-slate-700/50 text-slate-400 px-2 py-1 rounded">Spare pieces</span>
                 </div>
@@ -947,16 +985,7 @@ export default function CalculatorsView({ products = [], taxConfig = { taxRate: 
             )}
           </div>
 
-          {/* Quick link action card */}
-          <div className="bg-indigo-950/20 border border-indigo-900/30 rounded-xl p-5 shadow-lg flex items-center justify-between">
-            <div className="space-y-1">
-              <h4 className="text-sm font-semibold text-indigo-300">Need specific custom material orders?</h4>
-              <p className="text-xs text-slate-400">
-                You can drag calculated items directly or click the AI assistant chatbot to generate custom quotes instantly.
-              </p>
-            </div>
-            <ArrowRight className="w-5 h-5 text-indigo-400 flex-shrink-0" />
-          </div>
+
 
         </div>
       </div>

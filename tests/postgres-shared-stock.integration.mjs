@@ -1,0 +1,251 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+const url=new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
+if(!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/hardware_pos_ci')throw Error('Refusing shared-stock test outside local hardware_pos_ci');
+const {pool,initDbTables,createPurchaseOrder,receivePurchaseOrder,checkoutTransaction,refundTransaction}=await import('../backend/db.ts');
+const {initPackagingDrafts,savePackagingDraft,activatePackaging,checkPackagingActivation,updatePackagingPrices,getPackagingDraft,convertLegacyPackaging}=await import('../backend/packagingDrafts.ts');
+const {initSharedStockSchema,deductSharedSale,restoreSharedSale}=await import('../backend/sharedStock.ts');
+test('shared packaging activation, purchase, mixed sale and rollback against PostgreSQL',async()=>{
+ const suffix=randomUUID(),shop='ci-shared-'+suffix,product='prod-'+suffix,supplier='supplier-'+suffix,po='po-'+suffix;
+ const config={baseUnit:'Piece',units:[{id:'piece',label:'Piece',baseUnits:1,sellingPrice:500},{id:'box',label:'Box',baseUnits:12,sellingPrice:5400}]};
+ const stock=async()=>Number((await pool.query('SELECT quantity FROM products WHERE id=$1',[product])).rows[0].quantity);
+ const previous=process.env.ARS_SHARED_STOCK_PILOT;
+ try{
+  await initDbTables();await initSharedStockSchema(pool);await initPackagingDrafts(pool);
+  await pool.query("INSERT INTO suppliers(id,shop_id,name,company_name,phone) VALUES($1,$2,'CI','CI','0700000000')",[supplier,shop]);
+  await pool.query("INSERT INTO products(id,shop_id,name,sku,brand,category,cost_price,selling_price,quantity,reorder_level,warranty,description,variants_json) VALUES($1,$2,'Door lock',$1,'CI','Parts',300,500,0,1,'None','Test','[]'::jsonb)",[product,shop]);
+  const legacy='legacy-'+suffix;
+  await pool.query("INSERT INTO products(id,shop_id,name,sku,brand,category,cost_price,selling_price,quantity,reorder_level,warranty,description,variants_json) VALUES($1,$2,'Legacy door locks',$1,'CI','Parts',3600,5400,20,5,'None','Test','[]'::jsonb)",[legacy,shop]);
+  await savePackagingDraft(pool,shop,legacy,'CI Manager',config);
+  const request={confirmed:true,legacyUnitId:'box',expected:{quantity:20,reorderLevel:5,costPrice:3600,sellingPrice:5400},configuration:config};
+  const legacyRow=async()=>(await pool.query('SELECT quantity,reorder_level,cost_price,selling_price,shared_stock_units FROM products WHERE id=$1',[legacy])).rows[0];
+  process.env.ARS_SHARED_STOCK_PILOT='false';
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/disabled/);
+  delete process.env.ARS_SHARED_STOCK_PILOT;
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Cashier','Cashier',request),/confirmation/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,confirmed:false}),/confirmation/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,'other-shop',legacy,'CI Manager','Store Manager',request),/not eligible/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,expected:{...request.expected,quantity:19}}),/changed/);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',{...request,configuration:{...config,units:config.units.map(u=>({...u,sellingPrice:u.sellingPrice+1}))}}),/Save the current/);
+  assert.equal(Number((await legacyRow()).quantity),20);
+  assert.equal((await legacyRow()).shared_stock_units,null);
+  const oldPo='legacy-po-'+suffix;
+  await createPurchaseOrder({id:oldPo,shopId:shop,poNumber:oldPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:legacy,productName:'Legacy door locks',quantity:2,costPrice:3600}],total:7200,status:'Pending'});
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/outstanding purchase orders/);
+  assert.equal(Number((await legacyRow()).quantity),20);
+  await receivePurchaseOrder(oldPo,shop,'CI Manager');
+  assert.equal(Number((await legacyRow()).quantity),22);
+  // Create a genuine pre-conversion invoice via the ordinary checkout workflow.
+  const legacyCustomer='legacy-customer-'+suffix,legacyInvoice='legacy-invoice-'+suffix;
+  await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'CI Legacy Customer',0,0,0,0)",[legacyCustomer,shop]);
+  await checkoutTransaction({id:legacyInvoice,shopId:shop,invoiceNumber:legacyInvoice,date:new Date().toISOString(),customerId:legacyCustomer,customerName:'CI Legacy Customer',cashierName:'CI Cashier',items:[{productId:legacy,productName:'Legacy door locks',quantity:2,sellingPrice:5400,costPrice:3600,discount:0}],subtotal:10800,tax:0,discountAmount:0,total:10800,paymentMethod:'Cash',paymentStatus:'PAID',status:'Completed',cashReceived:10800,changeDue:0},'Cashier','CI Shop');
+  assert.equal(Number((await legacyRow()).quantity),20);
+  const originalLines=(await pool.query('SELECT * FROM sales_transaction_items WHERE transaction_id=$1',[legacyInvoice])).rows;
+  const originalPO=(await pool.query('SELECT * FROM purchase_order_items WHERE purchase_order_id=$1',[oldPo])).rows;
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/every historical invoice/);
+  const historicalRequest={...request,historicalUnits:originalLines.map(line=>({saleItemId:String(line.id),unitId:'box'}))};
+  const conversion=await convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',historicalRequest);
+  assert.deepEqual((await pool.query('SELECT * FROM sales_transaction_items WHERE transaction_id=$1',[legacyInvoice])).rows,originalLines);
+  assert.deepEqual((await pool.query('SELECT * FROM purchase_order_items WHERE purchase_order_id=$1',[oldPo])).rows,originalPO);
+
+  assert.equal(conversion.valuationDifference,0);
+  const converted=await legacyRow();
+  assert.deepEqual([Number(converted.quantity),Number(converted.reorder_level),Number(converted.cost_price),Number(converted.selling_price)],[240,60,300,500]);
+  assert.equal(Number(converted.quantity)*Number(converted.cost_price),72000);
+  assert.deepEqual(converted.shared_stock_units,config);
+  await assert.rejects(()=>convertLegacyPackaging(pool,shop,legacy,'CI Manager','Store Manager',request),/not eligible/);
+  const convertedAudit=await pool.query("SELECT details FROM activity_logs WHERE shop_id=$1 AND action='Converted Legacy Packaging'",[shop]);
+  assert.equal(convertedAudit.rowCount,1);
+  assert.equal(JSON.parse(convertedAudit.rows[0].details).productId,legacy);
+  const legacyClient=await pool.connect();
+  try{
+    await legacyClient.query('BEGIN');
+    await deductSharedSale(legacyClient,shop,legacy,'box',2);
+    await deductSharedSale(legacyClient,shop,legacy,'piece',4);
+    await legacyClient.query('COMMIT');
+  }finally{await legacyClient.query('ROLLBACK').catch(()=>{});legacyClient.release();}
+  assert.equal(Number((await legacyRow()).quantity),212);
+  await refundTransaction(legacyInvoice,shop,'CI legacy return','CI Manager','Store Manager');
+  assert.equal(Number((await legacyRow()).quantity),236);
+  await assert.rejects(()=>refundTransaction(legacyInvoice,shop,'CI duplicate return','CI Manager','Store Manager'),/already been refunded/);
+  assert.equal(Number((await legacyRow()).quantity),236);
+  await savePackagingDraft(pool,shop,product,'CI Manager',config);
+  assert.equal((await checkPackagingActivation(pool,shop,product)).eligible,true);
+  process.env.ARS_SHARED_STOCK_PILOT='false';
+  await assert.rejects(()=>activatePackaging(pool,shop,product,'CI Manager','Store Manager',true),/disabled/);
+  delete process.env.ARS_SHARED_STOCK_PILOT;
+  await assert.rejects(()=>activatePackaging(pool,shop,product,'CI Cashier','Cashier',true),/confirmation/);
+  await activatePackaging(pool,shop,product,'CI Manager','Store Manager',true);
+  assert.equal(await stock(),0);
+  await createPurchaseOrder({id:po,shopId:shop,poNumber:po,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:10,costPrice:3600}],total:36000,status:'Pending'});
+  await receivePurchaseOrder(po,shop,'CI Manager');
+  assert.equal(await stock(),120);
+  await assert.rejects(()=>receivePurchaseOrder(po,shop,'CI Manager'),/already received/);
+  const client=await pool.connect();
+  try{
+   await client.query('BEGIN');
+   const box=await deductSharedSale(client,shop,product,'box',2);
+   const piece=await deductSharedSale(client,shop,product,'piece',4);
+   assert.equal(box.baseQuantity,24);assert.equal(box.costPrice,3600);assert.equal(box.sellingPrice,5400);assert.equal(piece.baseQuantity,4);
+   await client.query('COMMIT');
+   assert.equal(await stock(),92);
+   await client.query('BEGIN');
+   assert.equal(await restoreSharedSale(client,shop,product,1,box.baseUnitsPerSaleUnit),12);
+   await client.query('COMMIT');
+   assert.equal(await stock(),104);
+   await client.query('BEGIN');
+   await deductSharedSale(client,shop,product,'box',8);
+   await assert.rejects(()=>deductSharedSale(client,shop,product,'piece',9),/Insufficient/);
+   await client.query('ROLLBACK');
+   assert.equal(await stock(),104);
+   await client.query('BEGIN');
+   await assert.rejects(()=>deductSharedSale(client,'other-shop',product,'piece',1),/unavailable/);
+   await client.query('ROLLBACK');
+  }finally{await client.query('ROLLBACK').catch(()=>{});client.release();}
+  const customerId='shared-customer-'+suffix;
+  await pool.query("INSERT INTO customers(id,shop_id,name,loyalty_balance,purchase_count,credit_limit,credit_balance) VALUES($1,$2,'CI Trade Customer',0,0,0,0)",[customerId,shop]);
+  const invoiceId='shared-invoice-'+suffix;
+  const tx={id:invoiceId,shopId:shop,invoiceNumber:invoiceId,date:new Date().toISOString(),customerId,customerName:'CI Trade Customer',cashierName:'CI Cashier',items:[
+    {productId:product,productName:'Door lock',sellingUnitId:'box',quantity:2,sellingPrice:5400,costPrice:3600,discount:0},
+    {productId:product,productName:'Door lock',sellingUnitId:'piece',quantity:4,sellingPrice:500,costPrice:300,discount:0}
+  ],subtotal:12800,tax:0,discountAmount:0,total:12800,paymentMethod:'Cash',paymentStatus:'PAID',status:'Completed',cashReceived:12800,changeDue:0};
+  await checkoutTransaction(tx,'Cashier','CI Shop');
+  assert.equal(await stock(),76);
+  const lines=(await pool.query('SELECT selling_unit_id,selling_unit_label,base_units_per_sale_unit,quantity,selling_price,cost_price FROM sales_transaction_items WHERE transaction_id=$1 ORDER BY selling_unit_id',[invoiceId])).rows;
+  assert.equal(lines.length,2);
+  assert.deepEqual(lines.map(l=>[l.selling_unit_id,l.selling_unit_label,Number(l.base_units_per_sale_unit),Number(l.quantity),Number(l.selling_price),Number(l.cost_price)]),[['box','Box',12,2,5400,3600],['piece','Piece',1,4,500,300]]);
+  assert.equal(lines.reduce((sum,l)=>sum+Number(l.quantity)*(Number(l.selling_price)-Number(l.cost_price)),0),4400);
+  await refundTransaction(invoiceId,shop,'CI full invoice return','CI Manager','Store Manager');
+  assert.equal(await stock(),104);
+  await assert.rejects(()=>refundTransaction(invoiceId,shop,'Duplicate return','CI Manager','Store Manager'),/already been refunded/);
+  assert.equal(await stock(),104);
+  const partialPo='partial-'+suffix;
+  const {initPartialReceivingTables,receivePartialOrder}=await import('../backend/partialReceiving.ts');
+  await initPartialReceivingTables(pool);
+  await createPurchaseOrder({id:partialPo,shopId:shop,poNumber:partialPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:5,costPrice:3600}],total:18000,status:'Pending'});
+  const line=(await pool.query('SELECT id,base_units_per_purchase_unit FROM purchase_order_items WHERE purchase_order_id=$1',[partialPo])).rows[0];
+  assert.equal(Number(line.base_units_per_purchase_unit),12);
+  const receipt=(requestKey,quantity)=>({shopId:shop,poId:partialPo,requestKey,user:'CI Manager',items:[{purchaseOrderItemId:Number(line.id),quantity}]});
+  const first=await receivePartialOrder(pool,receipt('first',2));
+  assert.equal(first.status,'Partially Received');assert.equal(await stock(),128);
+  const retry=await receivePartialOrder(pool,receipt('first',2));
+  assert.equal(retry.repeated,true);assert.equal(retry.batchId,first.batchId);assert.equal(await stock(),128);
+  await assert.rejects(()=>receivePartialOrder(pool,receipt('too-many',4)),/exceeds ordered/);
+  await assert.rejects(()=>receivePurchaseOrder(partialPo,shop,'CI Manager'),/Only open orders/);
+  assert.equal(await stock(),128);
+  const last=await receivePartialOrder(pool,receipt('last',3));
+  assert.equal(last.status,'Received');assert.equal(await stock(),164);
+  const logs=(await pool.query('SELECT quantity FROM stock_logs WHERE reference_id IN ($1,$2) ORDER BY quantity',[first.batchId,last.batchId])).rows;
+  assert.deepEqual(logs.map(row=>Number(row.quantity)),[24,36]);
+  await assert.rejects(()=>receivePartialOrder(pool,receipt('extra',1)),/not open/);
+  assert.equal(await stock(),164);
+  // Two independent checkout transactions compete for stock; only one can commit.
+  const competingInvoice=(tag)=>({...tx,id:'race-'+tag+'-'+suffix,invoiceNumber:'race-'+tag+'-'+suffix,items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:10,sellingPrice:5400,costPrice:3600,discount:0}],subtotal:54000,total:54000,cashReceived:54000});
+  const candidates=[competingInvoice('a'),competingInvoice('b')];
+  const outcomes=await Promise.allSettled(candidates.map(candidate=>checkoutTransaction(candidate,'Cashier','CI Shop')));
+  assert.equal(outcomes.filter(result=>result.status==='fulfilled').length,1);
+  const rejected=outcomes.find(result=>result.status==='rejected');
+  assert.match(String(rejected.reason),/insufficient/i);
+  assert.equal(await stock(),44);
+  const committed=(await pool.query('SELECT id FROM sales_transactions WHERE id=ANY($1::text[])',[candidates.map(candidate=>candidate.id)])).rows;
+  assert.equal(committed.length,1);
+  await refundTransaction(committed[0].id,shop,'CI concurrent checkout cleanup','CI Manager','Store Manager');
+  assert.equal(await stock(),164);
+  const repriced={...config,units:config.units.map(u=>({...u,sellingPrice:u.id==='box'?5800:550}))};
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Cashier','Cashier',config,repriced),/authorization/);
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,{...repriced,units:repriced.units.map(u=>u.id==='box'?{...u,baseUnits:24}:u)}),/Only selling prices/);
+  await updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced);
+  assert.equal(await stock(),164);
+  await assert.rejects(()=>updatePackagingPrices(pool,shop,product,'CI Manager','Store Manager',config,repriced),/Reload/);
+  await assert.rejects(()=>savePackagingDraft(pool,shop,product,'CI Manager',config),/Active packaging cannot be changed/);
+  await assert.rejects(()=>getPackagingDraft(pool,'other-shop',product),/not found/);
+  const current=await getPackagingDraft(pool,shop,product);
+  assert.equal(current.units.find(u=>u.id==='box').sellingPrice,5800);
+  assert.equal(current.units.find(u=>u.id==='box').baseUnits,12);
+  assert.equal(await stock(),164);
+  const historic=(await pool.query('SELECT selling_price FROM sales_transaction_items WHERE transaction_id=$1 AND selling_unit_id=$2',[invoiceId,'box'])).rows[0];
+  assert.equal(Number(historic.selling_price),5400);
+  assert.equal(Number((await pool.query('SELECT selling_price FROM products WHERE id=$1',[product])).rows[0].selling_price),550);
+  // Dedicated import fixture: use the same schema as production, but only in isolated CI.
+  await pool.query(`CREATE TABLE IF NOT EXISTS ars_import_shipments (
+    id TEXT PRIMARY KEY,shop_id TEXT NOT NULL,purchase_order_id TEXT NOT NULL,shipment_reference TEXT NOT NULL,
+    origin_country TEXT NOT NULL DEFAULT 'China',container_number TEXT NOT NULL DEFAULT '',eta_date DATE,
+    invoice_currency TEXT NOT NULL DEFAULT 'CNY',exchange_rate_lkr NUMERIC(16,6),
+    freight_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,customs_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,clearance_lkr NUMERIC(16,2) NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',created_by TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(shop_id,purchase_order_id),UNIQUE(shop_id,shipment_reference))`);
+  const {previewLandedCost,approveLandedCost}=await import('../backend/landedCost.ts');
+  const importPo='import-po-'+suffix,shipment='shipment-'+suffix;
+  await createPurchaseOrder({id:importPo,shopId:shop,poNumber:importPo,date:new Date().toISOString(),supplierId:supplier,supplierName:'CI',items:[{productId:product,productName:'Door lock',sellingUnitId:'box',quantity:3,costPrice:3600}],total:10800,status:'Pending'});
+  await pool.query("INSERT INTO ars_import_shipments(id,shop_id,purchase_order_id,shipment_reference,invoice_currency,exchange_rate_lkr,freight_lkr,customs_lkr,clearance_lkr,created_by) VALUES($1,$2,$3,$1,'CNY',42,1200,600,360,'CI Admin')",[shipment,shop,importPo]);
+  const preview=await previewLandedCost(pool,shop,shipment);
+  assert.equal(preview.snapshot.goodsTotal,10800);assert.equal(preview.snapshot.landedTotal,12960);
+  assert.equal(preview.snapshot.items[0].landedBaseUnitCost,360);
+  const approval={id:randomUUID(),shopId:shop,shipmentId:shipment,evidence:'CI customs record',approvedBy:'CI Admin',expectedSnapshot:preview.snapshot};
+  await assert.rejects(()=>approveLandedCost(pool,{...approval,shopId:'other-shop'}),/not found/);
+  await assert.rejects(()=>approveLandedCost(pool,{...approval,expectedSnapshot:{...preview.snapshot,landedTotal:1}}),/changed/);
+  const approved=await Promise.all([approveLandedCost(pool,approval),approveLandedCost(pool,approval)]);
+  assert.deepEqual(approved.map(r=>r.replayed).sort(),[false,true]);
+  await assert.rejects(()=>receivePurchaseOrder(importPo,shop,'CI Manager'),/Warehouse Receiving/);
+  const importLine=Number(preview.snapshot.items[0].itemId);
+  const receiveImport=(requestKey,quantity)=>receivePartialOrder(pool,{shopId:shop,poId:importPo,requestKey,user:'CI Manager',items:[{purchaseOrderItemId:importLine,quantity}]});
+  const currentInventory=async()=>{const r=(await pool.query('SELECT quantity,cost_price FROM products WHERE id=$1',[product])).rows[0];return [Number(r.quantity),Number(r.cost_price)];};
+  assert.deepEqual(await currentInventory(),[164,300]);
+  await pool.query('UPDATE purchase_order_items SET cost_price=3601 WHERE id=$1',[importLine]);
+  await assert.rejects(()=>receiveImport('changed',1),/differs from approved/);
+  assert.deepEqual(await currentInventory(),[164,300]);
+  await pool.query('UPDATE purchase_order_items SET cost_price=3600 WHERE id=$1',[importLine]);
+  const one=await receiveImport('import-first',1);
+  assert.equal(one.status,'Partially Received');assert.deepEqual(await currentInventory(),[176,304.09]);
+  assert.equal((await receiveImport('import-first',1)).repeated,true);
+  assert.deepEqual(await currentInventory(),[176,304.09]);
+  await assert.rejects(()=>receiveImport('import-too-many',3),/exceeds ordered/);
+  const two=await receiveImport('import-last',2);
+  assert.equal(two.status,'Received');assert.deepEqual(await currentInventory(),[200,310.8]);
+  const costing=(await pool.query('SELECT received_base_quantity,received_cost,rounding_difference FROM ars_receipt_cost_entries WHERE approval_id=$1 ORDER BY received_base_quantity',[approval.id])).rows;
+  assert.deepEqual(costing.map(r=>[Number(r.received_base_quantity),Number(r.received_cost)]),[[12,4320],[24,8640]]);
+  assert.equal(costing.reduce((sum,r)=>sum+Number(r.received_cost),0),12960);
+  assert.equal((await pool.query('SELECT COUNT(*)::int AS count FROM ars_receipt_batches WHERE purchase_order_id=$1',[importPo])).rows[0].count,2);
+  const originalCosts=(await pool.query('SELECT cost_price FROM sales_transaction_items WHERE transaction_id=$1 ORDER BY selling_unit_id',[invoiceId])).rows;
+  assert.deepEqual(originalCosts.map(r=>Number(r.cost_price)),[3600,300]);
+  // Reconcile already-paid import charges, not a second withdrawal.
+  const {initFinancialAccounts,createFinancialAccount,registerFinancialOpeningBalance,recordPaidExpense,listFinancialAccounts,financialProfitReport,financialCashFlow}=await import('../backend/financialAccounts.ts');
+  const {linkImportExpense,listImportExpenseReview}=await import('../backend/importExpenseReconciliation.ts');
+  await initFinancialAccounts(pool);
+  const bank='import-bank-'+suffix,day='2026-11-24',actor='CI Admin';
+  await createFinancialAccount(pool,{id:bank,shopId:shop,name:'Import bank',kind:'Bank',recordedBy:actor});
+  await registerFinancialOpeningBalance(pool,{id:randomUUID(),shopId:shop,accountId:bank,amount:5000,effectiveDate:day,recordedBy:actor});
+  const payment=async(description,amount,verified=true)=>{
+    const id='exp-'+randomUUID();
+    await recordPaidExpense(pool,{id,shopId:shop,desc:description,category:'Import charges',amount,date:day,recordedBy:actor,role:'Super Admin',...(verified?{sourceAccountId:bank,paymentMethod:'Bank Transfer'}:{})});
+    return id;
+  };
+  const freight=await payment('Freight payment',1200),customs=await payment('Customs payment',600),excess=await payment('Excess clearance',361),legacyExpense=await payment('Unverified historical expense',100,false);
+  const before=await financialProfitReport(pool,shop,day,day),cashBefore=await financialCashFlow(pool,shop,day,day);
+  const accountBefore=(await listFinancialAccounts(pool,shop)).find(a=>a.id===bank).balance;
+  assert.equal(before.expenses,2261);assert.equal(before.capitalizedImportExpenses,0);
+  const link={id:randomUUID(),shopId:shop,approvalId:approval.id,expenseId:freight,chargeKind:'Freight',expectedAmount:1200,evidence:'CI verified freight receipt',recordedBy:actor};
+  const review=await listImportExpenseReview(pool,shop);
+  assert.ok(review.expenses.some(e=>e.id===freight));assert.ok(!review.expenses.some(e=>e.id===legacyExpense));
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),shopId:'other-shop'}),/not found/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expectedAmount:1199}),/amount changed/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expenseId:legacyExpense,expectedAmount:100}),/verified financial payment/);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID(),expenseId:excess,chargeKind:'Clearance',expectedAmount:361}),/exceeds remaining/);
+  const retries=await Promise.all([linkImportExpense(pool,link),linkImportExpense(pool,link)]);
+  assert.deepEqual(retries.map(r=>r.replayed).sort(),[false,true]);
+  await assert.rejects(()=>linkImportExpense(pool,{...link,id:randomUUID()}),/already reconciled/);
+  await linkImportExpense(pool,{...link,id:randomUUID(),expenseId:customs,chargeKind:'Customs',expectedAmount:600,evidence:'CI customs receipt'});
+  const after=await financialProfitReport(pool,shop,day,day);
+  assert.equal(after.capitalizedImportExpenses,1800);assert.equal(after.expenses,461);
+  assert.equal(after.operatingEstimate-before.operatingEstimate,1800);
+  assert.deepEqual(await financialCashFlow(pool,shop,day,day),cashBefore);
+  assert.equal((await listFinancialAccounts(pool,shop)).find(a=>a.id===bank).balance,accountBefore);
+  assert.deepEqual(await currentInventory(),[200,310.8]);
+  const reviewed=await listImportExpenseReview(pool,shop);
+  assert.equal(reviewed.approvals.find(a=>a.id===approval.id).links.length,2);
+  assert.ok(!reviewed.expenses.some(e=>e.id===freight));
+
+
+ }finally{if(previous===undefined)delete process.env.ARS_SHARED_STOCK_PILOT;else process.env.ARS_SHARED_STOCK_PILOT=previous;await pool.end();}
+});

@@ -10,6 +10,9 @@ export type InvoiceCopyType =
   | 'Reprinted Invoice';
 
 export interface WholesaleInvoiceMeta {
+  /** Original whole-invoice discount entry, retained for audited reprints. */
+  invoiceDiscountMode?: 'amount' | 'percent';
+  invoiceDiscountPercent?: number;
   transportCharges?: number;
   deliveryCharges?: number;
   warrantyInformation?: string;
@@ -57,6 +60,7 @@ export interface Product {
   description: string;
   location?: string;
   variants?: ProductVariant[];
+  sharedStockUnits?: import('./utils/unitConversion').SharedStockUnits;
 }
 
 export interface ProductVariant {
@@ -113,7 +117,10 @@ export interface Employee {
 }
 
 export interface CartItem {
+  sellingUnitId?: string;
   product: Product;
+  /** Editable description for this invoice only; never updates the product master. */
+  invoiceDescription?: string;
   quantity: number;
   discount: number; // percentage
   discountAmount?: number;
@@ -123,10 +130,13 @@ export interface CartItem {
   variantSku?: string;
   variantBarcode?: string;
   unitPrice?: number;
+  customUnitPrice?: number;
+  priceOverrideReason?: string;
   unitCostPrice?: number;
 }
 
 export interface SalesTransaction {
+  creditDueDate?: string;
   id: string;
   shopId?: string;
   invoiceNumber: string;
@@ -135,10 +145,17 @@ export interface SalesTransaction {
   customerPhone?: string;
   customerAddress?: string;
   customerId?: string;
-  cashierName: string;
+  cashierName: string; // internal operator audit only; never shown as the Sales Representative
+  salesRepId?: string;
+  salesRepName?: string; // saved invoice snapshot, including historic reprints
   items: {
     productId: string;
     productName: string;
+    sellingUnitId?: string;
+    sellingUnitLabel?: string;
+    baseUnitsPerSaleUnit?: number;
+    /** Snapshot printed on original and duplicate invoices. */
+    invoiceDescription?: string;
     variantId?: string;
     variantName?: string;
     variantUnit?: string;
@@ -146,6 +163,7 @@ export interface SalesTransaction {
     variantBarcode?: string;
     quantity: number;
     sellingPrice: number;
+    priceOverride?: { standardPrice: number; reason: string };
     costPrice?: number;
     discount: number;
     discountAmount?: number;
@@ -175,11 +193,15 @@ export interface PurchaseOrder {
   items: {
     productId: string;
     productName: string;
+    variantId?: string;
+    sellingUnitId?: string;
+    sellingUnitLabel?: string;
+    baseUnitsPerPurchaseUnit?: number;
     quantity: number;
     costPrice: number;
   }[];
   total: number;
-  status: 'Pending' | 'Ordered' | 'Received' | 'Cancelled';
+  status: 'Pending' | 'Ordered' | 'Partially Received' | 'Received' | 'Cancelled';
 }
 
 export interface StockLog {
@@ -231,6 +253,7 @@ export interface StoreSettings {
 
 export interface ManualExpense {
   id: string;
+  shopId?: string;
   desc: string;
   amount: number;
   date: string;
@@ -270,6 +293,9 @@ export interface SupplierPayment {
 }
 
 export interface QuotationItem {
+  sellingUnitId?: string;
+  sellingUnitLabel?: string;
+  baseUnitsPerSaleUnit?: number;
   productId: string;
   productName: string;
   quantity: number;
@@ -314,6 +340,8 @@ export interface CashShift {
 
 export interface CustomerCreditPayment {
   id: string;
+  invoiceId?: string;
+  receiptSnapshot?: { invoiceTotal?: number; previousPayments?: number; balanceAfter: number; invoiceNumber?: string };
   shopId?: string;
   customerId: string;
   customerName: string;

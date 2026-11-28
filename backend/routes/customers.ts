@@ -1,4 +1,6 @@
+import { reportDay } from '../../src/utils/reporting';
 import { Router } from 'express';
+import { randomUUID } from 'node:crypto';
 import { requireAuth, requireRole, getActiveShopContext, AppRequest } from '../middleware';
 import { pool, insertCustomer, updateCustomerCreditLimit, addCustomerCreditPayment } from '../db';
 import { Customer, CustomerCreditPayment } from '../../src/types';
@@ -9,21 +11,29 @@ router.use(requireAuth);
 
 router.post('/', requireRole(['Super Admin', 'Store Manager', 'Cashier']), async (req, res) => {
   const { activeShopId } = getActiveShopContext(req);
-  const newCustomer: Customer = {
-    ...req.body,
-    id: 'cust-' + Date.now(),
+  const name = String(req.body?.name || '').trim();
+  const limit = Number(req.body?.creditLimit ?? 0);
+  if (!name || !Number.isFinite(limit) || limit < 0 ||
+      Math.abs(limit * 100 - Math.round(limit * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Customer name and a valid credit limit are required.' });
+  }
+  const customer: Customer = {
+    id: 'cust-' + randomUUID(),
     shopId: activeShopId,
-    loyaltyBalance: Number(req.body.loyaltyBalance) || 0,
+    name,
+    phone: String(req.body?.phone || '').trim(),
+    email: String(req.body?.email || '').trim(),
+    address: String(req.body?.address || '').trim(),
+    loyaltyBalance: 0,
     purchaseCount: 0,
-    creditLimit: Number(req.body.creditLimit) || 0,
-    creditBalance: Number(req.body.creditBalance) || 0,
+    creditLimit: (req as AppRequest).authUser?.role === 'Cashier' ? 0 : limit,
+    creditBalance: 0,
   };
-
   try {
-    await insertCustomer(newCustomer);
-    res.json(newCustomer);
+    await insertCustomer(customer);
+    res.json(customer);
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(409).json({ error: err.message });
   }
 });
 
@@ -38,8 +48,11 @@ router.put('/:id/credit', requireRole(['Super Admin', 'Store Manager']), async (
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const limit = Math.max(0, Number(creditLimit) || 0);
-    await updateCustomerCreditLimit(customerId, limit);
+    const limit = Number(creditLimit);
+    if (!Number.isFinite(limit) || limit < 0 || Math.abs(limit * 100 - Math.round(limit * 100)) > 0.00001) {
+      return res.status(400).json({ error: 'Invalid credit limit' });
+    }
+    await updateCustomerCreditLimit(customerId, activeShopId, limit);
 
     res.json({ id: customerId, creditLimit: limit });
   } catch (err: any) {
@@ -53,8 +66,9 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
   const { amount, paymentMethod, note } = req.body;
   const customerId = req.params.id;
 
-  if (Number(amount) <= 0) {
-    return res.status(400).json({ error: 'Amount must be positive' });
+  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0 ||
+      Math.abs(Number(amount) * 100 - Math.round(Number(amount) * 100)) > 0.00001) {
+    return res.status(400).json({ error: 'Amount must be positive with at most two decimal places' });
   }
 
   try {
@@ -65,26 +79,18 @@ router.post('/:id/credit-payment', requireRole(['Super Admin', 'Store Manager', 
     const customer = check.rows[0];
 
     const payment: CustomerCreditPayment = {
-      id: `cpay-${Date.now()}`,
+      id: `cpay-${randomUUID()}`,
       shopId: activeShopId,
       customerId,
       customerName: customer.name,
       amount: Number(amount),
-      date: new Date().toISOString().split('T')[0],
+      date: reportDay(new Date()),
       paymentMethod: String(paymentMethod || 'Cash'),
       note: note || undefined,
       createdBy: authUser?.name,
     };
 
     await addCustomerCreditPayment(payment);
-
-    // Record activity log
-    const actId = `act-${Date.now()}`;
-    await pool.query(
-      `INSERT INTO activity_logs (id, shop_id, date, user_name, role, action, details)
-       VALUES ($1, $2, NOW(), $3, $4, 'Credit Payment', $5)`,
-      [actId, activeShopId, authUser?.name || 'Cashier', authUser?.role || 'Cashier', `${customer.name} paid Rs.${payment.amount.toFixed(2)} towards credit balance.`]
-    );
 
     res.json({
       success: true,

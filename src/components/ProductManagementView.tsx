@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { notify } from '../utils/notifications';
 import {
   Plus,
   Edit2,
@@ -15,6 +17,8 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { Product, ProductVariant, Role } from '../types';
+import { previewLegacyPackaging } from '../utils/legacyPackagingConversion';
+import { validateSharedStock, type SharedStockUnits } from '../utils/unitConversion';
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
 
 interface ProductManagementViewProps {
@@ -22,9 +26,10 @@ interface ProductManagementViewProps {
   currentRole: Role;
   taxConfig?: { taxRate: number; storeName: string; currency: string; invoicePrefix: string; productCategories?: string[] };
   authToken: string;
-  onAddProduct: (prodData: Omit<Product, 'id'>) => Promise<void>;
+  onAddProduct: (prodData: Omit<Product, 'id'>) => Promise<Product>;
   onEditProduct: (id: string, prodData: Partial<Product> & { reason?: string; user?: string }) => Promise<void>;
   onDeleteProduct: (id: string) => Promise<void>;
+  canManageCategories?: boolean;
   onAddCategory: (categoryName: string) => Promise<void>;
 }
 
@@ -37,6 +42,7 @@ export default function ProductManagementView({
   onEditProduct,
   onDeleteProduct,
   onAddCategory,
+  canManageCategories=false,
 }: ProductManagementViewProps) {
   const currencySymbol = 'Rs.';
   const unitOptions = ['Piece', 'Liter', 'Milliliter', 'Kilogram', 'Gram', 'Meter', 'Feet', 'Roll', 'Box', 'Bag', 'Pack', 'Set', 'Square Feet', 'Square Meter'];
@@ -189,9 +195,15 @@ export default function ProductManagementView({
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [stockFilter, setStockFilter] = useState('All');
+  const [pageSize, setPageSize] = useState(25);
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [showCatalogMetrics, setShowCatalogMetrics] = useState(false);
+  const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
 
   // Form Modal States
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [showAdvancedProduct, setShowAdvancedProduct] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
@@ -218,6 +230,15 @@ export default function ProductManagementView({
   const [isCategorySubmitting, setIsCategorySubmitting] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Show a clear warning before staff accidentally register the same item
+  // under another automatically generated product code.
+  const matchingProducts = name.trim().length >= 3
+    ? products.filter((product) =>
+        product.id !== editingProduct?.id
+        && product.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase()
+      ).slice(0, 3)
+    : [];
+
 
   const [simpleProductAttributes, setSimpleProductAttributes] = useState<Record<string, string>>({});
 
@@ -231,6 +252,95 @@ export default function ProductManagementView({
     return fetch(url, { ...init, headers });
   };
 
+  const [newProductMultipleUnits,setNewProductMultipleUnits]=useState(false);
+  const [packagingProduct, setPackagingProduct] = useState<Product | null>(null);
+  const [packaging, setPackaging] = useState<SharedStockUnits>({baseUnit:'Piece', units:[]});
+  const [legacyUnitId,setLegacyUnitId]=useState('');
+  const [historyLines,setHistoryLines]=useState<Array<{saleItemId:string;invoiceNumber:string;date:string;status:string;quantity:number;sellingPrice:number;originalUnit:string|null;variantId:string|null;hasSharedSnapshot:boolean}>|null>(null);
+  const [historyUnits,setHistoryUnits]=useState<Record<string,string>>({});
+  const historyComplete=historyLines!==null && historyLines.every(line=>!line.variantId&&!line.hasSharedSnapshot&&packaging.units.some(u=>u.id===historyUnits[line.saleItemId]));
+  const [packagingBusy, setPackagingBusy] = useState(false);
+  const [packagingEligibility,setPackagingEligibility]=useState<{eligible:boolean;reasons:string[];pilotEnabled:boolean}|null>(null);
+  const [savedPackaging,setSavedPackaging]=useState('');
+  const canActivatePackaging=['Super Admin','Store Manager'].includes(currentRole);
+  const openPackaging = async (product: Product) => {
+    setPackagingBusy(true);
+    setPackagingEligibility(null);setSavedPackaging('');setLegacyUnitId('');setHistoryLines(null);setHistoryUnits({});
+    try {
+      const response = await authFetch('/api/products/' + encodeURIComponent(product.id) + '/packaging-draft');
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to load selling units.');
+      setSavedPackaging(product.sharedStockUnits ? JSON.stringify(product.sharedStockUnits) : body.configuration ? JSON.stringify(body.configuration) : '');
+      setPackaging(product.sharedStockUnits || body.configuration || {baseUnit:'Piece',units:[{id:crypto.randomUUID(),label:'Piece',baseUnits:1,sellingPrice:product.sellingPrice}]});
+      setPackagingProduct(product);
+    } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
+    finally { setPackagingBusy(false); }
+  };
+  const savePackaging = async () => {
+    if (!packagingProduct || packagingBusy || packagingProduct.sharedStockUnits) return;
+    setPackagingBusy(true);
+    try {
+      validateSharedStock(packaging);
+      const response = await authFetch('/api/products/' + encodeURIComponent(packagingProduct.id) + '/packaging-draft', {
+        method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({configuration:packaging})
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'Unable to save selling units.');
+      notify.success('Packaging draft saved. Stock and billing remain unchanged.');
+      setPackaging(body.configuration);setSavedPackaging(JSON.stringify(body.configuration));setPackagingEligibility(null);
+    } catch(error) { notify.error(error instanceof Error ? error.message : String(error)); }
+    finally { setPackagingBusy(false); }
+  };
+
+  const checkPackaging = async () => {
+    if(!packagingProduct || packagingBusy || !canActivatePackaging)return;
+    setPackagingBusy(true);setPackagingEligibility(null);setHistoryLines(null);setHistoryUnits({});
+    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-eligibility');const body=await response.json();if(!response.ok)throw Error(body.error);setPackagingEligibility(body);
+      const historyResponse=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-history');
+      const history=await historyResponse.json();
+      if(!historyResponse.ok||!Array.isArray(history.lines))throw Error(history.error||'Unable to load historical invoices.');
+      setHistoryLines(history.lines);
+    }
+    catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
+  };
+  const activateSavedPackaging = async () => {
+    if(!packagingProduct || packagingBusy || !canActivatePackaging || !packagingEligibility?.eligible || !packagingEligibility.pilotEnabled || savedPackaging!==JSON.stringify(packaging))return;
+    if(!window.confirm('Activate the saved packaging configuration? Stock will remain unchanged; packaging factors cannot be edited after activation.'))return;
+    setPackagingBusy(true);
+    try{const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true})});const body=await response.json();if(!response.ok)throw Error(body.error);notify.success('Shared stock activated. Reloading product data.');window.location.reload();}
+    catch(error){notify.error(String(error));}finally{setPackagingBusy(false);setPackagingEligibility(null);}
+  };
+
+  const saveActivePrices=async()=>{
+    if(!packagingProduct?.sharedStockUnits || !canActivatePackaging || packagingBusy)return;
+    setPackagingBusy(true);
+    try{
+      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-prices',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected:JSON.parse(savedPackaging),configuration:packaging})});
+      const body=await response.json();if(!response.ok)throw Error(body.error||'Price update failed.');
+      notify.success('Packaging prices updated. Reloading product data.');window.location.reload();
+    }catch(error){notify.error(String(error));}finally{setPackagingBusy(false);}
+  };
+
+  const conversionPreview=useMemo(()=>{
+    if(!packagingProduct || packagingProduct.sharedStockUnits || !legacyUnitId)return null;
+    try{return {result:previewLegacyPackaging({quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice,legacyUnitId,configuration:packaging}),error:''};}
+    catch(error){return {result:null,error:error instanceof Error?error.message:String(error)};}
+  },[packagingProduct,legacyUnitId,packaging]);
+  const convertExistingPackaging=async()=>{
+    const preview=conversionPreview?.result;
+    if(!packagingProduct || packagingProduct.sharedStockUnits || packagingBusy || !canActivatePackaging || !packagingEligibility?.pilotEnabled || !preview?.eligible || !historyComplete || savedPackaging!==JSON.stringify(packaging))return;
+    if(!window.confirm('Convert '+preview.oldQuantity+' '+preview.legacyUnit+' to '+preview.newQuantity+' '+preview.baseUnit+'? Confirm the current stock unit and inventory value are correct. This changes the inventory unit permanently.'))return;
+    setPackagingBusy(true);
+    try{
+      const expected={quantity:packagingProduct.quantity,reorderLevel:packagingProduct.reorderLevel,costPrice:packagingProduct.costPrice,sellingPrice:packagingProduct.sellingPrice};
+      const response=await authFetch('/api/products/'+encodeURIComponent(packagingProduct.id)+'/packaging-convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirmed:true,legacyUnitId,expected,configuration:packaging,historicalUnits:historyLines?.map(line=>({saleItemId:line.saleItemId,unitId:historyUnits[line.saleItemId]}))})});
+      const body=await response.json();
+      if(!response.ok)throw Error(body.error||'Conversion failed.');
+      notify.success('Inventory converted successfully. Reloading product data.');
+      window.location.reload();
+    }catch(error){notify.error(error instanceof Error?error.message:String(error));}
+    finally{setPackagingBusy(false);setPackagingEligibility(null);}
+  };
   const categories = Array.from(
     new Set([
       ...defaultCategories,
@@ -388,9 +498,13 @@ export default function ProductManagementView({
   // Open form for adding
   const handleOpenAdd = () => {
     setEditingProduct(null);
+    setNewProductMultipleUnits(false);
+    setShowAdvancedProduct(false);
+    const generatedCode = 'ARS-' + crypto.randomUUID().slice(0, 12).toUpperCase();
     setName('');
-    setSku('CON-' + Math.floor(100 + Math.random() * 900));
-    setBarcode('890100' + Math.floor(1000000 + Math.random() * 9000000));
+    setSku(generatedCode);
+    // Internal scan code only; never fabricate a manufacturer's EAN barcode.
+    setBarcode(generatedCode);
     setInternalCode('');
     setBrand('');
     setCategory('');
@@ -405,20 +519,16 @@ export default function ProductManagementView({
     setLocation('Aisle 1, Level 1');
     setImageUrl('');
     setSimpleProductAttributes({});
-    setVariants([
-      createVariantDraft({
-        name: 'Default Variant',
-        unit: 'Piece',
-        sku: `CON-${Math.floor(100 + Math.random() * 900)}-V1`,
-        barcode: `890100${Math.floor(1000000 + Math.random() * 9000000)}1`,
-      }),
-    ]);
+    // Ordinary hardware products do not need a synthetic variant.
+    // Only real size/colour/pack variants should override base price and stock.
+    setVariants([]);
     setIsFormOpen(true);
   };
 
   // Open form for editing
   const handleOpenEdit = (p: Product) => {
     setEditingProduct(p);
+    setShowAdvancedProduct(false); // Advanced fields remain accessible without overwhelming staff.
     setName(p.name);
     setSku(p.sku);
     setBarcode(p.barcode);
@@ -468,7 +578,7 @@ export default function ProductManagementView({
 
       setImageUrl(sanitizeImageSrc(data.imageUrl) || '');
     } catch (err: any) {
-      alert(err.message || 'Failed to upload image');
+      notify.warning(err.message || 'Failed to upload image');
     } finally {
       setIsUploadingImage(false);
     }
@@ -479,11 +589,11 @@ export default function ProductManagementView({
     e.preventDefault();
     const finalCategory = category.trim();
     if (!name.trim() || !sku.trim() || !barcode.trim()) {
-      alert('Please fill out Name, SKU, and Barcode fields.');
+      notify.warning('Enter a product name. Product codes are generated automatically.');
       return;
     }
     if (!finalCategory) {
-      alert('Please choose or enter a category.');
+      notify.warning('Please choose or enter a category.');
       return;
     }
 
@@ -505,16 +615,12 @@ export default function ProductManagementView({
     const hasVariants = cleanedVariants.length > 0;
     const hasSimpleAttributes = Object.keys(simpleProductAttributes).length > 0;
 
-    if (!hasVariants && !hasSimpleAttributes && !editingProduct) {
-      alert('Please add at least one complete variant (name, SKU, barcode) or fill category attributes.');
-      return;
-    }
-
     const primaryVariant = cleanedVariants[0];
     const totalVariantQty = hasVariants
       ? cleanedVariants.reduce((sum, variant) => sum + (Number(variant.quantity) || 0), 0)
       : Number(quantity || 0);
 
+    if (!editingProduct && newProductMultipleUnits && (totalVariantQty !== 0 || hasVariants || hasSimpleAttributes)) { notify.warning('Multiple-unit products must start with zero stock and no independent variants. Receive stock after configuring packaging.'); return; }
     setIsSubmitting(true);
 
     const finalVariants = hasVariants 
@@ -544,12 +650,12 @@ export default function ProductManagementView({
       internalCode: internalCode.trim() ? internalCode.trim().toUpperCase() : undefined,
       brand,
       category: finalCategory,
-      costPrice: Number(primaryVariant?.costPrice || costPrice),
-      sellingPrice: Number(primaryVariant?.sellingPrice || sellingPrice),
-      wholesalePrice: Number(primaryVariant?.wholesalePrice || 0),
-      dealerPrice: Number(primaryVariant?.dealerPrice || 0),
+      costPrice: Number(primaryVariant?.costPrice ?? costPrice),
+      sellingPrice: Number(primaryVariant?.sellingPrice ?? sellingPrice),
+      wholesalePrice: Number(primaryVariant?.wholesalePrice ?? editingProduct?.wholesalePrice ?? 0),
+      dealerPrice: Number(primaryVariant?.dealerPrice ?? editingProduct?.dealerPrice ?? 0),
       quantity: totalVariantQty,
-      reorderLevel: Number(primaryVariant?.reorderLevel || reorderLevel),
+      reorderLevel: Number(primaryVariant?.reorderLevel ?? reorderLevel),
       warranty,
       description,
       longDescription,
@@ -563,11 +669,14 @@ export default function ProductManagementView({
       if (editingProduct) {
         await onEditProduct(editingProduct.id, { ...payload, reason: 'Modified catalog specifications' });
       } else {
-        await onAddProduct(payload);
+        const created=await onAddProduct(payload);
+        if(newProductMultipleUnits){setIsFormOpen(false);await openPackaging(created);notify.success('Product created. Configure its selling units before receiving stock.');return;}
       }
+      notify.success(editingProduct ? 'Product updated successfully.' : 'Product saved and ready for billing.');
       setIsFormOpen(false);
     } catch (err) {
-      alert('Failed to commit catalog data: ' + err);
+      const message = err instanceof Error ? err.message : String(err);
+      notify.error(message.includes('already used') ? message : 'Could not save product. ' + message);
     } finally {
       setIsSubmitting(false);
     }
@@ -576,7 +685,7 @@ export default function ProductManagementView({
   const handleDelete = async (id: string, label: string) => {
     const isSuper = currentRole === 'Super Admin';
     if (!isSuper) {
-      alert('Permission Denied: Only Super Admin role holds authorities to erase catalog entries.');
+      notify.error('Permission Denied: Only Super Admin role holds authorities to erase catalog entries.');
       return;
     }
 
@@ -584,20 +693,21 @@ export default function ProductManagementView({
       try {
         await onDeleteProduct(id);
       } catch (err) {
-        alert('Failed to delete product: ' + err);
+        notify.error('Failed to delete product: ' + err);
       }
     }
   };
 
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if(!canManageCategories)return;
     const normalized = newCategoryName.trim();
     if (!normalized) {
-      alert('Please enter a category name.');
+      notify.warning('Please enter a category name.');
       return;
     }
     if (categories.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
-      alert('That category already exists.');
+      notify.error('That category already exists.');
       return;
     }
 
@@ -608,7 +718,7 @@ export default function ProductManagementView({
       handleCategoryChange(normalized);
       setIsCategoryModalOpen(false);
     } catch (err) {
-      alert('Failed to add category: ' + err);
+      notify.error('Failed to add category: ' + err);
     } finally {
       setIsCategorySubmitting(false);
     }
@@ -630,40 +740,36 @@ export default function ProductManagementView({
       (p.internalCode || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       variantSearchBlob.includes(searchTerm.toLowerCase());
     const matchesCat = categoryFilter === 'All' || p.category === categoryFilter;
-    return matchesSearch && matchesCat;
+    const matchesStock = stockFilter === 'All' || (stockFilter === 'Low' && p.quantity > 0 && p.quantity <= p.reorderLevel) || (stockFilter === 'Out' && p.quantity <= 0) || (stockFilter === 'Available' && p.quantity > p.reorderLevel) || (stockFilter === 'No photo' && !sanitizeImageSrc(p.imageUrl));
+    return matchesSearch && matchesCat && matchesStock;
   });
 
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(catalogPage, pageCount);
+  const visibleProducts = filtered.slice((currentPage-1)*pageSize,currentPage*pageSize);
+  useEffect(() => { setCatalogPage(1); setExpandedProduct(null); }, [searchTerm, categoryFilter, stockFilter, pageSize]);
   // Access flags
   const canModify = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
 
+  const catalogModalOpen = isFormOpen || !!packagingProduct || (isCategoryModalOpen && canManageCategories);
+  useEffect(() => {
+    if (!catalogModalOpen) return;
+    const bodyOverflow = document.body.style.overflow;
+    const rootOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = bodyOverflow;
+      document.documentElement.style.overflow = rootOverflow;
+    };
+  }, [catalogModalOpen]);
+
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in">
-      {/* View Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            Hardware Catalog Directory
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Register new shipments, configure pricing spreads, design custom SKUs.
-          </p>
-        </div>
-
-        {canModify && (
-          <button
-            id="btn-add-product"
-            onClick={handleOpenAdd}
-            className="bg-slate-900 hover:bg-slate-950 text-slate-100 text-xs font-bold px-4 py-2.5 rounded-lg flex items-center gap-2 shadow-xs transition"
-          >
-            <Plus className="w-4 h-4" /> Register New Product
-          </button>
-        )}
-      </div>
-
+    <div className="space-y-3">
       {/* Control Filters Toolbar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-2xs flex flex-col md:flex-row gap-4 items-center justify-between">
-        <div className="relative w-full md:w-85">
-          <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+      <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex flex-wrap gap-2 items-center">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
           <input
             id="catalog-search"
             type="text"
@@ -674,13 +780,13 @@ export default function ProductManagementView({
           />
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2">
           <Filter className="w-4 h-4 text-slate-400 shrink-0" />
           <select
             id="catalog-category-filter"
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="w-full md:w-56 bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs font-sans text-slate-700"
+            className="w-40 bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs font-sans text-slate-700"
           >
             <option value="All">All Hardware Categories</option>
             {categories.map((cat) => (
@@ -689,7 +795,12 @@ export default function ProductManagementView({
               </option>
             ))}
           </select>
-          {canModify && (
+          <select aria-label="Stock filter" value={stockFilter} onChange={e=>setStockFilter(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
+            {['All','Available','Low','Out','No photo'].map(v=><option key={v} value={v}>{v==='All'?'All stock':v}</option>)}
+          </select>
+          <button type="button" aria-pressed={showCatalogMetrics} onClick={()=>setShowCatalogMetrics(v=>!v)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold">{showCatalogMetrics?'Hide metrics':'Show metrics'}</button>
+          {canModify && <button id="btn-add-product" type="button" onClick={handleOpenAdd} className="flex items-center gap-1.5 rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white"><Plus className="h-4 w-4"/> Add Product</button>}
+          {canModify && canManageCategories && (
             <button
               type="button"
               onClick={() => setIsCategoryModalOpen(true)}
@@ -703,25 +814,25 @@ export default function ProductManagementView({
 
       {/* Catalog Table */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
+        <div className="max-h-[62dvh] overflow-auto overscroll-contain">
+          <table className="w-full min-w-[760px] text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-slate-50">
               <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 font-medium">
-                <th className="p-4">SKU / Barcode</th>
-                <th className="p-4">Item Details</th>
-                <th className="p-4">Department</th>
-                <th className="p-4 text-right">Cost Price</th>
-                <th className="p-4 text-right">Selling Price</th>
-                <th className="p-4 text-right">Profit / Unit</th>
-                <th className="p-4 text-right">Profit in Stock</th>
-                <th className="p-4 text-right">Markup%</th>
-                <th className="p-4 text-center">Available Stock</th>
-                <th className="p-4 text-center">Shelving Loc.</th>
-                {canModify && <th className="p-4 text-right">Actions</th>}
+                <th className="px-2.5 py-2">SKU / Barcode</th>
+                <th className="px-2.5 py-2">Item Details</th>
+                <th className="px-2.5 py-2">Department</th>
+                <th className="px-2.5 py-2 text-right">Cost Price</th>
+                <th className="px-2.5 py-2 text-right">Selling Price</th>
+                {showCatalogMetrics && <th className="px-2.5 py-2 text-right">Profit / Unit</th>}
+                {showCatalogMetrics && <th className="px-2.5 py-2 text-right">Profit in Stock</th>}
+                {showCatalogMetrics && <th className="px-2.5 py-2 text-right">Markup%</th>}
+                <th className="px-2.5 py-2 text-center">Available Stock</th>
+                {showCatalogMetrics && <th className="px-2.5 py-2 text-center">Shelving Loc.</th>}
+                {canModify && <th className="px-2.5 py-2 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((p) => {
+              {visibleProducts.map((p) => {
                 const markup = p.costPrice > 0 ? ((p.sellingPrice - p.costPrice) / p.costPrice) * 100 : 0;
                 const unitProfit = p.sellingPrice - p.costPrice;
                 const stockProfit = unitProfit * p.quantity;
@@ -730,7 +841,7 @@ export default function ProductManagementView({
 
                 return (
                   <tr key={p.id} id={`catalog-row-${p.id}`} className="hover:bg-slate-50/50 transition duration-150">
-                    <td className="p-4 font-mono">
+                    <td className="px-2.5 py-2 font-mono">
                       <span className="text-indigo-600 font-semibold block text-xs">{p.sku}</span>
                       <span className="text-slate-400 text-[10px] flex items-center gap-1 mt-0.5">
                         <Barcode className="w-3.5 h-3.5 shrink-0" /> {p.barcode}
@@ -741,46 +852,47 @@ export default function ProductManagementView({
                         </span>
                       ) : null}
                     </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="h-12 w-12 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 shrink-0">
-                          {p.imageUrl ? (
-                            <img src={p.imageUrl} alt={p.name} className="h-full w-full object-cover" />
+                    <td className="px-2.5 py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-white border border-slate-200 shrink-0">
+                          <div className="absolute inset-0 flex items-center justify-center text-slate-400"><Package className="h-5 w-5" aria-hidden="true"/></div>
+                          {sanitizeImageSrc(p.imageUrl) ? (
+                            <img src={sanitizeImageSrc(p.imageUrl) || undefined} alt={p.name} loading="lazy" decoding="async" className="relative h-full w-full object-contain bg-white" onError={event=>{event.currentTarget.style.visibility="hidden";}} />
                           ) : (
-                            <div className="h-full w-full flex items-center justify-center text-[9px] text-slate-400">NO IMG</div>
+                            <div className="h-full w-full flex items-center justify-center text-slate-400" title="No product photo"><Package className="h-5 w-5" aria-hidden="true"/></div>
                           )}
                         </div>
                         <div>
-                        <div className="font-semibold text-slate-900 text-sm max-w-sm" title={p.name}>
+                        <button type="button" onClick={()=>setExpandedProduct(v=>v===p.id?null:p.id)} aria-expanded={expandedProduct===p.id} className="text-left font-semibold text-slate-900 text-xs max-w-[28rem] hover:underline" title={p.name}>
                           {p.name}
-                        </div>
-                        <span className="text-[10px] text-slate-500 font-medium block mt-0.5">
-                          Brand: {p.brand || 'Generic'} • Warranty: {p.warranty}
-                        </span>
+                        </button>
+                        {expandedProduct===p.id && <span className="text-[10px] text-slate-500 font-medium block mt-0.5">
+                          Brand: {p.brand || 'Generic'} · Warranty: {p.warranty} · Location: {p.location || '-'} · Reorder: {p.reorderLevel}
+                        </span>}
                         </div>
                       </div>
                     </td>
-                    <td className="p-4">
+                    <td className="px-2.5 py-2">
                       <span className="inline-block px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-slate-100 text-slate-600">
                         {p.category}
                       </span>
                     </td>
-                    <td className="p-4 text-right font-mono text-slate-600">
+                    <td className="px-2.5 py-2 text-right font-mono text-slate-600">
                       {currencySymbol}{p.costPrice.toFixed(2)}
                     </td>
-                    <td className="p-4 text-right font-mono font-semibold text-slate-900">
-                      {currencySymbol}{p.sellingPrice.toFixed(2)}
+                    <td className="px-2.5 py-2 text-right font-mono font-semibold text-slate-900">
+                      {p.sharedStockUnits ? <div className="space-y-0.5">{p.sharedStockUnits.units.map(unit=><div key={unit.id} className="flex justify-end gap-2"><span className="font-sans font-normal text-slate-500">{unit.label}</span><span>{currencySymbol}{unit.sellingPrice.toFixed(2)}</span></div>)}</div> : <>{currencySymbol}{p.sellingPrice.toFixed(2)}</>}
                     </td>
-                    <td className={`p-4 text-right font-mono font-bold ${unitProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {showCatalogMetrics && <td className={`px-2.5 py-2 text-right font-mono font-bold ${unitProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {unitProfit >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(unitProfit).toFixed(2)}
-                    </td>
-                    <td className={`p-4 text-right font-mono font-bold ${stockProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
+                    </td>}
+                    {showCatalogMetrics && <td className={`px-2.5 py-2 text-right font-mono font-bold ${stockProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>
                       {stockProfit >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(stockProfit).toFixed(2)}
-                    </td>
-                    <td className="p-4 text-right font-mono text-emerald-600 font-bold">
+                    </td>}
+                    {showCatalogMetrics && <td className="px-2.5 py-2 text-right font-mono text-emerald-600 font-bold">
                       {markup.toFixed(0)}%
-                    </td>
-                    <td className="p-4 text-center">
+                    </td>}
+                    <td className="px-2.5 py-2 text-center">
                       <span
                         className={`inline-block px-3 py-1 font-mono font-bold rounded-lg text-xs leading-none ${
                           isOut
@@ -790,20 +902,21 @@ export default function ProductManagementView({
                             : 'bg-emerald-50 text-emerald-700'
                         }`}
                       >
-                        {p.quantity} {isOut ? 'OUT' : isLow ? 'LOW' : 'OK'}
+                        {p.quantity} {p.sharedStockUnits?.baseUnit || ""} {isOut ? 'OUT' : isLow ? 'LOW' : 'OK'}
                       </span>
-                      <span className="block text-[9px] text-slate-400 mt-1 font-mono">Reorder Min: {p.reorderLevel}</span>
+                      {p.sharedStockUnits?.units.filter(unit=>Number.isSafeInteger(unit.baseUnits)&&unit.baseUnits>1).map(unit=><span key={unit.id} className="block text-[10px] text-slate-600">{Math.floor(p.quantity/unit.baseUnits)} {unit.label} equivalents + {p.quantity%unit.baseUnits} {p.sharedStockUnits?.baseUnit}</span>)}
+                      {expandedProduct===p.id && <span className="block text-[9px] text-slate-500">Reorder: {p.reorderLevel}</span>}
                     </td>
-                    <td className="p-4 text-center text-slate-500 font-mono text-[10px]">
+                    {showCatalogMetrics && <td className="px-2.5 py-2 text-center text-slate-500 font-mono text-[10px]">
                       <div className="flex items-center justify-center gap-1">
                         <MapPin className="w-3 h-3 text-slate-400" />
                         <span>{p.location || '-'}</span>
                       </div>
-                    </td>
+                    </td>}
 
                     {/* Modification trigger icons */}
                     {canModify && (
-                      <td className="p-4 text-right space-x-1 whitespace-nowrap">
+                      <td className="px-2.5 py-2 text-right space-x-1 whitespace-nowrap">
                         <button
                           id={`btn-edit-prod-${p.id}`}
                           onClick={() => handleOpenEdit(p)}
@@ -828,7 +941,7 @@ export default function ProductManagementView({
 
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="text-center py-20 text-slate-400 font-sans border-t border-slate-100">
+                  <td colSpan={(showCatalogMetrics ? 10 : 6)+(canModify ? 1 : 0)} className="text-center py-8 text-slate-400 font-sans border-t border-slate-100">
                     <Package className="w-12 h-12 mx-auto text-slate-200" />
                     <p className="text-sm font-semibold mt-2">No matching hardware products</p>
                     <p className="text-xs text-slate-500">Refine category filter scope or keyword search</p>
@@ -838,28 +951,37 @@ export default function ProductManagementView({
             </tbody>
           </table>
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+          <span>{filtered.length ? (currentPage-1)*pageSize+1 : 0}–{Math.min(currentPage*pageSize,filtered.length)} of {filtered.length} products</span>
+          <div className="flex items-center gap-2"><label>Rows <select value={pageSize} onChange={e=>setPageSize(Number(e.target.value))} className="rounded border p-1">{[10,25,50,100].map(n=><option key={n}>{n}</option>)}</select></label>
+          <button type="button" disabled={currentPage<=1} onClick={()=>setCatalogPage(currentPage-1)} className="rounded border px-2 py-1 disabled:opacity-40">Previous</button><span>{currentPage} / {pageCount}</span><button type="button" disabled={currentPage>=pageCount} onClick={()=>setCatalogPage(currentPage+1)} className="rounded border px-2 py-1 disabled:opacity-40">Next</button></div>
+        </div>
       </div>
 
       {/* FORM MODAL PANEL (DRAWER overlay style) */}
-      {isFormOpen && (
-        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg border border-slate-200 max-h-[90vh] overflow-y-auto font-sans relative">
+      {isFormOpen && createPortal(
+        <div id="product-modal-root" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-[100]">
+          <div role="dialog" aria-modal="true" aria-label={editingProduct ? "Edit product" : "Add product"} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200 max-h-[92dvh] flex flex-col overflow-hidden font-sans relative">
             <button
+              type="button"
+              aria-label="Close product editor"
               onClick={() => setIsFormOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+              className="absolute top-4 right-4 z-10 rounded-lg p-2 text-white hover:bg-white/10"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <h3 className="font-heading font-medium text-slate-900 text-lg mb-4">
-              {editingProduct ? 'Modify Hardware Product Specifications' : 'Register New Hardware Inventory Intake'}
-            </h3>
-
-            <form onSubmit={handleSubmit} className="space-y-4 text-xs font-sans">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="shrink-0 bg-[#182a45] px-5 py-4 pr-14 text-white">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-300">ARS Distributors · Product catalog</p>
+              <h3 className="mt-1 text-xl font-bold">{editingProduct ? 'Edit product' : 'Add product'}</h3>
+              <p className="mt-1 text-sm text-slate-300">{editingProduct ? editingProduct.name+' · '+editingProduct.sku : 'Register a wholesale product and its selling units.'}</p>
+            </div>
+            <form id="ars-product-editor" onSubmit={handleSubmit} className="min-h-0 flex flex-1 flex-col text-xs font-sans">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-4 sm:px-6">
+              <div className="grid grid-cols-2 gap-3">
                 {/* Store Department Category at the very top (full width) */}
-                <div className="col-span-2 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-150 shadow-2xs">
-                  <label className="block text-indigo-950 font-bold mb-1.5 text-xs">Store Department Category *</label>
+                <div className="col-span-2 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-150 shadow-2xs">
+                  <label className="block text-indigo-950 font-bold mb-1.5 text-sm">Category *</label>
                   <input
                     id="input-prod-category"
                     type="text"
@@ -867,7 +989,7 @@ export default function ProductManagementView({
                     value={category}
                     onChange={(e) => handleCategoryChange(e.target.value)}
                     list="catalog-category-suggestions"
-                    placeholder="Type or select a category (e.g. Paints, Electrical, Tools, Plumbing...)"
+                    placeholder="Or type another category"
                     className="w-full bg-white border border-slate-250 p-2.5 rounded-lg text-sm text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-medium"
                   />
                   <datalist id="catalog-category-suggestions">
@@ -877,28 +999,93 @@ export default function ProductManagementView({
                   </datalist>
                 </div>
 
-                {!category.trim() ? (
-                  <div className="col-span-2 text-center py-10 bg-slate-50/60 rounded-xl border border-dashed border-slate-200 text-slate-400 p-4">
-                    <Package className="w-10 h-10 mx-auto text-slate-300 animate-pulse mb-2" />
-                    <p className="font-semibold text-xs text-slate-600">Enter or select a Category first</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">The registration form will automatically adjust and display relevant specifications.</p>
-                  </div>
-                ) : (
+                {/* Core fields are always visible: staff can complete them in any order. */}
                   <>
                     <div className="col-span-2">
-                      <label className="block text-slate-500 font-semibold mb-1">Product Display Name *</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Product name *</label>
                       <input
                         id="input-prod-name"
                         type="text"
                         required
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder="e.g. Galvanized Steel Fence Mesh (100ft)"
+                        placeholder="e.g. PVC Pipe 1 inch"
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    {matchingProducts.length > 0 && (
+                      <div role="alert" className="col-span-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                        <div className="font-bold">This product name is already in your catalog.</div>
+                        <p className="mt-1 text-xs">Check the existing product before adding another one.</p>
+                        {matchingProducts.map((match) => (
+                          <button key={match.id} type="button" onClick={() => handleOpenEdit(match)}
+                            className="mt-2 block w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-left text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                            Edit existing: {match.name} · {match.sku}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="col-span-2 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-800">
+                       <strong>No product code to remember.</strong> ARS creates a code for you. Use More product options when you have a barcode or special specifications.
+                     </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Buying cost ({currencySymbol})</label>
+                      <input
+                        id="input-prod-cost"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={costPrice}
+                        onChange={(e) => setCostPrice(Number(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
                       />
                     </div>
 
                     <div>
+                      <label className="block text-slate-500 font-semibold mb-1">Selling price ({currencySymbol})</label>
+                      <input
+                        id="input-prod-sell"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={sellingPrice}
+                        onChange={(e) => setSellingPrice(Number(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-500 font-semibold mb-1">{editingProduct ? "Current stock quantity" : "Opening stock quantity"}</label>
+                      <input
+                        id="input-prod-qty"
+                        type="number"
+                        min="0"
+                        value={quantity}
+                        onChange={(e) => setQuantity(Number(e.target.value))}
+                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
+                      />
+                    </div>
+
+                  </>
+
+                <div className="col-span-2 rounded-xl border border-slate-200 bg-white p-3 flex flex-wrap items-center gap-3">
+                  {sanitizeImageSrc(imageUrl) ? <img src={sanitizeImageSrc(imageUrl) || undefined} alt="Product photo preview" className="h-20 w-20 rounded-lg border border-slate-200 object-contain" /> : <div className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50"><Package className="h-7 w-7 text-slate-400" /></div>}
+                  <div className="min-w-0 flex-1"><label htmlFor="input-prod-image" className="block font-semibold text-slate-800">{imageUrl ? 'Replace product photo' : 'Add product photo'}</label><input id="input-prod-image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" disabled={isUploadingImage || isSubmitting} onChange={e=>{const file=e.target.files?.[0];if(file)handleImageUpload(file);e.target.value='';}} className="mt-2 block w-full text-xs file:mr-2 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:font-semibold file:text-indigo-700" /><p className="mt-1 text-xs text-slate-500">PNG, JPG, WEBP or GIF · up to 5 MB</p>{isUploadingImage && <p role="status" className="mt-1 text-indigo-700">Uploading image…</p>}{imageUrl && !isUploadingImage && <button type="button" onClick={()=>setImageUrl('')} className="mt-1 font-semibold text-rose-700">Remove photo</button>}</div>
+                </div>
+                <div className="col-span-2">
+                  <button type="button" onClick={() => setShowAdvancedProduct(value => !value)}
+                    aria-expanded={showAdvancedProduct}
+                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                    <span>More product options (optional)</span>
+                    <span aria-hidden="true">{showAdvancedProduct ? '−' : '+'}</span>
+                  </button>
+                </div>
+                {showAdvancedProduct && <div className="col-span-2 grid grid-cols-2 gap-3">
+                  <p className="col-span-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Optional product details</p>
+                     <div className="col-span-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">ARS codes can be replaced if your product has a supplier barcode. Keep them unique for accurate stock tracking.</div>
+                     <div>
                       <label className="block text-slate-500 font-semibold mb-1">Product SKU *</label>
                       <input
                         id="input-prod-sku"
@@ -911,7 +1098,7 @@ export default function ProductManagementView({
                     </div>
 
                     <div>
-                      <label className="block text-slate-500 font-semibold mb-1">EAN / Barcode *</label>
+                      <label className="block text-slate-500 font-semibold mb-1">Barcode / Internal Scan Code *</label>
                       <input
                         id="input-prod-barcode"
                         type="text"
@@ -922,6 +1109,7 @@ export default function ProductManagementView({
                       />
                     </div>
 
+                    
                     <div>
                       <label className="block text-slate-500 font-semibold mb-1">Manufacturer Brand</label>
                       <input
@@ -949,44 +1137,6 @@ export default function ProductManagementView({
                         onChange={(e) => setInternalCode(e.target.value.toUpperCase())}
                         placeholder="e.g. YMV, TSK"
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 uppercase font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Cost unit Price ({currencySymbol})</label>
-                      <input
-                        id="input-prod-cost"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={costPrice}
-                        onChange={(e) => setCostPrice(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">Retail Selling Price ({currencySymbol})</label>
-                      <input
-                        id="input-prod-sell"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={sellingPrice}
-                        onChange={(e) => setSellingPrice(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-500 font-semibold mb-1">In-Stock Quantity</label>
-                      <input
-                        id="input-prod-qty"
-                        type="number"
-                        min="0"
-                        value={quantity}
-                        onChange={(e) => setQuantity(Number(e.target.value))}
-                        className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                       />
                     </div>
 
@@ -1062,8 +1212,6 @@ export default function ProductManagementView({
                         className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-sans"
                       />
                     </div>
-                  </>
-                )}
 
                 {/* Category-Specific Attributes for Simple Product */}
                 {variants.length === 0 && (() => {
@@ -1279,45 +1427,12 @@ export default function ProductManagementView({
                   </p>
                 </div>
 
-                <div className="col-span-2">
-                  <label className="block text-slate-500 font-semibold mb-1">Product Image Upload</label>
-                  <input
-                    id="input-prod-image"
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp,image/gif"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        handleImageUpload(file);
-                      }
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">Supported: PNG, JPG, WEBP, GIF (max 5MB)</p>
-
-                  {isUploadingImage && (
-                    <p className="text-[11px] text-indigo-600 font-semibold mt-2">Uploading image...</p>
-                  )}
-
-                  {sanitizeImageSrc(imageUrl) && !isUploadingImage && (
-                    <div className="mt-2 flex items-center gap-3">
-                      <div className="h-16 w-16 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                        IMG
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setImageUrl('')}
-                        className="text-[11px] font-semibold text-rose-600 hover:text-rose-700"
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  )}
-                </div>
+                </div>}
+              </div>
               </div>
 
               {/* Status Warning if quantity is lower than reorder level */}
-              {quantity <= reorderLevel && (
+              {variants.length === 0 && quantity <= reorderLevel && (
                 <div className="bg-amber-50 border border-amber-200 rounded p-3 flex items-start gap-2 text-slate-700">
                   <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                   <p className="text-[11px]">
@@ -1326,8 +1441,10 @@ export default function ProductManagementView({
                 </div>
               )}
 
+              {!editingProduct && <div className="mx-4 my-2 rounded-lg border border-slate-200 p-3"><label className="block font-semibold mb-2">Selling unit model</label><select className="w-full rounded border p-2" value={newProductMultipleUnits?'multiple':'single'} onChange={e=>setNewProductMultipleUnits(e.target.value==='multiple')}><option value="single">Single unit — fixed stock unit</option><option value="multiple">Multiple units — Box / Piece / Carton</option></select>{newProductMultipleUnits && <p className="mt-2 text-amber-800">Save with zero initial stock and no independent variants. The packaging window opens next.</p>}</div>}
+              {editingProduct && <div className="px-4 py-2"><button type="button" disabled={packagingBusy || isSubmitting} onClick={()=>openPackaging(editingProduct)} className="rounded border border-indigo-200 px-3 py-2 text-xs font-semibold text-indigo-700">Configure selling units</button></div>}
               {/* Submitting buttons */}
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="shrink-0 border-t border-slate-200 bg-white px-4 py-3 sm:px-5 flex gap-3">
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
@@ -1338,18 +1455,79 @@ export default function ProductManagementView({
                 <button
                   id="btn-submit-prod"
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || isUploadingImage}
                   className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition"
                 >
-                  {isSubmitting ? 'Registering specifications...' : editingProduct ? 'Save Specifications' : 'Register Product'}
+                  {isSubmitting ? 'Saving product...' : editingProduct ? 'Save Changes' : newProductMultipleUnits ? 'Save & Configure Units' : 'Save Product & Finish'}
                 </button>
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
 
-      {isCategoryModalOpen && (
+      {packagingProduct && createPortal(
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+          <section role="dialog" aria-modal="true" aria-label="Packaging units" className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white p-5 shadow-xl space-y-4">
+            <h3 className="text-lg font-bold">Selling units · {packagingProduct.name}</h3>
+            <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded">{packagingProduct.sharedStockUnits ? "Active configuration — packaging factors protected. Managers may edit prices." : "Save a draft, then check eligibility. A manager must confirm activation."}</p>
+            <fieldset disabled={packagingBusy || (!!packagingProduct.sharedStockUnits && !canActivatePackaging)} className="space-y-4">
+            <label className="block text-sm">Base stock unit
+              <input className="block w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={packaging.baseUnit} onChange={e=>setPackaging(old=>({...old,baseUnit:e.target.value}))}/>
+            </label>
+            <div className="space-y-2">
+              {packaging.units.map((unit,index)=>(
+                <div key={unit.id} className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end border rounded p-2">
+                  <label className="text-xs">U/M<input className="w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={unit.label} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,label:e.target.value}:u)}))}/></label>
+                  <label className="text-xs">Base units<input type="number" min="1" step="1" className="w-full border rounded p-2" disabled={!!packagingProduct.sharedStockUnits} value={unit.baseUnits} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,baseUnits:Number(e.target.value)}:u)}))}/></label>
+                  <label className="text-xs">Selling price<input type="number" min="0" step="0.01" className="w-full border rounded p-2" value={unit.sellingPrice} onChange={e=>setPackaging(old=>({...old,units:old.units.map((u,i)=>i===index?{...u,sellingPrice:Number(e.target.value)}:u)}))}/></label>
+                  <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="text-xs text-rose-700 p-2" onClick={()=>setPackaging(old=>({...old,units:old.units.filter(u=>u.id!==unit.id)}))}>Remove</button>
+                </div>
+              ))}
+            </div>
+            <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits || packaging.units.length>=30} className="border rounded p-2 text-sm" onClick={()=>setPackaging(old=>({...old,units:[...old.units,{id:crypto.randomUUID(),label:'Box',baseUnits:12,sellingPrice:0}]}))}>+ Add selling unit</button>
+            </fieldset>
+            {!packagingProduct.sharedStockUnits && (packagingProduct.quantity>0 || (historyLines?.length || 0)>0) && <section className="rounded-lg border border-slate-300 p-3 space-y-2">
+              <h4 className="font-semibold text-sm">Existing stock conversion preview</h4>
+              <p className="text-xs text-slate-600">Select the unit represented by the current inventory. Review the calculation before confirming conversion. Historical sales require individual verification. Purchases, quotations and independent variants remain protected.</p>
+              <label className="block text-xs">Current stock unit<select className="w-full border rounded p-2" value={legacyUnitId} onChange={e=>setLegacyUnitId(e.target.value)}><option value="">Select current unit explicitly</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}</select></label>
+              {conversionPreview?.error && <p role="alert" className="text-xs text-rose-700">{conversionPreview.error}</p>}
+              {conversionPreview?.result && <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>Current stock<strong className="block">{conversionPreview.result.oldQuantity} {conversionPreview.result.legacyUnit}</strong></div>
+                <div>Converted stock<strong className="block">{conversionPreview.result.newQuantity} {conversionPreview.result.baseUnit}</strong></div>
+                <div>Current inventory value<strong className="block">Rs. {conversionPreview.result.valueBefore.toFixed(2)}</strong></div>
+                <div>Converted inventory value<strong className="block">Rs. {conversionPreview.result.valueAfter.toFixed(2)}</strong></div>
+                <div>Cost per base unit<strong className="block">Rs. {conversionPreview.result.newCostPrice.toFixed(2)}</strong></div>
+                <div>Converted reorder level<strong className="block">{conversionPreview.result.newReorderLevel}</strong></div>
+                <p className="col-span-2 text-amber-800">{conversionPreview.result.eligible?'Arithmetic checks passed. Save the draft and check eligibility before conversion. The server will recheck stock and transaction history.':conversionPreview.result.reasons.join(' ')}</p>
+              </div>}
+              {historyLines && historyLines.length>0 && <div className="space-y-2 border-t pt-3">
+                <h4 className="font-semibold text-sm">Verify historical invoice units</h4>
+                <p className="text-xs text-slate-600">Check the original invoice. Select each actual selling unit. No historical quantities are deducted again.</p>
+                <div className="max-h-64 overflow-auto space-y-2">{historyLines.map(line=><div key={line.saleItemId} className="rounded border p-2 text-xs">
+                  <strong>{line.invoiceNumber}</strong> · {line.status} · {String(line.date).slice(0,10)}
+                  <p>Quantity: {line.quantity} · Rate: Rs. {line.sellingPrice.toFixed(2)} · Recorded U/M: {line.originalUnit||'Not recorded'}</p>
+                  <select aria-label={'Verify unit for invoice '+line.invoiceNumber+' item '+line.saleItemId} className="mt-1 w-full rounded border p-2" disabled={packagingBusy||!!line.variantId||line.hasSharedSnapshot} value={historyUnits[line.saleItemId]||''} onChange={e=>setHistoryUnits(old=>({...old,[line.saleItemId]:e.target.value}))}>
+                    <option value="">Select verified historical unit</option>{packaging.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}
+                  </select>
+                  {(line.variantId||line.hasSharedSnapshot)&&<p className="text-rose-700">Separate reconciliation required.</p>}
+                </div>)}</div>
+                <p role="status">{historyLines.filter(line=>packaging.units.some(u=>u.id===historyUnits[line.saleItemId])).length} / {historyLines.length} lines reviewed</p>
+              </div>}
+              {canActivatePackaging && <button type="button" disabled={packagingBusy || !historyComplete || !packagingEligibility?.pilotEnabled || !conversionPreview?.result?.eligible || savedPackaging!==JSON.stringify(packaging)} className="rounded border border-indigo-300 px-3 py-2 text-xs font-semibold text-indigo-700 disabled:opacity-40" onClick={convertExistingPackaging}>Confirm &amp; convert stock</button>}
+            </section>}
+            {packagingEligibility && <div className="rounded border p-3 text-xs" role="status">{packagingEligibility.eligible?"Product meets eligibility checks.":packagingEligibility.reasons.join(" ")}{!packagingEligibility.pilotEnabled && " Selling-unit activation is disabled by system configuration."}</div>}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button type="button" disabled={packagingBusy} className="p-2" onClick={()=>setPackagingProduct(null)}>Close</button>
+              {!packagingProduct.sharedStockUnits && canActivatePackaging && <><button type="button" disabled={packagingBusy || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2" onClick={checkPackaging}>Check eligibility</button><button type="button" disabled={packagingBusy || !packagingEligibility?.eligible || !packagingEligibility?.pilotEnabled || savedPackaging!==JSON.stringify(packaging)} className="border rounded p-2 disabled:opacity-40" onClick={activateSavedPackaging}>Activate shared stock</button></>}
+              {packagingProduct.sharedStockUnits && canActivatePackaging && <button type="button" disabled={packagingBusy || savedPackaging===JSON.stringify(packaging)} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={saveActivePrices}>Save prices</button>}
+              <button type="button" disabled={packagingBusy || !!packagingProduct.sharedStockUnits} className="bg-indigo-600 text-white rounded p-2 disabled:opacity-40" onClick={savePackaging}>{packagingBusy?'Saving…':'Save draft'}</button>
+            </div>
+          </section>
+        </div>, document.body
+      )}
+
+      {isCategoryModalOpen && canManageCategories && createPortal(
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-200 font-sans relative">
             <button
@@ -1391,7 +1569,7 @@ export default function ProductManagementView({
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );

@@ -1,4 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import LedgerReportsPanel from './LedgerReportsPanel';
+import ReceivableAgingPanel from './ReceivableAgingPanel';
+import SupplierPayablePanel from './SupplierPayablePanel';
+import ChartOfAccountsPanel from './ChartOfAccountsPanel';
+import OpeningBalancePanel from './OpeningBalancePanel';
+import LedgerMappingPanel from './LedgerMappingPanel';
+import PositionRegisterPanel from './PositionRegisterPanel';
+import FinancialPositionPanel from './FinancialPositionPanel';
+import ImportExpenseReviewPanel from './ImportExpenseReviewPanel';
+import InventoryValuationPanel from './InventoryValuationPanel';
+import HistoricalCostReviewPanel from './HistoricalCostReviewPanel';
+import FinancialProfitPanel from './FinancialProfitPanel';
+import FinancialCashFlowPanel from './FinancialCashFlowPanel';
+import DisbursementVoucherActions from './DisbursementVoucherActions';
+import CashHandoversPanel from './CashHandoversPanel';
+import RepresentativeLoginsPanel from './RepresentativeLoginsPanel';
+import RepresentativeAccountsPanel from './RepresentativeAccountsPanel';
+import { arsDisplayName } from '../utils/arsPrintLogo';
+import { reportDay } from '../utils/reporting';
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
+import React, { useEffect, useState, useRef } from 'react';
+import { notify } from '../utils/notifications';
 import {
   TrendingUp,
   TrendingDown,
@@ -16,31 +38,52 @@ import {
 } from 'lucide-react';
 import { SalesTransaction, PurchaseOrder, Role, ManualExpense, StoreSettings } from '../types';
 import { sanitizeImageSrc } from '../utils/sanitizeImageSrc';
+import SupportHealthPanel from './SupportHealthPanel';
+import FinancialAccountsPanel from './FinancialAccountsPanel';
+import ChequeManagementPanel from './ChequeManagementPanel';
+import SupplierChequePanel from './SupplierChequePanel';
+import FinancialReconciliationPanel from './FinancialReconciliationPanel';
+import FinancialStatementPanel from './FinancialStatementPanel';
+import type { Customer } from '../types';
 
+type ExpenseRequest=Omit<ManualExpense,'id'|'date'> & {sourceAccountId?:string;requestId?:string;paymentMethod?:string};
+type ExpenseAccount={id:string;name:string;kind:string;active:boolean;balance:number};
 interface AccountingSettingsViewProps {
+  initialView?: 'accounting' | 'settings';
   transactions: SalesTransaction[];
   purchaseOrders: PurchaseOrder[];
   currentRole: Role;
+  canManageGlobalSettings?: boolean;
   taxConfig: StoreSettings;
   manualExpenses: ManualExpense[];
   authToken: string;
+  financialOwner?: string;
+  financialCustomers?: Customer[];
+  onFinancialRefresh?: () => Promise<void>;
+  financialShopId?: string;
   onUpdateTaxConfig: (config: StoreSettings) => Promise<void>;
-  onAddManualExpense: (expense: Omit<ManualExpense, 'id' | 'date'>) => Promise<void>;
+  onAddManualExpense: (expense: ExpenseRequest) => Promise<void>;
 }
 
 export default function AccountingSettingsView({
+  initialView = 'accounting',
   transactions,
   purchaseOrders,
   currentRole,
+  canManageGlobalSettings=false,
   taxConfig,
   manualExpenses,
   authToken,
+  financialOwner,
+  financialCustomers = [],
+  onFinancialRefresh,
+  financialShopId,
   onUpdateTaxConfig,
   onAddManualExpense,
 }: AccountingSettingsViewProps) {
   const defaultInvoiceCompanyMeta = {
-    companyLegalName: 'ARS (PVT) LTD',
-    companyTagline: 'Hardware Wholesale & Retail',
+    companyLegalName: '',
+    companyTagline: 'Imports & Wholesale Distribution',
     businessRegistrationNo: '',
     vatRegistrationNo: '',
     tinNo: '',
@@ -51,14 +94,46 @@ export default function AccountingSettingsView({
   };
 
   const currencySymbol = 'Rs.';
-  const [activeTab, setActiveTab] = useState<'accounting' | 'settings'>('accounting');
+  const [costCorrectionRevision,setCostCorrectionRevision]=useState(0);
+  const [activeTab, setActiveTab] = useState<'accounting' | 'settings'>(initialView);
+  const [financeWorkspace,setFinanceWorkspace] = useState('overview');
+  const [settingsWorkspace,setSettingsWorkspace]=useState<'profile'|'legal'|'support'>('profile');
 
   // Expense Logger form states
   const [isExpOpen, setIsExpOpen] = useState(false);
   const [expDesc, setExpDesc] = useState('');
   const [expAmt, setExpAmt] = useState(0);
   const [expCat, setExpCat] = useState('Utilities');
-  const expenseCategories = ['Utilities', 'Maintenance', 'Rent', 'Wages', 'Freight', 'Marketing', 'Other'];
+  const expenseCategories = ['Utilities','Maintenance','Rent','Wages','Transport & distribution','Vehicle fuel','Freight','Customs & clearance','Warehouse handling','Packaging','Office supplies','Marketing','Bank charges','Professional fees','Other'];
+  const [expenseAccounts,setExpenseAccounts]=useState<ExpenseAccount[]>([]);
+  const [expenseSource,setExpenseSource]=useState('');
+  const [expenseMethod,setExpenseMethod]=useState('Cash');
+  const [expenseLoading,setExpenseLoading]=useState(false);
+  const [expenseBusy,setExpenseBusy]=useState(false);
+  const [expenseError,setExpenseError]=useState('');
+  const [expensePending,setExpensePending]=useState<ExpenseRequest|null>(null);
+  const [expenseReady,setExpenseReady]=useState(false);
+  const expenseLock=useRef(false);
+  const expenseShop=financialShopId||taxConfig.activeShopId||'';
+  const expenseKey='ars:pending-expense:'+JSON.stringify([financialOwner||'',expenseShop]);
+  const matchingExpenseAccounts=expenseAccounts.filter(a=>a.active&&a.kind===(expenseMethod==='Cash'?'Office Cash':'Bank'));
+  const chosenExpenseAccount=matchingExpenseAccounts.find(a=>a.id===expenseSource);
+  useEffect(()=>{
+    setExpenseReady(false);setExpensePending(null);setIsExpOpen(false);setExpenseError('');
+    if(!financialOwner||!expenseShop)return;
+    try{setExpensePending(JSON.parse(localStorage.getItem(expenseKey)||'null'));setExpenseReady(true);}catch{setExpenseError('Cannot read saved expense. Check browser storage.');}
+  },[expenseKey,financialOwner,expenseShop]);
+  useEffect(()=>{
+    setExpenseAccounts([]);setExpenseSource('');
+    if(!isExpOpen||!expenseShop)return;
+    const controller=new AbortController();setExpenseLoading(true);setExpenseError('');
+    fetch('/api/financial-accounts',{headers:{Authorization:'Bearer '+authToken,'X-Shop-Id':expenseShop},cache:'no-store',signal:controller.signal})
+      .then(async r=>{const data=await r.json();if(!r.ok||!Array.isArray(data))throw Error(data.error||'Unable to load financial accounts.');return data;})
+      .then(data=>{if(!controller.signal.aborted)setExpenseAccounts(data);})
+      .catch(e=>{if(!controller.signal.aborted)setExpenseError(e.message);})
+      .finally(()=>{if(!controller.signal.aborted)setExpenseLoading(false);});
+    return ()=>controller.abort();
+  },[isExpOpen,expenseShop,authToken]);
 
   const toDefaultShopProfiles = (config: StoreSettings) => {
     if (Array.isArray(config.shopProfiles) && config.shopProfiles.length > 0) {
@@ -72,11 +147,11 @@ export default function AccountingSettingsView({
     return [
       {
         id: 'shop-main',
-        name: config.storeName || 'Lanka Smart Hardware',
+        name: config.storeName || 'ARS Distributor',
         logoUrl: config.logoUrl || '',
-        address: '150 Galle Road, Colombo 03, Sri Lanka',
-        phone: '+94 11 234 5678',
-        taxRate: config.taxRate || 18,
+        address: config.address || '',
+        phone: config.phone || '',
+        taxRate: config.taxRate ?? 0,
         invoicePrefix: config.invoicePrefix || 'SL-INV',
         printFormat: 'a4',
         invoiceCompanyMeta: {
@@ -146,10 +221,10 @@ export default function AccountingSettingsView({
 
     setShopProfiles(profiles);
     setActiveShopId(selectedShopId);
-    setStoreName(taxConfig.storeName);
-    setTaxRate(taxConfig.taxRate);
+    setStoreName(arsDisplayName(activeShop.name || taxConfig.storeName));
+    setTaxRate(activeShop.taxRate ?? taxConfig.taxRate);
     setCurrency(taxConfig.currency);
-    setInvoicePrefix(taxConfig.invoicePrefix);
+    setInvoicePrefix(activeShop.invoicePrefix ?? taxConfig.invoicePrefix);
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || taxConfig.logoUrl || '') || '');
     setShopAddress(activeShop.address || '');
     setShopPhone(activeShop.phone || '');
@@ -166,13 +241,14 @@ export default function AccountingSettingsView({
   }, [taxConfig]);
 
   const addShopProfile = () => {
+    if(!canManageGlobalSettings)return;
     const newShopId = `shop-${Date.now()}`;
     const newShop = {
       id: newShopId,
       name: `Branch ${shopProfiles.length + 1}`,
       logoUrl: '',
-      address: '150 Galle Road, Colombo 03, Sri Lanka',
-      phone: '+94 11 234 5678',
+      address: '',
+      phone: '',
       taxRate,
       invoicePrefix,
       printFormat: 'a4' as const,
@@ -185,7 +261,7 @@ export default function AccountingSettingsView({
     setActiveShopId(newShopId);
     setStoreName(newShop.name);
     setInvoicePrefix(newShop.invoicePrefix || 'SL-INV');
-    setTaxRate(Number(newShop.taxRate || 18));
+    setTaxRate(Number(newShop.taxRate ?? 0));
     setLogoUrl('');
     setShopAddress(newShop.address || '');
     setShopPhone(newShop.phone || '');
@@ -202,14 +278,15 @@ export default function AccountingSettingsView({
   };
 
   const handleShopChange = (shopId: string) => {
+    if(!canManageGlobalSettings&&shopId!==financialShopId)return;
     const activeShop = shopProfiles.find((shop) => shop.id === shopId);
     if (!activeShop) {
       return;
     }
     setActiveShopId(shopId);
-    setStoreName(activeShop.name || 'Lanka Smart Hardware');
+    setStoreName(arsDisplayName(activeShop.name || 'ARS Distributor'));
     setInvoicePrefix(activeShop.invoicePrefix || 'SL-INV');
-    setTaxRate(Number(activeShop.taxRate || 18));
+    setTaxRate(Number(activeShop.taxRate ?? 0));
     setLogoUrl(sanitizeImageSrc(activeShop.logoUrl || '') || '');
     setShopAddress(activeShop.address || '');
     setShopPhone(activeShop.phone || '');
@@ -229,43 +306,40 @@ export default function AccountingSettingsView({
     setSocialLinks(activeInvoiceMeta.socialLinks || '');
   };
 
-  // Profit/Loss Calculations
-  // Income comes from completed POS sales transactions
-  const totalIncome = transactions.reduce((sum, t) => sum + t.subtotal + t.tax, 0);
+  // Invoice value is not cash income; stock procurement is not cost of goods sold.
+  const completedSales=transactions.filter(t=>t.status==='Completed');
+  const totalIncome=completedSales.reduce((sum,t)=>sum+t.total,0);
+  const purchaseExpenses=purchaseOrders.filter(po=>po.status==='Received').reduce((sum,po)=>sum+po.total,0);
+  const totalExpensesAmt=manualExpenses.reduce((sum,e)=>sum+e.amount,0);
+  const creditInvoiceValue=completedSales.filter(t=>t.paymentMethod==='Credit Account').reduce((sum,t)=>sum+t.total,0);
 
-  // Expenses come from Received POs (actually bought restocks) plus manual expenses
-  const purchaseExpenses = purchaseOrders
-    .filter((po) => po.status === 'Received')
-    .reduce((sum, po) => sum + po.total, 0);
-
-  const totalExpensesAmt = manualExpenses.reduce((sum, e) => sum + e.amount, 0) + purchaseExpenses;
-  const netProfit = totalIncome - totalExpensesAmt;
-
+  const sendExpense=async(request:ExpenseRequest)=>{
+    if(expenseLock.current)return;
+    expenseLock.current=true;setExpenseBusy(true);setExpenseError('');
+    try{
+      await onAddManualExpense(request);
+      localStorage.removeItem(expenseKey);setExpensePending(null);setIsExpOpen(false);setExpDesc('');setExpAmt(0);
+      notify.success('Expense recorded.');
+    }catch(err){setExpenseError(err instanceof Error?err.message:'Unable to confirm expense. Retry the original request.');}
+    finally{expenseLock.current=false;setExpenseBusy(false);}
+  };
   const handleLogManualExpense = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!expDesc.trim() || expAmt <= 0) {
-      alert('Description and positive amount are required.');
-      return;
+    if(expenseLock.current||expensePending||!expenseReady)return;
+    if(!expDesc.trim()||!Number.isFinite(expAmt)||expAmt<=0||!chosenExpenseAccount||chosenExpenseAccount.balance<expAmt){
+      setExpenseError('Enter valid expense details and select an account with sufficient recorded funds.');return;
     }
-
-    try {
-      await onAddManualExpense({
-        desc: expDesc,
-        amount: expAmt,
-        category: expCat,
-      });
-      setIsExpOpen(false);
-      setExpDesc('');
-      setExpAmt(0);
-    } catch (err: any) {
-      alert(err.message || 'Failed to log expense');
-    }
+    const request:ExpenseRequest={desc:expDesc.trim(),amount:expAmt,category:expCat,sourceAccountId:expenseSource,paymentMethod:expenseMethod,requestId:crypto.randomUUID()};
+    try{localStorage.setItem(expenseKey,JSON.stringify(request));}catch{setExpenseError('Cannot safely preserve expense request.');return;}
+    setExpensePending(request);await sendExpense(request);
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const nextProfiles = shopProfiles.map((shop) => {
+    if(!canManageGlobalSettings&&(!financialShopId||activeShopId!==financialShopId)){notify.warning('Select your authorized branch.');return;}
+    const sourceProfiles=canManageGlobalSettings?shopProfiles:(taxConfig.shopProfiles||[]);
+    const nextProfiles = sourceProfiles.map((shop) => {
       if (shop.id !== activeShopId) {
         return shop;
       }
@@ -277,7 +351,7 @@ export default function AccountingSettingsView({
         logoUrl,
         address: shopAddress,
         phone: shopPhone,
-        printFormat,
+        printFormat: 'a4' as const,
         invoiceCompanyMeta: {
           companyLegalName,
           companyTagline,
@@ -290,47 +364,38 @@ export default function AccountingSettingsView({
           socialLinks,
         },
       };
-      return isWholesaleShopProfile(nextShop) ? { ...nextShop, printFormat: 'a4' as const } : nextShop;
+      return nextShop;
     });
 
     const activeShop = nextProfiles.find((shop) => shop.id === activeShopId) || nextProfiles[0];
 
     try {
-      await onUpdateTaxConfig({
+      await onUpdateTaxConfig(canManageGlobalSettings?{
         storeName: activeShop?.name || storeName,
-        taxRate: Number(activeShop?.taxRate || taxRate),
+        taxRate: Number(activeShop?.taxRate ?? taxRate),
         currency,
-        invoicePrefix: String(activeShop?.invoicePrefix || invoicePrefix),
+        invoicePrefix: String(activeShop?.invoicePrefix ?? invoicePrefix),
         logoUrl: String(activeShop?.logoUrl || logoUrl || ''),
         address: String(activeShop?.address || shopAddress || ''),
         phone: String(activeShop?.phone || shopPhone || ''),
         activeShopId: activeShop?.id,
         shopProfiles: nextProfiles,
-      });
+      }:{...taxConfig,shopProfiles:nextProfiles});
       setIsSettingsSaved(true);
       setTimeout(() => setIsSettingsSaved(false), 3000);
     } catch (err: any) {
-      alert(err.message || 'Failed to save settings');
+      notify.warning(err.message || 'Failed to save settings');
     }
   };
 
   const isManager = ['Super Admin', 'Store Manager'].includes(currentRole);
   const selectedSettingsShop = shopProfiles.find((shop) => shop.id === activeShopId);
-  const isWholesaleSettingsShop = Boolean(selectedSettingsShop && isWholesaleShopProfile(selectedSettingsShop));
+  const isWholesaleSettingsShop = true; // Preserve legacy internal format value; customer invoice renderer uses 240 × 270 mm.
 
   return (
-    <div className="space-y-6 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
-      {/* Tab Switching Navigation Header */}
-      <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-            Accounting and Store Settings
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Audit store cash flows, register fixed overhead expenses, and configure invoicing parameters.
-          </p>
-        </div>
-
+    <div className="space-y-3 motion-safe:animate-fade-in font-sans selection:bg-amber-100">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        <span className="px-2 text-xs font-semibold text-slate-600">Finance &amp; company profile</span>
         <div className="flex bg-slate-100 p-1.5 rounded-lg border border-slate-200 shrink-0">
           <button
             onClick={() => setActiveTab('accounting')}
@@ -360,15 +425,41 @@ export default function AccountingSettingsView({
 
       {/* RENDER TAB 1: FINANCIAL LEDGER */}
       {activeTab === 'accounting' && (
-        <div className="space-y-6">
+        <div className="space-y-3">
+          <nav aria-label="Financial workspaces" className="flex flex-wrap gap-1.5 rounded-xl border border-slate-200 bg-white p-2">
+            {[{id:'overview',label:'Overview',allowed:true},{id:'logins',label:'Representative logins',allowed:Boolean(currentRole==='Super Admin')},{id:'handover',label:'Cash handovers',allowed:Boolean(isManager && financialOwner)},{id:'repaccounts',label:'Representative accounts',allowed:Boolean(isManager)},{id:'accounts',label:'Financial accounts',allowed:Boolean(isManager)},{id:'cheques',label:'Customer cheques',allowed:Boolean(isManager)},{id:'suppliercheques',label:'Supplier cheques',allowed:Boolean(isManager)},{id:'reconcile',label:'Reconciliation',allowed:Boolean(isManager)},{id:'historical',label:'Historical costs',allowed:Boolean(currentRole==='Super Admin' && financialOwner)},{id:'receivables',label:'Receivables',allowed:Boolean(isManager)},{id:'payables',label:'Supplier payables',allowed:Boolean(isManager)},{id:'coa',label:'Chart of accounts',allowed:Boolean(isManager)},{id:'opening',label:'Opening balances',allowed:Boolean(isManager)},{id:'ledger',label:'Ledger reports',allowed:Boolean(isManager)},{id:'mapping',label:'Ledger mapping',allowed:Boolean(isManager)},{id:'register',label:'Position register',allowed:Boolean(isManager)},{id:'position',label:'Financial position',allowed:Boolean(isManager)},{id:'valuation',label:'Inventory valuation',allowed:Boolean(isManager)},{id:'importexpense',label:'Import expenses',allowed:Boolean(isManager)},{id:'profit',label:'Profit',allowed:Boolean(isManager)},{id:'cashflow',label:'Cash flow',allowed:Boolean(isManager)},{id:'statements',label:'Financial statements',allowed:Boolean(isManager)}].filter(item=>item.allowed).map(item=><button key={item.id} type="button" aria-pressed={financeWorkspace===item.id} onClick={()=>setFinanceWorkspace(item.id)} className={financeWorkspace===item.id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg border border-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50'}>{item.label}</button>)}
+          </nav>
+          {financeWorkspace==='logins' && currentRole==='Super Admin' && <RepresentativeLoginsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='handover' && isManager && financialOwner && <CashHandoversPanel manager authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='repaccounts' && isManager && <RepresentativeAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='accounts' && isManager && <FinancialAccountsPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='cheques' && isManager && <ChequeManagementPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} customers={financialCustomers} transactions={transactions} onRefresh={onFinancialRefresh} />}
+          {financeWorkspace==='suppliercheques' && isManager && <SupplierChequePanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} purchaseOrders={purchaseOrders} settings={taxConfig} onRefresh={onFinancialRefresh} />}
+          {financeWorkspace==='reconcile' && isManager && <FinancialReconciliationPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} />}
+          {financeWorkspace==='historical' && currentRole==='Super Admin' && financialOwner && <HistoricalCostReviewPanel authToken={authToken} owner={financialOwner} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
+          {financeWorkspace==='receivables' && isManager && <ReceivableAgingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='payables' && isManager && <SupplierPayablePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='coa' && isManager && <ChartOfAccountsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='opening' && isManager && <OpeningBalancePanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='ledger' && isManager && <LedgerReportsPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='mapping' && isManager && <LedgerMappingPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} canManage={currentRole==='Super Admin'} />}
+          {financeWorkspace==='register' && isManager && <PositionRegisterPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} settings={taxConfig} />}
+          {financeWorkspace==='position' && isManager && <FinancialPositionPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='valuation' && isManager && <InventoryValuationPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='importexpense' && isManager && <ImportExpenseReviewPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} owner={financialOwner} canApprove={currentRole==='Super Admin'} onChanged={()=>setCostCorrectionRevision(n=>n+1)} />}
+          {financeWorkspace==='profit' && isManager && <FinancialProfitPanel correctionRevision={costCorrectionRevision} authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='cashflow' && isManager && <FinancialCashFlowPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='statements' && isManager && <FinancialStatementPanel authToken={authToken} shopId={financialShopId || taxConfig.activeShopId || toDefaultShopProfiles(taxConfig)[0].id} settings={taxConfig} />}
+          {financeWorkspace==='overview' && <div className="space-y-3">
+          {isManager&&<ReportExportMenu settings={taxConfig} report={()=>({title:'Financial ledger overview',filename:'ars-financial-ledger',period:'All available records | operational figures, not audited accounts',headers:['Type','Date','Reference / description','Status','Amount (LKR)'],moneyColumns:[4],rows:[...transactions.map(t=>['Sale',reportDay(t.date),t.invoiceNumber,t.status||'Completed',t.total]),...purchaseOrders.map(p=>['Purchase order',reportDay(p.date),p.poNumber,p.status,p.total]),...manualExpenses.map(e=>['Manual expense',reportDay(e.date),e.desc,e.category,e.amount])],summary:[{label:'Non-refunded invoice totals (LKR)',value:transactions.filter(t=>t.status!=='Refunded').reduce((a,t)=>a+t.total,0)},{label:'Received purchase orders (LKR)',value:purchaseOrders.filter(p=>p.status==='Received').reduce((a,p)=>a+p.total,0)},{label:'Manual expenses (LKR)',value:manualExpenses.reduce((a,e)=>a+e.amount,0)}]})}/>}
           {/* KPI Analytics Block */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Gross Sales Income</span>
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Completed invoice value (incl. tax)</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 <span className="text-[9px] text-emerald-600 font-bold flex items-center gap-1 mt-1 font-mono">
-                  <TrendingUp className="w-3 h-3" /> FROM {transactions.length} CASHIER SALES
+                  <TrendingUp className="w-3 h-3" /> FROM {completedSales.length} INVOICES
                 </span>
               </div>
               <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600 h-11 w-11 flex items-center justify-center shrink-0">
@@ -376,12 +467,12 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Total Store Cost Expenses</span>
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Recorded manual expenses</span>
                 <strong className="text-2xl font-mono text-slate-900 block mt-1">{currencySymbol}{totalExpensesAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                 <span className="text-[9px] text-rose-600 font-bold flex items-center gap-1 mt-1 font-mono">
-                  <TrendingDown className="w-3 h-3" /> Procurement: {currencySymbol}{purchaseExpenses.toFixed(2)}
+                  <TrendingDown className="w-3 h-3" /> Received PO value (separate): {currencySymbol}{purchaseExpenses.toFixed(2)}
                 </span>
               </div>
               <div className="p-3 bg-rose-50 rounded-xl text-rose-600 h-11 w-11 flex items-center justify-center shrink-0">
@@ -389,27 +480,27 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
+            <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-2xs flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Net Operating Surplus</span>
-                <strong className={`text-2xl font-mono block mt-1 ${netProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                  {currencySymbol}{netProfit.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span className="text-[10px] uppercase font-mono font-bold text-slate-400 block tracking-wider">Credit invoice value</span>
+                <strong className={`text-2xl font-mono block mt-1 text-slate-900`}>
+                  {currencySymbol}{creditInvoiceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </strong>
-                <span className="text-[9px] text-slate-500 block mt-1 font-mono">After logistics and overheads</span>
+                <span className="text-[9px] text-slate-500 block mt-1 font-mono">Original credit invoice totals, not outstanding debt</span>
               </div>
-              <div className={`p-3 rounded-xl h-11 w-11 flex items-center justify-center shrink-0 ${netProfit >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+              <div className={`p-3 rounded-xl h-11 w-11 flex items-center justify-center shrink-0 bg-slate-100 text-slate-700`}>
                 <FileSpreadsheet className="w-5 h-5" />
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
             {/* Cash Flow Timeline logs (8 cols) */}
             <div className="lg:col-span-8 bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               <div className="p-5 border-b border-slate-100 flex items-center justify-between">
                 <div>
-                  <h4 className="font-heading font-medium text-slate-900 text-sm">Overhead & Expense Chronology</h4>
-                  <p className="text-[10px] text-slate-400">Inventory shipments and fixed store expenditures.</p>
+                  <h4 className="font-heading font-medium text-slate-900 text-sm">Procurement and expense records</h4>
+                  <p className="text-[10px] text-slate-400">Received purchase orders are inventory records, not evidence of payment.</p>
                 </div>
 
                 {isManager && (
@@ -423,14 +514,14 @@ export default function AccountingSettingsView({
                 )}
               </div>
 
-              <div className="overflow-x-auto text-[11px] font-sans">
+              <div className="max-h-[55dvh] overflow-auto text-[11px] font-sans">
                 <table className="w-full text-left">
-                  <thead>
+                  <thead className="sticky top-0 bg-slate-50">
                     <tr className="bg-slate-50/75 text-slate-500 font-medium font-sans border-b border-slate-100">
-                      <th className="p-4">Paid On</th>
+                      <th className="p-4">Record date</th>
                       <th className="p-4">Reference/Description</th>
                       <th className="p-4">Category</th>
-                      <th className="p-4 text-right">Debit amount</th>
+                      <th className="p-4 text-right">Recorded value</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -441,14 +532,14 @@ export default function AccountingSettingsView({
                         <tr key={po.id} className="hover:bg-slate-50/50 transition">
                           <td className="p-4 text-slate-400 font-mono">Completed Date</td>
                           <td className="p-4">
-                            <span className="font-semibold text-slate-900 block">Stock Replenishment Invoice</span>
+                            <span className="font-semibold text-slate-900 block">Received purchase order (not payment)</span>
                             <span className="text-[9px] text-slate-400 block mt-0.5">Wholesaler PO: {po.poNumber} ({po.supplierName})</span>
                           </td>
                           <td className="p-4">
                             <span className="bg-blue-50 text-blue-800 text-[9px] font-mono font-bold px-2 py-0.5 rounded">Inventory</span>
                           </td>
                           <td className="p-4 text-right font-mono font-bold text-rose-600">
-                            -{currencySymbol}{po.total.toFixed(2)}
+                            {currencySymbol}{po.total.toFixed(2)}
                           </td>
                         </tr>
                       ))}
@@ -459,6 +550,7 @@ export default function AccountingSettingsView({
                         <td className="p-4 text-slate-400 font-mono">{exp.date}</td>
                         <td className="p-4">
                           <span className="font-semibold text-slate-900 block">{exp.desc}</span>
+                          {isManager&&expenseShop&&<DisbursementVoucherActions kind="expense" id={exp.id} authToken={authToken} shopId={expenseShop} />}
                         </td>
                         <td className="p-4">
                           <span className="bg-slate-100 text-slate-700 text-[9px] font-mono font-bold px-2 py-0.5 rounded">{exp.category}</span>
@@ -474,21 +566,21 @@ export default function AccountingSettingsView({
             </div>
 
             {/* Income Streams POS Quick Ledger (4 cols) */}
-            <div className="lg:col-span-4 bg-white p-5 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
+            <div className="lg:col-span-4 bg-white p-3 rounded-xl border border-slate-100 shadow-xs flex flex-col justify-between">
               <div>
-                <h4 className="font-heading font-medium text-slate-900 text-sm">POS Income Stream Feed</h4>
-                <p className="text-[11px] text-slate-400 mb-4">Chronological receipts compiled at cashier registers.</p>
+                <h4 className="font-heading font-medium text-slate-900 text-sm">Completed invoice register</h4>
+                <p className="text-[11px] text-slate-400 mb-4">Invoice values, including credit sales; not cash collections.</p>
 
                 <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                  {transactions.map((t, idx) => {
-                    const grossText = (t.subtotal + t.tax).toFixed(2);
+                  {completedSales.map((t, idx) => {
+                    const grossText = t.total.toFixed(2);
                     return (
                       <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200/55 flex justify-between font-mono text-[11px]">
                         <div>
                           <strong className="text-slate-800 font-sans block">{t.invoiceNumber}</strong>
                           <span className="text-slate-400 text-[9px] block mt-0.5">Ref: {t.paymentMethod}</span>
                         </div>
-                        <span className="text-emerald-600 font-bold shrink-0 mt-0.5">+{currencySymbol}{grossText}</span>
+                        <span className="text-emerald-600 font-bold shrink-0 mt-0.5">{currencySymbol}{grossText}</span>
                       </div>
                     );
                   })}
@@ -496,48 +588,56 @@ export default function AccountingSettingsView({
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 text-xs font-mono text-slate-500 leading-relaxed text-center">
-                Financial balances calculated dynamically against local state file storage records.
+                For actual cash movements, use the recorded cash flow and account statements above.
               </div>
             </div>
           </div>
+          </div>}
         </div>
       )}
 
       {/* RENDER TAB 2: STORE SETTINGS PANEL */}
+      {activeTab === 'settings' && <nav aria-label="Company settings workspaces" className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {([['profile','Company & billing'],['legal','Legal & contact details'],['support','System health']] as const).filter(([id])=>id!=='support'||['Super Admin','Store Manager'].includes(currentRole)).map(([id,label])=><button key={id} type="button" aria-pressed={settingsWorkspace===id} onClick={()=>setSettingsWorkspace(id)} className={settingsWorkspace===id?'rounded-lg bg-[#182a45] px-3 py-2 text-xs font-bold text-white':'rounded-lg px-3 py-2 text-xs font-semibold text-slate-600'}>{label}</button>)}
+      </nav>}
       {activeTab === 'settings' && (
-        <div className="bg-white p-6 rounded-xl border border-slate-150 shadow-xs max-w-lg mx-auto">
-          <h3 className="font-heading font-medium text-slate-900 text-base mb-4 flex items-center gap-1.5">
-            <Settings className="w-5 h-5 text-amber-500 animate-spin-slow" /> Store Parameters configuration
+        <div hidden={settingsWorkspace==='support'} className="bg-white p-3 rounded-xl border border-slate-150 shadow-xs max-w-6xl mx-auto">
+          <h3 className="font-heading font-medium text-slate-900 text-sm mb-2 flex items-center gap-1.5">
+            <Settings className="w-5 h-5 text-amber-500" /> Company Profile · Legal & Billing Details
           </h3>
 
-          <form onSubmit={handleSaveSettings} className="space-y-5 text-xs font-sans">
+          <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">{canManageGlobalSettings?'Global administrator · manage company branches':'Branch access · only your assigned company profile can be changed'}</p>
+          <form onSubmit={handleSaveSettings} onInvalidCapture={event=>{const target=event.target as HTMLElement;if(target.closest('section[hidden]'))setSettingsWorkspace('legal');else setSettingsWorkspace('profile');}} className="space-y-3 text-xs font-sans">
+            <div hidden={settingsWorkspace!=='profile'}><div className="grid gap-3 lg:grid-cols-2">
+              <div className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Active Shop / Branch</label>
                 <select
                   id="settings-active-shop"
                   value={activeShopId}
+                  disabled={!canManageGlobalSettings}
                   onChange={(e) => handleShopChange(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded focus:outline-none text-xs"
                 >
-                  {shopProfiles.map((shop) => (
+                  {shopProfiles.filter(shop=>canManageGlobalSettings||shop.id===financialShopId).map((shop) => (
                     <option key={shop.id} value={shop.id}>
-                      {shop.name}{isWholesaleShopProfile(shop) ? ' (Wholesale)' : ' (Retail)'}
+                      {shop.name}
                     </option>
                   ))}
                 </select>
               </div>
-              <button
+              {canManageGlobalSettings&&<button
                 type="button"
                 onClick={addShopProfile}
                 className="h-10 px-3 bg-slate-900 hover:bg-slate-950 text-white rounded font-semibold"
               >
-                + Add Shop
-              </button>
+                + Add Branch
+              </button>}
             </div>
 
             <div>
-              <label className="block text-slate-500 font-semibold mb-1">Corporate Store Handle Name *</label>
+              <label className="block text-slate-500 font-semibold mb-1">Company / Branch Name *</label>
               <input
                 id="settings-store-name"
                 type="text"
@@ -572,7 +672,7 @@ export default function AccountingSettingsView({
                     try {
                       await handleUploadShopLogo(file);
                     } catch (err: any) {
-                      alert(err.message || 'Failed to upload logo');
+                      notify.warning(err.message || 'Failed to upload logo');
                     }
                   }}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs"
@@ -580,15 +680,17 @@ export default function AccountingSettingsView({
               </div>
               {logoUrl && (
                 <div className="mt-2 p-2 bg-slate-50 border border-slate-200 rounded flex items-center gap-2">
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded bg-white border border-slate-200 text-[10px] font-bold text-slate-500">OK</span>
-                  <span className="text-[11px] text-slate-500">Logo uploaded and stored for the active shop</span>
+                  <img src={sanitizeImageSrc(logoUrl) || ''} alt="Company logo preview" className="h-14 w-20 rounded-lg border border-slate-200 bg-slate-900 p-1 object-contain" />
+                  <span className="text-[11px] text-slate-500">Logo ready. Save Company Profile to apply it to invoices.</span>
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              </div>
+              <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-slate-500 font-semibold mb-1">Shop Address</label>
+                <label className="block text-slate-500 font-semibold mb-1">Registered / Trading Address</label>
                 <textarea
                   id="settings-shop-address"
                   value={shopAddress}
@@ -612,7 +714,7 @@ export default function AccountingSettingsView({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-slate-500 font-semibold mb-1 flex items-center gap-1">
                   <Percent className="w-4 h-4 text-slate-400" /> State VAT/GST Tax Rate (%)
@@ -645,7 +747,7 @@ export default function AccountingSettingsView({
 
             <div>
               <label className="text-slate-500 font-semibold mb-1 flex items-center gap-1">
-                <Receipt className="w-4 h-4 text-slate-400" /> Cashier Invoice Series Prefix
+                <Receipt className="w-4 h-4 text-slate-400" /> Invoice Series Prefix
               </label>
               <input
                 id="settings-invoice-prefix"
@@ -665,15 +767,21 @@ export default function AccountingSettingsView({
                 onChange={(e) => setPrintFormat(e.target.value as 'a4' | 'thermal')}
                 className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded focus:outline-none text-xs"
               >
-                <option value="a4">A4 Invoice</option>
+                <option value="a4">ARS wholesale invoice · 240 × 270 mm</option>
                 <option value="thermal" disabled={isWholesaleSettingsShop}>Thermal 80mm</option>
               </select>
               {isWholesaleSettingsShop && (
-                <p className="mt-1 text-[11px] text-amber-700">Wholesale shop billing is locked to A4 format.</p>
+                <p className="mt-1 text-[11px] text-amber-700">Customer invoices use the approved 240 × 270 mm format.</p>
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              </div>
+            </div>
+
+            </div>
+            <section hidden={settingsWorkspace!=='legal'} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+              <h4 className="text-sm font-semibold text-slate-800">Legal registration, support contacts and additional invoice details</h4>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-500 font-semibold mb-1">Company Legal Name</label>
                 <input
@@ -758,12 +866,13 @@ export default function AccountingSettingsView({
                 />
               </div>
             </div>
+            </section>
 
-            <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-lg text-slate-700 leading-snug">
+            <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-slate-700 leading-snug">
               <strong>Caution:</strong> Changes configured in settings will propagate instantly into checkout receipts generated inside POS and reports summaries. Ensure tax ratios map actual legislative mandates.
             </div>
 
-            <div className="pt-2">
+            <div className="sticky bottom-0 z-10 border-t border-slate-200 bg-white/95 py-3 backdrop-blur-sm">
               <button
                 id="btn-save-settings"
                 type="submit"
@@ -776,11 +885,17 @@ export default function AccountingSettingsView({
         </div>
       )}
 
+      {activeTab === 'settings' && settingsWorkspace==='support' && ['Super Admin', 'Store Manager'].includes(currentRole) && (
+        <SupportHealthPanel authToken={authToken} />
+      )}
+
+      {expensePending&&isManager&&<div className="rounded border border-amber-300 bg-amber-50 p-3 text-sm"><strong>Unconfirmed expense</strong><p>{expensePending.desc} · Rs. {expensePending.amount.toFixed(2)}</p><p>Retry the original request; do not enter another expense.</p>{expenseError&&<p role="alert">{expenseError}</p>}<button type="button" disabled={expenseBusy} className="rounded bg-slate-900 text-white px-3 py-2" onClick={()=>void sendExpense(expensePending)}>Retry exact expense</button></div>}
       {/* FIXED LOG OVERHEAD EXPENSE DRAWER MODAL */}
       {isExpOpen && (
         <div id="expense-modal-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-250 font-sans relative">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md max-h-[90dvh] overflow-y-auto border border-slate-250 font-sans relative">
             <button
+              disabled={expenseBusy}
               onClick={() => setIsExpOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
             >
@@ -788,7 +903,7 @@ export default function AccountingSettingsView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">
-              Log Operations Overhead Expense
+              Record Business Expense
             </h3>
 
             <form onSubmit={handleLogManualExpense} className="space-y-4 text-xs font-sans">
@@ -812,7 +927,7 @@ export default function AccountingSettingsView({
                     id="input-exp-amount"
                     type="number"
                     step="0.01"
-                    min="0.1"
+                    min="0.01"
                     required
                     value={expAmt}
                     onChange={(e) => setExpAmt(Number(e.target.value))}
@@ -837,9 +952,16 @@ export default function AccountingSettingsView({
                 </div>
               </div>
 
+              <label className="block">Payment method<select value={expenseMethod} onChange={e=>{setExpenseMethod(e.target.value);setExpenseSource('');}} className="block w-full rounded border p-2"><option>Cash</option><option>Bank Transfer</option></select></label>
+              <label className="block">Paid from *<select required value={expenseSource} disabled={expenseLoading||expenseBusy} onChange={e=>setExpenseSource(e.target.value)} className="block w-full rounded border p-2"><option value="">{expenseLoading?'Loading accounts…':'Select financial account'}</option>{matchingExpenseAccounts.map(a=><option key={a.id} value={a.id}>{a.name} · Rs. {a.balance.toFixed(2)}</option>)}</select></label>
+              {!expenseLoading&&!matchingExpenseAccounts.length&&<p className="text-amber-800">Create a matching financial account first.</p>}
+              {chosenExpenseAccount&&<p className="rounded bg-slate-50 p-2">Estimated remaining balance: Rs. {(chosenExpenseAccount.balance-expAmt).toFixed(2)}</p>}
+              <p className="text-slate-500">Record only actual payments. Do not duplicate supplier payments or inventory costs as overhead expenses.</p>
+              {expenseError&&<p role="alert" className="text-red-700">{expenseError}</p>}
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button
                   type="button"
+                  disabled={expenseBusy}
                   onClick={() => setIsExpOpen(false)}
                   className="flex-1 py-1.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded"
                 >
@@ -848,9 +970,10 @@ export default function AccountingSettingsView({
                 <button
                   id="btn-log-expense-submit"
                   type="submit"
+                  disabled={expenseBusy||expenseLoading||!!expensePending||!expenseReady||!expenseSource}
                   className="flex-1 py-1.5 text-xs font-bold text-slate-150 bg-rose-500 hover:bg-rose-600 rounded shadow-3xs text-slate-100"
                 >
-                  Log Expense Debit
+                  {expenseBusy?'Recording…':'Record expense'}
                 </button>
               </div>
             </form>

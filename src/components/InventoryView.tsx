@@ -1,4 +1,7 @@
+import { reportDay, reportTime } from '../utils/reporting';
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { notify } from '../utils/notifications';
 import {
   History,
   TrendingDown,
@@ -10,9 +13,13 @@ import {
   FileCheck2,
   X,
 } from 'lucide-react';
-import { Product, StockLog, Role } from '../types';
+import { Product, StockLog, Role, StoreSettings } from '../types';
+
+import { ReportExportMenu } from './ReportExportMenu';
+import type { BusinessReport } from '../utils/businessReport';
 
 interface InventoryViewProps {
+  taxConfig: StoreSettings;
   products: Product[];
   stockLogs: StockLog[];
   currentRole: Role;
@@ -21,6 +28,7 @@ interface InventoryViewProps {
 }
 
 export default function InventoryView({
+  taxConfig,
   products,
   stockLogs,
   currentRole,
@@ -30,11 +38,22 @@ export default function InventoryView({
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [logTypeFilter, setLogTypeFilter] = useState('All');
+  const [productSearch, setProductSearch] = useState('');
+  const [productLimit, setProductLimit] = useState(12);
+  const [stockFilter, setStockFilter] = useState<'All' | 'Low' | 'Out' | 'Available'>('All');
+  const [logLimit, setLogLimit] = useState(25);
+  const [logDateFrom, setLogDateFrom] = useState('');
+  const [logDateTo, setLogDateTo] = useState('');
+  const [isLedgerFocused, setIsLedgerFocused] = useState(false);
 
   // Manual Adjust Modal
   const [isAdjustOpen, setIsAdjustOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState('');
   const [qtyDifference, setQtyDifference] = useState<number>(0);
+  const [adjustUnitId, setAdjustUnitId] = useState('');
+  const adjustmentProduct = products.find(p=>p.id===selectedProductId);
+  const adjustmentUnit = adjustmentProduct?.sharedStockUnits?.units.find(u=>u.id===adjustUnitId);
+  const baseDifference = qtyDifference * (adjustmentUnit?.baseUnits ?? 1);
   const [adjustType, setAdjustType] = useState<'Stock In' | 'Stock Out' | 'Stock Adjust' | 'Return'>('Stock Adjust');
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -42,49 +61,40 @@ export default function InventoryView({
   // Validate Operator Role for Adjustments
   const canAdjust = ['Super Admin', 'Store Manager', 'Inventory Staff'].includes(currentRole);
 
+  const adjustmentIssue = !canAdjust ? 'You do not have permission to adjust stock.'
+    : !adjustmentProduct ? 'Select a product.'
+    : adjustmentProduct.sharedStockUnits && !adjustmentUnit ? 'Select an adjustment U/M.'
+    : !Number.isSafeInteger(qtyDifference) || qtyDifference === 0 ? 'Enter a non-zero whole quantity.'
+    : adjustType === 'Stock Out' && qtyDifference > 0 ? 'Stock Out requires a negative quantity.'
+    : (adjustType === 'Stock In' || adjustType === 'Return') && qtyDifference < 0 ? 'Stock In and Return require a positive quantity.'
+    : !Number.isSafeInteger(baseDifference) || !Number.isSafeInteger(adjustmentProduct.quantity + baseDifference) || adjustmentProduct.quantity + baseDifference > 2147483647 ? 'Stock quantity exceeds the supported range.'
+    : adjustmentProduct.quantity + baseDifference < 0 ? 'Insufficient stock for this adjustment.'
+    : !reason.trim() ? 'Enter an audit reason.'
+    : '';
+
   const handleSubmitAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProductId) {
-      alert('Please select a product to adjust.');
+    if (isSubmitting) return;
+    if (adjustmentIssue || !adjustmentProduct) {
+      notify.warning(adjustmentIssue || 'Select a product.');
       return;
     }
-    if (qtyDifference === 0) {
-      alert('Adjustment amount cannot be zero.');
-      return;
-    }
-    if (!reason.trim()) {
-      alert('Please provide an audit reason or ticket log reference.');
-      return;
-    }
+    const newQty = adjustmentProduct.quantity + baseDifference;
     setIsSubmitting(true);
-
-    const product = products.find((p) => p.id === selectedProductId);
-    if (!product) {
-      alert('Product not found.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    // Compute new target quantity
-    const newQty = product.quantity + qtyDifference;
-    if (newQty < 0) {
-      alert('Inventory error: Stock cannot be adjusted below zero.');
-      setIsSubmitting(false);
-      return;
-    }
 
     try {
       await onEditProduct(selectedProductId, {
         quantity: newQty,
-        reason: `${adjustType}: ${reason.trim()}`,
+        reason: `${adjustType}: ${adjustmentUnit ? `${qtyDifference} ${adjustmentUnit.label} (${baseDifference} base units); ` : ''}${reason.trim()}`,
         user: currentUser,
       });
+      notify.success('Inventory adjustment saved with audit reason.');
       setIsAdjustOpen(false);
       setSelectedProductId('');
       setQtyDifference(0);
       setReason('');
     } catch (err) {
-      alert('Adjustment failed: ' + err);
+      notify.error('Adjustment failed: ' + err);
     } finally {
       setIsSubmitting(false);
     }
@@ -92,40 +102,61 @@ export default function InventoryView({
 
   const handleOpenAdjustForProduct = (productId: string) => {
     if (!canAdjust) {
-      alert('Permission Denied: Your active security clearance restricts manual audit updates.');
+      notify.error('Permission Denied: Your active security clearance restricts manual audit updates.');
       return;
     }
     setSelectedProductId(productId);
+    setAdjustUnitId('');
     setQtyDifference(0);
     setAdjustType('Stock Adjust');
-    setReason('Manual bin location recount audit');
+    setReason('');
     setIsAdjustOpen(true);
   };
 
   // Filter Stock Ledger Logs
   const filteredLogs = stockLogs.filter((log) => {
-    const matchesSearch =
-      log.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.reason.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.user.toLowerCase().includes(searchTerm.toLowerCase());
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    const matchesSearch = [log.productName, log.productId, log.reason, log.user, log.referenceId, log.type]
+      .some((field) => String(field || '').toLowerCase().includes(normalizedSearch));
     const matchesType = logTypeFilter === 'All' || log.type === logTypeFilter;
-    return matchesSearch && matchesType;
+    const logDay = reportDay(log.date);
+    const matchesDate = (!logDateFrom || logDay >= logDateFrom) && (!logDateTo || logDay <= logDateTo);
+    return matchesSearch && matchesType && matchesDate;
+  });
+  const isLedgerFiltered = Boolean(searchTerm.trim() || logTypeFilter !== 'All' || logDateFrom || logDateTo);
+  const isProductFiltered = Boolean(productSearch.trim());
+
+
+  const ledgerReport = ():BusinessReport => ({
+    title:'Stock movement ledger',filename:'ars-stock-movements',period:(logDateFrom||'All dates')+' to '+(logDateTo||'Latest')+' | '+logTypeFilter,
+    headers:['Date','Product ID','Product','Type','Quantity','Operator','Reason','Reference'],
+    rows:filteredLogs.map(log=>[reportTime(log.date),log.productId,log.productName,log.type,Number(log.quantity),log.user,log.reason,log.referenceId||'']),
+    summary:[{label:'Matching movements',value:filteredLogs.length},{label:'Distinct products',value:new Set(filteredLogs.map(log=>log.productId)).size}]
   });
 
+  const matchingProducts = products.filter(p => [p.name,p.sku,p.location].some(v=>String(v||'').toLowerCase().includes(productSearch.trim().toLowerCase())) && (stockFilter==='All' || (stockFilter==='Out' ? p.quantity<=0 : stockFilter==='Low' ? p.quantity>0 && p.quantity<=p.reorderLevel : p.quantity>0 && p.quantity>p.reorderLevel)));
+  const stockCounts = { All: products.length, Low: products.filter(p=>p.quantity>0 && p.quantity<=p.reorderLevel).length, Out: products.filter(p=>p.quantity<=0).length, Available: products.filter(p=>p.quantity>0 && p.quantity>p.reorderLevel).length };
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 motion-safe:animate-fade-in">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2"><button type="button" aria-pressed={!isLedgerFocused} onClick={()=>setIsLedgerFocused(false)} className={!isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Stock overview</button><button type="button" aria-pressed={isLedgerFocused} onClick={()=>setIsLedgerFocused(true)} className={isLedgerFocused?"rounded-lg bg-[#182a45] px-4 py-2 text-xs font-bold text-white":"rounded-lg px-4 py-2 text-xs font-semibold text-slate-600"}>Movement history</button><span className="ml-auto px-2 text-xs text-slate-500">{products.length} products · {products.filter(p=>p.quantity<=p.reorderLevel).length} low or out of stock</span></div>
       {/* LEFT: Products Quick Stock overview inline adjustments (5 cols) */}
-      <div className="lg:col-span-5 space-y-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs">
+      <div className={isLedgerFocused ? "hidden" : "space-y-2"}>
+        <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-xs">
           <h3 className="font-heading font-medium text-slate-900 text-sm mb-1">
-            Shelf Audit Controls
+            Stock overview
           </h3>
           <p className="text-[11px] text-slate-500 mb-4">
-            Select catalog products to perform manual inventory overrides.
+            Search products, check available stock and record authorized adjustments.
           </p>
 
-          <div className="space-y-3 max-h-[580px] overflow-y-auto pr-1">
-            {products.map((p) => {
+          <div className="mb-2 flex flex-wrap gap-2" aria-label="Filter by stock status">
+            {(["All","Available","Low","Out"] as const).map(status=><button key={status} type="button" aria-pressed={stockFilter===status} onClick={()=>{setStockFilter(status);setProductLimit(12);}} className={"rounded-lg border px-3 py-2 text-xs font-semibold "+(stockFilter===status?"border-indigo-600 bg-indigo-50 text-indigo-800":"border-slate-200 text-slate-600")}>{status==="Low"?"Low stock":status==="Out"?"Out of stock":status==="Available"?"Healthy stock":"All products"} ({stockCounts[status]})</button>)}
+          </div>
+          <input type="search" aria-label="Find shelf stock product" value={productSearch}
+            onChange={event=>{setProductSearch(event.target.value);setProductLimit(12);}}
+            placeholder="Find product, SKU or shelf..." className="mb-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs"/>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3 max-h-[65dvh] overflow-y-auto overscroll-contain">
+            {(isProductFiltered ? matchingProducts : matchingProducts.slice(0,productLimit)).map((p) => {
               const isLow = p.quantity <= p.reorderLevel;
               const isOut = p.quantity <= 0;
 
@@ -133,14 +164,14 @@ export default function InventoryView({
                 <div
                   key={p.id}
                   id={`shelf-audit-item-${p.id}`}
-                  className="p-3 bg-slate-50 rounded-xl border border-slate-200/50 flex items-center justify-between hover:bg-slate-100/50 transition"
+                  className="p-2.5 bg-slate-50 rounded-lg border border-slate-200/50 flex items-center justify-between hover:bg-slate-100/50 transition"
                 >
                   <div className="min-w-0 pr-2">
                     <p className="font-semibold text-slate-800 text-xs truncate" title={p.name}>
                       {p.name}
                     </p>
                     <p className="text-[10px] font-mono text-slate-400 mt-1">
-                      SKU: {p.sku} | Loc: {p.location || 'Aisle 1'}
+                      SKU: {p.sku} | Loc: {p.location || 'Not assigned'}
                     </p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -153,7 +184,8 @@ export default function InventoryView({
                           : 'bg-slate-100 text-slate-700'
                       }`}
                     >
-                      Qty: {p.quantity}
+                      Qty: {p.quantity} {p.sharedStockUnits?.baseUnit || ''}
+                      {p.sharedStockUnits?.units.filter(u=>Number.isSafeInteger(u.baseUnits)&&u.baseUnits>1).map(u=><span key={u.id} className="block text-[10px] font-normal">{Math.floor(p.quantity/u.baseUnits)} {u.label} equivalents + {p.quantity%u.baseUnits} {p.sharedStockUnits?.baseUnit}</span>)}
                     </span>
 
                     {canAdjust && (
@@ -169,18 +201,33 @@ export default function InventoryView({
                 </div>
               );
             })}
+            {matchingProducts.length===0 && <div className="col-span-full rounded-lg border border-dashed border-slate-200 p-6 text-center text-xs text-slate-600">No products match these filters. <button type="button" className="font-semibold text-indigo-700 underline" onClick={()=>{setProductSearch('');setStockFilter('All');setProductLimit(12);}}>Clear filters</button></div>}
+            {!isProductFiltered&&matchingProducts.length>productLimit&&<button type="button"
+              onClick={()=>setProductLimit(v=>v+12)}
+              className="col-span-full w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold">
+              Show more shelf products ({matchingProducts.length-productLimit} remaining)
+            </button>}
           </div>
         </div>
       </div>
 
       {/* RIGHT: Detailed Logs Ledger Chronology (7 cols) */}
-      <div className="lg:col-span-7 flex flex-col space-y-4">
+      <div id="ars-stock-ledger-workspace" aria-label="Full stock movement history"
+        className={isLedgerFocused
+          ? 'flex min-h-0 flex-col gap-2'
+          : 'hidden'}>
         {/* Logs Timeline Search Controls */}
-        <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-xs space-y-4">
+        <div className="bg-white p-3 rounded-xl border border-slate-100 shadow-xs space-y-2">
           <div>
-            <h2 className="text-xl font-heading font-medium tracking-tight text-slate-900">
-              Stock Ledger & Movement History
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-heading font-medium tracking-tight text-slate-900">
+                Stock Ledger & Movement History
+              </h2>
+              <button type="button" id="ars-stock-ledger-focus-toggle" onClick={() => setIsLedgerFocused(value => !value)}
+                className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-100">
+                {isLedgerFocused ? 'Back to stock overview' : 'Open full stock history'}
+              </button>
+            </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Audits warehouse intake logs and points-of-sale deduction feeds.
             </p>
@@ -194,7 +241,7 @@ export default function InventoryView({
                 type="text"
                 placeholder="Search ledger by keyword or operator..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => {setSearchTerm(e.target.value);setLogLimit(25);}}
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 text-slate-850 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-sans"
               />
             </div>
@@ -204,7 +251,7 @@ export default function InventoryView({
               <select
                 id="ledger-type-filter"
                 value={logTypeFilter}
-                onChange={(e) => setLogTypeFilter(e.target.value)}
+                onChange={(e) => {setLogTypeFilter(e.target.value);setLogLimit(25);}}
                 className="bg-slate-50 border border-slate-200 p-1.5 rounded-lg text-xs font-sans text-slate-700 focus:outline-none"
               >
                 <option value="All">All Movements</option>
@@ -217,37 +264,54 @@ export default function InventoryView({
           </div>
         </div>
 
+        <div className="flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3">
+          <div><label htmlFor="ledger-from" className="block text-xs font-semibold text-slate-600">From date</label>
+            <input id="ledger-from" type="date" value={logDateFrom}
+              onChange={event => setLogDateFrom(event.target.value)}
+              className="rounded-lg border border-slate-200 p-2 text-xs" /></div>
+          <div><label htmlFor="ledger-to" className="block text-xs font-semibold text-slate-600">To date</label>
+            <input id="ledger-to" type="date" value={logDateTo}
+              onChange={event => setLogDateTo(event.target.value)}
+              className="rounded-lg border border-slate-200 p-2 text-xs" /></div>
+          <span className="mr-auto text-xs font-semibold text-slate-600">{filteredLogs.length} matching movement(s)</span>
+          <button type="button" onClick={() => {setSearchTerm(''); setLogTypeFilter('All'); setLogDateFrom(''); setLogDateTo(''); setLogLimit(25);}}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50">
+            Clear filters
+          </button>
+          <ReportExportMenu report={ledgerReport} settings={taxConfig}/>
+        </div>
+
         {/* Chronological log feed */}
-        <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden flex-1">
-          <div className="overflow-x-auto">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
+          <div className={isLedgerFocused ? 'max-h-[58dvh] overflow-auto overscroll-contain' : 'overflow-x-auto'}>
             <table className="w-full text-left text-xs">
-              <thead>
+              <thead className="sticky top-0 z-10 bg-slate-50">
                 <tr className="bg-slate-50/75 border-b border-slate-100 text-slate-500 font-medium font-sans">
-                  <th className="p-4">Timestamp</th>
-                  <th className="p-4">Target Product</th>
-                  <th className="p-4">Action Type</th>
-                  <th className="p-4 text-right">Adjustment Quantity</th>
-                  <th className="p-4">Operator</th>
-                  <th className="p-4">Reason Details</th>
+                  <th className="px-3 py-2">Timestamp</th>
+                  <th className="px-3 py-2">Target Product</th>
+                  <th className="px-3 py-2">Action Type</th>
+                  <th className="px-3 py-2 text-right">Adjustment Quantity</th>
+                  <th className="px-3 py-2">Operator</th>
+                  <th className="px-3 py-2">Reason Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-sans">
-                {filteredLogs.map((log) => {
+                {(isLedgerFiltered ? filteredLogs : filteredLogs.slice(0,logLimit)).map((log) => {
                   const qtyVal = Number(log.quantity);
                   const isPos = qtyVal > 0;
 
                   return (
                     <tr key={log.id} className="hover:bg-slate-50/50 transition duration-150 text-[11px]">
-                      <td className="p-4 text-slate-400 font-mono">
-                        {new Date(log.date).toLocaleDateString()} <br />
-                        {new Date(log.date).toLocaleTimeString()}
+                      <td className="px-3 py-2 text-slate-400 font-mono">
+                        {reportDay(log.date)} <br />
+                        {new Date(log.date).toLocaleTimeString('en-GB',{timeZone:'Asia/Colombo'})}
                       </td>
-                      <td className="p-4">
+                      <td className="px-3 py-2">
                         <div className="font-semibold text-slate-900 max-w-xs truncate" title={log.productName}>
                           {log.productName}
                         </div>
                       </td>
-                      <td className="p-4">
+                      <td className="px-3 py-2">
                         <span
                           className={`inline-block px-2 py-0.5 rounded text-[9px] font-mono font-bold ${
                             log.type === 'Stock In'
@@ -262,14 +326,14 @@ export default function InventoryView({
                           {log.type}
                         </span>
                       </td>
-                      <td className="p-4 text-right font-mono font-bold">
+                      <td className="px-3 py-2 text-right font-mono font-bold">
                         <span className={isPos ? 'text-emerald-600' : 'text-rose-600'}>
                           {isPos ? '+' : ''}
                           {log.quantity}
                         </span>
                       </td>
-                      <td className="p-4 text-slate-600 font-medium">{log.user}</td>
-                      <td className="p-4 text-slate-500 font-mono leading-snug max-w-xs">{log.reason}</td>
+                      <td className="px-3 py-2 text-slate-600 font-medium">{log.user}</td>
+                      <td className="px-3 py-2 text-slate-500 font-mono leading-snug max-w-xs">{log.reason}</td>
                     </tr>
                   );
                 })}
@@ -286,13 +350,19 @@ export default function InventoryView({
               </tbody>
             </table>
           </div>
+          {!isLedgerFiltered&&filteredLogs.length>logLimit&&<div className="border-t border-slate-100 p-3 text-center">
+            <button type="button" onClick={()=>setLogLimit(v=>v+25)}
+              className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold">
+              Show more stock movements ({filteredLogs.length-logLimit} remaining)
+            </button>
+          </div>}
         </div>
       </div>
 
       {/* ADJUST QUANTITY OVERLAY MODAL */}
-      {isAdjustOpen && (
-        <div id="adjust-dialog-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-40 animate-fade-in">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm border border-slate-200 font-sans relative">
+      {isAdjustOpen && createPortal(
+        <div id="adjust-dialog-backdrop" className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[120]">
+          <div role="dialog" aria-modal="true" aria-label="Stock adjustment" className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-lg border border-slate-200 font-sans relative max-h-[90dvh] overflow-y-auto">
             <button
               onClick={() => setIsAdjustOpen(false)}
               className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
@@ -301,7 +371,7 @@ export default function InventoryView({
             </button>
 
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4 flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-amber-500" /> Manual Stock Audit Override
+              <Sliders className="w-4 h-4 text-amber-500" /> Stock adjustment
             </h3>
 
             <form onSubmit={handleSubmitAdjustment} className="space-y-4 text-xs font-sans">
@@ -310,7 +380,7 @@ export default function InventoryView({
                 <select
                   id="adjust-prod-select"
                   value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(e.target.value)}
+                  onChange={(e) => {setSelectedProductId(e.target.value);setAdjustUnitId('');setQtyDifference(0);setReason('');}}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs focus:outline-none focus:border-amber-500"
                 >
                   <option value="">-- Choose Hardware SKU --</option>
@@ -322,9 +392,15 @@ export default function InventoryView({
                 </select>
               </div>
 
+              {adjustmentProduct?.sharedStockUnits && <label className="block text-slate-500 font-semibold">Adjustment U/M
+                <select required value={adjustUnitId} onChange={e=>setAdjustUnitId(e.target.value)} className="w-full border rounded p-2">
+                  <option value="">Select U/M</option>
+                  {adjustmentProduct.sharedStockUnits.units.map(u=><option key={u.id} value={u.id}>{u.label} ({u.baseUnits} base units)</option>)}
+                </select>
+              </label>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-500 font-semibold mb-1">Difference amount *</label>
+                  <label className="block text-slate-500 font-semibold mb-1">Difference amount ({adjustmentUnit?.label || 'base stock units'}) *</label>
                   <input
                     id="adjust-qty-diff"
                     type="number"
@@ -333,7 +409,7 @@ export default function InventoryView({
                     placeholder="e.g. +11 or -4"
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 font-mono"
                   />
-                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract</span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Use negative values to subtract. {adjustmentUnit && `Converted change: ${baseDifference} base units.`}</span>
                 </div>
 
                 <div>
@@ -341,7 +417,7 @@ export default function InventoryView({
                   <select
                     id="adjust-type-select"
                     value={adjustType}
-                    onChange={(e) => setAdjustType(e.target.value as any)}
+                    onChange={(e) => {setAdjustType(e.target.value as typeof adjustType);setQtyDifference(0);}}
                     className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:border-amber-500 text-xs"
                   >
                     <option value="Stock Adjust">Stock Adjust (*)</option>
@@ -365,7 +441,8 @@ export default function InventoryView({
                 />
               </div>
 
-              {selectedProductId && (
+              {adjustmentIssue && <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{adjustmentIssue}</p>}
+              {adjustmentProduct && !adjustmentIssue && (
                 <div className="bg-amber-50/50 border border-amber-200 p-2.5 rounded text-[10px] text-slate-600 font-sans leading-relaxed">
                   <strong>Outcome Forecast:</strong> <br />
                   Product original base stock will transition from{' '}
@@ -374,7 +451,7 @@ export default function InventoryView({
                   </strong>{' '}
                   to{' '}
                   <strong className="font-mono">
-                    {(products.find((p) => p.id === selectedProductId)?.quantity || 0) + qtyDifference}
+                    {(products.find((p) => p.id === selectedProductId)?.quantity || 0) + baseDifference}
                   </strong>
                   .
                 </div>
@@ -391,15 +468,15 @@ export default function InventoryView({
                 <button
                   id="btn-confirm-adjust"
                   type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm hover:shadow-md transition"
+                  disabled={isSubmitting || !!adjustmentIssue}
+                  className="flex-1 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded shadow-sm hover:shadow-md transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSubmitting ? 'Adjusting Ledger...' : 'Apply Adjustments'}
                 </button>
               </div>
             </form>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );
