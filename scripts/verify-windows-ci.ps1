@@ -47,7 +47,9 @@ try {
 } finally {Remove-Item -LiteralPath $supervisorFixture -Recurse -Force}
 
 Invoke-Checked 'node' @('--test','tests/uninstall-table-fingerprints.test.mjs')
-& (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -Rollback -RepairFixture
+& (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -Rollback -RepairFixture -HttpReadiness
+& (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -HttpReadiness
+& (Join-Path $PSScriptRoot 'rehearse-windows-switch-journal.ps1') -Rollback -HttpReadiness -FailedRollback
 $postgresRoot = Join-Path $env:ProgramFiles 'PostgreSQL'
 $bin = Get-ChildItem $postgresRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'bin/initdb.exe') } |
   Sort-Object { [int]$_.Name } -Descending | Select-Object -First 1

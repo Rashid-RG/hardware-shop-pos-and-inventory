@@ -1,5 +1,5 @@
 # Disposable persistent switch journal rehearsal. No installation or database access.
-param([switch]$Rollback,[switch]$RepairFixture)
+param([switch]$Rollback,[switch]$RepairFixture,[switch]$HttpReadiness,[switch]$FailedRollback)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'windows-switch-inspection.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
@@ -21,7 +21,7 @@ function Write-New([string]$Path,$Value) {
  try {$file.Write($bytes,0,$bytes.Length);$file.Flush($true)} finally {$file.Dispose()}
 }
 function Record-Phase([string]$Next) {
- $allowed=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back')}
+ $allowed=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back','manual-recovery-required')}
  if (-not $allowed.ContainsKey($script:phase) -or $Next -cnotin $allowed[$script:phase]) { throw 'Invalid rehearsal transition.' }
  if ($script:sequence -gt 0 -and (Get-FileHash -LiteralPath $journal -Algorithm SHA256).Hash -cne $script:lastDigest) { throw 'Journal changed.' }
  $number=$script:sequence+1
@@ -45,6 +45,12 @@ function Select-Pointer([string]$Expected,[string]$Next,[string]$Retained) {
  $pending=Join-Path $root ('runtime-switch-pending-'+[guid]::NewGuid().ToString('N')+'.json')
  Write-New $pending ([ordered]@{schema=1;switchId=$id;digest=$Next;activationAllowed=$false})
  [IO.File]::Replace($pending,$pointer,(Join-Path $root $Retained))
+}
+function Test-ReleaseReadiness([string]$Actual,[string]$Expected) {
+ & node (Join-Path $PSScriptRoot 'rehearse-release-http.mjs') $Actual $Expected 2>$null
+ if ($LASTEXITCODE -eq 2) {return $false}
+ if ($LASTEXITCODE -ne 0) {throw 'HTTP readiness fixture failed.'}
+ return $true
 }
 try {
  if ($RepairFixture) {
@@ -84,6 +90,11 @@ try {
  $interrupted=Get-ArsSwitchInspection $root
  if ($interrupted.state -cne 'pointer-conflict') {throw 'Interrupted transition not detected.'}
  Record-Phase 'switched'
+ if ($HttpReadiness) {
+  $candidateVersion=if ($Rollback) {'9.9.9'} else {'1.0.1'}
+  $ready=Test-ReleaseReadiness $candidateVersion '1.0.1'
+  if ($ready -eq [bool]$Rollback) {throw 'Unexpected candidate readiness result.'}
+ }
  if ($Rollback) {
   Record-Phase 'rollback-required'
   Select-Pointer $new $old 'runtime-failed-candidate.json'
@@ -92,6 +103,16 @@ try {
    if ($review.startupAllowed -ne $false -or $review.rollbackReceiptMatched -ne $true) {throw 'Unsafe interrupted rollback review.'}
    $active=Get-Content -LiteralPath $pointer -Raw|ConvertFrom-Json
    if ($active.digest -cne $old) {throw 'Previous build pointer not restored.'}
+  }
+  if ($HttpReadiness) {
+   $previousVersion=if ($FailedRollback) {'9.9.8'} else {'1.0.0'}
+   $ready=Test-ReleaseReadiness $previousVersion '1.0.0'
+   if ($ready -eq [bool]$FailedRollback) {throw 'Unexpected rollback readiness result.'}
+  }
+  if ($FailedRollback) {
+   Record-Phase 'manual-recovery-required'
+   if ((Get-ArsSwitchInspection $root).startupAllowed -ne $false) {throw 'Failed rollback authorized startup.'}
+   return
   }
   Record-Phase 'rolled-back'
  } else {Record-Phase 'completed'}

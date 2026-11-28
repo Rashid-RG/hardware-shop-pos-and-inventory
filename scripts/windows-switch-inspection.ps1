@@ -23,11 +23,11 @@ function Get-ArsSwitchInspection([string]$Control) {
     $phash=(Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash
     $j=Get-Content -LiteralPath $journal[0].FullName -Raw | ConvertFrom-Json
     $p=Get-Content -LiteralPath $pointer[0].FullName -Raw | ConvertFrom-Json
-    if ($j.schema -ne 1 -or $p.schema -ne 1 -or $j.switchId -cnotmatch '^[a-f0-9]{32}$' -or $j.previousDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.candidateDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.previousDigest -ceq $j.candidateDigest -or $p.switchId -cne $j.switchId -or $p.digest -cnotmatch '^[a-f0-9]{64}$' -or $j.phase -cnotin @('prepared','switched','rollback-required','rolled-back','completed') -or $j.activationAllowed -isnot [bool] -or $j.activationAllowed -or $p.activationAllowed -isnot [bool] -or $p.activationAllowed) { throw 'Invalid switch record.' }
+    if ($j.schema -ne 1 -or $p.schema -ne 1 -or $j.switchId -cnotmatch '^[a-f0-9]{32}$' -or $j.previousDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.candidateDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.previousDigest -ceq $j.candidateDigest -or $p.switchId -cne $j.switchId -or $p.digest -cnotmatch '^[a-f0-9]{64}$' -or $j.phase -cnotin @('prepared','switched','rollback-required','rolled-back','completed','manual-recovery-required') -or $j.activationAllowed -isnot [bool] -or $j.activationAllowed -or $p.activationAllowed -isnot [bool] -or $p.activationAllowed) { throw 'Invalid switch record.' }
     if ((Get-FileHash -LiteralPath $journal[0].FullName -Algorithm SHA256).Hash -cne $jhash -or (Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash -cne $phash) { throw 'Switch evidence changed.' }
     # Require the complete bounded sequence, including the retained old records.
     if ($j.sequence -isnot [int] -or $j.sequence -lt 1 -or $j.sequence -gt 4 -or $history.Count -ne ($j.sequence-1)) { throw 'Invalid switch history length.' }
-    $transitions=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back')}
+    $transitions=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back','manual-recovery-required')}
     $lastPhase=''
     $lastHash=''
     $hashes=[ordered]@{}
@@ -49,7 +49,7 @@ function Get-ArsSwitchInspection([string]$Control) {
     $again=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {$_.Name -like 'journal-history-*'})
     if ($again.Count -ne $history.Count -or (Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash -cne $phash) {throw 'Switch evidence changed.'}
     $blocked['historyVerified']=$true
-    $expected=if ($j.phase -cin @('prepared','rolled-back')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}
+    $expected=if ($j.phase -cin @('prepared','rolled-back','manual-recovery-required')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}
     if ($p.digest -cnotin @($j.previousDigest,$j.candidateDigest) -or ($expected -and $p.digest -cne $expected)) { $blocked.state='pointer-conflict' }
     else { $blocked.state='switch-review-required' }
     return [pscustomobject]$blocked
