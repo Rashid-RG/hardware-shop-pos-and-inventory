@@ -87,6 +87,15 @@ class RecoveryTests(unittest.TestCase):
                     verify.assert_called_once_with(release, "1.2.3")
                 self.assertEqual([call.args[0][2] for call in service.call_args_list], ["start", "stop"])
             self.assertEqual(hold.read_bytes(), saved)
+            import hashlib
+            archive=state/("resume-hold-"+hashlib.sha256(saved).hexdigest()+".json")
+            self.assertEqual(archive.read_bytes(),saved)
+            archive.write_bytes(b"tampered")
+            with patch.object(resume,"STATE",state), patch.object(resume.os,"geteuid",return_value=1000), patch.object(resume,"stopped"), patch.object(resume,"check_database_clients"), patch.object(resume.subprocess,"run") as service:
+                with self.assertRaisesRegex(ValueError,"archive differs"):
+                    resume.resume("RESUME CURRENT POS")
+                service.assert_not_called()
+            self.assertEqual(hold.read_bytes(),saved)
 
     def test_readiness_requires_exact_version_pid_and_stable_service(self):
         with tempfile.TemporaryDirectory() as tmp:

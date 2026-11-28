@@ -85,6 +85,8 @@ def resume(confirmation):
             if not migration_mapping_valid(STATE):
                 raise ValueError("Runtime migration mapping is incomplete; maintenance hold retained.")
             saved=hold.read_bytes()
+            if not 0<len(saved)<=65536:
+                raise ValueError("Invalid maintenance hold length.")
             stopped()
             check_database_clients(current)
             package = current / "package.json"
@@ -96,6 +98,21 @@ def resume(confirmation):
                 raise ValueError("Installed release version cannot be verified.")
             if hold.is_symlink() or hold.read_bytes()!=saved or (STATE/"project").resolve(strict=True)!=current:
                 raise ValueError("Maintenance evidence changed before resume.")
+            # Retain an immutable-by-convention audit copy before releasing the hold.
+            # This is not startup authorization and does not replace a live interlock.
+            import hashlib
+            archive=STATE/("resume-hold-"+hashlib.sha256(saved).hexdigest()+".json")
+            if os.path.lexists(archive):
+                if archive.is_symlink() or not archive.is_file() or archive.read_bytes()!=saved:
+                    raise ValueError("Existing resume archive differs from the hold.")
+            else:
+                with archive.open("xb") as stream:
+                    stream.write(saved)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            sync_dir(STATE)
+            if hold.is_symlink() or hold.read_bytes()!=saved or (STATE/"project").resolve(strict=True)!=current:
+                raise ValueError("Maintenance evidence changed before hold release.")
             hold.unlink()
             try:
                 sync_dir(STATE)
@@ -103,6 +120,8 @@ def resume(confirmation):
                     raise RuntimeError("Startup guard rejected resume.")
                 subprocess.run(["systemctl","--user","start","--no-block",UNIT],check=True,timeout=30)
                 wait_for_current_release(current, version)
+                if archive.is_symlink() or archive.read_bytes()!=saved:
+                    raise RuntimeError("Retained resume evidence changed.")
                 print("Current POS resumed.")
             except BaseException:
                 try:
