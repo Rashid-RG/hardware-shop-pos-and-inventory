@@ -78,15 +78,15 @@ def resume(confirmation):
                     raise ValueError("Retained update evidence requires manual review before resume.")
             if hold.is_symlink() or not hold.is_file() or journal.exists() or journal.is_symlink():
                 raise ValueError("Missing maintenance hold or software switch journal present. Manual review required.")
-            record=json.loads(hold.read_text())
+            saved=hold.read_bytes()
+            if not 0<len(saved)<=65536:
+                raise ValueError("Invalid maintenance hold length.")
+            record=json.loads(saved)
             current=(STATE/"project").resolve(strict=True)
             if record.get("purpose")!="pre-update backup" or record.get("previousProject")!=str(current):
                 raise ValueError("Cannot confirm unchanged application. Manual review required.")
             if not migration_mapping_valid(STATE):
                 raise ValueError("Runtime migration mapping is incomplete; maintenance hold retained.")
-            saved=hold.read_bytes()
-            if not 0<len(saved)<=65536:
-                raise ValueError("Invalid maintenance hold length.")
             stopped()
             check_database_clients(current)
             package = current / "package.json"
@@ -113,8 +113,8 @@ def resume(confirmation):
             sync_dir(STATE)
             if hold.is_symlink() or hold.read_bytes()!=saved or (STATE/"project").resolve(strict=True)!=current:
                 raise ValueError("Maintenance evidence changed before hold release.")
-            hold.unlink()
             try:
+                hold.unlink()
                 sync_dir(STATE)
                 if not startup_allowed(STATE):
                     raise RuntimeError("Startup guard rejected resume.")
@@ -125,10 +125,13 @@ def resume(confirmation):
                 print("Current POS resumed.")
             except BaseException:
                 try:
-                    with hold.open("xb") as stream:
-                        stream.write(saved)
-                        stream.flush()
-                        os.fsync(stream.fileno())
+                    if not os.path.lexists(hold):
+                        with hold.open("xb") as stream:
+                            stream.write(saved)
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                    if hold.is_symlink() or not hold.is_file() or hold.read_bytes()!=saved:
+                        raise RuntimeError("Conflicting maintenance hold retained; recovery review required.")
                     sync_dir(STATE)
                 finally:
                     subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)

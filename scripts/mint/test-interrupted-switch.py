@@ -97,6 +97,27 @@ class RecoveryTests(unittest.TestCase):
                 service.assert_not_called()
             self.assertEqual(hold.read_bytes(),saved)
 
+    def test_resume_never_overwrites_a_conflicting_hold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state=Path(tmp)
+            release=state/"installed"
+            release.mkdir()
+            (release/"package.json").write_text('{"version":"1.2.3"}')
+            (state/"project").symlink_to(release)
+            hold=state/"maintenance-hold.json"
+            saved=json.dumps({"purpose":"pre-update backup","previousProject":str(release)}).encode()
+            hold.write_bytes(saved)
+            conflict=b"new maintenance evidence"
+            def fail_readiness(*args):
+                hold.write_bytes(conflict)
+                raise RuntimeError("Candidate readiness failed")
+            with patch.object(resume,"STATE",state), patch.object(resume.os,"geteuid",return_value=1000), patch.object(resume,"stopped"), patch.object(resume,"check_database_clients"), patch.object(resume.subprocess,"run") as service, patch.object(resume,"wait_for_current_release",side_effect=fail_readiness):
+                with self.assertRaisesRegex(RuntimeError,"Conflicting maintenance hold"):
+                    resume.resume("RESUME CURRENT POS")
+                self.assertEqual([call.args[0][2] for call in service.call_args_list],["start","stop"])
+            self.assertEqual(hold.read_bytes(),conflict)
+            self.assertFalse(startup_allowed(state))
+
     def test_readiness_requires_exact_version_pid_and_stable_service(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
