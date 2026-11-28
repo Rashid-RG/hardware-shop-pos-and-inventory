@@ -47,14 +47,15 @@ try {
   [IO.Compression.ZipFile]::CreateFromDirectory($source,$archive)
   $private=Join-Path $root 'private.pem'
   $public=Join-Path $root 'public.pem'
-  & openssl.exe genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out $private
+  $openssl=(Get-Command openssl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+  & $openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out $private
   if ($LASTEXITCODE -ne 0) {throw 'Test signing key generation failed.'}
-  & openssl.exe pkey -in $private -pubout -out $public
+  & $openssl pkey -in $private -pubout -out $public
   if ($LASTEXITCODE -ne 0) {throw 'Test trust key generation failed.'}
   $manifest=Join-Path $source '.ars-release-manifest.json'
   $signature=Join-Path $source '.ars-release-manifest.sig'
   [IO.File]::WriteAllText($manifest,(@{product='ARS Distributor';platform='windows';version='1.2.3';sha256=(Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant()}|ConvertTo-Json -Compress))
-  & openssl.exe dgst -sha256 -sign $private -out $signature $manifest
+  & $openssl dgst -sha256 -sign $private -out $signature $manifest
   if ($LASTEXITCODE -ne 0) {throw 'Test signing failed.'}
   Copy-Item -LiteralPath $archive -Destination (Join-Path $source '.ars-release.zip')
   $review=Get-ArsPublisherSourceReview $source $public

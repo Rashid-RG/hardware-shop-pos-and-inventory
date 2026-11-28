@@ -32,7 +32,7 @@ function Get-ArsPublisherSourceReview([string]$Project,[string]$TrustKey) {
     $manifest=Join-Path $work '.ars-release-manifest.json'
     $signature=Join-Path $work '.ars-release-manifest.sig'
     $archive=Join-Path $work '.ars-release.zip'
-    $openssl=(Get-Command openssl.exe -CommandType Application -ErrorAction Stop).Source
+    $openssl=(Get-Command openssl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     & $openssl dgst -sha256 -verify $key -signature $signature $manifest | Out-Null
     if ($LASTEXITCODE -ne 0) {throw 'Publisher signature invalid.'}
     $record=Get-Content -LiteralPath $manifest -Raw|ConvertFrom-Json
