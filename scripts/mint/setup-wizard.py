@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Graphical fresh-install entry point. Never performs updates or recovery."""
+"""Graphical setup and entry point to existing installation maintenance."""
 import fcntl
 import os
 from pathlib import Path
@@ -23,6 +23,21 @@ def assert_fresh():
     for name in (".env.local", "uploads", "backups"):
         if os.path.lexists(ROOT/name):
             raise RuntimeError("Existing local runtime data detected. Fresh setup is blocked.")
+def installed_maintenance(state):
+    if os.geteuid()==0 or state.resolve(strict=True)!=state or state.stat().st_uid!=os.getuid():
+        raise RuntimeError("Existing installation could not be verified.")
+    pointer=state/"project"
+    if not pointer.is_symlink() or pointer.lstat().st_uid!=os.getuid():
+        raise RuntimeError("Existing installation is incomplete. Contact RS Nextward support.")
+    project=pointer.resolve(strict=True)
+    if not project.is_dir() or project.stat().st_uid!=os.getuid() or project==state or state in project.parents or project in state.parents:
+        raise RuntimeError("Existing application path could not be verified.")
+    script=project/"scripts/mint/maintenance-center.py"
+    if script.resolve(strict=True)!=script or not script.is_file() or script.stat().st_uid!=os.getuid():
+        raise RuntimeError("Installed Maintenance Center could not be verified.")
+    return script,project
+
+
 def preflight():
     assert_fresh()
     missing = [x for x in ("node","npm","docker","python3","zenity","systemctl","xdg-open","xdg-user-dir") if not shutil.which(x)]
@@ -44,6 +59,13 @@ def main():
         except BlockingIOError:
             return 1
         try:
+            if os.path.lexists(STATE):
+                script,project=installed_maintenance(STATE)
+                if dialog("--question","--no-markup",
+                          "--text=An ARS installation already exists. Open its Maintenance Center to prepare a protected repair?",
+                          "--ok-label=Open Maintenance Center","--cancel-label=Close")==0:
+                    subprocess.run(["/usr/bin/python3",str(script)],cwd=project,check=True)
+                return 0
             consume_resume(ROOT)
             assert_fresh()
             from setup_ui import SetupUI
