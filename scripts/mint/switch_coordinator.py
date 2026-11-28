@@ -1,4 +1,4 @@
-"""Testable coordinator; deliberately no production service adapter or CLI."""
+"""Release switch rehearsals and guarded installed service operations."""
 from pathlib import Path
 from switch_journal import switch_pointer, write_journal
 
@@ -109,3 +109,60 @@ def resume_interrupted_switch(root,service,verify_backup,verify_release):
         finally:
             phase("manual-recovery-required")
         raise
+
+class InstalledMintService:
+    """Managed service operations, not release activation authorization.
+
+    The caller must hold the maintenance and update locks and verify signed
+    releases, backup and startup authorization independently. No bypass of
+    systemd or application startup guards is provided.
+    """
+    def __init__(self, state):
+        self.state = Path(state)
+        if not self.state.is_absolute() or self.state.resolve(strict=True) != self.state:
+            raise ValueError("Plain absolute managed state required.")
+        self.expected = None
+
+    def bind(self, project, version):
+        import re
+        project = Path(project)
+        if not project.is_absolute() or project.resolve(strict=True) != project or not project.is_dir():
+            raise ValueError("Invalid managed release.")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version):
+            raise ValueError("Invalid managed version.")
+        self.expected = (project, version)
+
+    def _assert_selected(self):
+        if self.expected is None:
+            raise ValueError("Expected release must be bound first.")
+        pointer = self.state / "project"
+        if not pointer.is_symlink() or pointer.resolve(strict=True) != self.expected[0]:
+            raise RuntimeError("Managed release pointer changed.")
+
+    def stop(self):
+        import subprocess
+        self.expected = None
+        subprocess.run(["systemctl", "--user", "stop", "ars-hardware.service"], check=True, timeout=180)
+
+    def stopped(self):
+        from maintenance_backup import stopped
+        stopped()
+        return True
+
+    def start(self):
+        import subprocess
+        from startup_guard import startup_allowed
+        self._assert_selected()
+        self.stopped()
+        if not startup_allowed(self.state):
+            raise RuntimeError("Installed startup guard blocked service start.")
+        self._assert_selected()
+        subprocess.run(["systemctl", "--user", "start", "--no-block", "ars-hardware.service"], check=True, timeout=30)
+
+    def ready(self):
+        from resume_maintenance import wait_for_current_release
+        self._assert_selected()
+        wait_for_current_release(*self.expected, state=self.state)
+        self._assert_selected()
+        return True
+

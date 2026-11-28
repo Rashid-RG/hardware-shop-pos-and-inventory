@@ -33,7 +33,8 @@ def active_process():
         return None
     return int(pid), started
 
-def wait_for_current_release(project, version, *, timeout=155):
+def wait_for_current_release(project, version, *, timeout=155, state=None):
+    state = STATE if state is None else Path(state)
     local = build_opener(ProxyHandler({}), NoReadinessRedirect())
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -51,7 +52,7 @@ def wait_for_current_release(project, version, *, timeout=155):
             if isinstance(data, dict) and data.get("ok") is True and data.get("status") == "ready" and data.get("database") == "reachable" and data.get("sourceOfTruth") == "normalized":
                 if type(data.get("processId")) is not int or data["processId"] != pid or data.get("buildVersion") != version:
                     raise RuntimeError("Readiness belongs to another POS process or release.")
-                if active_process() != instance or (STATE/"project").resolve(strict=True) != project:
+                if active_process() != instance or (state/"project").resolve(strict=True) != project:
                     raise RuntimeError("The POS process or release changed during readiness verification.")
                 return
         time.sleep(1)

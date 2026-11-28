@@ -232,5 +232,40 @@ class CoordinatorTests(unittest.TestCase):
                 self.assertEqual((root/"business-data").read_text(),"original invoices")
                 self.assertFalse(startup_allowed(root))
 
+
+    def test_installed_service_adapter_respects_guard_and_release_identity(self):
+        from switch_coordinator import InstalledMintService
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            old, new = root/"old", root/"new"
+            old.mkdir()
+            new.mkdir()
+            pointer = root/"project"
+            pointer.symlink_to(old)
+            adapter = InstalledMintService(root)
+            with patch("subprocess.run") as command, patch("maintenance_backup.stopped") as stopped, patch("resume_maintenance.wait_for_current_release") as ready:
+                adapter.stop()
+                command.assert_called_once_with(["systemctl","--user","stop","ars-hardware.service"], check=True, timeout=180)
+                command.reset_mock()
+                adapter.bind(old,"1.2.3")
+                hold = root/"maintenance-hold.json"
+                hold.touch()
+                with self.assertRaisesRegex(RuntimeError,"startup guard"):
+                    adapter.start()
+                command.assert_not_called()
+                hold.unlink()
+                adapter.start()
+                command.assert_called_once_with(["systemctl","--user","start","--no-block","ars-hardware.service"], check=True, timeout=30)
+                stopped.assert_called()
+                self.assertTrue(adapter.ready())
+                ready.assert_called_once_with(old,"1.2.3",state=root)
+                pointer.unlink()
+                pointer.symlink_to(new)
+                with self.assertRaisesRegex(RuntimeError,"pointer changed"):
+                    adapter.ready()
+                with self.assertRaisesRegex(RuntimeError,"pointer changed"):
+                    adapter.start()
+                self.assertEqual(command.call_count,1)
+
 if __name__=="__main__":
     unittest.main()
