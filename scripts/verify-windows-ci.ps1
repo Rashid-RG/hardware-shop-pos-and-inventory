@@ -13,6 +13,7 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
   [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors)
   if ($parseErrors) { throw "$($_.Name): $($parseErrors.Message)" }
 }
+& (Join-Path $PSScriptRoot 'test-windows-installed-lifecycle.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-prepared-fingerprint.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-install-recovery-tools.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-identity-probe-bundle.ps1')
