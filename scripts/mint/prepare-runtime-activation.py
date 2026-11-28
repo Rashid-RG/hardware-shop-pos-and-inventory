@@ -98,6 +98,11 @@ def snapshot(folder):
         if binding.get(key)!=db.get(key):
             raise ValueError("Database binding changed.")
     plan=load("update-switch-plan.py").plan(folder, quiet=True)
+    if plan.get("restoreReceiptSha256")!=sha(raw["restore"]):
+        raise ValueError("Rollback compatibility receipt changed during preflight.")
+    signed_archive=plan.get("signedArchiveSha256")
+    if not isinstance(signed_archive,str) or not re.fullmatch(r"[a-f0-9]{64}",signed_archive):
+        raise ValueError("Verified signed update archive required.")
     receipt=json.loads(raw["restore"])
     if plan.get("activationAllowed") is not False or plan.get("rollbackAllowed") is not False or plan.get("candidateVersion")!=version or any(receipt.get(k) is not True for k in ("authenticatedReadsPassed","authenticatedWritesPassed","backwardStartupPassed","backwardReadsPassed","backwardWritesPassed","migrationCompatibilityPassed","restoreTestPassed")):
         raise ValueError("Compatibility review incomplete.")
@@ -105,7 +110,7 @@ def snapshot(folder):
     check_database_clients(current)
     if any(read(p)!=raw[k] for k,p in files.items()) or (STATE/"project").resolve(strict=True)!=current:
         raise ValueError("Evidence changed during observation.")
-    return {"schema":1,"recoveryFolder":str(folder),"candidateVersion":version,"previousProject":str(current),"desktopUid":os.getuid(),"evidence":{k:sha(v) for k,v in raw.items()},"backupHoldBindingVerified":True,"continuousExclusionVerified":False,**FLAGS}
+    return {"schema":1,"recoveryFolder":str(folder),"candidateVersion":version,"signedArchiveSha256":signed_archive,"previousProject":str(current),"desktopUid":os.getuid(),"evidence":{k:sha(v) for k,v in raw.items()},"backupHoldBindingVerified":True,"continuousExclusionVerified":False,**FLAGS}
 
 def matches(record, observed):
     return record.get("schema")==1 and record.get("kind")=="mint-runtime-activation-proposal" and record.get("observationOnly") is True and record.get("snapshot")==observed

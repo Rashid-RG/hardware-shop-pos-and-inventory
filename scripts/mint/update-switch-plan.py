@@ -34,7 +34,8 @@ def plan(folder, quiet=False):
     if folder.parent!=(STATE/"update-recovery").resolve(strict=True):
         raise ValueError("Choose a managed recovery folder.")
     meta=json.loads((folder/"recovery.json").read_text())
-    receipt=json.loads((folder/"restore-test.json").read_text())
+    receipt_raw=(folder/"restore-test.json").read_bytes()
+    receipt=json.loads(receipt_raw)
     version=meta.get("version","")
     if not isinstance(version,str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?",version):
         raise ValueError("Invalid version.")
@@ -77,6 +78,8 @@ def plan(folder, quiet=False):
         blockers.insert(0,"Successful authenticated billing and financial operations required on both versions.")
     return {"currentProject":str(current),"candidateProject":str(staged),
             "candidateVersion":version,"recoveryFolder":str(folder),
+            "signedArchiveSha256":manifest["sha256"],
+            "restoreReceiptSha256":hashlib.sha256(receipt_raw).hexdigest(),
             "activationAllowed":False,"rollbackAllowed":False,"blockers":blockers}
 
 if __name__=="__main__":
