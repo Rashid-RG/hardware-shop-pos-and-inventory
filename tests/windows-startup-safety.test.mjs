@@ -252,8 +252,11 @@ test('Windows final backup requires matching shutdown evidence, holds launcher m
  assert.match(s,/ARSDistributorPOSLauncher/);
  assert.ok(s.indexOf('windows-locked-maintenance-backup.mjs')>s.indexOf('$maintenanceDigest=Assert-Maintenance'));
  const wrapper=readFileSync(new URL('../scripts/windows-locked-maintenance-backup.mjs',import.meta.url),'utf8');
- assert.match(wrapper,/backup-local-postgres\.ps1/);
- assert.ok(wrapper.indexOf('pg_try_advisory_lock')<wrapper.indexOf('backup-local-postgres.ps1'));
+ assert.match(wrapper,/withMaintenanceSession\(client,config\.database,session=>withMaintenanceTableFence\(client,session,/);
+ assert.match(wrapper,/await runVerifiedInstalledWindowsBackup\(scope,\{root,destination\}\)/);
+ const worker=readFileSync(new URL('../scripts/windows-maintenance-backup-worker.ps1',import.meta.url),'utf8');
+ assert.match(worker,/backup-local-postgres\.ps1/);
+ assert.match(worker,/-PreserveExistingArchives/);
  assert.match(s,/Maintenance evidence changed during backup/);
  assert.match(s,/externalWritersExcluded=\$false/);
  assert.match(s,/quiesced=\$false/);
