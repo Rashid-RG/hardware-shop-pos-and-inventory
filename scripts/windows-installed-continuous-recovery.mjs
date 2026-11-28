@@ -19,17 +19,8 @@ async function canonical(path,directory){
  if(st.isSymbolicLink()||!(directory?st.isDirectory():st.isFile())||!same(await realpath(p),p))throw Error('Invalid recovery path.');
  return p;
 }
-export async function runInstalledWindowsContinuousRecovery({root,destination,signal,holdDigest,shutdownDigest}={}){
- if(process.platform!=='win32'||!signal||typeof signal.addEventListener!=='function'||signal.aborted||typeof process.env.LOCALAPPDATA!=='string'||!isAbsolute(process.env.LOCALAPPDATA)||['ARS_RUNTIME_ROOT','DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH'].some(k=>process.env[k]!==undefined))throw Error('Unsupported recovery environment.');
- if(![holdDigest,shutdownDigest].every(x=>typeof x==='string'&&/^[A-F0-9]{64}$/.test(x)))throw Error('Original preparation digests required.');
- const runtime=await canonical(root,true);
- const folder=await canonical(destination,true);
- const state=await canonical(join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor'),true);
- const recoveryRoot=await canonical(join(state,'uninstall-recovery'),true);
- const control=await canonical(join(state,'desktop-control'),true);
- if(!same(dirname(folder),recoveryRoot)||! /^[a-f0-9]{32}$/.test(basename(folder)))throw Error('Managed recovery directory required.');
- if((await readdir(folder)).length!==0)throw Error('Existing recovery evidence must be retained.');
- const checkShutdown=async()=>{
+export async function assertPreparedShutdownEvidence({runtime,folder,control,signal,holdDigest,shutdownDigest}={}){
+  if(!signal||![runtime,folder,control].every(p=>typeof p==="string"&&isAbsolute(p))||![holdDigest,shutdownDigest].every(x=>typeof x==="string"&&/^[A-F0-9]{64}$/.test(x)))throw Error("Invalid shutdown verification request.");
   if(signal.aborted)throw Error('Recovery interrupted.');
   for(const [name,expected] of [['maintenance.json',holdDigest],['maintenance-shutdown.json',shutdownDigest]]){
    const path=await canonical(join(control,name),false);
@@ -47,7 +38,19 @@ export async function runInstalledWindowsContinuousRecovery({root,destination,si
    }finally{await handle.close();}
   }
   if(signal.aborted)throw Error('Recovery interrupted.');
- };
+}
+
+export async function runInstalledWindowsContinuousRecovery({root,destination,signal,holdDigest,shutdownDigest}={}){
+ if(process.platform!=='win32'||!signal||typeof signal.addEventListener!=='function'||signal.aborted||typeof process.env.LOCALAPPDATA!=='string'||!isAbsolute(process.env.LOCALAPPDATA)||['ARS_RUNTIME_ROOT','DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH'].some(k=>process.env[k]!==undefined))throw Error('Unsupported recovery environment.');
+ if(![holdDigest,shutdownDigest].every(x=>typeof x==='string'&&/^[A-F0-9]{64}$/.test(x)))throw Error('Original preparation digests required.');
+ const runtime=await canonical(root,true);
+ const folder=await canonical(destination,true);
+ const state=await canonical(join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor'),true);
+ const recoveryRoot=await canonical(join(state,'uninstall-recovery'),true);
+ const control=await canonical(join(state,'desktop-control'),true);
+ if(!same(dirname(folder),recoveryRoot)||! /^[a-f0-9]{32}$/.test(basename(folder)))throw Error('Managed recovery directory required.');
+ if((await readdir(folder)).length!==0)throw Error('Existing recovery evidence must be retained.');
+ const checkShutdown=()=>assertPreparedShutdownEvidence({runtime,folder,control,signal,holdDigest,shutdownDigest});
  await checkShutdown();
  const identity=await reviewCurrentWindowsMaintenanceInstallation(runtime);
  const checkIdentity=async()=>{
