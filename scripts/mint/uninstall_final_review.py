@@ -39,6 +39,11 @@ def review(observation, uninstall_id, archive, evidence, members):
 
 
 def inspect(folder):
+    return _inspect(folder, None)
+
+
+def _inspect(folder, retained_maintenance):
+    from contextlib import nullcontext
     """Read and compare current managed recovery evidence under maintenance locks."""
     import fcntl
     import hashlib
@@ -87,7 +92,13 @@ def inspect(folder):
             raise ValueError("Archive digest mismatch.")
         plan = review(json.loads(raw["restore"]), folder.name, meta["archive"], digests, members)
         return plan, raw
-    with open_lock(state / "maintenance.lock") as maintenance, open_lock(state / "update.lock") as update:
+    maintenance_scope = (
+        open_lock(state / "maintenance.lock") if retained_maintenance is None
+        else nullcontext(retained_maintenance)
+    )
+    with maintenance_scope as maintenance, open_lock(state / "update.lock") as update:
+        if not os.path.samestat(os.fstat(maintenance.fileno()), (state / "maintenance.lock").lstat()):
+            raise ValueError("Maintenance lock changed.")
         for lock in (maintenance, update):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         first = snapshot()

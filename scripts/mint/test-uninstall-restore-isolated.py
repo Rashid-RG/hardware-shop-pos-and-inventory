@@ -70,13 +70,24 @@ def result(expected,actual,archive_digest,upload_count):
             "uploadMemberCount":upload_count,**{flag:False for flag in FLAGS}}
 
 def inspect(folder):
+    return _inspect(folder, None)
+
+
+def _inspect(folder, retained_maintenance):
+    from contextlib import nullcontext
     if os.geteuid()==0 or STATE.resolve(strict=True)!=STATE or STATE.stat().st_uid!=os.getuid():
         raise ValueError("Managed desktop user required.")
     if folder.resolve(strict=True)!=folder or folder.parent!=STATE/"uninstall-recovery" or not re.fullmatch(r"[a-f0-9]{32}",folder.name) or folder.stat().st_uid!=os.getuid():
         raise ValueError("Managed uninstall recovery required.")
     assert_local_docker()
     prepare=load_prepare()
-    with open_lock(STATE/"maintenance.lock") as maintenance,open_lock(STATE/"update.lock") as update:
+    maintenance_scope = (
+        open_lock(STATE / "maintenance.lock") if retained_maintenance is None
+        else nullcontext(retained_maintenance)
+    )
+    with maintenance_scope as maintenance, open_lock(STATE / "update.lock") as update:
+        if not os.path.samestat(os.fstat(maintenance.fileno()), (STATE / "maintenance.lock").lstat()):
+            raise ValueError("Maintenance lock changed.")
         for lock in (maintenance,update):
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         target=folder/"uninstall-restore-test.json"

@@ -62,6 +62,7 @@ class Rehearsal(unittest.TestCase):
 
     def test_coordinator_failure_paths(self):
         import uninstall_coordinator as coordinator
+        import fcntl
         from unittest.mock import Mock
         from contextlib import ExitStack
         for phase in ("backup", "restore", "review", "complete"):
@@ -78,18 +79,30 @@ class Rehearsal(unittest.TestCase):
                 sample=state/"business.json";sample.write_bytes(b"synthetic business data")
                 before={p:p.read_bytes() for p in (hold,proof,sample)}
                 restore=Mock()
-                restore.inspect.return_value={"uninstallId":uid,"isolatedRestorePassed":True}
+                def assert_retained(folder=None, lock=None, **kwargs):
+                    with (state/"maintenance.lock").open("a") as competitor:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(competitor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                def restore_stage(folder, lock):
+                    assert_retained(folder, lock)
+                    return {"uninstallId":uid,"isolatedRestorePassed":True}
+                restore._inspect.side_effect=restore_stage
                 backup=Mock()
                 final=Mock(return_value={"uninstallId":uid,"restoreObservationMatched":True,
                                          **{k:False for k in coordinator.FLAGS}})
+                backup.side_effect=lambda *args, **kwargs: assert_retained()
+                def final_stage(folder, lock):
+                    assert_retained(folder, lock)
+                    return final.return_value
+                final.side_effect=final_stage
                 if phase=="backup": backup.side_effect=RuntimeError("simulated backup failure")
-                if phase=="restore": restore.inspect.side_effect=RuntimeError("simulated restore failure")
+                if phase=="restore": restore._inspect.side_effect=RuntimeError("simulated restore failure")
                 if phase=="review": final.side_effect=RuntimeError("simulated review failure")
                 spec=Mock()
                 with ExitStack() as stack:
                     for name,value in (("STATE",state),("shutdown",Mock(return_value=observation)),
                                        ("read_regular",lambda p:p.read_bytes()),("validate",Mock()),
-                                       ("stopped",Mock()),("inspect",final)):
+                                       ("stopped",Mock()),("inspect_final",final)):
                         stack.enter_context(patch.object(coordinator,name,value))
                     stack.enter_context(patch.object(coordinator.os,"geteuid",return_value=1000))
                     stack.enter_context(patch.object(coordinator.subprocess,"run",backup))
@@ -103,7 +116,7 @@ class Rehearsal(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError,"simulated"):
                             coordinator.rehearse(coordinator.CONFIRMATION)
                 backup.assert_called_once()
-                self.assertEqual(restore.inspect.call_count,0 if phase=="backup" else 1)
+                self.assertEqual(restore._inspect.call_count,0 if phase=="backup" else 1)
                 self.assertEqual(final.call_count,1 if phase in ("review","complete") else 0)
                 for p,raw in before.items(): self.assertEqual(p.read_bytes(),raw)
                 self.assertFalse(startup_allowed(state))
