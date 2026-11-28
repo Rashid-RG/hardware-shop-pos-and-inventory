@@ -563,6 +563,51 @@ class RecoveryTests(unittest.TestCase):
                 center.offline_release_center(candidate)
                 run.assert_not_called()
                 notice.assert_called_once()
+    def test_offline_finalization_menu_recovers_archived_intent(self):
+        from types import SimpleNamespace
+        import hashlib
+        spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
+        center=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(center)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous=root/"previous"
+            candidate=root/"staged-releases/1.2.3"
+            candidate.mkdir(parents=True)
+            selector=previous/"scripts/mint/select-offline-release.py"
+            selector.parent.mkdir(parents=True)
+            selector.write_text("# fixture")
+            (root/"project").symlink_to(previous)
+            switch_id="a"*32
+            hold=json.dumps({"purpose":"pre-update backup","previousProject":str(previous)}).encode()
+            (root/"maintenance-hold.json").write_bytes(hold)
+            digest=hashlib.sha256(hold).hexdigest()
+            intent=json.dumps({"observationOnly":True,"switchId":switch_id,"binding":{
+                "candidateVersion":"1.2.3","previousProject":str(previous),"maintenanceDigest":digest}}).encode()
+            archive=root/("rolled-back-intent-"+switch_id+".json")
+            archive.write_bytes(intent)
+            record={"schema":1,"kind":"mint-offline-release-selection","phase":"offline-rolled-back",
+                    "previous":str(previous),"candidate":str(candidate),"startupAllowed":False,
+                    "switchId":switch_id,"intentDigest":hashlib.sha256(intent).hexdigest(),"maintenanceDigest":digest}
+            journal=root/"switch-journal.json"
+            journal.write_text(json.dumps(record))
+            yes=SimpleNamespace(returncode=0,stdout="Finalize offline rollback")
+            with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
+                center.offline_release_center(previous)
+                run.assert_called_once_with(previous,"select-offline-release.py","--finalize-rollback","--confirmation","FINALIZE OFFLINE ROLLBACK")
+            for phase in ("switched","offline-rollback-pending"):
+                journal.write_text(json.dumps({**record,"phase":phase}))
+                with patch.object(center,"STATE",root), patch.object(center,"notice"), patch.object(center,"execute") as run:
+                    center.offline_release_center(previous)
+                    run.assert_not_called()
+            journal.write_text(json.dumps(record))
+            def reappear(*args):
+                if args[0]=="--question":
+                    (root/"runtime-switch-intent.json").write_bytes(intent)
+                return yes
+            with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=reappear), patch.object(center,"notice"), patch.object(center,"execute") as run:
+                center.offline_release_center(previous)
+                run.assert_not_called()
     def test_candidate_fingerprint_survives_only_verified_runtime_links(self):
         from release_fingerprint import fingerprint
         spec=importlib.util.spec_from_file_location("intent",Path(__file__).with_name("prepare-switch-intent.py"))

@@ -351,7 +351,23 @@ def offline_release_center(project):
     if os.path.lexists(journal):
         try:
             records={}
-            for name,path in (("journal",journal),("hold",hold),("intent",target)):
+            # Finalization may have archived and removed the live intent
+            # before a power loss. Permit only the exact retained archive.
+            intent_path=target
+            if not os.path.lexists(target):
+                if journal.is_symlink() or not journal.is_file():
+                    raise ValueError("Invalid journal")
+                with journal.open("rb") as stream:
+                    preliminary_raw=stream.read(65537)
+                if not preliminary_raw or len(preliminary_raw)>65536:
+                    raise ValueError("Invalid journal length")
+                preliminary=json.loads(preliminary_raw)
+                switch_id=preliminary.get("switchId")
+                if (preliminary.get("phase")!="offline-rolled-back" or
+                    not isinstance(switch_id,str) or not re.fullmatch(r"[a-f0-9]{32}",switch_id)):
+                    raise ValueError("Missing live intent")
+                intent_path=STATE/("rolled-back-intent-"+switch_id+".json")
+            for name,path in (("journal",journal),("hold",hold),("intent",intent_path)):
                 if path.is_symlink() or not path.is_file():
                     raise ValueError("Invalid recovery record")
                 with path.open("rb") as stream:
@@ -360,6 +376,8 @@ def offline_release_center(project):
                     raise ValueError("Invalid recovery record length")
                 records[name]=raw
             data=json.loads(records["journal"])
+            if intent_path!=target and (records["journal"]!=preliminary_raw or os.path.lexists(target)):
+                raise ValueError("Finalization evidence changed")
             protected=json.loads(records["hold"])
             intent=json.loads(records["intent"])
             binding=intent["binding"]
@@ -388,7 +406,7 @@ def offline_release_center(project):
                 selector_bytes=stream.read(1048577)
             if len(selector_bytes)>1048576:
                 raise ValueError("Recovery tool exceeds size limit")
-            observed=((journal,records["journal"]),(hold,records["hold"]),(target,records["intent"]),(selector,selector_bytes))
+            observed=((journal,records["journal"]),(hold,records["hold"]),(intent_path,records["intent"]),(selector,selector_bytes))
             phase=data.get("phase")
             if phase in ("backup-verified","switched","offline-rollback-pending"):
                 actions=["Return to previous release"]
@@ -429,6 +447,8 @@ def offline_release_center(project):
                     with path.open("rb") as stream:
                         if stream.read(len(original)+1)!=original:
                             raise ValueError("Recovery evidence changed")
+                if intent_path!=target and os.path.lexists(target):
+                    raise ValueError("Live intent reappeared")
                 if (STATE/"project").resolve(strict=True)!=project or selector.resolve(strict=True)!=selector:
                     raise ValueError("Release layout changed")
             except (OSError,ValueError,RuntimeError):
