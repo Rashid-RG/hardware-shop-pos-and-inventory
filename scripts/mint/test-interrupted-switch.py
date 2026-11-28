@@ -454,7 +454,11 @@ class RecoveryTests(unittest.TestCase):
                 digest=fingerprint(Path(build))
             proposal_path=root/"runtime-activation-proposal.json"
             proposal_path.write_text("fixture proposal")
-            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes()),"desktopUid":os.getuid(),"previousBuildDigest":digest,"proposalDigest":sha(proposal_path.read_bytes())}
+            from release_fingerprint import recovery_tools_fingerprint
+            (previous/"scripts").mkdir()
+            helper=previous/"scripts/helper.py"
+            helper.write_text("original")
+            binding={"previousProject":str(previous),"candidateVersion":"1.2.3","maintenanceDigest":sha(hold.read_bytes()),"desktopUid":os.getuid(),"previousBuildDigest":digest,"proposalDigest":sha(proposal_path.read_bytes()),"previousRecoveryToolsDigest":recovery_tools_fingerprint(previous)}
             target=root/"runtime-switch-intent.json"
             target.write_text(json.dumps({"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}))
             journal=root/"switch-journal.json"
@@ -475,6 +479,12 @@ class RecoveryTests(unittest.TestCase):
                 self.assertTrue(target.exists())
                 self.assertFalse(startup_allowed(root))
                 journal.write_bytes(original_journal)
+                helper.write_text("modified")
+                with self.assertRaisesRegex(ValueError,"recovery tools fingerprint"):
+                    selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE",review)
+                self.assertEqual((root/"project").resolve(),candidate)
+                self.assertEqual(journal.read_bytes(),original_journal)
+                helper.write_text("original")
                 result=selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE",review)
                 self.assertTrue(result["previousSelected"])
                 self.assertTrue(selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE")["previousSelected"])
@@ -498,6 +508,12 @@ class RecoveryTests(unittest.TestCase):
                 self.assertFalse((root/("rolled-back-intent-"+"a"*32+".json")).exists())
                 self.assertFalse(startup_allowed(root))
                 journal.write_bytes(original_journal)
+                helper.write_text("modified")
+                with self.assertRaisesRegex(ValueError,"recovery tools fingerprint"):
+                    selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)
+                self.assertTrue(target.exists())
+                self.assertFalse(list(root.glob("rolled-back-*.json")))
+                helper.write_text("original")
                 original_proposal=proposal_path.read_bytes()
                 proposal_path.write_bytes(original_proposal+b" ")
                 with self.assertRaisesRegex(ValueError,"Activation proposal mismatch"):

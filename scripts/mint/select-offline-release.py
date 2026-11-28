@@ -71,6 +71,17 @@ def verify_reviewed_evidence(review, records, active):
         raise ValueError("Operator-reviewed recovery evidence changed.")
 
 
+def verify_recovery_tools(previous, binding):
+    """Check retained local integrity evidence; legacy intents remain offline-only."""
+    from release_fingerprint import recovery_tools_fingerprint
+    import re
+    if "previousRecoveryToolsDigest" not in binding:
+        return False
+    expected=binding["previousRecoveryToolsDigest"]
+    if not isinstance(expected,str) or not re.fullmatch(r"[a-f0-9]{64}",expected) or recovery_tools_fingerprint(previous)!=expected:
+        raise ValueError("Previous recovery tools fingerprint changed.")
+    return True
+
 def rollback_offline_release(confirmation, reviewed_evidence=None):
     """Reverse offline selection only; never restore SQL or authorize startup."""
     from switch_journal import write_journal, switch_pointer
@@ -128,6 +139,7 @@ def rollback_offline_release(confirmation, reviewed_evidence=None):
                 raise ValueError("Previous build fingerprint changed.")
         if proposal.read(target)!=raw or proposal.read(hold)!=hold_raw or proposal.read(journal_path)!=journal_raw:
             raise ValueError("Rollback evidence changed.")
+        verify_recovery_tools(previous,binding)
         journal["phase"]="offline-rollback-pending"
         write_journal(STATE,journal)
         if pointer.resolve(strict=True)==candidate:
@@ -136,6 +148,7 @@ def rollback_offline_release(confirmation, reviewed_evidence=None):
         check_database_clients(previous)
         if pointer.resolve(strict=True)!=previous or proposal.read(target)!=raw or proposal.read(hold)!=hold_raw:
             raise ValueError("Rollback verification failed.")
+        verify_recovery_tools(previous,binding)
         journal["phase"]="offline-rolled-back"
         write_journal(STATE,journal)
         return {"previousSelected":True,"maintenanceRetained":True,"startupAllowed":False,"databaseRestored":False}
@@ -191,6 +204,7 @@ def finalize_offline_rollback(confirmation, reviewed_evidence=None):
             raise ValueError("Activation proposal mismatch.")
         entries=((prop,prop_archive,prop_raw),(target,archive,intent_raw),(journal,journal_archive,raw))
         def verify_sources():
+            verify_recovery_tools(previous,binding)
             if proposal.read(hold)!=hold_raw or not (STATE/"project").is_symlink() or (STATE/"project").resolve(strict=True)!=previous:
                 raise ValueError("Maintenance evidence changed.")
             for source,dest,expected in entries:
