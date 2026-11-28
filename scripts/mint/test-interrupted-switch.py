@@ -529,6 +529,35 @@ class RecoveryTests(unittest.TestCase):
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
                 center.offline_release_center(candidate)
                 run.assert_called_once_with(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE")
+            # Each change occurs after the menu opens, while the confirmation
+            # dialog is being answered. No recovery command may be dispatched.
+            for changed in (journal,root/"maintenance-hold.json",root/"runtime-switch-intent.json",selector):
+                with self.subTest(changed=changed.name):
+                    original=changed.read_bytes()
+                    def confirm_changed(*args):
+                        if args[0]=="--question":
+                            changed.write_bytes(original+b" ")
+                        return yes
+                    try:
+                        with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=confirm_changed), patch.object(center,"notice") as notice, patch.object(center,"execute") as run:
+                            center.offline_release_center(candidate)
+                            run.assert_not_called()
+                            notice.assert_called_once()
+                    finally:
+                        changed.write_bytes(original)
+            def confirm_pointer_change(*args):
+                if args[0]=="--question":
+                    (root/"project").unlink()
+                    (root/"project").symlink_to(previous)
+                return yes
+            try:
+                with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=confirm_pointer_change), patch.object(center,"notice") as notice, patch.object(center,"execute") as run:
+                    center.offline_release_center(candidate)
+                    run.assert_not_called()
+                    notice.assert_called_once()
+            finally:
+                (root/"project").unlink()
+                (root/"project").symlink_to(candidate)
             journal.write_text(json.dumps({**record,"previous":str(root/"unrelated")}))
             with patch.object(center,"STATE",root), patch.object(center,"notice") as notice, patch.object(center,"execute") as run:
                 center.offline_release_center(candidate)

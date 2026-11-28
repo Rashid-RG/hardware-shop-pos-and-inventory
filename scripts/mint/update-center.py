@@ -382,7 +382,13 @@ def offline_release_center(project):
                 active not in (tool_project,candidate) or active!=project or
                 selector.resolve(strict=True)!=selector or not selector.is_file()):
                 raise ValueError("Unexpected release layout")
-            observed=((journal,records["journal"]),(hold,records["hold"]),(target,records["intent"]))
+            # Bind the selected recovery entry point to this operator review.
+            # This is a change detector, not a signed release attestation.
+            with selector.open("rb") as stream:
+                selector_bytes=stream.read(1048577)
+            if len(selector_bytes)>1048576:
+                raise ValueError("Recovery tool exceeds size limit")
+            observed=((journal,records["journal"]),(hold,records["hold"]),(target,records["intent"]),(selector,selector_bytes))
             phase=data.get("phase")
             if phase in ("backup-verified","switched","offline-rollback-pending"):
                 actions=["Return to previous release"]
