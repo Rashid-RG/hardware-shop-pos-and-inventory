@@ -7,9 +7,20 @@ param(
   [string]$Destination = 'backups',
   [int]$Keep = 30,
   [switch]$OutputArchive,
-  [switch]$PreserveExistingArchives
+  [switch]$PreserveExistingArchives,
+  [string]$ExpectedSystemIdentifier,
+  [string]$ExpectedDatabaseOid
 )
 $ErrorActionPreference = 'Stop'
+$clusterBound=$PSBoundParameters.ContainsKey('ExpectedSystemIdentifier') -or $PSBoundParameters.ContainsKey('ExpectedDatabaseOid')
+if ($clusterBound) {
+  if (-not $PreserveExistingArchives -or -not $PSBoundParameters.ContainsKey('ExpectedSystemIdentifier') -or -not $PSBoundParameters.ContainsKey('ExpectedDatabaseOid')) {throw 'Complete protected backup identity required.'}
+  . (Join-Path $PSScriptRoot 'windows-docker-cluster-identity.ps1')
+  $null=ConvertFrom-ArsDockerClusterIdentity @($Database+'|'+$ExpectedSystemIdentifier+'|'+$ExpectedDatabaseOid) $Database
+  $expectedContainer=if ($Database -ceq 'hardware_pos_ars') {'ars-windows-pilot-postgres'} else {'hardware-pos-postgres'}
+  $expectedUser=if ($Database -ceq 'hardware_pos_ars') {'ars'} else {'postgres'}
+  if ($Container -cne $expectedContainer -or $DbUser -cne $expectedUser) {throw 'Protected backup configuration mismatch.'}
+}
 if ($Keep -lt 7 -or $Keep -gt 3650) { throw 'Keep must be between 7 and 3650 successful backups.' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'windows-runtime-paths.ps1')
@@ -72,6 +83,17 @@ try {
   $ErrorActionPreference = $previousPreference
 }
 if ($dockerInfoExitCode -ne 0) { throw 'Docker is unavailable.' }
+$originalCluster=$null
+if ($clusterBound) {
+  $originalCluster=Confirm-ArsProtectedDockerCluster $Database $ExpectedSystemIdentifier $ExpectedDatabaseOid
+  $Container=$originalCluster.containerId
+}
+function Assert-ProtectedBackupCluster {
+  if ($clusterBound) {
+    $current=Confirm-ArsProtectedDockerCluster $Database $ExpectedSystemIdentifier $ExpectedDatabaseOid
+    if ($current.containerId -cne $originalCluster.containerId) {throw 'Protected Docker container changed.'}
+  }
+}
 & docker inspect $Container *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Configured Docker container was not found.' }
 $portMap = & docker port $Container '5432/tcp' 2>$null
@@ -95,8 +117,14 @@ $uploadChecksum = "$uploadZip.sha256"
 try {
   & docker exec $Container pg_isready -U $DbUser -d $Database *> $null
   if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL is not ready.' }
-  & docker exec $Container pg_dump -U $DbUser -d $Database -Fc -f $remoteFile
+  Assert-ProtectedBackupCluster
+  if ($clusterBound) {
+    & docker exec $Container pg_dump -w -h /var/run/postgresql -p 5432 -U $DbUser -d $Database -Fc -f $remoteFile
+  } else {
+    & docker exec $Container pg_dump -U $DbUser -d $Database -Fc -f $remoteFile
+  }
   if ($LASTEXITCODE -ne 0) { throw 'Database pg_dump failed.' }
+  Assert-ProtectedBackupCluster
   & docker exec $Container pg_restore --list $remoteFile *> $null
   if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL archive validation failed.' }
   & docker cp "$($Container):$remoteFile" $tempFile
@@ -122,6 +150,7 @@ try {
     Set-Content -LiteralPath $uploadChecksum -Value "$uploadHash  $name-uploads.zip" -Encoding ASCII
     Move-Item -LiteralPath $uploadTemp -Destination $uploadZip
   }
+  Assert-ProtectedBackupCluster
   Set-Content -LiteralPath $checksumFile -Value "$hash  $name.dump" -Encoding ASCII
   # Publish the selectable dump last, after all companions are present.
   Move-Item -LiteralPath $tempFile -Destination $backupFile
