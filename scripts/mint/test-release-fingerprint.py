@@ -78,5 +78,42 @@ class FingerprintTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 recovery_tools_fingerprint(project)
 
+    def test_switch_binding_tracks_recovery_tools(self):
+        import importlib.util
+        import hashlib
+        import json
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location("intent",Path(__file__).with_name("prepare-switch-intent.py"))
+        intent=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(intent)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            project=root/"previous"
+            (project/"scripts").mkdir(parents=True)
+            helper=project/"scripts/helper.py"
+            helper.write_text("original")
+            folder=root/"backup"
+            folder.mkdir()
+            (root/"runtime-activation-proposal.json").write_text("{}")
+            restore=folder/"restore-test.json"
+            restore.write_text(json.dumps({"buildFingerprint":"a"*64,"previousBuildFingerprint":"b"*64}))
+            class Proposal:
+                @staticmethod
+                def read(path): return path.read_bytes()
+                @staticmethod
+                def sha(raw): return hashlib.sha256(raw).hexdigest()
+                @staticmethod
+                def matches(record,observed): return True
+                @staticmethod
+                def snapshot(folder): return {"candidateVersion":"1.2.3","previousProject":str(project),"evidence":{"restore":Proposal.sha(restore.read_bytes()),"hold":"c"*64}}
+            with patch.object(intent,"STATE",root):
+                binding=intent.verified_binding(folder,Proposal)
+                record={"schema":1,"kind":"mint-runtime-switch-intent","switchId":"a"*32,"observationOnly":True,"binding":binding,**intent.FLAGS}
+                self.assertTrue(intent.matches(record,intent.verified_binding(folder,Proposal)))
+                helper.write_text("modified")
+                self.assertFalse(intent.matches(record,intent.verified_binding(folder,Proposal)))
+                helper.write_text("original")
+                self.assertTrue(intent.matches(record,intent.verified_binding(folder,Proposal)))
+
 if __name__=="__main__":
     unittest.main()

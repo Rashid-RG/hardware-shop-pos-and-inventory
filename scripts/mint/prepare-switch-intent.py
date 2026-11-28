@@ -23,6 +23,7 @@ def load():
     return module
 
 def verified_binding(folder, proposal):
+    from release_fingerprint import recovery_tools_fingerprint
     raw=proposal.read(STATE/"runtime-activation-proposal.json")
     record=json.loads(raw)
     observed=proposal.snapshot(folder)
@@ -36,7 +37,7 @@ def verified_binding(folder, proposal):
     previous=receipt.get("previousBuildFingerprint")
     if not all(isinstance(x,str) and re.fullmatch(r"[a-f0-9]{64}",x) for x in (candidate,previous)):
         raise ValueError("Release fingerprints required.")
-    return {"proposalDigest":proposal.sha(raw),"recoveryFolder":str(folder),"candidateVersion":observed["candidateVersion"],"previousProject":observed["previousProject"],"candidateDigest":candidate,"previousBuildDigest":previous,"maintenanceDigest":observed["evidence"]["hold"],"desktopUid":os.getuid()}
+    return {"proposalDigest":proposal.sha(raw),"recoveryFolder":str(folder),"candidateVersion":observed["candidateVersion"],"previousProject":observed["previousProject"],"candidateDigest":candidate,"previousBuildDigest":previous,"previousRecoveryToolsDigest":recovery_tools_fingerprint(Path(observed["previousProject"])),"maintenanceDigest":observed["evidence"]["hold"],"desktopUid":os.getuid()}
 
 def prepare_candidate_runtime(candidate, runtime):
     """Attach the verified candidate to stable storage without selecting it."""
