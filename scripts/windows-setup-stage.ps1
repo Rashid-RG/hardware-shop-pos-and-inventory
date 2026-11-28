@@ -6,6 +6,16 @@ function Invoke-ArsSetupStage([string]$stage) {
  $processInfo.UseShellExecute=$false
  $processInfo.CreateNoWindow=$true
  switch ($stage) {
+  'prerequisite-node' {
+   $processInfo.FileName=(Get-Command winget.exe -CommandType Application -ErrorAction Stop).Source
+   $processInfo.Arguments='install --id OpenJS.NodeJS.22 --exact --source winget --interactive'
+   $processInfo.CreateNoWindow=$false
+  }
+  'prerequisite-docker' {
+   $processInfo.FileName=(Get-Command winget.exe -CommandType Application -ErrorAction Stop).Source
+   $processInfo.Arguments='install --id Docker.DockerDesktop --exact --source winget --interactive'
+   $processInfo.CreateNoWindow=$false
+  }
   'dependencies' {
    $processInfo.FileName=Join-Path $env:SystemRoot 'System32\cmd.exe'
    $processInfo.Arguments='/d /c npm.cmd ci --include=dev'

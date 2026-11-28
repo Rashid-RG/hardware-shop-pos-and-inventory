@@ -47,12 +47,10 @@ function Install-ArsMissingPrerequisites {
  if ([System.Windows.Forms.MessageBox]::Show($message,$title,'YesNo','Question') -ne 'Yes') { return $false }
  # Explicit source and exact IDs; no hash bypass or blanket license acceptance.
  if ($plan.Node -eq 'missing') {
-  & winget install --id OpenJS.NodeJS.22 --exact --source winget --interactive
-  if ($LASTEXITCODE -ne 0) { throw 'Node.js installation did not complete. Reopen Setup after resolving the publisher prompt.' }
+  Invoke-ArsSetupStage 'prerequisite-node'
  }
  if ($plan.Docker -eq 'missing') {
-  & winget install --id Docker.DockerDesktop --exact --source winget --interactive
-  if ($LASTEXITCODE -ne 0) { throw 'Docker installation did not complete. Reopen Setup after resolving the publisher prompt.' }
+  Invoke-ArsSetupStage 'prerequisite-docker'
  }
  Offer-ArsSetupResume
  [void][System.Windows.Forms.MessageBox]::Show('Prerequisite installation steps completed. Restart Windows if requested, start Docker Desktop and finish its first-run prompts, then reopen ARS Setup. No ARS database has been created.',$title,'OK','Information')

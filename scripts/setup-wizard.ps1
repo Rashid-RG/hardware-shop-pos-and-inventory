@@ -58,7 +58,10 @@ try {
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
  if (-not (Show-ArsSetupPage 'Installation agreement' $terms 'Accept and continue' -Agreement)) { return }
  . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
- if (-not (Install-ArsMissingPrerequisites)) { return }
+ Open-ArsProgress
+ Set-ArsProgress 0 'Checking and preparing system prerequisites...'
+ try { $prerequisitesReady=Install-ArsMissingPrerequisites } finally { Close-ArsProgress }
+ if (-not $prerequisitesReady) { return }
  Assert-Fresh
  . (Join-Path $PSScriptRoot 'windows-setup-destination.ps1')
  $picker=New-Object Windows.Forms.FolderBrowserDialog

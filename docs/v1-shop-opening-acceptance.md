@@ -78,3 +78,22 @@ Operator acceptance: ____________________
 RS Nextward technical verification: ____________________
 
 Date / exact release commit: ____________________
+
+
+## Remaining release completion workstreams
+
+The existing graphical installers already display five actual installation milestones. Physical testing must confirm that those screens, permission prompts, restarts and failure states work on supported clean computers. Do not report a graphical installer as absent merely because physical acceptance is pending.
+
+| Workstream | Completion evidence |
+| --- | --- |
+| Automatic prerequisites | Clean-machine setup with supported Node, Docker and Compose, including authorized restart or sign-out and safe resume |
+| Trusted recovery execution | Independently trusted recovery entry point and dependencies, tamper rejection before execution |
+| Installed update coordinator | Signed candidate, protected backup, continuous database writer exclusion, verified process and database identity |
+| Automatic rollback | Failed candidate stopped, previous version verified ready, business records unchanged; otherwise retained maintenance hold |
+| Graphical setup | Observed milestones, responsive UI, publisher prompts and failure handling on Windows and Mint |
+| Production hosting | Owner-approved HTTPS feed for each platform; verify download without redirects and reject tampered releases |
+| Production signing | Owner-controlled offline private signing key, verified public trust key distribution and documented key recovery/rotation; never commit private keys |
+| Physical acceptance | Completed device, printer, recovery and billing evidence above |
+| Commercial activation | Explicit owner sign-off after all applicable gates; no activation solely because CI is green |
+
+Keep live switching disabled until its installed acceptance passes. All tests before that point must use isolated fixtures or disposable installations.
