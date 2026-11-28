@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 from switch_coordinator import simulate_switch
+from startup_guard import startup_allowed
 
 class Service:
     def __init__(self,root,fail=False):
@@ -63,6 +64,7 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual((root/"project").resolve(),root/release)
             self.assertEqual((root/"business-data").read_text(),"historical invoices")
             self.assertTrue(service.ready())
+            self.assertFalse(startup_allowed(root))
     def test_success(self): self.exercise(False,True,"updated","new")
     def test_unhealthy_candidate(self): self.exercise(True,True,"rolled-back","old")
     def test_backup_rejection(self): self.exercise(False,False,"rolled-back","old")

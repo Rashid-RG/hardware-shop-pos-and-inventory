@@ -12,7 +12,7 @@ def simulate_switch(root, service, backup):
     new=root/"new"
     if not pointer.is_symlink() or pointer.resolve()!=old or any(p.is_symlink() or not p.is_dir() for p in (old,new)):
         raise ValueError("Invalid sandbox release layout.")
-    record={"previous":str(old),"candidate":str(new),"phase":"prepared"}
+    record={"kind":"mint-switch-rehearsal","previous":str(old),"candidate":str(new),"phase":"prepared"}
     def phase(value):
         record["phase"]=value
         write_journal(root,record)

@@ -37,6 +37,18 @@ Use a separate test installation and synthetic customer, product and supplier re
 | Password recovery | Owner-configured sender delivers usable single-use reset link/code | |
 | Backup with uploaded product image | Encrypted Drive copy downloads and restores to isolated database; image and records match | |
 
+### Installed update and rollback acceptance
+
+Use a disposable installation on each platform and record the running version before and after each attempt. Keep a sample invoice, stock movement, and uploaded product image for comparison.
+
+| Scenario | Evidence required |
+| --- | --- |
+| Signed update succeeds | The installed updater validates the signature, retains a verified backup, switches to the candidate, confirms service and database readiness, and opens the original test records and uploads. |
+| Candidate fails startup | The updater confirms the candidate stopped, starts the previous release, and confirms the same records and uploads are available. |
+| Candidate shutdown or previous startup cannot be confirmed | The updater retains its journal and backup for review. Billing stays blocked until the running version and database state are established. |
+| Interruption during switch | On restart, the updater detects the unfinished operation and preserves its recovery evidence. |
+| Update source unavailable | The installed version can still open and bill offline. |
+
 ### Evidence log
 
 Record one row per attempt. Never include passwords, recovery keys, customer personal details or unredacted environment files.
