@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<rect width="1280" height="640" fill="#101c2e"/>
+<path d="M920 0H1280V640H620Z" fill="#172b42"/>
+<path d="M1040 0H1280V640H840Z" fill="#203b52"/>
+<rect x="76" y="82" width="64" height="6" rx="3" fill="#4fc8b3"/>
+<text x="76" y="140" fill="#a6c6d7" font-family="Arial,sans-serif" font-size="26" letter-spacing="5">RS NEXTWARD</text>
+<text x="76" y="250" fill="#ffffff" font-family="Arial,sans-serif" font-size="80" font-weight="700">ARS Distributors</text>
+<text x="80" y="309" fill="#c6d9e5" font-family="Arial,sans-serif" font-size="32">Wholesale &amp; Distribution Management</text>
+<path d="M80 360H760" stroke="#52778d" stroke-width="2"/>
+<text x="80" y="412" fill="#ffffff" font-family="Arial,sans-serif" font-size="25">Sales  /  Inventory  /  Accounting  /  Recovery</text>
+<text x="80" y="535" fill="#a6c6d7" font-family="Arial,sans-serif" font-size="24">Windows   •   Linux Mint   •   PostgreSQL</text>
+<rect x="956" y="440" width="248" height="57" rx="10" fill="#4fc8b3"/>
+<text x="1080" y="476" text-anchor="middle" font-family="Arial,sans-serif" font-size="22" font-weight="700" fill="#102331">V1.0 PILOT</text>
+</svg>
