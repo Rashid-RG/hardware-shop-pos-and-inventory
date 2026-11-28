@@ -87,3 +87,30 @@ foreach ($invalid in @(
  if (-not $blocked) {throw 'Unsupported recovery archive accepted.'}
 }
 Write-Host 'Legacy and fresh installer recovery archive compatibility checks passed.'
+
+
+# Source database binding must distinguish the two full archive prefixes.
+$legacyArchive='ars-hardware_pos-20261127-120000-123-'+$id+'-with-uploads.dump'
+$pilotArchive='ars-hardware_pos_ars-20261127-120000-123-'+$id+'-with-uploads.dump'
+Assert-ArsUninstallSourceDatabase 'hardware_pos' $legacyArchive
+Assert-ArsUninstallSourceDatabase 'hardware_pos_ars' $pilotArchive
+$invalidBindings=@(
+ @{database='hardware_pos';archive=$pilotArchive;error='Recovery source database mismatch.'},
+ @{database='hardware_pos_ars';archive=$legacyArchive;error='Recovery source database mismatch.'},
+ @{database='';archive=$legacyArchive;error='Unsupported recovery source database.'},
+ @{database=$null;archive=$legacyArchive;error='Unsupported recovery source database.'},
+ @{database='hardware_pos_ci';archive=$legacyArchive;error='Unsupported recovery source database.'},
+ @{database='HARDWARE_POS';archive=$legacyArchive;error='Unsupported recovery source database.'},
+ @{database='hardware_pos_ars';archive=($pilotArchive.Replace('with-uploads','database-only'));error='Recovery source database mismatch.'},
+ @{database='hardware_pos';archive='';error='Recovery source database mismatch.'}
+)
+foreach ($binding in $invalidBindings) {
+ $blocked=$false
+ try {Assert-ArsUninstallSourceDatabase $binding.database $binding.archive}
+ catch {
+  if ($_.Exception.Message -cne $binding.error) {throw}
+  $blocked=$true
+ }
+ if (-not $blocked) {throw 'Invalid recovery source database binding accepted.'}
+}
+Write-Host 'Recovery source database identity checks passed.'
