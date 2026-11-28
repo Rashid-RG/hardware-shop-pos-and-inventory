@@ -182,28 +182,37 @@ def finalize_offline_rollback(confirmation, reviewed_evidence=None):
         binding=record["binding"]
         if not intent.matches(record,binding) or record.get("switchId")!=switch_id or binding.get("desktopUid")!=os.getuid() or binding.get("previousProject")!=str(previous) or binding.get("maintenanceDigest")!=proposal.sha(hold_raw) or proposal.sha(intent_raw)!=j.get("intentDigest"):
             raise ValueError("Rollback intent mismatch.")
-        stopped()
-        check_database_clients(previous)
-        for source,dest,expected in ((target,archive,intent_raw),(journal,journal_archive,raw)):
-            if not os.path.lexists(dest):
-                os.link(source,dest,follow_symlinks=False)
-                sync_dir(STATE)
-            if proposal.read(dest)!=expected or (os.path.lexists(source) and proposal.read(source)!=expected):
-                raise ValueError("Archived rollback evidence mismatch.")
-        if proposal.read(hold)!=hold_raw or (STATE/"project").resolve(strict=True)!=previous:
-            raise ValueError("Maintenance evidence changed.")
-        # Archive the proposal too, allowing a future update to prepare a new one.
+        # Validate every source before publishing any archive. Retain the
+        # journal until the other two records have been safely archived.
         prop=STATE/"runtime-activation-proposal.json"
         prop_archive=STATE/("rolled-back-proposal-"+switch_id+".json")
         prop_raw=proposal.read(prop if os.path.lexists(prop) else prop_archive)
         if proposal.sha(prop_raw)!=binding.get("proposalDigest"):
             raise ValueError("Activation proposal mismatch.")
-        if not os.path.lexists(prop_archive):
-            os.link(prop,prop_archive,follow_symlinks=False)
-            sync_dir(STATE)
-        if proposal.read(prop_archive)!=prop_raw:
-            raise ValueError("Archived proposal mismatch.")
-        for source in (prop,target,journal):
+        entries=((prop,prop_archive,prop_raw),(target,archive,intent_raw),(journal,journal_archive,raw))
+        def verify_sources():
+            if proposal.read(hold)!=hold_raw or not (STATE/"project").is_symlink() or (STATE/"project").resolve(strict=True)!=previous:
+                raise ValueError("Maintenance evidence changed.")
+            for source,dest,expected in entries:
+                if proposal.read(source if os.path.lexists(source) else dest)!=expected:
+                    raise ValueError("Rollback source evidence changed.")
+                if os.path.lexists(dest) and proposal.read(dest)!=expected:
+                    raise ValueError("Archived rollback evidence mismatch.")
+        stopped()
+        check_database_clients(previous)
+        verify_sources()
+        for source,dest,expected in entries:
+            if not os.path.lexists(dest):
+                os.link(source,dest,follow_symlinks=False)
+                sync_dir(STATE)
+            if proposal.read(dest)!=expected:
+                raise ValueError("Archived rollback evidence mismatch.")
+        # Recheck the entire evidence set before each removal. A partial
+        # finalization remains recoverable using the retained archives.
+        for source,dest,expected in entries:
+            verify_sources()
+            if proposal.read(dest)!=expected:
+                raise ValueError("Archived rollback evidence mismatch.")
             if os.path.lexists(source):
                 source.unlink()
                 sync_dir(STATE)
