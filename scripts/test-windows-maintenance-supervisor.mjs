@@ -237,3 +237,49 @@ try{
  else process.env.LOCALAPPDATA=previousLocal;
 }
 console.log('Verified installed backup coordinator fixture checks passed.');
+
+// Active monitoring must detect lost protection without an external abort or
+// explicit caller-side ownership check. Use only disposable child processes.
+for(const mode of ['database-identity','scope-evidence']){
+ const marker=join(dir,'monitor-'+mode+'.json');
+ const source="const c=require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});const fs=require('node:fs');fs.writeFileSync(process.argv[1]+'.tmp',JSON.stringify([process.pid,c.pid]));fs.renameSync(process.argv[1]+'.tmp',process.argv[1]);setInterval(()=>{},1000)";
+ const database=new FixtureDatabase();
+ let ids,checks=0,invalid=false,activeChecks=0;
+ await assert.rejects(withMaintenanceSession(database,'hardware_pos_ci',async session=>{
+  const scope=Object.freeze({owner:session.owner,signal:session.signal,assertActive:async()=>{
+   assert.equal(++activeChecks,1,'overlapping protection checks');
+   try{
+    checks++;
+    await session.assertActive();
+    if(mode==='scope-evidence'&&invalid)throw Error('Fixture evidence changed.');
+   }finally{activeChecks--;}
+  }});
+  const pending=runWindowsMaintenanceWorker(scope,supervisor,process.execPath,['-e',source,marker],options);
+  pending.catch(()=>{});
+  try{
+   for(let i=0;i<200;i++){
+    try{ids=JSON.parse(await readFile(marker,'utf8'));break;}catch(e){if(e.code!=='ENOENT')throw e;}
+    await delay(50);
+   }
+   assert.equal(ids?.length,2,'monitored worker readiness not observed');
+   if(mode==='database-identity')database.pid++;
+   else invalid=true;
+   await pending;
+  }finally{
+   if(!ids)database.emit('end');
+   await pending.catch(()=>{});
+   assert.equal(getEventListeners(session.signal,'abort').length,0);
+  }
+ }),/Maintenance interrupted/);
+ assert.ok(checks>=2,'periodic check did not run');
+ assert.equal(activeChecks,0);
+ assert.equal(database.closed,true);
+ for(const pid of ids){
+  assert.ok(Number.isSafeInteger(pid)&&pid>1);
+  assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+ }
+ const stoppedChecks=checks;
+ await delay(2200);
+ assert.equal(checks,stoppedChecks,'monitor continued after worker exit');
+}
+console.log('Active Windows maintenance protection monitoring checks passed.');
