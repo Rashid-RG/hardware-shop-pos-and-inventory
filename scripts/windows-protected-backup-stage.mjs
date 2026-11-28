@@ -17,9 +17,7 @@ async function canonical(path,directory){
 export async function runProtectedWindowsBackup(scope,{root,destination,supervisor,timeoutMs=900000}={}){
  if(process.platform!=='win32'||typeof scope?.assertActive!=='function'||!scope.signal)throw Error('Protected Windows backup scope required.');
  const ownerDatabase=scope.owner?.database;
- // Only the disposable hosted native fixture may use the CI database identity.
- const fixture=ownerDatabase==='hardware_pos_ci'&&process.env.GITHUB_ACTIONS==='true'&&process.env.RUNNER_ENVIRONMENT==='github-hosted';
- const database=fixture?'hardware_pos':ownerDatabase;
+ const database=ownerDatabase;
  if(!['hardware_pos','hardware_pos_ars'].includes(database))throw Error('Unsupported protected backup database.');
  const verify=async()=>{await scope.assertActive();if(scope.signal.aborted||scope.owner?.database!==ownerDatabase)throw Error('Maintenance interrupted or database identity changed.');};
  await verify();
