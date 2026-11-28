@@ -588,13 +588,16 @@ class RecoveryTests(unittest.TestCase):
             selector=previous/"scripts/mint/select-offline-release.py"
             selector.parent.mkdir(parents=True)
             selector.touch()
+            helper=selector.parent/"helper.py"
+            helper.write_text("original")
+            from release_fingerprint import recovery_tools_fingerprint
             (root/"project").symlink_to(candidate)
             hold=json.dumps({"purpose":"pre-update backup","previousProject":str(previous)}).encode()
             (root/"maintenance-hold.json").write_bytes(hold)
             hold_digest=hashlib.sha256(hold).hexdigest()
             intent=json.dumps({"observationOnly":True,"switchId":"fixture",
                                "binding":{"candidateVersion":"1.2.3","previousProject":str(previous),
-                                          "maintenanceDigest":hold_digest}}).encode()
+                                          "maintenanceDigest":hold_digest,"previousRecoveryToolsDigest":recovery_tools_fingerprint(previous)}}).encode()
             (root/"runtime-switch-intent.json").write_bytes(intent)
             journal=root/"switch-journal.json"
             record={"schema":1,"kind":"mint-offline-release-selection","phase":"switched","previous":str(previous),
@@ -616,7 +619,7 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(review["activeProject"],str(candidate))
             # Each change occurs after the menu opens, while the confirmation
             # dialog is being answered. No recovery command may be dispatched.
-            for changed in (journal,root/"maintenance-hold.json",root/"runtime-switch-intent.json",selector):
+            for changed in (journal,root/"maintenance-hold.json",root/"runtime-switch-intent.json",selector,helper):
                 with self.subTest(changed=changed.name):
                     original=changed.read_bytes()
                     def confirm_changed(*args):
@@ -630,6 +633,15 @@ class RecoveryTests(unittest.TestCase):
                             notice.assert_called_once()
                     finally:
                         changed.write_bytes(original)
+            helper.write_text("modified before review")
+            try:
+                with patch.object(center,"STATE",root), patch.object(center,"dialog") as dialog, patch.object(center,"notice") as notice, patch.object(center,"execute") as run:
+                    center.offline_release_center(candidate)
+                    run.assert_not_called()
+                    dialog.assert_not_called()
+                    notice.assert_called_once()
+            finally:
+                helper.write_text("original")
             def confirm_pointer_change(*args):
                 if args[0]=="--question":
                     (root/"project").unlink()

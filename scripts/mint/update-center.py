@@ -361,6 +361,16 @@ def read_recovery_evidence(path, maximum):
     return raw,identity(before)
 
 
+def check_recovery_tool_binding(project,binding):
+    """Check local retained integrity before dispatch, not publisher authenticity."""
+    if "previousRecoveryToolsDigest" not in binding:
+        return False  # Legacy offline recovery remains available.
+    from release_fingerprint import recovery_tools_fingerprint
+    expected=binding["previousRecoveryToolsDigest"]
+    if not isinstance(expected,str) or not re.fullmatch(r"[a-f0-9]{64}",expected) or recovery_tools_fingerprint(project)!=expected:
+        raise ValueError("Recovery tools fingerprint mismatch.")
+    return True
+
 def offline_release_center(project):
     """Offline selection and rollback only; never start a candidate."""
     journal=STATE/"switch-journal.json"
@@ -425,6 +435,7 @@ def offline_release_center(project):
                 raise ValueError("Unexpected release layout")
             # Bind the selected recovery entry point to this operator review.
             # This is a change detector, not a signed release attestation.
+            check_recovery_tool_binding(tool_project,binding)
             selector_bytes,selector_identity=read_recovery_evidence(selector,1048576)
             observed=((journal,records["journal"],identities["journal"]),
                       (hold,records["hold"],identities["hold"]),
@@ -472,6 +483,7 @@ def offline_release_center(project):
                     raise ValueError("Live intent reappeared")
                 if (STATE/"project").resolve(strict=True)!=project or selector.resolve(strict=True)!=selector:
                     raise ValueError("Release layout changed")
+                check_recovery_tool_binding(tool_project,binding)
             except (OSError,ValueError,RuntimeError):
                 notice("Switch evidence changed. Reopen the Update Center for review.",True)
                 return
