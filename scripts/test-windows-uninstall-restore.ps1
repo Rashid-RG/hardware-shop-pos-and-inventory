@@ -148,3 +148,36 @@ if ($checkIndex -lt 0 -or $createIndex -le $checkIndex -or $uploadIndex -le $cre
 if (-not $source.Contains('$mutex.WaitOne(0)') -or -not $source.Contains('if ($owned) {$mutex.ReleaseMutex()}') -or -not $source.Contains('$mutex.Dispose()')) {throw 'Recovery preparation mutex contract changed.'}
 if (-not $source.Contains('applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;activationAllowed=$false;continuousExclusionVerified=$false')) {throw 'Recovery preparation authorization contract changed.'}
 Write-Host 'Continuous recovery preparation guard and ordering checks passed.'
+
+
+# Exercise opt-in rehearsal guards without stopping any application.
+. (Join-Path $PSScriptRoot 'windows-continuous-recovery-rehearsal.ps1')
+foreach ($confirmation in @('','STOP','stop pos for uninstall backup','STOP POS FOR UNINSTALL BACKUP ')) {
+ $blocked=$false
+ try {Invoke-ArsContinuousRecoveryRehearsal $foreign $confirmation|Out-Null}
+ catch {
+  if ($_.Exception.Message -cne 'Explicit shutdown approval required.') {throw}
+  $blocked=$true
+ }
+ if (-not $blocked) {throw 'Unapproved shutdown accepted.'}
+}
+$blocked=$false
+try {Invoke-ArsContinuousRecoveryRehearsal $foreign 'STOP POS FOR UNINSTALL BACKUP'|Out-Null}
+catch {
+ if ($_.Exception.Message -cne 'Managed installation required.') {throw}
+ $blocked=$true
+}
+if (-not $blocked) {throw 'Foreign rehearsal accepted.'}
+$source=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-continuous-recovery-rehearsal.ps1') -Raw
+$approval=$source.IndexOf("Explicit shutdown approval required.")
+$stop=$source.IndexOf("& (Join-Path "+'$PSScriptRoot'+" 'stop-local.ps1')")
+$prepare=$source.IndexOf('$prepared=Initialize-ArsContinuousRecovery')
+$firstCheck=$source.IndexOf(([string][char]10+' Assert-RecoveryPreparationUnchanged'))
+$invoke=$source.IndexOf('$lines=@(& node $entry')
+$lastCheck=$source.LastIndexOf(([string][char]10+' Assert-RecoveryPreparationUnchanged'))
+$return=$source.IndexOf(' return $result')
+if ($approval -lt 0 -or $stop -le $approval -or $prepare -le $stop -or $firstCheck -le $prepare -or $invoke -le $firstCheck -or $lastCheck -le $invoke -or $return -le $lastCheck) {throw 'Continuous rehearsal stage ordering changed.'}
+foreach ($needle in @('$LASTEXITCODE -ne 0','$lines.Count -ne 1',"StartsWith('ARS_RECOVERY=')",'$result.uninstallId -cne $prepared.uninstallId','$result.$flag -isnot [bool]','$prepared.uploadsDigest','Get-ArsPreparedFingerprint')) {
+ if (-not $source.Contains($needle)) {throw "Missing rehearsal guard: $needle"}
+}
+Write-Host 'Continuous recovery rehearsal early guards and stage ordering passed.'
