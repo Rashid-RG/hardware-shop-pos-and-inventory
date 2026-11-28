@@ -119,6 +119,14 @@ try {
  } else {Record-Phase 'completed'}
  $final=Get-ArsSwitchInspection $root
  if ($final.state -cne 'switch-review-required' -or $final.startupAllowed -ne $false -or $final.historyVerified -ne $true) {throw 'Final review state invalid.'}
+ # A writer holding the journal open must prevent a trusted inspection.
+ $writer=[IO.File]::Open($journal,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+ try {
+  $busy=Get-ArsSwitchInspection $root
+  if ($busy.state -cne 'unreadable-or-invalid' -or $busy.startupAllowed -ne $false) {throw 'Busy journal was accepted.'}
+ } finally {$writer.Dispose()}
+ $afterWriter=Get-ArsSwitchInspection $root
+ if ($afterWriter.historyVerified -ne $true) {throw 'Stable evidence not accepted.'}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))

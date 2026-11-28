@@ -1,4 +1,26 @@
 # Read-only inspection; no pointer creation, switching, rollback or startup.
+function Read-ArsSwitchSnapshot([string]$Path) {
+  $f=Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+  if ($f.PSIsContainer -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'Invalid evidence file.'}
+  $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+  try {
+    if ($stream.Length -lt 1 -or $stream.Length -gt 16384) {throw 'Invalid evidence size.'}
+    $bytes=New-Object byte[] ([int]$stream.Length)
+    $offset=0
+    while ($offset -lt $bytes.Length) {
+      $count=$stream.Read($bytes,$offset,$bytes.Length-$offset)
+      if ($count -le 0) {throw 'Incomplete evidence.'}
+      $offset+=$count
+    }
+    if ($stream.ReadByte() -ne -1) {throw 'Evidence grew.'}
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try {$digest=[BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','')} finally {$sha.Dispose()}
+    $encoding=New-Object Text.UTF8Encoding($false,$true)
+    $record=$encoding.GetString($bytes).TrimStart([char]0xFEFF)|ConvertFrom-Json -ErrorAction Stop
+    return [pscustomobject]@{digest=$digest;record=$record}
+  } finally {$stream.Dispose()}
+}
+
 function Get-ArsSwitchInspection([string]$Control) {
   $blocked=[ordered]@{schema=1;state='unreadable-or-invalid';startupAllowed=$false;activationAllowed=$false;rollbackAllowed=$false}
   try {
@@ -19,12 +41,14 @@ function Get-ArsSwitchInspection([string]$Control) {
     foreach ($f in @($journal[0],$pointer[0])) {
       if ($f.PSIsContainer -or $f.Length -lt 1 -or $f.Length -gt 16384 -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid switch evidence.' }
     }
-    $jhash=(Get-FileHash -LiteralPath $journal[0].FullName -Algorithm SHA256).Hash
-    $phash=(Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash
-    $j=Get-Content -LiteralPath $journal[0].FullName -Raw | ConvertFrom-Json
-    $p=Get-Content -LiteralPath $pointer[0].FullName -Raw | ConvertFrom-Json
+    $journalSnapshot=Read-ArsSwitchSnapshot $journal[0].FullName
+    $pointerSnapshot=Read-ArsSwitchSnapshot $pointer[0].FullName
+    $jhash=$journalSnapshot.digest
+    $phash=$pointerSnapshot.digest
+    $j=$journalSnapshot.record
+    $p=$pointerSnapshot.record
     if ($j.schema -ne 1 -or $p.schema -ne 1 -or $j.switchId -cnotmatch '^[a-f0-9]{32}$' -or $j.previousDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.candidateDigest -cnotmatch '^[a-f0-9]{64}$' -or $j.previousDigest -ceq $j.candidateDigest -or $p.switchId -cne $j.switchId -or $p.digest -cnotmatch '^[a-f0-9]{64}$' -or $j.phase -cnotin @('prepared','switched','rollback-required','rolled-back','completed','manual-recovery-required') -or $j.activationAllowed -isnot [bool] -or $j.activationAllowed -or $p.activationAllowed -isnot [bool] -or $p.activationAllowed) { throw 'Invalid switch record.' }
-    if ((Get-FileHash -LiteralPath $journal[0].FullName -Algorithm SHA256).Hash -cne $jhash -or (Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash -cne $phash) { throw 'Switch evidence changed.' }
+    if ((Read-ArsSwitchSnapshot $journal[0].FullName).digest -cne $jhash -or (Read-ArsSwitchSnapshot $pointer[0].FullName).digest -cne $phash) { throw 'Switch evidence changed.' }
     # Require the complete bounded sequence, including the retained old records.
     if ($j.sequence -isnot [int] -or $j.sequence -lt 1 -or $j.sequence -gt 4 -or $history.Count -ne ($j.sequence-1)) { throw 'Invalid switch history length.' }
     $transitions=@{''=@('prepared');prepared=@('switched');switched=@('completed','rollback-required');'rollback-required'=@('rolled-back','manual-recovery-required')}
@@ -35,8 +59,9 @@ function Get-ArsSwitchInspection([string]$Control) {
       $path=if ($n -eq $j.sequence) {$journal[0].FullName} else {Join-Path $Control ('journal-history-{0:D4}.json' -f $n)}
       $f=Get-Item -LiteralPath $path -Force -ErrorAction Stop
       if ($f.PSIsContainer -or $f.Length -lt 1 -or $f.Length -gt 16384 -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'Invalid history file.'}
-      $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
-      $record=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+      $snapshot=Read-ArsSwitchSnapshot $path
+      $hash=$snapshot.digest
+      $record=$snapshot.record
       if ($record.schema -ne 1 -or $record.sequence -ne $n -or $record.switchId -cne $j.switchId -or $record.previousDigest -cne $j.previousDigest -or $record.candidateDigest -cne $j.candidateDigest -or $record.activationAllowed -isnot [bool] -or $record.activationAllowed -or $record.previousJournalDigest -isnot [string] -or $record.previousJournalDigest -cne $lastHash -or -not $transitions.ContainsKey($lastPhase) -or $record.phase -cnotin $transitions[$lastPhase]) {throw 'Invalid history transition.'}
       $hashes[$path]=$hash
       $lastHash=$hash
@@ -44,10 +69,10 @@ function Get-ArsSwitchInspection([string]$Control) {
     }
     if ($lastHash -cne $jhash -or $lastPhase -cne $j.phase) {throw 'Journal head changed.'}
     foreach ($path in $hashes.Keys) {
-      if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -cne $hashes[$path]) {throw 'History changed.'}
+      if ((Read-ArsSwitchSnapshot $path).digest -cne $hashes[$path]) {throw 'History changed.'}
     }
     $again=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {$_.Name -like 'journal-history-*'})
-    if ($again.Count -ne $history.Count -or (Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash -cne $phash) {throw 'Switch evidence changed.'}
+    if ($again.Count -ne $history.Count -or (Read-ArsSwitchSnapshot $pointer[0].FullName).digest -cne $phash) {throw 'Switch evidence changed.'}
     $blocked['historyVerified']=$true
     $blocked['phase']=$j.phase
     $expected=if ($j.phase -cin @('prepared','rolled-back','manual-recovery-required')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}
