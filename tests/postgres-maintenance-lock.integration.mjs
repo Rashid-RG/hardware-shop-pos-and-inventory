@@ -545,3 +545,43 @@ test('disposable child releases leases after '+failure,{timeout:60000},async()=>
  }
 });
 }
+
+test('protected session reads the actual cluster identity for both installed database names',{timeout:30000},async()=>{
+ const {withMaintenanceSession}=await import('../scripts/database-maintenance-session.mjs');
+ const {withMaintenanceTableFence}=await import('../scripts/database-maintenance-table-fence.mjs');
+ const {readProtectedMaintenanceClusterIdentity,assertMaintenanceClusterMatch}=await import('../scripts/maintenance-cluster-identity.mjs');
+ const admin=new pg.Client({connectionString:url.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+ const identities=[];
+ await admin.connect();
+ try{
+  const {rows:[cluster]}=await admin.query('SELECT system_identifier::text FROM pg_control_system()');
+  for(const database of ['hardware_pos','hardware_pos_ars']){
+   // A name collision fails before cleanup is registered. Only drop databases created here.
+   await admin.query('CREATE DATABASE '+database);
+   try{
+    const databaseUrl=new URL(url);
+    databaseUrl.pathname='/'+database;
+    const connect=()=>new pg.Client({connectionString:databaseUrl.toString(),connectionTimeoutMillis:5000,query_timeout:5000});
+    const setup=connect();
+    await setup.connect();
+    try{
+     await setup.query('CREATE TABLE public.cluster_identity_fixture (id integer PRIMARY KEY)');
+    }finally{
+     await setup.end();
+    }
+    const client=connect();
+    await withMaintenanceSession(client,database,session=>withMaintenanceTableFence(client,session,async scope=>{
+     const identity=await readProtectedMaintenanceClusterIdentity(client,scope);
+     assert.deepEqual(identity,{database,systemIdentifier:cluster.system_identifier,databaseOid:scope.owner.databaseOid});
+     identities.push(identity);
+    }));
+   }finally{
+    await admin.query('DROP DATABASE '+database);
+   }
+  }
+  assert.notEqual(identities[0].databaseOid,identities[1].databaseOid);
+  assert.throws(()=>assertMaintenanceClusterMatch(...identities),/PostgreSQL cluster identity mismatch/);
+ }finally{
+  await admin.end();
+ }
+});
