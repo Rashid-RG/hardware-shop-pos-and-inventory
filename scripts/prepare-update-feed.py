@@ -29,6 +29,26 @@ def included(name):
         return False
     return True
 
+def verify_feed(root,version,public_key):
+    """Read-only verification of the exact signed public assets before publishing."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Invalid feed directory.")
+    for platform,name in (("windows","release.zip"),("linux-mint","release.tar.gz")):
+        folder=root/platform
+        if folder.is_symlink() or not folder.is_dir() or {p.name for p in folder.iterdir()}!={name,"manifest.json","manifest.sig"}:
+            raise ValueError("Unexpected feed inventory.")
+        archive,manifest,signature=(folder/n for n in (name,"manifest.json","manifest.sig"))
+        for path,limit in ((archive,512*1024*1024),(manifest,65536),(signature,16384)):
+            if path.is_symlink() or not path.is_file() or not 0<path.stat().st_size<=limit:
+                raise ValueError("Invalid feed asset.")
+        subprocess.run(["openssl","dgst","-sha256","-verify",str(public_key),"-signature",str(signature),str(manifest)],check=True)
+        data=json.loads(manifest.read_bytes())
+        with archive.open("rb") as stream:
+            digest=hashlib.file_digest(stream,"sha256").hexdigest()
+        if any(data.get(k)!=v for k,v in {"product":"ARS Distributor","platform":platform,"version":version,"sha256":digest}.items()):
+            raise ValueError("Signed feed asset mismatch.")
+    return True
+
 def prepare(commit,version,private_key,public_key,output):
     if not re.fullmatch(r"[a-f0-9]{40}",commit) or git("rev-parse","HEAD").decode().strip()!=commit:
         raise ValueError("Exact checked-out release commit required.")
@@ -85,6 +105,7 @@ def prepare(commit,version,private_key,public_key,output):
                 t.addfile(ti,io.BytesIO(data))
         for platform,archive in (("windows",windows),("linux-mint",mint)):
             signer.sign_release(platform,version,archive,private_key,public_key,stage/platform)
+        verify_feed(stage,version,public_key)
         # Only signed public artifacts are exported; never copy signing keys.
         (stage/"release-record.json").write_text(json.dumps({"commit":commit,"version":version,"published":False,"liveUpdatesApproved":False},sort_keys=True)+"\n")
         if os.path.lexists(output):

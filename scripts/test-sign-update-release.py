@@ -114,6 +114,14 @@ class ReleaseSigningTests(unittest.TestCase):
                 with tarfile.open(output/"linux-mint/release.tar.gz") as archive:
                     self.assertEqual(set(archive.getnames()),set(files)-{".env.local"})
                 self.assertFalse(json.loads((output/"release-record.json").read_text())["published"])
+                self.assertTrue(feed.verify_feed(output,"1.2.3",public))
+                payload=output/"windows/release.zip"
+                original=payload.read_bytes()
+                payload.write_bytes(original+b"tampered")
+                with self.assertRaisesRegex(ValueError,"Signed feed asset mismatch"):
+                    feed.verify_feed(output,"1.2.3",public)
+                payload.write_bytes(original)
+                self.assertTrue(feed.verify_feed(output,"1.2.3",public))
                 with self.assertRaises(FileExistsError):
                     feed.prepare(commit,"1.2.3",private,public,output)
                 with self.assertRaises(ValueError):
