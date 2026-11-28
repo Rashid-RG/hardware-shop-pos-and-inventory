@@ -46,6 +46,27 @@ function Select-Pointer([string]$Expected,[string]$Next,[string]$Retained) {
  Write-New $pending ([ordered]@{schema=1;switchId=$id;digest=$Next;activationAllowed=$false})
  [IO.File]::Replace($pending,$pointer,(Join-Path $root $Retained))
 }
+# Fixture-only continuation: reconstruct coordinator state from persisted
+# evidence instead of trusting the in-memory phase before interruption.
+function Resume-FixtureBoundary($Reviewed,[string]$Boundary,[string]$Next) {
+ $check=Confirm-ArsSwitchReview $root $Reviewed
+ if (-not $check.reviewMatched) {throw 'Stale fixture recovery review.'}
+ $current=Get-ArsSwitchInspection $root
+ if ($current.interruptionBoundary -cne $Boundary -or $current.evidenceInventory -cne $Reviewed.evidenceInventory) {throw 'Unexpected fixture recovery boundary.'}
+ $snapshot=Read-ArsSwitchSnapshot $journal
+ $inventory=$Reviewed.evidenceInventory|ConvertFrom-Json
+ if ($snapshot.digest -cne $inventory.'runtime-switch-journal.json') {throw 'Fixture journal changed.'}
+ if (($Boundary -ceq 'forward-pointer-replaced' -and $Next -cne 'switched') -or
+     ($Boundary -ceq 'rollback-pointer-replaced' -and $Next -cnotin @('rolled-back','manual-recovery-required'))) {throw 'Invalid fixture continuation.'}
+ $script:phase=$snapshot.record.phase
+ $script:sequence=$snapshot.record.sequence
+ $script:lastDigest=$snapshot.digest
+ $pointerBefore=(Read-ArsSwitchSnapshot $pointer).digest
+ Record-Phase $Next
+ $after=Get-ArsSwitchInspection $root
+ if ($after.historyVerified -ne $true -or $after.phase -cne $Next -or $after.startupAllowed -ne $false -or
+     (Read-ArsSwitchSnapshot $pointer).digest -cne $pointerBefore) {throw 'Fixture continuation verification failed.'}
+}
 function Test-ReleaseReadiness([string]$Actual,[string]$Expected) {
  & node (Join-Path $PSScriptRoot 'rehearse-release-http.mjs') $Actual $Expected 2>$null
  if ($LASTEXITCODE -eq 2) {return $false}
@@ -89,7 +110,11 @@ try {
  Select-Pointer $old $new 'runtime-previous.json'
  $interrupted=Get-ArsSwitchInspection $root
  if ($interrupted.state -cne 'pointer-conflict' -or $interrupted.interruptionBoundary -cne 'forward-pointer-replaced' -or $interrupted.startupAllowed -ne $false) {throw 'Interrupted transition not detected.'}
- Record-Phase 'switched'
+ # Simulate loss of volatile coordinator state.
+ $script:phase=''
+ $script:sequence=0
+ $script:lastDigest=''
+ Resume-FixtureBoundary $interrupted 'forward-pointer-replaced' 'switched'
  if ($HttpReadiness) {
   $candidateVersion=if ($Rollback) {'9.9.9'} else {'1.0.1'}
   $ready=Test-ReleaseReadiness $candidateVersion '1.0.1'
@@ -112,12 +137,18 @@ try {
    if ($ready -eq [bool]$FailedRollback) {throw 'Unexpected rollback readiness result.'}
   }
   if ($FailedRollback) {
-   Record-Phase 'manual-recovery-required'
+   $script:phase=''
+   $script:sequence=0
+   $script:lastDigest=''
+   Resume-FixtureBoundary $rollbackInterrupted 'rollback-pointer-replaced' 'manual-recovery-required'
    $failed=Get-ArsSwitchInspection $root
    if ($failed.state -cne 'manual-recovery-required' -or $failed.phase -cne 'manual-recovery-required' -or $failed.historyVerified -ne $true -or $failed.startupAllowed -ne $false) {throw 'Failed rollback evidence was not classified correctly.'}
    return
   }
-  Record-Phase 'rolled-back'
+  $script:phase=''
+  $script:sequence=0
+  $script:lastDigest=''
+  Resume-FixtureBoundary $rollbackInterrupted 'rollback-pointer-replaced' 'rolled-back'
  } else {Record-Phase 'completed'}
  $final=Get-ArsSwitchInspection $root
  if ($final.state -cne 'switch-review-required' -or $final.startupAllowed -ne $false -or $final.historyVerified -ne $true) {throw 'Final review state invalid.'}
