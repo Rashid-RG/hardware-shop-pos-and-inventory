@@ -84,6 +84,19 @@ class TrustedSwitchRecoveryTests(unittest.TestCase):
         self.assertEqual(review["switch-journal.json"], hashlib.sha256(self.journal.read_bytes()).hexdigest())
         self.assertTrue((self.root / "maintenance-hold.json").is_file())
 
+    def test_recovery_rechecks_evidence_after_snapshot_preparation(self):
+        from contextlib import contextmanager
+        original = recovery.publisher_snapshot
+        @contextmanager
+        def changed(*args, **kwargs):
+            with original(*args, **kwargs) as snapshot:
+                self.journal.write_bytes(self.journal.read_bytes() + b" ")
+                yield snapshot
+        with patch.object(recovery, "publisher_snapshot", side_effect=changed):
+            with self.assertRaisesRegex(ValueError, "changed before dispatch"):
+                recovery.recover(self.root, "resume")
+        self.assertFalse(self.dispatch.exists())
+
     def test_completed_selection_does_not_roll_back_automatically(self):
         self.record["phase"] = "switched"
         self.write_journal()

@@ -98,13 +98,22 @@ def requires_publisher(state, project):
 
 
 def read_record(path, *, maximum=65536):
+    if path.resolve(strict=True) != path:
+        raise ValueError("Linked switch evidence.")
+    def identity(info):
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
+                info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    before = path.lstat()
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or not 0 < info.st_size <= maximum:
             raise ValueError("Invalid switch evidence.")
         raw = stream.read(maximum + 1)
-        if len(raw) != info.st_size:
-            raise ValueError("Switch evidence changed.")
+        after = os.fstat(stream.fileno())
+    if (len(raw) != info.st_size or identity(before) != identity(info)
+            or identity(info) != identity(after) or identity(after) != identity(path.lstat())
+            or path.resolve(strict=True) != path):
+        raise ValueError("Switch evidence changed.")
     return raw
 
 
@@ -157,6 +166,10 @@ def recover(state, action, confirmation=None, expected_review=None, *, startup_c
     if action != "resume" and confirmation != CONFIRMATIONS[command]:
         raise ValueError("Explicit switch recovery confirmation required.")
     def dispatch(source, worker, *binding):
+        # Snapshot preparation can take time. Reject stale journal, hold, intent
+        # or pointer before launching even the authenticated worker.
+        if evidence(state, action) != (previous, phase, review):
+            raise ValueError("Switch evidence changed before dispatch.")
         if not worker.is_file():
             raise ValueError("Verified switch recovery tools are unavailable.")
         # The worker checks the reviewed digests after acquiring the maintenance and update locks.
