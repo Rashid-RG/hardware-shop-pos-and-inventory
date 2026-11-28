@@ -67,3 +67,13 @@ function Assert-ArsInstalledLifecycleStopped($Binding) {
   if (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue) {throw 'POS port still listening.'}
   $true
 }
+
+function Get-ArsInstalledLifecycleBinding([string]$Project,[string]$Control) {
+  $package=Join-Path $Project 'package.json'
+  Assert-ArsAdapterPlainPath $package
+  $item=Get-Item -LiteralPath $package -Force -ErrorAction Stop
+  if ($item.PSIsContainer -or $item.Length -lt 1 -or $item.Length -gt 65536) {throw 'Invalid installed package metadata.'}
+  $version=(Get-Content -LiteralPath $package -Raw | ConvertFrom-Json).version
+  if ($version -isnot [string]) {throw 'Invalid installed version.'}
+  New-ArsInstalledLifecycle $Project $Control $version
+}

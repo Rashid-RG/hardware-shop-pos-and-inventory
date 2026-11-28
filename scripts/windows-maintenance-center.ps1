@@ -9,6 +9,7 @@ $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
 . (Join-Path $PSScriptRoot 'windows-switch-inspection.ps1')
 . (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
+. (Join-Path $PSScriptRoot 'windows-installed-lifecycle.ps1')
 function Get-ArsUpdateInterruption([string]$Control) {
  if (-not (Test-Path -LiteralPath $Control)) {return}
  $entries=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop)
@@ -95,6 +96,17 @@ try {
     } else {
      [void][Windows.Forms.MessageBox]::Show('Evidence changed, is unavailable, or maintenance is busy. Reopen Maintenance Center for a fresh review. No recovery action performed.',$title,'OK','Warning')
     }
+   }
+   break
+  }
+  if ([Windows.Forms.MessageBox]::Show('Prepare a graceful POS shutdown for maintenance? Finish all billing first. PostgreSQL and business data will be retained.',$title,'YesNo','Question') -eq 'Yes') {
+   try {
+    $binding=Get-ArsInstalledLifecycleBinding $root $control
+    Stop-ArsInstalledLifecycle $binding
+    $null=Assert-ArsInstalledLifecycleStopped $binding
+    [void][Windows.Forms.MessageBox]::Show('Managed POS shutdown verified. Maintenance remains active; no update or database restore was applied.',$title,'OK','Information')
+   } catch {
+    [void][Windows.Forms.MessageBox]::Show('Shutdown was cancelled or could not be verified. Retain all maintenance evidence and contact RS Nextward if needed.',$title,'OK','Warning')
    }
    break
   }

@@ -7,7 +7,8 @@ try {
   [void][IO.Directory]::CreateDirectory($project)
   [void][IO.Directory]::CreateDirectory($control)
   [IO.File]::WriteAllText((Join-Path $project 'package.json'),'{"version":"1.2.3"}')
-  $binding=New-ArsInstalledLifecycle $project $control '1.2.3'
+  $binding=Get-ArsInstalledLifecycleBinding $project $control
+  if ($binding.version -cne '1.2.3') {throw 'Installed package binding failed.'}
   $rejected=$false
   try {$null=New-ArsInstalledLifecycle $project $control '1.2.4'} catch {$rejected=$true}
   if (-not $rejected) {throw 'Wrong installed version accepted.'}
