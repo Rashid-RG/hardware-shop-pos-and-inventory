@@ -24,7 +24,7 @@ async function main(){
  process.on('SIGINT',interrupt);process.on('SIGTERM',interrupt);
  try{
   await check();
-  const result=await runInstalledWindowsContinuousRecovery({root,destination:folder,signal:controller.signal});
+  const result=await runInstalledWindowsContinuousRecovery({root,destination:folder,signal:controller.signal,holdDigest,shutdownDigest});
   await check();
   if(controller.signal.aborted||result.finalReviewMatched!==true||result.sharedProtectionScopeObserved!==true||!/^[a-f0-9]{64}$/.test(result.restoreObservationDigest)||['applicationRemovalAllowed','databaseDeletionAllowed','serviceRemovalAllowed','activationAllowed','uninstalled','finalUninstallBackupVerified','continuousExclusionVerified'].some(k=>result[k]!==false))throw Error('Invalid recovery result.');
   console.log('ARS_RECOVERY='+JSON.stringify({...result,uninstallId:basename(folder)}));
