@@ -57,6 +57,57 @@ def execute(project,script,*args):
     else:
         notice("Preparation failed. Existing data was not deliberately removed.\nContact RS Nextward with local log: "+log.name,True)
 
+def check_signed_feed(project):
+    feed_file=STATE/"release-feed-url.txt"
+    trust=STATE/"release-signing-public.pem"
+    if any(path.is_symlink() or not path.is_file() for path in (feed_file,trust)):
+        notice("The trusted update feed and release key must be configured by RS Nextward.",True)
+        return
+    try:
+        with feed_file.open() as source:
+            feed=source.read(2049).strip()
+        version=json.loads((project/"package.json").read_text())["version"]
+        if not feed or len(feed)>2048:
+            raise ValueError("Invalid update feed.")
+    except (OSError,ValueError,KeyError,TypeError):
+        notice("The trusted update feed configuration is invalid.",True)
+        return
+    command=[str(STATE/"node"),str(project/"scripts/download-signed-update.mjs"),
+             feed,"linux-mint",version,str(trust)]
+
+    def run_feed(message,*args):
+        progress=subprocess.Popen(["zenity","--progress","--pulsate","--no-cancel",
+                                   "--title="+TITLE,"--text="+message],stdin=subprocess.PIPE)
+        try:
+            result=subprocess.run([*command,*args],cwd=project,capture_output=True,text=True,
+                                  check=True,timeout=340)
+            return json.loads(result.stdout)
+        finally:
+            if progress.poll() is None:
+                progress.terminate()
+            progress.wait()
+
+    try:
+        release=run_feed("Checking the signed update feed.")
+        if release.get("available") is not True:
+            notice("No newer signed update is available for this release.")
+            return
+        found=release["version"]
+        if dialog("--question","--no-markup","--text=Download and prepare signed update "+found+"?",
+                  "--ok-label=Download and prepare","--cancel-label=Cancel").returncode!=0:
+            return
+        with tempfile.TemporaryDirectory(prefix="ars-update-download-") as temporary:
+            bundle=Path(temporary)/"bundle"
+            downloaded=run_feed("Downloading and verifying the signed update.",str(bundle))
+            if downloaded.get("available") is not True or downloaded.get("version")!=found:
+                notice("The feed changed. Check for updates again before preparing a release.",True)
+                return
+            execute(project,"stage-update.py",*(str(bundle/name) for name in
+                    ("manifest.json","manifest.sig","release.tar.gz")))
+    except (OSError,ValueError,KeyError,subprocess.SubprocessError):
+        notice("The update feed could not be verified or downloaded. Check the feed configuration and connection.",True)
+
+
 def switch_intent_review(project):
     """Review or cancel intent without changing the installed release."""
     while True:
@@ -353,10 +404,12 @@ def main():
                 offline_release_center(project)
                 return
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
-                          "Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Offline Release Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
+                          "Check for signed updates","Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Offline Release Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")
             if choice.returncode!=0 or choice.stdout.strip()=="Close": return
             action=choice.stdout.strip()
-            if action=="Prepare signed release":
+            if action=="Check for signed updates":
+                check_signed_feed(project)
+            elif action=="Prepare signed release":
                 if not (STATE/"release-signing-public.pem").is_file():
                     notice("Trusted release signing key is not configured. Contact RS Nextward.",True)
                     continue
