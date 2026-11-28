@@ -57,7 +57,7 @@ async function main(){
     assertFingerprintMatch(before,await fingerprintPublicTables(client));
     if(JSON.stringify(evidence())!==JSON.stringify(shutdown))throw Error('Shutdown evidence changed during protected backup.');
     await assertActive();
-    const manifest={...shutdown,schema:1,kind:'windows-uninstall-table-manifest',archive:basename(result.archive),dumpSha256:result.sha256,tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
+    const manifest={...shutdown,schema:1,kind:'windows-uninstall-table-manifest',sourceDatabase:scope.owner.database,archive:basename(result.archive),dumpSha256:result.sha256,tables:before,locksObserved:true,applicationRemovalAllowed:false,continuousExclusionVerified:false};
     const fd=openSync(join(destination,'uninstall-table-manifest.json'),'wx',0o600);
     try{writeFileSync(fd,JSON.stringify(manifest)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
    }
