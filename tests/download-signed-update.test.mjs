@@ -65,8 +65,11 @@ test('signed downloads work over real TLS and reject an untrusted certificate', 
   version: '2.0.0', sha256: createHash('sha256').update(payload).digest('hex')}));
  const routes = new Map([['/manifest.json', manifest], ['/manifest.sig', sign('sha256', manifest, privateKey)],
   ['/release.tar.gz', payload]]);
+ const publicStatus = {product: 'ARS Distributors', channel: 'production', status: 'published', version: '2.0.0',
+  commit: 'a'.repeat(40), platforms: ['windows', 'linux-mint']};
+ routes.set('/status.json', Buffer.from(JSON.stringify(publicStatus)));
  for (const [platform, archive] of [['linux-mint', 'release.tar.gz'], ['windows', 'release.zip']]) {
-  const platformManifest = Buffer.from(JSON.stringify({product: 'ARS Distributor', platform, version: '2.0.0',
+  const platformManifest = Buffer.from(JSON.stringify({product: 'ARS Distributor', platform, version: '2.0.0', commit: 'a'.repeat(40),
    sha256: createHash('sha256').update(payload).digest('hex')}));
   routes.set('/' + platform + '/manifest.json', platformManifest);
   routes.set('/' + platform + '/manifest.sig', sign('sha256', platformManifest, privateKey));
@@ -95,6 +98,12 @@ test('signed downloads work over real TLS and reject an untrusted certificate', 
    version: '2.0.0', platforms: ['windows', 'linux-mint'], signaturesVerified: true, archivesVerified: true
   });
   await assert.rejects(run(process.execPath, [verifier, url, '2.0.1', trust], trusted), /does not match the approved release/);
+  const exact = await run(process.execPath, [verifier, url, '2.0.0', trust, 'a'.repeat(40)], trusted);
+  assert.equal(JSON.parse(exact.stdout).commit, 'a'.repeat(40));
+  assert.equal(JSON.parse(exact.stdout).statusVerified, true);
+  await assert.rejects(run(process.execPath, [verifier, url, '2.0.0', trust, 'b'.repeat(40)], trusted), /commit does not match/);
+  routes.set('/status.json', Buffer.from(JSON.stringify({...publicStatus, version: '2.0.1'})));
+  await assert.rejects(run(process.execPath, [verifier, url, '2.0.0', trust, 'a'.repeat(40)], trusted), /status does not match/);
   routes.set('/windows/release.zip', Buffer.from('tampered'));
   await assert.rejects(run(process.execPath, [verifier, url, '2.0.0', trust], trusted), /windows: Update archive checksum mismatch/);
  } finally {

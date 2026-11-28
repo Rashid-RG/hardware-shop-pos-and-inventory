@@ -47,7 +47,12 @@ async function collect(body) {
  return Buffer.concat(chunks);
 }
 
-export async function fetchSignedUpdate({feed, platform, currentVersion, expectedVersion, publicKey, output}) {
+export async function fetchUpdateFeedStatus(base) {
+ const raw = await fetchAsset(base, 'status.json', 4096, collect, 15000);
+ return JSON.parse(raw.toString('utf8'));
+}
+
+export async function fetchSignedUpdate({feed, platform, currentVersion, expectedVersion, expectedCommit, publicKey, output}) {
  const base = new URL(feed);
  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || !base.pathname.endsWith('/')) {
   throw Error('Expected a trusted HTTPS release directory URL ending in /.');
@@ -58,6 +63,10 @@ export async function fetchSignedUpdate({feed, platform, currentVersion, expecte
   throw Error('Specify the installed version or the exact expected release version.');
  }
  stableVersion(currentVersion ?? expectedVersion);
+ if (expectedCommit !== undefined && (expectedVersion === undefined ||
+     typeof expectedCommit !== 'string' || !/^[a-f0-9]{40}$/.test(expectedCommit))) {
+  throw Error('An exact approved commit must accompany the expected release version.');
+ }
  const key = await readFile(publicKey);
  const [manifest, signature] = await Promise.all([
   fetchAsset(base, 'manifest.json', 65536, collect, 15000),
@@ -71,6 +80,9 @@ export async function fetchSignedUpdate({feed, platform, currentVersion, expecte
  }
  if (expectedVersion !== undefined) {
   if (release.version !== expectedVersion) throw Error('Published update version does not match the approved release.');
+  if (expectedCommit !== undefined && release.commit !== expectedCommit) {
+   throw Error('Published update commit does not match the approved release.');
+  }
  } else if (!isNewer(currentVersion, release.version)) return {available: false};
  if (output === undefined) return {available: true, version: release.version};
 

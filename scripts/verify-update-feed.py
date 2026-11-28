@@ -28,7 +28,7 @@ def main():
         spec=importlib.util.spec_from_file_location("feed",Path(__file__).with_name("prepare-update-feed.py"))
         feed=importlib.util.module_from_spec(spec)
         spec.loader.exec_module(feed)
-        feed.verify_feed(args.feed,args.version,args.public_key)
+        feed.verify_feed(args.feed,args.version,args.public_key,commit=data["commit"])
     except (OSError,ValueError,TypeError,AttributeError,subprocess.SubprocessError) as error:
         sys.exit("Feed verification failed: "+str(error))
     print(json.dumps({"version":args.version,"platforms":["windows","linux-mint"],"signaturesVerified":True,"publicationAuthorized":False,"liveUpdatesApproved":False}))

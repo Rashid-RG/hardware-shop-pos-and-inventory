@@ -14,7 +14,7 @@ ARCHIVES = {"windows": "release.zip", "linux-mint": "release.tar.gz"}
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 
 
-def sign_release(platform, version, archive, private_key, public_key, output, notes=""):
+def sign_release(platform, version, archive, private_key, public_key, output, notes="", commit=None):
     if platform not in ARCHIVES or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version):
         raise ValueError("Invalid platform or version.")
     archive_name = ARCHIVES[platform]
@@ -22,6 +22,8 @@ def sign_release(platform, version, archive, private_key, public_key, output, no
         raise ValueError("Archive format does not match the target updater.")
     if len(notes) > 1200:
         raise ValueError("Release notes must be at most 1200 characters.")
+    if commit is not None and not re.fullmatch(r"[a-f0-9]{40}", commit):
+        raise ValueError("Exact release commit required.")
     if not private_key.is_file() or not public_key.is_file():
         raise ValueError("Both the authorized private key and the installed public trust key are required.")
 
@@ -42,10 +44,13 @@ def sign_release(platform, version, archive, private_key, public_key, output, no
 
         manifest = output / "manifest.json"
         signature = output / "manifest.sig"
-        manifest.write_text(json.dumps({
+        record = {
             "product": "ARS Distributor", "platform": platform,
             "version": version, "sha256": digest.hexdigest(), "notes": notes,
-        }, sort_keys=True) + "\n", encoding="utf-8")
+        }
+        if commit is not None:
+            record["commit"] = commit
+        manifest.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
         subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(private_key),
                         "-out", str(signature), str(manifest)], check=True)
         if not 0 < signature.stat().st_size <= 16384:

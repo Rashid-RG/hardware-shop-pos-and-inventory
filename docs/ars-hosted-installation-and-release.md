@@ -218,12 +218,33 @@ Run these commands once for a new key. Keep an encrypted offline recovery copy,
 and verify the public key independently before installing it on shop computers.
 After owner approval, use `scripts/prepare-update-feed.py` on that workstation to
 build the signed Windows and Mint bundles from the approved commit.
-Publish both platform directories together in the same site deployment.
-Check the published archives with only the public key before provisioning the
+Prepare a publication commit after approval. This command verifies both signed
+manifests against the approved application commit and writes one Git commit
+containing the signed downloads and the new site status.
+
+```bash
+git fetch origin ars-production-update-feed
+python3 scripts/prepare-update-publication.py \
+  --feed /path/to/signed-bundles \
+  --approved-commit APPROVED_APPLICATION_COMMIT \
+  --feed-base "$(git rev-parse FETCH_HEAD)" \
+  --public-key /path/to/release-signing-public.pem
+```
+
+Review the returned `publicationCommit` with `git show --stat`, then push it
+to the feed branch with a normal fast-forward push and deploy the site in
+Render. If the feed branch changed during preparation, fetch the new head,
+review the changes, and prepare the commit again.
+
+```bash
+git push origin PUBLICATION_COMMIT:refs/heads/ars-production-update-feed
+```
+
+Check both published archives with only the public key before provisioning the
 feed URL on shop computers.
 
 ```bash
 node scripts/verify-published-update-feed.mjs \
   https://ars-distributors-updates.onrender.com/ APPROVED_VERSION \
-  /path/to/release-signing-public.pem
+  /path/to/release-signing-public.pem APPROVED_APPLICATION_COMMIT
 ```

@@ -23,6 +23,82 @@ mint_spec.loader.exec_module(mint_updater)
 
 
 class ReleaseSigningTests(unittest.TestCase):
+    def test_publication_prepares_one_complete_commit_without_moving_the_branch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            repo.mkdir()
+
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=repo)
+
+            git("init", "-q")
+            git("config", "user.name", "ARS release test")
+            git("config", "user.email", "release-test@example.invalid")
+            (repo / "package.json").write_text('{"version":"1.2.3"}')
+            git("add", "package.json")
+            git("commit", "-qm", "Application release")
+            application = git("rev-parse", "HEAD").decode().strip()
+            git("switch", "-qc", "feed")
+            git("rm", "-q", "package.json")
+            (repo / "feed").mkdir()
+            (repo / "feed/index.html").write_text("<!doctype html><title>Updates</title>")
+            (repo / "feed/status.json").write_text(json.dumps({
+                "product": "ARS Distributors", "channel": "production", "status": "awaiting-signed-release"
+            }))
+            git("add", "feed")
+            git("commit", "-qm", "Update site")
+            base = git("rev-parse", "HEAD").decode().strip()
+
+            private, public = root / "private.pem", root / "public.pem"
+            subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                            "ec_paramgen_curve:P-256", "-out", str(private)], check=True)
+            subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)], check=True)
+            signed = root / "signed"
+            signed.mkdir()
+            (signed / "release-record.json").write_text(json.dumps({
+                "version": "1.2.3", "commit": application, "published": False, "liveUpdatesApproved": False
+            }))
+            for platform, archive in signer.ARCHIVES.items():
+                asset = root / archive
+                asset.write_bytes(platform.encode())
+                signer.sign_release(platform, "1.2.3", asset, private, public, signed / platform, commit=application)
+
+            def prepare(feed_base):
+                return subprocess.run([
+                    sys.executable, str(Path(__file__).resolve().with_name("prepare-update-publication.py")),
+                    "--feed", str(signed), "--approved-commit", application, "--feed-base", feed_base,
+                    "--public-key", str(public),
+                ], cwd=repo, capture_output=True, text=True)
+
+            (repo / "feed/index.html").write_text("Uncommitted change")
+            git("add", "feed/index.html")
+            success = prepare(base)
+            self.assertEqual(success.returncode, 0, success.stderr)
+            publication = json.loads(success.stdout)["publicationCommit"]
+            self.assertEqual(git("rev-parse", publication + "^").decode().strip(), base)
+            self.assertEqual(git("rev-parse", "HEAD").decode().strip(), base)
+            self.assertEqual(git("show", ":feed/index.html"), b"Uncommitted change")
+            self.assertEqual(git("show", publication + ":feed/index.html"), b"<!doctype html><title>Updates</title>")
+            self.assertEqual(json.loads(git("show", publication + ":feed/status.json"))["version"], "1.2.3")
+            expected = {f"feed/{platform}/{name}" for platform, archive in signer.ARCHIVES.items()
+                        for name in (archive, "manifest.json", "manifest.sig")}
+            self.assertEqual(set(git("diff", "--name-only", base, publication).decode().splitlines()),
+                             expected | {"feed/status.json"})
+            for platform, archive in signer.ARCHIVES.items():
+                self.assertEqual(git("show", f"{publication}:feed/{platform}/{archive}"), platform.encode())
+            self.assertIn("advance the production version", prepare(publication).stderr)
+            extra = signed / "private.pem"
+            extra.write_bytes(private.read_bytes())
+            self.assertIn("inventory", prepare(base).stderr)
+            extra.unlink()
+            mint = signed / "linux-mint"
+            shutil.rmtree(mint)
+            signer.sign_release("linux-mint", "1.2.3", root / "release.tar.gz", private, public, mint, commit="9" * 40)
+            result = prepare(base)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Signed feed commit mismatch", result.stderr)
+
     def test_platform_bundles_and_tamper_rejection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
