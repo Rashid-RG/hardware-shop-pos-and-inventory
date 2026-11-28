@@ -69,6 +69,7 @@ class FixtureDatabase extends EventEmitter{
  async end(){this.closed=true;this.emit('end');}
  async query(sql){
   if(sql==='SELECT current_database() AS name')return {rows:[{name:this.database}]};
+  if(sql.includes('FROM pg_control_system()'))return {rows:[{database:this.database,system_identifier:'18446744073709551615',database_oid:this.clusterDatabaseOid??'12345'}]};
   if(sql.includes('pg_try_advisory_lock'))return {rows:[{acquired:true}]};
   return {rows:[{pid:this.pid,started:'2026-01-01 00:00:00.123456+00',database:this.database,database_oid:'12345',locks:3}]};
  }
@@ -140,6 +141,7 @@ const stageDestination=join(dir,'stage-recovery');
 await mkdir(stageScripts,{recursive:true});
 await mkdir(stageDestination);
 await copyFile(fileURLToPath(new URL('./windows-maintenance-backup-worker.ps1',import.meta.url)),join(stageScripts,'windows-maintenance-backup-worker.ps1'));
+await copyFile(fileURLToPath(new URL('./windows-docker-cluster-identity.ps1',import.meta.url)),join(stageScripts,'windows-docker-cluster-identity.ps1'));
 const producer=join(stageScripts,'backup-local-postgres.ps1');
 await writeFile(producer,[
  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)',
@@ -205,16 +207,21 @@ try{
  const destination=join(await realpath(dir),'verified-recovery');
  await mkdir(destination);
  await writeFile(producer,[
-  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)',
+  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser,[string]$ExpectedSystemIdentifier,[string]$ExpectedDatabaseOid)',
   '$ErrorActionPreference="Stop"',
  'if (-not $PreserveExistingArchives) { throw "Protected retention required" }',
+  'if ($ExpectedSystemIdentifier -cne "18446744073709551615" -or $ExpectedDatabaseOid -cne "12345") { throw "Protected cluster identity required" }',
   '$archive=Join-Path $Destination "ars-hardware_pos-verified-fixture.dump"',
   '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
   'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
  ].join('\r\n'));
- const invoke=()=>withMaintenanceSession(new FixtureDatabase('hardware_pos'),'hardware_pos',session=>
-  runVerifiedInstalledWindowsBackup(session,{root:installedRoot,destination,timeoutMs:15000})
- );
+ const invoke=(databaseOid='12345')=>{
+  const client=new FixtureDatabase('hardware_pos');
+  client.clusterDatabaseOid=databaseOid;
+  return withMaintenanceSession(client,'hardware_pos',session=>
+   runVerifiedInstalledWindowsBackup(client,session,{root:installedRoot,destination,timeoutMs:15000})
+  );
+ };
  const result=await invoke();
  assert.equal(result.installationIdentityDigest,digest(identityRaw));
  assert.equal(result.packageManifestDigest,digest(manifestRaw));
@@ -223,6 +230,8 @@ try{
  for(const field of ['signatureVerified','applicationTreeReverified','applicationRemovalAllowed','databaseDeletionAllowed','activationAllowed','continuousExclusionVerified'])assert.equal(result[field],false);
  const files=await readdir(destination);
  const resultRaw=await readFile(join(destination,result.resultName));
+ await assert.rejects(invoke('12346'),/Protected database identity mismatch/);
+ assert.deepEqual(await readdir(destination),files);
  await writeFile(identityPath,JSON.stringify({...identity,desktopSid:sid==='S-1-5-18'?'S-1-5-19':'S-1-5-18'}));
  await assert.rejects(invoke(),/identity does not match/);
  await writeFile(identityPath,identityRaw);
@@ -330,7 +339,6 @@ console.log('Strict native backup database, container and user binding checks pa
 
 // Exercise cluster identity transmission across Node, native supervisor,
 // PowerShell worker and a disposable producer, without invoking Docker.
-await copyFile(fileURLToPath(new URL('./windows-docker-cluster-identity.ps1',import.meta.url)),join(stageScripts,'windows-docker-cluster-identity.ps1'));
 for(const database of ['hardware_pos','hardware_pos_ars']){
  const destination=join(dir,'cluster-'+database);
  await mkdir(destination);

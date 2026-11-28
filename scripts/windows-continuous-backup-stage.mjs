@@ -38,7 +38,7 @@ export async function runWindowsContinuousBackupStage(client,scope,{root,destina
  try{await lstat(manifestPath);throw Error('Existing recovery manifest must be retained.');}catch(error){if(error.code!=='ENOENT')throw error;}
  const before=await fingerprintPublicTables(client);
  await check();await unchanged();
- const backup=await runVerifiedInstalledWindowsBackup(scope,{root,destination});
+ const backup=await runVerifiedInstalledWindowsBackup(client,scope,{root,destination});
  await check();
  if(dirname(backup.archive).toLowerCase()!==destination.toLowerCase()||!new RegExp('^ars-'+database+'-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\\.dump$').test(basename(backup.archive)))throw Error('Complete matching backup required.');
  assertFingerprintMatch(before,await fingerprintPublicTables(client));

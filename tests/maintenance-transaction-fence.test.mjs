@@ -17,7 +17,7 @@ test('maintenance wrappers retain exclusive transaction fence before table locks
  }
  assert.match(windows,/withMaintenanceSession\(client,config\.database,session=>withMaintenanceTableFence\(client,session,/);
  const protectedScope=windows.indexOf('session=>withMaintenanceTableFence(client,session,');
- const backup=windows.indexOf('await runVerifiedInstalledWindowsBackup(scope,');
+ const backup=windows.indexOf('await runVerifiedInstalledWindowsBackup(client,scope,');
  const manifest=windows.indexOf("openSync(join(destination,'uninstall-table-manifest.json')");
  assert.ok(protectedScope>=0&&backup>protectedScope&&manifest>backup);
  assert.match(windows,/await fence\.assertActive\(\)/);

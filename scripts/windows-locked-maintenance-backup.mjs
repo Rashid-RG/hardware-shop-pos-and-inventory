@@ -51,7 +51,7 @@ async function main(){
    const before=uninstall?await fingerprintPublicTables(client):null;
    if(uninstall&&JSON.stringify(evidence())!==JSON.stringify(shutdown))throw Error('Shutdown evidence changed before protected backup.');
    await assertActive();
-   const result=await runVerifiedInstalledWindowsBackup(scope,{root,destination});
+   const result=await runVerifiedInstalledWindowsBackup(client,scope,{root,destination});
    await assertActive();
    if(uninstall){
     assertFingerprintMatch(before,await fingerprintPublicTables(client));

@@ -23,6 +23,6 @@ test('server and maintenance acquire gate before writer lease and fail closed',(
  assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
  assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
  assert.match(windows,/withMaintenanceSession\(client,config\.database,session=>withMaintenanceTableFence\(client,session,/);
- assert.match(windows,/await runVerifiedInstalledWindowsBackup\(scope,\{root,destination\}\)/);
+ assert.match(windows,/await runVerifiedInstalledWindowsBackup\(client,scope,\{root,destination\}\)/);
  assert.doesNotMatch(windows,/\bspawn\s*\(/);
 });

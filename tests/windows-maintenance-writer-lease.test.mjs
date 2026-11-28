@@ -16,7 +16,7 @@ test('Windows final backup holds application writer lease and table locks throug
  assert.ok(fence.indexOf('IN SHARE MODE NOWAIT')<fence.indexOf('await work('));
  assert.match(fence,/finally\{[\s\S]*await client\.query\('ROLLBACK'\)/);
  assert.match(session,/finally\{[\s\S]*await client\.end\(\)/);
- assert.match(s,/await runVerifiedInstalledWindowsBackup\(scope,\{root,destination\}\)/);
+ assert.match(s,/await runVerifiedInstalledWindowsBackup\(client,scope,\{root,destination\}\)/);
  assert.match(p,/windows-locked-maintenance-backup\.mjs/);
  assert.match(p,/externalWritersExcluded=\$false/);
  assert.match(p,/activationApproved=\$false/);
