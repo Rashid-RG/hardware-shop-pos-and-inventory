@@ -17,10 +17,13 @@ def simulate_switch(root, service, backup):
         record["phase"]=value
         write_journal(root,record)
     phase("prepared")
-    service.stop()
-    if not service.stopped():
+    try:
+        service.stop()
+        if not service.stopped():
+            raise RuntimeError("Cannot confirm shutdown.")
+    except Exception:
         phase("shutdown-unconfirmed")
-        raise RuntimeError("Cannot confirm shutdown.")
+        raise
     try:
         phase("stopped")
         if backup() is not True:
@@ -35,19 +38,20 @@ def simulate_switch(root, service, backup):
         return "updated"
     except Exception:
         phase("rollback-required")
-        service.stop()
-        if not service.stopped():
+        try:
+            service.stop()
+            if not service.stopped():
+                raise RuntimeError("Cannot safely reverse while service may be running.")
+            if pointer.resolve()==new:
+                switch_pointer(pointer,new,old)
+            elif pointer.resolve()!=old:
+                raise RuntimeError("Unexpected release pointer.")
+            phase("previous-selected")
+            service.start()
+            if not service.ready():
+                raise RuntimeError("Previous version failed readiness.")
+        except Exception:
             phase("manual-recovery-required")
-            raise RuntimeError("Cannot safely reverse while service may be running.")
-        if pointer.resolve()==new:
-            switch_pointer(pointer,new,old)
-        elif pointer.resolve()!=old:
-            phase("manual-recovery-required")
-            raise RuntimeError("Unexpected release pointer.")
-        phase("previous-selected")
-        service.start()
-        if not service.ready():
-            phase("manual-recovery-required")
-            raise RuntimeError("Previous version failed readiness.")
+            raise
         phase("rolled-back")
         return "rolled-back"
