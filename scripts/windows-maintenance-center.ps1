@@ -7,16 +7,29 @@ $title='RS Nextward | ARS Distributor Maintenance Center'
 . (Join-Path $PSScriptRoot 'windows-uninstall-preview.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-activation-plan.ps1')
 . (Join-Path $PSScriptRoot 'windows-repair-interruption.ps1')
+. (Join-Path $PSScriptRoot 'windows-switch-inspection.ps1')
+function Get-ArsUpdateInterruption([string]$Control) {
+ if (-not (Test-Path -LiteralPath $Control)) {return}
+ $entries=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop)
+ $markers=@($entries | Where-Object {
+  $_.Name -in @('runtime-switch-journal.json','runtime-switch-intent.json','runtime-active.json',
+    'runtime-previous.json','runtime-failed-candidate.json','handoff-pending.json',
+    'runtime-activation-interrupted.json') -or $_.Name -like 'runtime-switch-pending-*' -or
+    $_.Name -like 'journal-history-*'
+ })
+ if ($markers.Count) {Get-ArsSwitchInspection $Control}
+}
 function Get-ArsMaintenanceSummary {
  $control=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor\desktop-control'
  $held=$false
+ $interruption=Get-ArsUpdateInterruption $control
  foreach ($name in @('maintenance.json','runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json','repair-interrupted.json')) {
   if (Test-Path -LiteralPath (Join-Path $control $name)) { $held=$true }
  }
  $build=(Test-Path -LiteralPath (Join-Path $root 'dist/server.cjs') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $root 'dist/index.html') -PathType Leaf)
  $config=Test-Path -LiteralPath (Join-Path $root '.env.local') -PathType Leaf
  $ready=$false
- if (-not $held) {
+ if (-not $held -and -not $interruption) {
   try {
    $request=[Net.HttpWebRequest]::Create('http://127.0.0.1:3000/api/ready')
    $request.Proxy=$null
@@ -39,7 +52,7 @@ function Get-ArsMaintenanceSummary {
  @(
   ('Production files: '+$(if ($build) {'Present'} else {'Review required'}))
   ('Runtime configuration: '+$(if ($config) {'Present (not validated)'} else {'Review required'}))
-  ('Maintenance evidence: '+$(if ($held) {'Review required'} else {'No listed marker found'}))
+  ('Maintenance evidence: '+$(if ($held -or $interruption) {'Review required'} else {'No listed marker found'}))
   ('Database readiness: '+$(if ($ready) {'Endpoint reports ready'} else {'Not confirmed'}))
   ''
   'Diagnostics and isolated repair preparation. Repair activation and uninstall remain locked.'
@@ -55,6 +68,20 @@ try {
    } catch {
     [void][Windows.Forms.MessageBox]::Show('Interruption evidence could not be verified. Marker retained. No startup or rollback performed.',$title,'OK','Error')
    }
+   break
+  }
+  $interruption=Get-ArsUpdateInterruption $control
+  if ($interruption) {
+   $reason=switch ($interruption.state) {
+    'manual-recovery-required' {'The previous release did not pass readiness after rollback.'}
+    'pointer-conflict' {'The selected release differs from the recorded switch phase.'}
+    'incomplete-switch-evidence' {'The update journal or release selection record is missing.'}
+    'switch-review-required' {"Recorded phase: $($interruption.phase). Review is required before startup."}
+    default {'Update evidence could not be verified.'}
+   }
+   $null=Show-ArsSetupPage 'Interrupted update review' ($reason+[Environment]::NewLine+[Environment]::NewLine+
+    'Keep billing stopped. Contact RS Nextward support and retain the backup and update records.'+
+    [Environment]::NewLine+[Environment]::NewLine+'Update records: '+$control) 'Close'
    break
   }
   if ([Windows.Forms.MessageBox]::Show('Open the data-preserving Uninstall Wizard preview?',$title,'YesNo','Question') -eq 'Yes') {

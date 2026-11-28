@@ -13,7 +13,7 @@ function Get-ArsSwitchInspection([string]$Control) {
     $pointer=@($entries | Where-Object {$_.Name -ieq 'runtime-active.json'})
     $pending=@($entries | Where-Object {$_.Name -like 'runtime-switch-pending-*' -or $_.Name -ieq 'runtime-previous.json' -or $_.Name -ieq 'runtime-failed-candidate.json'})
     $history=@($entries | Where-Object {$_.Name -like 'journal-history-*'})
-    $other=@($entries | Where-Object {$_.Name -in @('handoff-pending.json','maintenance-shutdown.json','runtime-switch-intent.json')})
+    $other=@($entries | Where-Object {$_.Name -in @('handoff-pending.json','maintenance-shutdown.json','runtime-switch-intent.json','runtime-activation-interrupted.json')})
     if ($journal.Count -eq 0 -and $pointer.Count -eq 0 -and $pending.Count -eq 0 -and $history.Count -eq 0 -and $other.Count -eq 0) { $blocked.state='no-switch-evidence';return [pscustomobject]$blocked }
     if ($journal.Count -ne 1 -or $pointer.Count -ne 1) { $blocked.state='incomplete-switch-evidence';return [pscustomobject]$blocked }
     foreach ($f in @($journal[0],$pointer[0])) {
@@ -49,8 +49,10 @@ function Get-ArsSwitchInspection([string]$Control) {
     $again=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {$_.Name -like 'journal-history-*'})
     if ($again.Count -ne $history.Count -or (Get-FileHash -LiteralPath $pointer[0].FullName -Algorithm SHA256).Hash -cne $phash) {throw 'Switch evidence changed.'}
     $blocked['historyVerified']=$true
+    $blocked['phase']=$j.phase
     $expected=if ($j.phase -cin @('prepared','rolled-back','manual-recovery-required')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}
     if ($p.digest -cnotin @($j.previousDigest,$j.candidateDigest) -or ($expected -and $p.digest -cne $expected)) { $blocked.state='pointer-conflict' }
+    elseif ($j.phase -ceq 'manual-recovery-required') { $blocked.state='manual-recovery-required' }
     else { $blocked.state='switch-review-required' }
     return [pscustomobject]$blocked
   } catch { return [pscustomobject]$blocked }

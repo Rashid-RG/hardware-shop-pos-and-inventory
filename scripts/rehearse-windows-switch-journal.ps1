@@ -111,7 +111,8 @@ try {
   }
   if ($FailedRollback) {
    Record-Phase 'manual-recovery-required'
-   if ((Get-ArsSwitchInspection $root).startupAllowed -ne $false) {throw 'Failed rollback authorized startup.'}
+   $failed=Get-ArsSwitchInspection $root
+   if ($failed.state -cne 'manual-recovery-required' -or $failed.phase -cne 'manual-recovery-required' -or $failed.historyVerified -ne $true -or $failed.startupAllowed -ne $false) {throw 'Failed rollback evidence was not classified correctly.'}
    return
   }
   Record-Phase 'rolled-back'
