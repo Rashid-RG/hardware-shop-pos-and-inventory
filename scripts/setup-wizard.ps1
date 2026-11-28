@@ -18,6 +18,15 @@ function New-Secret {
  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
  return [BitConverter]::ToString($bytes).Replace('-','').ToLowerInvariant()
 }
+function Get-ArsReleaseTrustBytes {
+ $pem=Get-Content -LiteralPath (Join-Path $root 'release-trust\release-signing-public.pem') -Raw
+ if ($pem -notmatch '\A-----BEGIN PUBLIC KEY-----\r?\n([A-Za-z0-9+/=\r\n]+)-----END PUBLIC KEY-----\s*\z') { throw 'Invalid RS Nextward public key.' }
+ $der=[Convert]::FromBase64String($Matches[1])
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try { $fingerprint=[BitConverter]::ToString($sha.ComputeHash($der)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+ if ($fingerprint -cne '5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6') { throw 'RS Nextward public key fingerprint mismatch.' }
+ return [Text.Encoding]::ASCII.GetBytes($pem)
+}
 function Assert-FreshFiles {
  foreach ($name in @('.env.local','uploads','backups')) {
   if (Test-Path -LiteralPath (Join-Path $root $name)) { throw 'Existing runtime detected. Fresh setup is blocked.' }
@@ -55,6 +64,7 @@ try {
  . (Join-Path $PSScriptRoot 'windows-setup-stage.ps1')
  if (-not (Show-ArsSetupPage 'Welcome to Setup' ('Thank you for choosing RS Nextward.'+[Environment]::NewLine+'Welcome to ARS Distributor 1.0 Pilot Setup. Internet access is required. Setup checks Node.js 22 and Docker Desktop and can install missing components.'))) { return }
  Assert-FreshFiles
+ [void](Get-ArsReleaseTrustBytes)
  $terms=Get-Content -LiteralPath (Join-Path $root 'docs\pilot-installation-terms.txt') -Raw
  if (-not (Show-ArsSetupPage 'Installation agreement' $terms 'Accept and continue' -Agreement)) { return }
  . (Join-Path $PSScriptRoot 'windows-prerequisites.ps1')
@@ -132,6 +142,9 @@ try {
  . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
  $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
  [void][IO.Directory]::CreateDirectory($state)
+ $trustBytes=[byte[]](Get-ArsReleaseTrustBytes)
+ $trustStream=[IO.File]::Open((Join-Path $state 'release-signing-public.pem'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+ try { $trustStream.Write($trustBytes,0,$trustBytes.Length) } finally { $trustStream.Dispose() }
  . (Join-Path $PSScriptRoot 'windows-install-recovery-tools.ps1')
  Install-ArsRecoveryTools $root $state
  Write-ArsDesktopRegistration $root $state $desktop $programs
