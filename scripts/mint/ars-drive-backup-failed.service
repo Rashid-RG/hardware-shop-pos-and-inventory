@@ -1,6 +1,0 @@
-[Unit]
-Description=Notify the ARS desktop user when a backup fails
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/zenity --notification --text="ARS Distributor backup failed. Open the Update Center and check backup history."

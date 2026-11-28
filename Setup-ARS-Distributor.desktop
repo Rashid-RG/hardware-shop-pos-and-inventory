@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=ARS Distributor Setup
-Comment=Fresh pilot installation by RS Nextward
-Exec=sh -c "cd \"$(dirname \"$1\")\" && exec python3 scripts/mint/setup-wizard.py" sh %k
-Icon=system-software-install
-Terminal=false
-Categories=System;
