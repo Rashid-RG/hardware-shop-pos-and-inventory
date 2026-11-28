@@ -507,7 +507,34 @@ class RecoveryTests(unittest.TestCase):
                 self.assertTrue(hold.exists())
                 self.assertFalse(list(root.glob("rolled-back-*.json")))
                 proposal_path.write_bytes(original_proposal)
-                self.assertTrue(selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)["rollbackFinalized"])
+                # Simulate a shutdown after both live proposal and intent
+                # have been removed, but before the final journal unlink.
+                # The actual archive operations run against disposable files.
+                originals={p.name:p.read_bytes() for p in (proposal_path,target,journal)}
+                original_unlink=Path.unlink
+                def interrupt_at_journal(path,*args,**kwargs):
+                    if path==journal:
+                        raise OSError("simulated finalization interruption")
+                    return original_unlink(path,*args,**kwargs)
+                with patch.object(Path,"unlink",interrupt_at_journal):
+                    with self.assertRaisesRegex(OSError,"simulated finalization interruption"):
+                        selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)
+                self.assertFalse(proposal_path.exists())
+                self.assertFalse(target.exists())
+                self.assertTrue(journal.exists())
+                self.assertTrue(hold.exists())
+                self.assertFalse(startup_allowed(root))
+                self.assertEqual((root/"project").resolve(),previous)
+                archived_intent=root/("rolled-back-intent-"+"a"*32+".json")
+                for kind,source in (("proposal",proposal_path),("intent",target),("journal",journal)):
+                    archived=root/("rolled-back-"+kind+"-"+"a"*32+".json")
+                    self.assertEqual(archived.read_bytes(),originals[source.name])
+                # A fresh operator review must refer to the archived intent.
+                with self.assertRaisesRegex(ValueError,"Operator-reviewed"):
+                    selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)
+                fresh_review={p.name:sha(p.read_bytes()) for p in (journal,hold,archived_intent)}
+                fresh_review["activeProject"]=str(previous)
+                self.assertTrue(selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",fresh_review)["rollbackFinalized"])
             self.assertTrue(hold.exists())
             self.assertFalse(target.exists())
             self.assertFalse(journal.exists())
