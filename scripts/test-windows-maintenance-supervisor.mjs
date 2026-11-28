@@ -283,3 +283,46 @@ for(const mode of ['database-identity','scope-evidence']){
  assert.equal(checks,stoppedChecks,'monitor continued after worker exit');
 }
 console.log('Active Windows maintenance protection monitoring checks passed.');
+
+
+// Native worker argument binding for both supported installations.
+// This producer validates the exact container and user without invoking Docker.
+for(const [database,container,user] of [
+ ['hardware_pos','hardware-pos-postgres','postgres'],
+ ['hardware_pos_ars','ars-windows-pilot-postgres','ars']
+]){
+ const destination=join(dir,'identity-'+database);
+ await mkdir(destination);
+ const archiveName='ars-'+database+'-identity-fixture.dump';
+ await writeFile(producer,[
+  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives,[string]$Database,[string]$Container,[string]$DbUser)',
+  '$ErrorActionPreference="Stop"',
+  'if ($Database -cne "'+database+'" -or $Container -cne "'+container+'" -or $DbUser -cne "'+user+'") {throw "Incorrect native database binding"}',
+  'if (-not $OutputArchive -or -not $PreserveExistingArchives) {throw "Protected archive options required"}',
+  '$archive=Join-Path $Destination "'+archiveName+'"',
+  '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
+  'Write-Output ("ARS_ARCHIVE="+$archive)'
+ ].join('\r\n'));
+ const fixtureDb=new FixtureDatabase(database);
+ const result=await withMaintenanceSession(fixtureDb,database,session=>
+  runProtectedWindowsBackup(session,{root:stageRoot,destination,supervisor,timeoutMs:15000})
+ );
+ assert.equal(result.archive,join(destination,archiveName));
+ assert.equal(result.sha256,createHash('sha256').update(Buffer.alloc(4096)).digest('hex'));
+ assert.equal(fixtureDb.closed,true);
+ const files=await readdir(destination);
+ assert.equal(files.length,2);
+ // The opposite database must not be accepted by the producer.
+ const other=database==='hardware_pos'?'hardware_pos_ars':'hardware_pos';
+ await assert.rejects(withMaintenanceSession(new FixtureDatabase(other),other,session=>
+  runProtectedWindowsBackup(session,{root:stageRoot,destination,supervisor,timeoutMs:15000})
+ ),/Native maintenance worker did not complete/);
+ assert.deepEqual(await readdir(destination),files);
+}
+const unsupportedDestination=join(dir,'unsupported-source');
+await mkdir(unsupportedDestination);
+await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
+ runProtectedWindowsBackup(session,{root:stageRoot,destination:unsupportedDestination,supervisor,timeoutMs:15000})
+),/Unsupported protected backup database/);
+assert.deepEqual(await readdir(unsupportedDestination),[]);
+console.log('Strict native backup database, container and user binding checks passed.');
