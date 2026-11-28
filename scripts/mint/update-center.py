@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Graphical update preparation, without live activation or automatic rollback."""
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -346,18 +347,42 @@ def offline_release_center(project):
         return
     actions=[]
     tool_project=project
+    observed=None
     if os.path.lexists(journal):
         try:
-            if journal.is_symlink() or not journal.is_file() or journal.stat().st_size>65536:
-                raise ValueError("Invalid journal")
-            data=json.loads(journal.read_text())
-            if data.get("kind")!="mint-offline-release-selection" or data.get("startupAllowed") is not False:
-                raise ValueError("Unsupported journal")
-            # Continue using the original control script after the pointer moves.
-            tool_project=Path(data["previous"])
+            records={}
+            for name,path in (("journal",journal),("hold",hold),("intent",target)):
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("Invalid recovery record")
+                with path.open("rb") as stream:
+                    raw=stream.read(65537)
+                if not raw or len(raw)>65536:
+                    raise ValueError("Invalid recovery record length")
+                records[name]=raw
+            data=json.loads(records["journal"])
+            protected=json.loads(records["hold"])
+            intent=json.loads(records["intent"])
+            binding=intent["binding"]
+            version=binding["candidateVersion"]
+            candidate=STATE/"staged-releases"/version
+            if (data.get("schema")!=1 or data.get("kind")!="mint-offline-release-selection" or
+                data.get("startupAllowed") is not False or intent.get("observationOnly") is not True or
+                not VERSION.fullmatch(version) or data["candidate"]!=str(candidate) or
+                data["switchId"]!=intent["switchId"] or protected.get("purpose")!="pre-update backup" or
+                data["previous"]!=protected["previousProject"] or data["previous"]!=binding["previousProject"] or
+                data["intentDigest"]!=hashlib.sha256(records["intent"]).hexdigest() or
+                data["maintenanceDigest"]!=hashlib.sha256(records["hold"]).hexdigest() or
+                data["maintenanceDigest"]!=binding["maintenanceDigest"]):
+                raise ValueError("Recovery evidence does not match")
+            tool_project=Path(protected["previousProject"])
+            selector=tool_project/"scripts/mint/select-offline-release.py"
             active=(STATE/"project").resolve(strict=True)
-            if not tool_project.is_absolute() or tool_project.resolve(strict=True)!=tool_project or active not in (tool_project,Path(data["candidate"])):
+            if (not tool_project.is_absolute() or tool_project==candidate or
+                tool_project.resolve(strict=True)!=tool_project or candidate.resolve(strict=True)!=candidate or
+                active not in (tool_project,candidate) or active!=project or
+                selector.resolve(strict=True)!=selector or not selector.is_file()):
                 raise ValueError("Unexpected release layout")
+            observed=((journal,records["journal"]),(hold,records["hold"]),(target,records["intent"]))
             phase=data.get("phase")
             if phase in ("backup-verified","switched","offline-rollback-pending"):
                 actions=["Return to previous release"]
@@ -390,6 +415,19 @@ def offline_release_center(project):
         args=["--finalize-rollback","--confirmation","FINALIZE OFFLINE ROLLBACK"]
         message="Archive verified rollback evidence? Maintenance remains active until you separately resume the previous POS."
     if dialog("--question","--no-markup","--text="+message).returncode==0:
+        if observed is not None:
+            try:
+                for path,original in observed:
+                    if path.is_symlink() or not path.is_file():
+                        raise ValueError("Invalid recovery record")
+                    with path.open("rb") as stream:
+                        if stream.read(len(original)+1)!=original:
+                            raise ValueError("Recovery evidence changed")
+                if (STATE/"project").resolve(strict=True)!=project or selector.resolve(strict=True)!=selector:
+                    raise ValueError("Release layout changed")
+            except (OSError,ValueError,RuntimeError):
+                notice("Switch evidence changed. Reopen the Update Center for review.",True)
+                return
         execute(tool_project,"select-offline-release.py",*args)
         # Exit this center so subsequent operations re-resolve the active project.
 

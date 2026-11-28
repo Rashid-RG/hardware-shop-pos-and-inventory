@@ -502,12 +502,25 @@ class RecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             previous=root/"previous"
-            candidate=root/"candidate"
-            previous.mkdir()
-            candidate.mkdir()
+            import hashlib
+            candidate=root/"staged-releases/1.2.3"
+            candidate.mkdir(parents=True)
+            selector=previous/"scripts/mint/select-offline-release.py"
+            selector.parent.mkdir(parents=True)
+            selector.touch()
             (root/"project").symlink_to(candidate)
-            (root/"maintenance-hold.json").touch()
-            (root/"switch-journal.json").write_text(json.dumps({"kind":"mint-offline-release-selection","phase":"switched","previous":str(previous),"candidate":str(candidate),"startupAllowed":False}))
+            hold=json.dumps({"purpose":"pre-update backup","previousProject":str(previous)}).encode()
+            (root/"maintenance-hold.json").write_bytes(hold)
+            hold_digest=hashlib.sha256(hold).hexdigest()
+            intent=json.dumps({"observationOnly":True,"switchId":"fixture",
+                               "binding":{"candidateVersion":"1.2.3","previousProject":str(previous),
+                                          "maintenanceDigest":hold_digest}}).encode()
+            (root/"runtime-switch-intent.json").write_bytes(intent)
+            journal=root/"switch-journal.json"
+            record={"schema":1,"kind":"mint-offline-release-selection","phase":"switched","previous":str(previous),
+                    "candidate":str(candidate),"startupAllowed":False,"switchId":"fixture",
+                    "intentDigest":hashlib.sha256(intent).hexdigest(),"maintenanceDigest":hold_digest}
+            journal.write_text(json.dumps(record))
             yes=SimpleNamespace(returncode=0,stdout="Return to previous release")
             no=SimpleNamespace(returncode=1,stdout="")
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,no]), patch.object(center,"execute") as run:
@@ -516,6 +529,11 @@ class RecoveryTests(unittest.TestCase):
             with patch.object(center,"STATE",root), patch.object(center,"dialog",side_effect=[yes,yes]), patch.object(center,"execute") as run:
                 center.offline_release_center(candidate)
                 run.assert_called_once_with(previous,"select-offline-release.py","--rollback-offline","--confirmation","ROLL BACK OFFLINE RELEASE")
+            journal.write_text(json.dumps({**record,"previous":str(root/"unrelated")}))
+            with patch.object(center,"STATE",root), patch.object(center,"notice") as notice, patch.object(center,"execute") as run:
+                center.offline_release_center(candidate)
+                run.assert_not_called()
+                notice.assert_called_once()
     def test_candidate_fingerprint_survives_only_verified_runtime_links(self):
         from release_fingerprint import fingerprint
         spec=importlib.util.spec_from_file_location("intent",Path(__file__).with_name("prepare-switch-intent.py"))
