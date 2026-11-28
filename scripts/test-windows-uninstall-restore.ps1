@@ -114,3 +114,37 @@ foreach ($binding in $invalidBindings) {
  if (-not $blocked) {throw 'Invalid recovery source database binding accepted.'}
 }
 Write-Host 'Recovery source database identity checks passed.'
+
+
+# Preparation must reject foreign installations before inspecting Docker or state.
+. (Join-Path $PSScriptRoot 'windows-continuous-recovery-preparation.ps1')
+$foreign=Join-Path ([IO.Path]::GetTempPath()) ('ars-foreign-'+[guid]::NewGuid().ToString('N'))
+$blocked=$false
+try {Initialize-ArsContinuousRecovery $foreign|Out-Null}
+catch {
+ if ($_.Exception.Message -cne 'Managed installation required.') {throw}
+ $blocked=$true
+}
+if (-not $blocked) {throw 'Foreign recovery installation accepted.'}
+if (Test-Path -LiteralPath $foreign) {throw 'Foreign recovery directory created.'}
+# Invalid identifiers must be rejected before any directory creation.
+$managedState=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
+foreach ($invalidId in @('','..','../outside',('A'*32),('a'*31),('a'*33))) {
+ $blocked=$false
+ try {New-ArsPrivateUninstallRecoveryDirectory $managedState $invalidId|Out-Null}
+ catch {
+  if ($_.Exception.Message -cne 'Managed recovery identity required.') {throw}
+  $blocked=$true
+ }
+ if (-not $blocked) {throw 'Invalid private recovery identity accepted.'}
+}
+# Exercise the preparation contract without creating real application state.
+$source=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'windows-continuous-recovery-preparation.ps1') -Raw
+$checkIndex=$source.IndexOf("  Assert-ContinuousShutdown")
+$createIndex=$source.IndexOf('  $folder=New-ArsPrivateUninstallRecoveryDirectory')
+$uploadIndex=$source.IndexOf('  $uploads=Get-ArsPreparedFingerprint')
+$lastCheck=$source.LastIndexOf("  Assert-ContinuousShutdown")
+if ($checkIndex -lt 0 -or $createIndex -le $checkIndex -or $uploadIndex -le $createIndex -or $lastCheck -le $uploadIndex) {throw 'Recovery preparation guard order changed.'}
+if (-not $source.Contains('$mutex.WaitOne(0)') -or -not $source.Contains('if ($owned) {$mutex.ReleaseMutex()}') -or -not $source.Contains('$mutex.Dispose()')) {throw 'Recovery preparation mutex contract changed.'}
+if (-not $source.Contains('applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;activationAllowed=$false;continuousExclusionVerified=$false')) {throw 'Recovery preparation authorization contract changed.'}
+Write-Host 'Continuous recovery preparation guard and ordering checks passed.'
