@@ -201,21 +201,21 @@ The dedicated Render static site publishes the `feed` directory from the
 files only. Keep the signing private key, credentials, and business data on
 their owner-controlled computers.
 
-On an owner-controlled Linux release workstation, create the signing key
-in a new private directory outside the source checkout. OpenSSL prompts for
-the key's encryption passphrase.
+RS Nextward supplied its encrypted RSA-4096 release key pair's public key on
+2026-11-28. The public reference is stored at
+`release-trust/release-signing-public.pem`. Its SHA-256 fingerprint of the
+DER-encoded SubjectPublicKeyInfo is:
 
-```bash
-umask 077
-mkdir -m 700 "$HOME/ars-release-signing" &&
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -aes-256-cbc \
-  -out "$HOME/ars-release-signing/private.pem" &&
-openssl pkey -in "$HOME/ars-release-signing/private.pem" -pubout \
-  -out "$HOME/ars-release-signing/release-signing-public.pem"
-```
+`5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6`
 
-Run these commands once for a new key. Keep an encrypted offline recovery copy,
-and verify the public key independently before installing it on shop computers.
+The owner must independently compare this fingerprint with the original public
+key on the signing workstation before provisioning it into the installed
+per-user state directory. A repository copy alone is not a trust bootstrap.
+Never replace a different existing installed trust key automatically.
+Keep the encrypted private key and its passphrase outside the checkout and
+maintain an encrypted offline recovery copy. The public reference does not
+authorize release publication, installation, or live activation.
+
 After owner approval, use `scripts/prepare-update-feed.py` on that workstation to
 build the signed Windows and Mint bundles from the approved commit.
 Prepare a publication commit after approval. This command verifies both signed
