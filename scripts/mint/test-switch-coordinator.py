@@ -114,18 +114,26 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "switch-journal.json").read_text())["phase"], "manual-recovery-required")
 
 
+    def test_http_readiness_accepts_candidate(self):
+        self.exercise_http("1.0.1", "1.0.0", "updated", "new", "completed", [0, 0])
+
     def test_http_readiness_failure_rolls_back_and_verifies_previous_process(self):
+        self.exercise_http("9.9.9", "1.0.0", "rolled-back", "old", "rolled-back", [0, 1, 0])
+
+    def test_unhealthy_previous_release_requires_recovery_review(self):
+        self.exercise_http("9.9.9", "9.9.8", None, "old", "manual-recovery-required", [0, 1, 1])
+
+    def exercise_http(self, candidate_version, restarted_version, outcome, selected, phase, results):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             (root / ".ars-switch-test").touch()
             data = root / "business-data"
             data.write_text("historical invoices")
             verifier = Path(__file__).resolve().parent.parent / "verify-installed-release-readiness.mjs"
-            for release, version in (("old", "1.0.0"), ("new", "9.9.9")):
+            for release, version in (("old", "1.0.0"), ("new", candidate_version)):
                 server = root / release / "dist/server.cjs"
                 server.parent.mkdir(parents=True)
-                # Bind an ephemeral loopback port. The candidate deliberately
-                # reports a different build from the expected signed version.
+                # Bind an ephemeral loopback port for each process.
                 server.write_text(
                     "const http=require('node:http'),fs=require('node:fs');"
                     "const server=http.createServer((req,res)=>res.end(JSON.stringify("
@@ -179,15 +187,23 @@ class CoordinatorTests(unittest.TestCase):
                 service.start()
                 self.assertTrue(service.ready())
                 initial_pid = service.process.pid
-                self.assertEqual(simulate_switch(root, service, lambda: True), "rolled-back")
-                self.assertEqual((root / "project").resolve(), root / "old")
+                previous_server = root / "old/dist/server.cjs"
+                if restarted_version != "1.0.0":
+                    previous_server.write_text(previous_server.read_text().replace('"1.0.0"', json.dumps(restarted_version)))
+                if outcome is None:
+                    with self.assertRaisesRegex(RuntimeError, "Previous version failed readiness"):
+                        simulate_switch(root, service, lambda: True)
+                else:
+                    self.assertEqual(simulate_switch(root, service, lambda: True), outcome)
+                self.assertEqual((root / "project").resolve(), root / selected)
                 self.assertEqual(data.read_text(), "historical invoices")
-                self.assertEqual([item[0] for item in service.observed], ["1.0.0", "1.0.1", "1.0.0"])
-                self.assertEqual(service.observed[0][2], 0)
-                self.assertNotEqual(service.observed[1][2], 0)
-                self.assertEqual(service.observed[2][2], 0)
+                expected_versions = ["1.0.0", "1.0.1"]
+                if len(results) == 3:
+                    expected_versions.append("1.0.0")
+                self.assertEqual([item[0] for item in service.observed], expected_versions)
+                self.assertEqual([int(code != 0) for _, _, code in service.observed], results)
                 self.assertNotEqual(service.process.pid, initial_pid)
-                self.assertEqual(json.loads((root / "switch-journal.json").read_text())["phase"], "rolled-back")
+                self.assertEqual(json.loads((root / "switch-journal.json").read_text())["phase"], phase)
                 self.assertFalse(startup_allowed(root))
             finally:
                 service.stop()
