@@ -30,13 +30,18 @@ for (const [database,container,user] of [
 ]) {
  const root=await realpath(await mkdtemp(join(tmpdir(),'ars-docker-recovery-')));
  const password=randomUUID();
- let containerId;
+ const containers=[];
+ const startContainer=(...args)=>{
+  const id=docker('run','-d',...args);
+  assert.match(id,/^[a-f0-9]{64}$/);
+  containers.push(id);
+  return id;
+ };
  try {
   // Docker rejects a name collision. Cleanup only targets the container this run created.
-  containerId=docker('run','-d','--name',container,'-p','127.0.0.1::5432',
+  const containerId=startContainer('--name',container,'-p','127.0.0.1::5432',
    '-e','POSTGRES_DB='+database,'-e','POSTGRES_USER='+user,
    '-e','POSTGRES_PASSWORD='+password,'postgres:16-alpine');
-  assert.match(containerId,/^[a-f0-9]{64}$/);
   const port=docker('port',containerId,'5432/tcp').match(/^127\.0\.0\.1:(\d+)$/)?.[1];
   assert.ok(port,'Expected a disposable loopback port');
   const connectionString='postgresql://'+user+':'+password+'@127.0.0.1:'+port+'/'+database;
@@ -88,16 +93,29 @@ for (const [database,container,user] of [
   assert.equal(uploadDigest,recordedUploadDigest.toLowerCase());
 
   const restoreDatabase='ars_recovery_fixture';
-  docker('exec',containerId,'createdb','-U',user,restoreDatabase);
-  docker('cp',archive,containerId+':/tmp/ars-recovery-fixture.dump');
-  docker('exec',containerId,'pg_restore','--exit-on-error','-U',user,'-d',restoreDatabase,'/tmp/ars-recovery-fixture.dump');
-  const rows=docker('exec',containerId,'psql','-XAt','-v','ON_ERROR_STOP=1','-U',user,'-d',restoreDatabase,
-   '-c','SELECT id,amount FROM recovery_fixture ORDER BY id');
-  assert.deepEqual(rows.split(/\r?\n/),['1|125','2|375']);
+  const restoreId=startContainer('--network','none','--tmpfs','/var/lib/postgresql/data:rw,mode=0700',
+   '-e','POSTGRES_DB='+restoreDatabase,'-e','POSTGRES_USER='+user,
+   '-e','POSTGRES_PASSWORD='+randomUUID(),'postgres:16-alpine');
+  for (let attempt=0; attempt<60; attempt++) {
+   try {
+    docker('exec',restoreId,'pg_isready','-h','127.0.0.1','-U',user,'-d',restoreDatabase);
+    break;
+   } catch (error) {
+    if (attempt===59) throw error;
+    await delay(1000);
+   }
+  }
+  docker('cp',archive,restoreId+':/tmp/ars-recovery-fixture.dump');
+  docker('exec',restoreId,'pg_restore','--exit-on-error','-U',user,'-d',restoreDatabase,'/tmp/ars-recovery-fixture.dump');
+  const readRows=(id,db)=>docker('exec',id,'psql','-XAt','-v','ON_ERROR_STOP=1','-U',user,'-d',db,
+   '-c','SELECT id,amount FROM recovery_fixture ORDER BY id').split(/\r?\n/);
+  const originalRows=readRows(containerId,database);
+  assert.deepEqual(originalRows,['1|125','2|375']);
+  assert.deepEqual(readRows(restoreId,restoreDatabase),originalRows);
   console.log(database+': protected Docker backup and isolated PostgreSQL restore passed.');
  } finally {
   try {
-   if (/^[a-f0-9]{64}$/.test(containerId??'')) docker('rm','-fv',containerId);
+   if (containers.length) docker('rm','-fv',...containers.reverse());
   } finally {
    await rm(root,{recursive:true,force:true});
   }
