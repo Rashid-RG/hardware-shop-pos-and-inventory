@@ -23,6 +23,25 @@ function Get-ArsUninstallArchiveMembers([string]$archive) {
  $zip=$archive.Substring(0,$archive.Length-5)+'-uploads.zip'
  @($archive,($archive+'.sha256'),$zip,($zip+'.sha256'))
 }
+# Caller must own the launcher mutex and validate the shutdown hold first.
+function New-ArsPrivateUninstallRecoveryDirectory([string]$state,[string]$id) {
+ if ($id -cnotmatch '^[a-f0-9]{32}$' -or $state -ine (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor')) {throw 'Managed recovery identity required.'}
+ Assert-ArsPlainPath $state
+  $recovery=Join-Path $state 'uninstall-recovery'
+  [void][IO.Directory]::CreateDirectory($recovery)
+  Assert-ArsPlainPath $recovery
+  $folder=Join-Path $recovery $id
+  if (Test-Path -LiteralPath $folder) {throw 'Existing recovery retained.'}
+  New-Item -ItemType Directory -Path $folder -ErrorAction Stop|Out-Null
+  $acl=Get-Acl -LiteralPath $folder
+  $acl.SetAccessRuleProtection($true,$false)
+  foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,(New-Object Security.Principal.SecurityIdentifier('S-1-5-18')))) {
+   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))
+  }
+  Set-Acl -LiteralPath $folder -AclObject $acl
+  Assert-ArsPlainPath $folder
+  return $folder
+}
 function Prepare-ArsUninstallBackup([string]$project) {
  $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
  $control=Join-Path $state 'desktop-control'
@@ -49,18 +68,7 @@ function Prepare-ArsUninstallBackup([string]$project) {
   if (@(Get-ChildItem -LiteralPath $control -Force|Where-Object Name -in $markers).Count -or (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {throw 'Application or incident remains active.'}
   $old=Get-Process -Id ([int]$hold.pid) -ErrorAction SilentlyContinue
   if ($old -and $old.StartTime.ToUniversalTime().Ticks.ToString() -ceq $hold.startedUtc) {throw 'Original application remains active.'}
-  $recovery=Join-Path $state 'uninstall-recovery'
-  [void][IO.Directory]::CreateDirectory($recovery)
-  Assert-ArsPlainPath $recovery
-  $folder=Join-Path $recovery $hold.uninstallId
-  if (Test-Path -LiteralPath $folder) {throw 'Existing recovery retained.'}
-  New-Item -ItemType Directory -Path $folder -ErrorAction Stop|Out-Null
-  $acl=Get-Acl -LiteralPath $folder
-  $acl.SetAccessRuleProtection($true,$false)
-  foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,(New-Object Security.Principal.SecurityIdentifier('S-1-5-18')))) {
-   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))
-  }
-  Set-Acl -LiteralPath $folder -AclObject $acl
+  $folder=New-ArsPrivateUninstallRecoveryDirectory $state $hold.uninstallId
   $uploads=Get-ArsPreparedFingerprint (Join-Path $project 'uploads')
   $result=@(& node (Join-Path $project 'scripts/windows-locked-maintenance-backup.mjs') $folder --uninstall-manifest)
   if ($LASTEXITCODE -ne 0) {throw 'Protected backup failed.'}
