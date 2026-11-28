@@ -21,4 +21,23 @@ try {
   $rejected=$false
   try { $null=Assert-ArsPreparedFingerprint $root } catch { $rejected=$true }
   if (-not $rejected) { throw 'Missing file accepted.' }
+  $scripts=Join-Path $root 'scripts'
+  [void][IO.Directory]::CreateDirectory($scripts)
+  $helper=Join-Path $scripts 'helper.ps1'
+  [IO.File]::WriteAllText($helper,'original')
+  $before=Get-ArsRecoveryToolsFingerprint $scripts
+  [IO.File]::WriteAllText($helper,'modified')
+  if ((Get-ArsRecoveryToolsFingerprint $scripts) -ceq $before) {throw 'Recovery modification undetected.'}
+  [IO.File]::WriteAllText($helper,'original')
+  if ((Get-ArsRecoveryToolsFingerprint $scripts) -cne $before) {throw 'Recovery fingerprint unstable.'}
+  $writer=[IO.File]::Open($helper,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::Read)
+  try {
+    $rejected=$false
+    try {$null=Get-ArsRecoveryToolsFingerprint $scripts} catch {$rejected=$true}
+    if (-not $rejected) {throw 'Busy recovery file accepted.'}
+  } finally {$writer.Dispose()}
+  [IO.File]::WriteAllText((Join-Path $scripts 'helper.pyc'),'unexpected')
+  $rejected=$false
+  try {$null=Get-ArsRecoveryToolsFingerprint $scripts} catch {$rejected=$true}
+  if (-not $rejected) {throw 'Standalone bytecode accepted.'}
 } finally { if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force} }

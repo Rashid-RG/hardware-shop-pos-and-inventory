@@ -1,6 +1,7 @@
 # Retain a switch intent only. Never create an active pointer or start the POS.
 param([Parameter(Mandatory=$true)][string]$RecoveryId,[switch]$Verify,[switch]$Cancel,[string]$Confirmation)
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'windows-prepared-fingerprint.ps1')
 if ($RecoveryId -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?-[a-f0-9]{32}$') {throw 'Invalid recovery identifier.'}
 $state=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'RS Nextward\ARS Distributor'
 $control=Join-Path $state 'desktop-control'
@@ -36,7 +37,7 @@ function Get-VerifiedBinding {
  $meta=Read-Record (Join-Path $folder 'recovery.json')
  $rollback=Read-Record (Join-Path $folder 'rollback-compatibility-rehearsal.json')
  if ($meta.digest -cne $proposal.data.snapshot.evidence.recovery -or $rollback.digest -cne $proposal.data.snapshot.evidence.rollback -or $meta.data.preparedDigest -cnotmatch '^[a-f0-9]{64}$' -or $rollback.data.previousBuildDigest -cnotmatch '^[a-f0-9]{64}$') {throw 'Release evidence changed.'}
- return [ordered]@{recoveryId=$RecoveryId;proposalDigest=$proposal.digest;candidateDigest=$meta.data.preparedDigest;previousBuildDigest=$rollback.data.previousBuildDigest;maintenanceDigest=$proposal.data.snapshot.evidence.maintenance;userSid=$proposal.data.snapshot.userSid}
+ return [ordered]@{recoveryId=$RecoveryId;proposalDigest=$proposal.digest;candidateDigest=$meta.data.preparedDigest;previousBuildDigest=$rollback.data.previousBuildDigest;previousRecoveryToolsDigest=(Get-ArsRecoveryToolsFingerprint $PSScriptRoot);maintenanceDigest=$proposal.data.snapshot.evidence.maintenance;userSid=$proposal.data.snapshot.userSid}
 }
 try {
  try {$owns=$mutex.WaitOne(0)} catch [System.Threading.AbandonedMutexException] {$owns=$true}
