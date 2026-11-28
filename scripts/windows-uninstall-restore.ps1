@@ -108,6 +108,8 @@ function Test-ArsUninstallRestore([string]$project,[string]$folder) {
   $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
   if ($manifest.schema -ne 1 -or $manifest.kind -cne 'windows-uninstall-table-manifest' -or $manifest.archive -cne $meta.archive -or $manifest.dumpSha256 -cne $hashes[$meta.archive] -or $manifest.locksObserved -isnot [bool] -or -not $manifest.locksObserved -or $manifest.applicationRemovalAllowed -isnot [bool] -or $manifest.applicationRemovalAllowed -or $manifest.continuousExclusionVerified -isnot [bool] -or $manifest.continuousExclusionVerified) {throw 'Invalid protected manifest.'}
   Assert-ArsUninstallManifestBinding $manifest $id $digests.hold $digests.proof
+  Assert-ArsUninstallSourceDatabase $manifest.sourceDatabase $meta.archive
+  if ($meta.sourceDatabase -cne $manifest.sourceDatabase) {throw 'Recovery metadata source database mismatch.'}
   Assert-ArsUninstallRestoredTables $manifest.tables $manifest.tables
   & node (Join-Path $project 'scripts/verify-backup.mjs') $archive|Out-Null
   if ($LASTEXITCODE -ne 0) {throw 'Archive verification failed.'}
