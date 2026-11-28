@@ -118,6 +118,23 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(hold.read_bytes(),conflict)
             self.assertFalse(startup_allowed(state))
 
+    def test_resume_uses_installed_lifecycle_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state=Path(tmp).resolve()
+            release=state/"installed"
+            release.mkdir()
+            (release/"package.json").write_text('{"version":"1.2.3"}')
+            (state/"project").symlink_to(release)
+            hold=state/"maintenance-hold.json"
+            hold.write_text(json.dumps({"purpose":"pre-update backup","previousProject":str(release)}))
+            with patch.object(resume,"STATE",state), patch.object(resume.os,"geteuid",return_value=1000), patch.object(resume,"stopped"), patch.object(resume,"check_database_clients"), patch("switch_coordinator.InstalledMintService") as adapter:
+                resume.resume("RESUME CURRENT POS")
+                adapter.return_value.bind.assert_called_once_with(release,"1.2.3")
+                adapter.return_value.start.assert_called_once_with()
+                adapter.return_value.ready.assert_called_once_with()
+                adapter.return_value.stop.assert_not_called()
+            self.assertFalse(hold.exists())
+
     def test_readiness_requires_exact_version_pid_and_stable_service(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)

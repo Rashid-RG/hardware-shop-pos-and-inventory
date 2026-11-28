@@ -117,11 +117,13 @@ class InstalledMintService:
     releases, backup and startup authorization independently. No bypass of
     systemd or application startup guards is provided.
     """
-    def __init__(self, state):
+    def __init__(self, state, *, stopped_check=None, readiness_check=None):
         self.state = Path(state)
         if not self.state.is_absolute() or self.state.resolve(strict=True) != self.state:
             raise ValueError("Plain absolute managed state required.")
         self.expected = None
+        self.stopped_check = stopped_check
+        self.readiness_check = readiness_check
 
     def bind(self, project, version):
         import re
@@ -146,7 +148,7 @@ class InstalledMintService:
 
     def stopped(self):
         from maintenance_backup import stopped
-        stopped()
+        (self.stopped_check or stopped)()
         return True
 
     def start(self):
@@ -162,7 +164,10 @@ class InstalledMintService:
     def ready(self):
         from resume_maintenance import wait_for_current_release
         self._assert_selected()
-        wait_for_current_release(*self.expected, state=self.state)
+        if self.readiness_check is None:
+            wait_for_current_release(*self.expected, state=self.state)
+        else:
+            self.readiness_check(*self.expected)
         self._assert_selected()
         return True
 

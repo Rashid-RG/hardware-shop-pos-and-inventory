@@ -114,13 +114,14 @@ def resume(confirmation):
             sync_dir(STATE)
             if hold.is_symlink() or hold.read_bytes()!=saved or (STATE/"project").resolve(strict=True)!=current:
                 raise ValueError("Maintenance evidence changed before hold release.")
+            from switch_coordinator import InstalledMintService
+            lifecycle=InstalledMintService(STATE, stopped_check=stopped, readiness_check=wait_for_current_release)
+            lifecycle.bind(current,version)
             try:
                 hold.unlink()
                 sync_dir(STATE)
-                if not startup_allowed(STATE):
-                    raise RuntimeError("Startup guard rejected resume.")
-                subprocess.run(["systemctl","--user","start","--no-block",UNIT],check=True,timeout=30)
-                wait_for_current_release(current, version)
+                lifecycle.start()
+                lifecycle.ready()
                 if archive.is_symlink() or archive.read_bytes()!=saved:
                     raise RuntimeError("Retained resume evidence changed.")
                 print("Current POS resumed.")
@@ -135,7 +136,7 @@ def resume(confirmation):
                         raise RuntimeError("Conflicting maintenance hold retained; recovery review required.")
                     sync_dir(STATE)
                 finally:
-                    subprocess.run(["systemctl","--user","stop",UNIT],check=True,timeout=180)
+                    lifecycle.stop()
                 raise
 
 if __name__=="__main__":

@@ -22,7 +22,7 @@ OPTIONS = {"rollback": "--rollback-offline", "finalize": "--finalize-rollback"}
 INITIAL_FILES = (
     "select-offline-release.py", "prepare-switch-intent.py", "prepare-runtime-activation.py",
     "switch_journal.py", "startup_guard.py", "interrupted_switch.py", "maintenance_backup.py",
-    "resume_maintenance.py", "release_fingerprint.py", "compose.yaml",
+    "resume_maintenance.py", "switch_coordinator.py", "release_fingerprint.py", "compose.yaml",
 )
 
 

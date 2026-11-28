@@ -177,7 +177,7 @@ class InstalledRollbackTests(unittest.TestCase):
             (previous / "package.json").write_text('{"version":"1.2.2"}')
             for name in ("select-offline-release.py", "prepare-switch-intent.py",
                          "prepare-runtime-activation.py", "switch_journal.py", "startup_guard.py",
-                         "interrupted_switch.py", "maintenance_backup.py", "resume_maintenance.py",
+                         "interrupted_switch.py", "maintenance_backup.py", "resume_maintenance.py", "switch_coordinator.py", "switch_coordinator.py",
                          "release_fingerprint.py", "signed_release_source.py", "compose.yaml"):
                 shutil.copy2(HERE / name, previous_scripts / name)
             if signed:
