@@ -62,26 +62,29 @@ export async function runInstalledWindowsContinuousRecovery({root,destination,si
  const config=resolveWindowsMaintenanceDatabase(dotenv.parse(await readFile(configPath)));
  const client=new pg.Client(config.connection);
  const check=async scope=>{await scope.assertActive();await checkIdentity();await checkShutdown();await scope.assertActive();};
+ // Pass the original shutdown binding into every nested worker boundary.
+ // This does not claim continuous monitoring while a child is running.
+ const protectedScope=scope=>Object.freeze({owner:scope.owner,signal:scope.signal,assertActive:()=>check(scope)});
  return withProtectedWindowsRecovery(client,config.database,{
   signal,
   backup:async scope=>{
    await check(scope);
-   const result=await runWindowsContinuousBackupStage(client,scope,{root:runtime,destination:folder});
+   const result=await runWindowsContinuousBackupStage(client,protectedScope(scope),{root:runtime,destination:folder});
    await check(scope);
    return result;
   },
   prepare:async(scope,backup)=>{
    await check(scope);
-   return prepareWindowsContinuousRecoveryMetadata(scope,backup,{root:runtime,destination:folder,control});
+   return prepareWindowsContinuousRecoveryMetadata(protectedScope(scope),backup,{root:runtime,destination:folder,control});
   },
   restore:async(scope,metadata)=>{
    await check(scope);
    if(metadata.database!==config.database||metadata.destination!==folder||metadata.uninstallId!==basename(folder))throw Error('Recovery metadata identity changed.');
-   return runVerifiedInstalledWindowsRestore(scope,{root:runtime,destination:folder});
+   return runVerifiedInstalledWindowsRestore(protectedScope(scope),{root:runtime,destination:folder});
   },
   review:async(scope,metadata,restored)=>{
    await check(scope);
-   const evidence=await verifyWindowsRestoreEvidence(scope,{destination:folder,control});
+   const evidence=await verifyWindowsRestoreEvidence(protectedScope(scope),{destination:folder,control});
    if(evidence.restoreObservationVerified!==true||evidence.database!==config.database||evidence.uninstallId!==metadata.uninstallId||evidence.observationDigest!==restored.observationDigest||evidence.archiveSha256!==restored.archiveSha256)throw Error('Restoration evidence changed before final review.');
    await check(scope);
    return Object.freeze({restoreObservationMatched:true,applicationRemovalAllowed:false,databaseDeletionAllowed:false,serviceRemovalAllowed:false,uninstalled:false,finalUninstallBackupVerified:false,continuousExclusionVerified:false});
