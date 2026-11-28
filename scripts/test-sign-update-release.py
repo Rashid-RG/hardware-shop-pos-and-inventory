@@ -115,11 +115,19 @@ class ReleaseSigningTests(unittest.TestCase):
                     self.assertEqual(set(archive.getnames()),set(files)-{".env.local"})
                 self.assertFalse(json.loads((output/"release-record.json").read_text())["published"])
                 self.assertTrue(feed.verify_feed(output,"1.2.3",public))
+                verify_command=[sys.executable,str(Path(__file__).with_name("verify-update-feed.py")),"--feed",str(output),"--version","1.2.3","--public-key",str(public)]
+                result=subprocess.run(verify_command,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+                extra=output/"private.pem"
+                extra.write_text("unexpected")
+                self.assertNotEqual(subprocess.run(verify_command,capture_output=True).returncode,0)
+                extra.unlink()
                 payload=output/"windows/release.zip"
                 original=payload.read_bytes()
                 payload.write_bytes(original+b"tampered")
                 with self.assertRaisesRegex(ValueError,"Signed feed asset mismatch"):
                     feed.verify_feed(output,"1.2.3",public)
+                self.assertNotEqual(subprocess.run(verify_command,capture_output=True).returncode,0)
                 payload.write_bytes(original)
                 self.assertTrue(feed.verify_feed(output,"1.2.3",public))
                 with self.assertRaises(FileExistsError):
