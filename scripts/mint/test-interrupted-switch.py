@@ -461,7 +461,21 @@ class RecoveryTests(unittest.TestCase):
             journal.write_text(json.dumps({"schema":1,"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":"switched","switchId":"a"*32,"intentDigest":sha(target.read_bytes()),"maintenanceDigest":sha(hold.read_bytes()),"startupAllowed":False}))
             proposal=SimpleNamespace(plain=lambda *args:None,read=lambda path:path.read_bytes(),sha=sha)
             with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"load",return_value=proposal), patch.object(selector.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
-                result=selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE")
+                review={p.name:sha(p.read_bytes()) for p in (journal,hold,target)}
+                review["activeProject"]=str(candidate)
+                original_journal=journal.read_bytes()
+                # A valid current journal with different bytes must not be
+                # accepted on behalf of a stale graphical confirmation.
+                journal.write_bytes(original_journal+b" ")
+                with self.assertRaisesRegex(ValueError,"Operator-reviewed"):
+                    selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE",review)
+                self.assertEqual((root/"project").resolve(),candidate)
+                self.assertEqual(journal.read_bytes(),original_journal+b" ")
+                self.assertTrue(hold.exists())
+                self.assertTrue(target.exists())
+                self.assertFalse(startup_allowed(root))
+                journal.write_bytes(original_journal)
+                result=selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE",review)
                 self.assertTrue(result["previousSelected"])
                 self.assertTrue(selector.rollback_offline_release("ROLL BACK OFFLINE RELEASE")["previousSelected"])
             self.assertEqual((root/"project").resolve(),previous)
@@ -470,7 +484,21 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(target.exists())
             self.assertFalse(startup_allowed(root))
             with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"load",return_value=proposal), patch.object(selector.os,"geteuid",return_value=1000), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
-                self.assertTrue(selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK")["rollbackFinalized"])
+                review={p.name:sha(p.read_bytes()) for p in (journal,hold,target)}
+                review["activeProject"]=str(previous)
+                original_journal=journal.read_bytes()
+                journal.write_bytes(original_journal+b" ")
+                with self.assertRaisesRegex(ValueError,"Operator-reviewed"):
+                    selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)
+                self.assertEqual((root/"project").resolve(),previous)
+                self.assertTrue(target.exists())
+                self.assertTrue(proposal_path.exists())
+                self.assertTrue(hold.exists())
+                self.assertEqual(journal.read_bytes(),original_journal+b" ")
+                self.assertFalse((root/("rolled-back-intent-"+"a"*32+".json")).exists())
+                self.assertFalse(startup_allowed(root))
+                journal.write_bytes(original_journal)
+                self.assertTrue(selector.finalize_offline_rollback("FINALIZE OFFLINE ROLLBACK",review)["rollbackFinalized"])
             self.assertTrue(hold.exists())
             self.assertFalse(target.exists())
             self.assertFalse(journal.exists())
