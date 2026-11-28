@@ -75,6 +75,8 @@ function Get-ArsFinalUninstallEvidenceReview([string]$project,[string]$folder) {
    if ((Get-Item -LiteralPath $manifestPath).Length -gt 16777216) {throw 'Manifest too large.'}
    $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
    Assert-ArsUninstallManifestBinding $manifest $id $digests.hold $digests.proof
+  Assert-ArsUninstallSourceDatabase $manifest.sourceDatabase $meta.archive
+  if ($meta.sourceDatabase -cne $manifest.sourceDatabase) {throw 'Recovery metadata source database mismatch.'}
    if ($manifest.schema -ne 1 -or $manifest.kind -cne 'windows-uninstall-table-manifest' -or $manifest.archive -cne $meta.archive -or $manifest.dumpSha256 -cne $hashes[$meta.archive] -or $manifest.locksObserved -isnot [bool] -or -not $manifest.locksObserved -or $manifest.applicationRemovalAllowed -isnot [bool] -or $manifest.applicationRemovalAllowed) {throw 'Invalid protected manifest.'}
    $evidence=[ordered]@{hold=$digests.hold;proof=$digests.proof;meta=$digests.meta}
    $plan=New-ArsFinalUninstallEvidenceReview $raw.restore $id $meta.archive $evidence $hashes
