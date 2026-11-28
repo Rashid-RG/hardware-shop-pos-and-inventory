@@ -12,6 +12,12 @@ function Assert-ArsUninstallHold($hold,$proof,[string]$project) {
 function Assert-ArsUninstallManifestBinding($manifest,[string]$id,[string]$holdDigest,[string]$shutdownDigest) {
  if ($id -cnotmatch '^[a-f0-9]{32}$' -or $holdDigest -cnotmatch '^[A-F0-9]{64}$' -or $shutdownDigest -cnotmatch '^[A-F0-9]{64}$' -or $manifest.uninstallId -cne $id -or $manifest.holdDigest -cne $holdDigest -or $manifest.shutdownDigest -cne $shutdownDigest -or $manifest.continuousExclusionVerified -isnot [bool] -or $manifest.continuousExclusionVerified) {throw 'Protected manifest shutdown binding mismatch.'}
 }
+# Bind the recorded source identity to the complete archive name, not a partial prefix.
+function Assert-ArsUninstallSourceDatabase([string]$database,[string]$archive) {
+ if ($database -cnotin @('hardware_pos','hardware_pos_ars')) {throw 'Unsupported recovery source database.'}
+ $pattern='^ars-'+[regex]::Escape($database)+'-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$'
+ if ([IO.Path]::GetFileName($archive) -cnotmatch $pattern) {throw 'Recovery source database mismatch.'}
+}
 function Get-ArsUninstallArchiveMembers([string]$archive) {
  if ([IO.Path]::GetFileName($archive) -cnotmatch '^ars-hardware_pos(?:_ars)?-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$') { throw 'Complete database and upload archive required.' }
  $zip=$archive.Substring(0,$archive.Length-5)+'-uploads.zip'
@@ -73,10 +79,11 @@ function Prepare-ArsUninstallBackup([string]$project) {
   $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
   if ($manifest.schema -ne 1 -or $manifest.kind -cne 'windows-uninstall-table-manifest' -or $manifest.archive -cne [IO.Path]::GetFileName($archive) -or $manifest.dumpSha256 -cne $hashes[[IO.Path]::GetFileName($archive)] -or $manifest.locksObserved -isnot [bool] -or -not $manifest.locksObserved -or $manifest.applicationRemovalAllowed -isnot [bool] -or $manifest.applicationRemovalAllowed) {throw 'Invalid protected manifest.'}
   Assert-ArsUninstallManifestBinding $manifest $hold.uninstallId $holdHash $proofHash
+  Assert-ArsUninstallSourceDatabase $manifest.sourceDatabase $archive
   $hashes['uninstall-table-manifest.json']=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
   & node (Join-Path $project 'scripts/verify-backup.mjs') $archive|Out-Null
   if ($LASTEXITCODE -ne 0 -or (Get-ArsPreparedFingerprint (Join-Path $project 'uploads')).digest -cne $uploads.digest -or (Get-FileHash -LiteralPath $holdPath -Algorithm SHA256).Hash -cne $holdHash -or (Get-FileHash -LiteralPath $proofPath -Algorithm SHA256).Hash -cne $proofHash -or (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {throw 'Backup or maintenance evidence changed.'}
-  $meta=[ordered]@{schema=1;kind='windows-final-uninstall-backup';uninstallId=$hold.uninstallId;previousProject=$project;archive=[IO.Path]::GetFileName($archive);archiveDigests=$hashes;holdDigest=$holdHash;shutdownDigest=$proofHash;restoreTestPassed=$false;finalUninstallBackupVerified=$false;applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;continuousExclusionVerified=$false}
+  $meta=[ordered]@{schema=1;kind='windows-final-uninstall-backup';uninstallId=$hold.uninstallId;previousProject=$project;sourceDatabase=$manifest.sourceDatabase;archive=[IO.Path]::GetFileName($archive);archiveDigests=$hashes;holdDigest=$holdHash;shutdownDigest=$proofHash;restoreTestPassed=$false;finalUninstallBackupVerified=$false;applicationRemovalAllowed=$false;databaseDeletionAllowed=$false;continuousExclusionVerified=$false}
   $stream=[IO.File]::Open((Join-Path $folder 'recovery.json'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
   try {$bytes=[Text.Encoding]::UTF8.GetBytes(($meta|ConvertTo-Json -Depth 5));$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)} finally {$stream.Dispose()}
   return $folder
