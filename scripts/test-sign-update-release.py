@@ -68,6 +68,18 @@ class ReleaseSigningTests(unittest.TestCase):
                 bundle.add(package, arcname="package.json")
             expected = hashlib.sha256(archive.read_bytes()).hexdigest()
             mint_updater.verify_signed_source(staged, expected)
+            (staged / "dist").mkdir()
+            (staged / "dist/server.cjs").write_text("// generated")
+            mint_updater.verify_signed_source(staged, expected)
+            extra = staged / "unsigned.ts"
+            extra.write_text("// unexpected")
+            with self.assertRaisesRegex(ValueError, "Unexpected staged source entry"):
+                mint_updater.verify_signed_source(staged, expected)
+            extra.unlink()
+            package.chmod(0o700)
+            with self.assertRaisesRegex(ValueError, "executable permission differs"):
+                mint_updater.verify_signed_source(staged, expected)
+            package.chmod(0o600)
             package.write_text('{"version":"1.2.4"}')
             with self.assertRaisesRegex(ValueError, "Staged source differs"):
                 mint_updater.verify_signed_source(staged, expected)
