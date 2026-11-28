@@ -75,6 +75,7 @@ jobs:
           python3 scripts/mint/test-setup-ui.py
           python3 scripts/mint/test-setup-prerequisites.py
           python3 scripts/test-sign-update-release.py
+          python3 scripts/test-sign-native-installers.py
           python3 scripts/mint/test-setup-existing-installation.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py
