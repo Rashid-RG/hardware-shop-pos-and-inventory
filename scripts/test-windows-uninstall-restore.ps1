@@ -181,3 +181,40 @@ foreach ($needle in @('$LASTEXITCODE -ne 0','$lines.Count -ne 1',"StartsWith('AR
  if (-not $source.Contains($needle)) {throw "Missing rehearsal guard: $needle"}
 }
 Write-Host 'Continuous recovery rehearsal early guards and stage ordering passed.'
+
+
+# Read-only Docker identity parser regression: no Docker or live database access.
+. (Join-Path $PSScriptRoot 'windows-docker-cluster-identity.ps1')
+foreach ($database in @('hardware_pos','hardware_pos_ars')) {
+ $identity=ConvertFrom-ArsDockerClusterIdentity @("$database|18446744073709551615|4294967295") $database
+ if ($identity.database -cne $database -or $identity.systemIdentifier -cne '18446744073709551615' -or $identity.databaseOid -cne '4294967295') {throw 'Docker identity precision lost.'}
+}
+foreach ($invalid in @(
+ 'hardware_pos|18446744073709551616|1',
+ 'hardware_pos|1|4294967296',
+ 'hardware_pos|0|1',
+ 'hardware_pos|01|1',
+ 'hardware_pos|1|0',
+ 'hardware_pos|1|01',
+ 'hardware_pos|-1|1',
+ 'hardware_pos|1|1|extra',
+ 'hardware_pos_ars|1|1',
+ 'hardware_pos|1| 1',
+ 'hardware_pos|1'
+)) {
+ $blocked=$false
+ try {ConvertFrom-ArsDockerClusterIdentity @($invalid) 'hardware_pos'|Out-Null} catch {$blocked=$true}
+ if (-not $blocked) {throw 'Invalid Docker identity accepted.'}
+}
+foreach ($candidate in @(@{lines=@()},@{lines=@('hardware_pos|1|1','hardware_pos|1|1')},@{lines=@(123)})) {
+ $blocked=$false
+ try {ConvertFrom-ArsDockerClusterIdentity $candidate.lines 'hardware_pos'|Out-Null} catch {$blocked=$true}
+ if (-not $blocked) {throw 'Non-unique or malformed Docker identity accepted.'}
+}
+$blocked=$false
+try {Get-ArsDockerClusterIdentity 'hardware_pos_ci'|Out-Null} catch {
+ if ($_.Exception.Message -cne 'Unsupported managed database.') {throw}
+ $blocked=$true
+}
+if (-not $blocked) {throw 'Unsupported Docker source accepted.'}
+Write-Host 'Docker cluster identity parser and early guard checks passed.'
