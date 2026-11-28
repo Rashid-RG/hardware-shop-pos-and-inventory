@@ -12,10 +12,11 @@ export async function runWindowsMaintenanceWorker(session,supervisor,command,arg
  if(session.signal.aborted)throw Error('Maintenance interrupted.');
  await new Promise((resolve,reject)=>{
   const child=spawn(supervisor,['--private-worker-v1',String(timeoutMs),cwd,command,...args],{cwd,stdio:['pipe','pipe','pipe'],windowsHide:true,shell:false});
-  let failure,deadline,cleanup;
+  let failure,deadline,cleanup,monitorTimer,inFlight,closed=false;
   function revoke(reason){
    if(failure)return;
    failure=Error(reason);
+   clearTimeout(monitorTimer);
    // Closing the private control stream requests native cancellation. Allow
    // native job termination verification before forcing supervisor shutdown.
    child.stdin.destroy();
@@ -26,13 +27,36 @@ export async function runWindowsMaintenanceWorker(session,supervisor,command,arg
   child.stdout.on('data',()=>revoke('Unexpected native maintenance output.'));
   child.stderr.on('data',()=>revoke('Unexpected native maintenance output.'));
   child.once('error',()=>revoke('Native maintenance supervisor failed.'));
-  child.once('close',(code,signal)=>{
+  child.once('close',async(code,signal)=>{
+   closed=true;
+   clearTimeout(monitorTimer);
    clearTimeout(deadline);clearTimeout(cleanup);
    session.signal.removeEventListener('abort',abort);
    child.stdin.destroy();
+   // Drain the last ownership check before allowing the caller to release its session.
+   if(inFlight)await inFlight;
    if(failure||code!==0||signal){reject(failure||Error('Native maintenance worker did not complete.'));return;}
    resolve();
   });
+  // Serial checks avoid overlapping queries on the dedicated PostgreSQL client.
+  // Polling detects persistent loss, not every possible transient change.
+  function scheduleCheck(){
+   if(closed||failure)return;
+   monitorTimer=setTimeout(()=>{
+    if(closed||failure)return;
+    inFlight=(async()=>{
+     try{
+      await session.assertActive();
+      if(session.signal.aborted)revoke('Maintenance interrupted.');
+     }catch{
+      if(closed){if(!failure)failure=Error('Maintenance protection lost.');}
+      else revoke('Maintenance interrupted.');
+     }
+    })();
+    inFlight.then(()=>{inFlight=undefined;scheduleCheck();});
+   },2000);
+  }
+  scheduleCheck();
   deadline=setTimeout(()=>revoke('Native maintenance supervisor timed out.'),timeoutMs+5000);
   session.signal.addEventListener('abort',abort,{once:true});
   if(session.signal.aborted)abort();
