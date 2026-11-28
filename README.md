@@ -28,6 +28,16 @@ The RS Nextward Update Center supports protected backup preparation, isolated re
 
 Google Drive encryption and scheduled backup require setup on the actual machine, verification of a successful upload, and an isolated restore drill. Keep the encryption recovery credentials separately and securely.
 
+### Windows Docker recovery rehearsal
+
+On a dedicated Windows test machine, start Docker Desktop in Linux-container mode and run `npm ci` from the test checkout. From Windows PowerShell, run:
+
+```powershell
+.\scripts\rehearse-windows-docker-maintenance-recovery.ps1
+```
+
+The rehearsal builds a temporary maintenance supervisor and tests both supported database names with disposable sample data. It needs the managed Docker container names to be free and fails if either name is in use. A successful run prints a backup-and-restore result for each database.
+
 ## Shop-opening acceptance
 
 Complete the [V1.0 acceptance checklist](docs/v1-shop-opening-acceptance.md) with the owner and operator before real data entry or release approval.
