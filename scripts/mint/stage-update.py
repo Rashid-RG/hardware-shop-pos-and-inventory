@@ -51,6 +51,12 @@ def extract_verified(archive, target):
                     shutil.copyfileobj(source, out)
                 dest.chmod(0o700 if member.mode & 0o111 else 0o600)
 
+def verify_package_version(source, version):
+    package = json.loads((source / "package.json").read_text(encoding="utf-8"))
+    if not isinstance(package, dict) or package.get("version") != version:
+        raise ValueError("Package version does not match the signed release manifest.")
+
+
 def stage(manifest, signature, archive):
     if os.geteuid() == 0:
         raise ValueError("Run update preparation as the desktop user.")
@@ -86,6 +92,7 @@ def stage(manifest, signature, archive):
             for required in ("package.json", "package-lock.json", "scripts/mint/compose.yaml"):
                 if not (source/required).is_file():
                     raise ValueError("Release is missing required application files.")
+            verify_package_version(source, version)
             # Do not provide database credentials to build subprocesses.
             env = {key: os.environ[key] for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
             subprocess.run(["npm", "ci", "--include=dev"], cwd=source, env=env, check=True)

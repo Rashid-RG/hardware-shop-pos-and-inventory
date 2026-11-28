@@ -11,6 +11,10 @@ spec = importlib.util.spec_from_file_location("release_signer", Path(__file__).w
 signer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signer)
 
+mint_spec = importlib.util.spec_from_file_location("mint_updater", Path(__file__).parent / "mint/stage-update.py")
+mint_updater = importlib.util.module_from_spec(mint_spec)
+mint_spec.loader.exec_module(mint_updater)
+
 
 class ReleaseSigningTests(unittest.TestCase):
     def test_platform_bundles_and_tamper_rejection(self):
@@ -38,6 +42,17 @@ class ReleaseSigningTests(unittest.TestCase):
                                              "-signature", str(output / "manifest.sig"), str(manifest)],
                                             capture_output=True)
                     self.assertNotEqual(result.returncode, 0)
+
+
+    def test_mint_staging_requires_exact_signed_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            package = source / "package.json"
+            package.write_text('{"version":"1.2.3"}')
+            mint_updater.verify_package_version(source, "1.2.3")
+            for wrong in ("1.2.2", "1.2.3-rc.1", "1.2.4"):
+                with self.subTest(version=wrong), self.assertRaisesRegex(ValueError, "does not match"):
+                    mint_updater.verify_package_version(source, wrong)
 
 
 if __name__ == "__main__":

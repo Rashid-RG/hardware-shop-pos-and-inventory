@@ -86,6 +86,8 @@ test('Windows staging rejects unsafe ZIP members and publishes only to a new rel
  const inspector=readFileSync(new URL('../scripts/inspect-windows-release.ps1',import.meta.url),'utf8');
  assert.match(inspector,/\[IO.Directory\]::Move\(\$pending,\$target\)/);
  assert.match(inspector,/No build, database connection or installation/);
+ assert.ok(inspector.indexOf('Package version does not match the signed release manifest')>=0);
+ assert.ok(inspector.indexOf('Package version does not match the signed release manifest')<inspector.indexOf('[IO.Directory]::Move'));
 });
 
 test('Windows staged source revalidation uses signed original archive',()=>{

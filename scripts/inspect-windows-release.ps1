@@ -55,6 +55,8 @@ try {
     foreach ($required in @('package.json','package-lock.json','server.ts','scripts/start-local.ps1')) {
       if (-not (Test-Path -LiteralPath (Join-Path $source $required) -PathType Leaf)) { throw 'Required release file missing.' }
     }
+    $package = Get-Content -LiteralPath (Join-Path $source 'package.json') -Raw | ConvertFrom-Json
+    if ($package.version -isnot [string] -or $package.version -cne $data.version) { throw 'Package version does not match the signed release manifest.' }
     Copy-Item -LiteralPath $m -Destination (Join-Path $source '.ars-release-manifest.json')
     Copy-Item -LiteralPath $sig -Destination (Join-Path $source '.ars-release-manifest.sig')
     Copy-Item -LiteralPath (Join-Path $temp 'release.zip') -Destination (Join-Path $source '.ars-release.zip')
