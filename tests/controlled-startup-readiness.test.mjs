@@ -36,3 +36,27 @@ test('installed readiness refuses another release or process on the POS port',as
   await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
  }
 });
+
+
+test('installed readiness bounds response size and rejects malformed or failed responses',async()=>{
+ const {createServer}=await import('node:http');
+ const {verifyInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ const ready={ok:true,status:'ready',database:'reachable',sourceOfTruth:'normalized',buildVersion:'1.2.3',processId:4123};
+ let mode='large';
+ const server=createServer((_req,res)=>{
+  if(mode==='large'){res.write(JSON.stringify({...ready,padding:'x'.repeat(17000)}));res.end();}
+  else if(mode==='invalid')res.end('{invalid');
+  else if(mode==='unready'){res.statusCode=503;res.end(JSON.stringify(ready));}
+  else if(mode==='redirect'){res.statusCode=302;res.setHeader('Location','/elsewhere');res.end();}
+  else res.end(JSON.stringify(ready));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const {port}=server.address();
+  await assert.rejects(verifyInstalledRelease('1.2.3',4123,port),/exceeds limit/);
+  mode='invalid';await assert.rejects(verifyInstalledRelease('1.2.3',4123,port),/Invalid POS readiness response/);
+  mode='unready';await assert.rejects(verifyInstalledRelease('1.2.3',4123,port),/not ready/);
+  mode='redirect';await assert.rejects(verifyInstalledRelease('1.2.3',4123,port));
+  mode='valid';await verifyInstalledRelease('1.2.3',4123,port);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
