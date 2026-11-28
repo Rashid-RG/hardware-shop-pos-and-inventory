@@ -1,9 +1,9 @@
 """Verify the installer uses the same Docker endpoint as local recovery."""
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from setup_prerequisites import verify_docker_endpoint
+from setup_prerequisites import verify_docker_endpoint, verify_docker_ready
 
 
 class DockerEndpointTests(unittest.TestCase):
@@ -25,6 +25,25 @@ class DockerEndpointTests(unittest.TestCase):
             with self.subTest(key=key), patch.dict("os.environ", {key: ""}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "without connection overrides"):
                     verify_docker_endpoint()
+        run.assert_not_called()
+
+
+    @patch("setup_prerequisites.verify_docker_endpoint")
+    @patch("setup_prerequisites.shutil.which", return_value="/usr/bin/pkexec")
+    @patch("setup_prerequisites.subprocess.run")
+    @patch("setup_prerequisites.run_ok", side_effect=[True, False, False, True])
+    def test_authorized_service_start_continues_setup(self, _ok, run, _which, _endpoint):
+        run.return_value = subprocess.CompletedProcess([], 0, stdout="linux\n")
+        self.assertTrue(verify_docker_ready(Mock(return_value=0), Mock()))
+        self.assertEqual(run.call_args_list[0].args[0],
+                         ["pkexec", "/usr/bin/systemctl", "start", "docker.service"])
+
+    @patch("setup_prerequisites.verify_docker_endpoint")
+    @patch("setup_prerequisites.shutil.which", return_value="/usr/bin/pkexec")
+    @patch("setup_prerequisites.subprocess.run")
+    @patch("setup_prerequisites.run_ok", side_effect=[True, False, False])
+    def test_declining_service_start_leaves_setup_cancelled(self, _ok, run, _which, _endpoint):
+        self.assertFalse(verify_docker_ready(Mock(return_value=1), Mock()))
         run.assert_not_called()
 
 

@@ -77,20 +77,12 @@ def install_missing(dialog, resume=lambda: None):
         if not match or int(match.group(1))<12 or candidate("npm")=="(none)":
             raise RuntimeError("Configured APT repositories do not provide a compatible Node.js 22.12+ and npm. A trusted runtime source must be prepared by support.")
         packages.extend(["nodejs","npm"])
-    if shutil.which("docker"):
-        if not run_ok(["docker","info"]):
-            return configure_docker_access(dialog, resume)
-        result=subprocess.run(["docker","info","--format","{{.OSType}}"],check=True,capture_output=True,text=True,timeout=15)
-        if result.stdout.strip()!="linux":
-            raise RuntimeError("Setup requires Linux containers.")
-        if not run_ok(["docker","compose","version"]):
-            raise RuntimeError("Existing Docker has no Compose v2. Setup will not mix Docker package providers.")
-    else:
+    if not shutil.which("docker"):
         if candidate("docker.io")=="(none)" or candidate("docker-compose-v2")=="(none)":
             raise RuntimeError("Configured APT repositories do not provide Docker Engine and Compose v2.")
         packages.extend(["docker.io","docker-compose-v2"])
     if not packages:
-        return True
+        return verify_docker_ready(dialog, resume)
     if not shutil.which("pkexec"):
         raise RuntimeError("Graphical administrator authorization (pkexec) is unavailable.")
     if dialog("--question","--no-markup","--text=Setup needs these packages from configured system repositories:\n"+", ".join(packages)+"\nAdministrator authorization is required. Continue?","--ok-label=Install requirements","--cancel-label=Cancel"):
@@ -98,6 +90,23 @@ def install_missing(dialog, resume=lambda: None):
     # APT confirms repository signatures. Never add repositories, remove packages,
     # bypass authentication or run application as root.
     subprocess.run(["pkexec","/usr/bin/apt-get","--no-remove","--assume-yes","install",*packages],check=True)
-    resume()
-    dialog("--info","--no-markup","--text=Prerequisites installed. Reopen Setup after administrator review of Docker access. No ARS database was created.")
-    return False
+    return verify_docker_ready(dialog, resume)
+
+
+def verify_docker_ready(dialog, resume):
+    verify_docker_endpoint()
+    if not run_ok(["docker","compose","version"]):
+        raise RuntimeError("Docker Compose v2 is required.")
+    if not run_ok(["docker","info"]):
+        if not run_ok(["/usr/bin/systemctl","is-active","--quiet","docker.service"]):
+            if not shutil.which("pkexec"):
+                raise RuntimeError("Graphical administrator authorization (pkexec) is unavailable.")
+            if dialog("--question","--no-markup","--text=Start the local Docker service so Setup can prepare PostgreSQL? Administrator authorization is required.","--ok-label=Start Docker","--cancel-label=Cancel"):
+                return False
+            subprocess.run(["pkexec","/usr/bin/systemctl","start","docker.service"],check=True,timeout=90)
+        if not run_ok(["docker","info"]):
+            return configure_docker_access(dialog, resume)
+    result=subprocess.run(["docker","info","--format","{{.OSType}}"],check=True,capture_output=True,text=True,timeout=15)
+    if result.stdout.strip()!="linux":
+        raise RuntimeError("Setup requires Linux containers.")
+    return True
