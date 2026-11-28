@@ -87,5 +87,37 @@ class ReleaseSigningTests(unittest.TestCase):
                 mint_updater.verify_signed_source(staged, "0" * 64)
 
 
+    def test_prepare_dual_platform_feed(self):
+        from unittest.mock import patch
+        spec=importlib.util.spec_from_file_location("feed",Path(__file__).with_name("prepare-update-feed.py"))
+        feed=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(feed)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            private,public=root/"private.pem",root/"public.pem"
+            subprocess.run(["openssl","genpkey","-algorithm","EC","-pkeyopt","ec_paramgen_curve:P-256","-out",str(private)],check=True)
+            subprocess.run(["openssl","pkey","-in",str(private),"-pubout","-out",str(public)],check=True)
+            commit="a"*40
+            files={"package.json":b'{"version":"1.2.3"}',"package-lock.json":b"{}","scripts/mint/compose.yaml":b"fixture","scripts/windows-pilot-compose.yml":b"fixture",".env.local":b"excluded"}
+            def git(*args):
+                if args[0]=="rev-parse": return commit.encode()
+                if args[0]=="show": return files["package.json"]
+                if args[0]=="ls-tree": return b"".join(("100644 blob "+name+"\t"+name+"\0").encode() for name in files)
+                if args[0]=="cat-file": return files[args[-1]]
+                raise AssertionError(args)
+            with patch.object(feed,"git",side_effect=git):
+                output=root/"feed"
+                feed.prepare(commit,"1.2.3",private,public,output)
+                import zipfile
+                with zipfile.ZipFile(output/"windows/release.zip") as archive:
+                    self.assertEqual(set(archive.namelist()),set(files)-{".env.local"})
+                with tarfile.open(output/"linux-mint/release.tar.gz") as archive:
+                    self.assertEqual(set(archive.getnames()),set(files)-{".env.local"})
+                self.assertFalse(json.loads((output/"release-record.json").read_text())["published"])
+                with self.assertRaises(FileExistsError):
+                    feed.prepare(commit,"1.2.3",private,public,output)
+                with self.assertRaises(ValueError):
+                    feed.prepare(commit,"1.2.4",private,public,root/"wrong")
+
 if __name__ == "__main__":
     unittest.main()
