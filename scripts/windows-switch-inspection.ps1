@@ -21,6 +21,21 @@ function Read-ArsSwitchSnapshot([string]$Path) {
   } finally {$stream.Dispose()}
 }
 
+function Get-ArsSwitchEvidenceInventory([string]$Control) {
+  $files=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {
+    $_.Name -in @('runtime-switch-journal.json','runtime-active.json','runtime-previous.json',
+      'runtime-failed-candidate.json','handoff-pending.json','maintenance-shutdown.json',
+      'maintenance.json','runtime-switch-intent.json','runtime-activation-interrupted.json','repair-interrupted.json') -or
+    $_.Name -like 'runtime-switch-pending-*' -or $_.Name -like 'journal-history-*'
+  } | Sort-Object Name)
+  if ($files.Count -gt 32) {throw 'Too many switch evidence files.'}
+  $inventory=[ordered]@{}
+  foreach ($file in $files) {
+    $inventory[$file.Name]=(Read-ArsSwitchSnapshot $file.FullName).digest
+  }
+  return ($inventory|ConvertTo-Json -Compress)
+}
+
 function Get-ArsSwitchInspection([string]$Control) {
   $blocked=[ordered]@{schema=1;state='unreadable-or-invalid';startupAllowed=$false;activationAllowed=$false;rollbackAllowed=$false}
   try {
@@ -41,6 +56,7 @@ function Get-ArsSwitchInspection([string]$Control) {
     foreach ($f in @($journal[0],$pointer[0])) {
       if ($f.PSIsContainer -or $f.Length -lt 1 -or $f.Length -gt 16384 -or ($f.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid switch evidence.' }
     }
+    $inventory=Get-ArsSwitchEvidenceInventory $Control
     $journalSnapshot=Read-ArsSwitchSnapshot $journal[0].FullName
     $pointerSnapshot=Read-ArsSwitchSnapshot $pointer[0].FullName
     $jhash=$journalSnapshot.digest
@@ -73,6 +89,8 @@ function Get-ArsSwitchInspection([string]$Control) {
     }
     $again=@(Get-ChildItem -LiteralPath $Control -Force -ErrorAction Stop | Where-Object {$_.Name -like 'journal-history-*'})
     if ($again.Count -ne $history.Count -or (Read-ArsSwitchSnapshot $pointer[0].FullName).digest -cne $phash) {throw 'Switch evidence changed.'}
+    if ((Get-ArsSwitchEvidenceInventory $Control) -cne $inventory) {throw 'Switch evidence inventory changed.'}
+    $blocked['evidenceInventory']=$inventory
     $blocked['historyVerified']=$true
     $blocked['phase']=$j.phase
     $expected=if ($j.phase -cin @('prepared','rolled-back','manual-recovery-required')) {$j.previousDigest} elseif ($j.phase -cin @('switched','completed')) {$j.candidateDigest} else {''}

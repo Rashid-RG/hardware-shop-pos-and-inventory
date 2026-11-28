@@ -127,6 +127,15 @@ try {
  } finally {$writer.Dispose()}
  $afterWriter=Get-ArsSwitchInspection $root
  if ($afterWriter.historyVerified -ne $true) {throw 'Stable evidence not accepted.'}
+ # Retained pointer evidence is part of the review, not just the journal.
+ $retained=Join-Path $root 'runtime-previous.json'
+ $original=[IO.File]::ReadAllBytes($retained)
+ [IO.File]::AppendAllText($retained,' ')
+ $changed=Get-ArsSwitchInspection $root
+ if ($changed.historyVerified -ne $true -or $changed.evidenceInventory -ceq $final.evidenceInventory) {throw 'Retained evidence change not reflected in review.'}
+ [IO.File]::WriteAllBytes($retained,$original)
+ $restored=Get-ArsSwitchInspection $root
+ if ($restored.evidenceInventory -cne $final.evidenceInventory) {throw 'Stable evidence inventory mismatch.'}
  $historyVerified=$true
  for ($n=2;$n -le $script:sequence;$n++) {
   $before=Join-Path $root ('journal-history-{0:D4}.json' -f ($n-1))
