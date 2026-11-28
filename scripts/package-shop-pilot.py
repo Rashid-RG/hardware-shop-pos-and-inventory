@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Create an acceptance package from committed files and an optional CI runtime."""
-import hashlib, json, pathlib, subprocess, sys, zipfile
+import hashlib, json, pathlib, subprocess, sys, zipfile, ssl
 commit, target = sys.argv[1:3]
 runtime = pathlib.Path(sys.argv[3]) if len(sys.argv) == 4 else None
 actual = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -9,7 +9,12 @@ if actual != commit:
 out = pathlib.Path(target)
 out.mkdir(parents=True, exist_ok=True)
 files = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", "-z", commit]).decode().split("\0")
-required = {"package.json", "package-lock.json", "Launch-Hardware-POS.vbs", "Start-Hardware-POS.bat", "scripts/mint/install.sh", "docs/v1-shop-opening-acceptance.md"}
+public_key = "release-trust/release-signing-public.pem"
+expected_fingerprint = "5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6"
+key_bytes = subprocess.check_output(["git", "show", commit + ":" + public_key])
+if hashlib.sha256(ssl.PEM_cert_to_DER_cert(key_bytes.decode().replace("PUBLIC KEY", "CERTIFICATE"))).hexdigest() != expected_fingerprint:
+    raise SystemExit("RS Nextward public key fingerprint mismatch")
+required = {public_key, "package.json", "package-lock.json", "Launch-Hardware-POS.vbs", "Start-Hardware-POS.bat", "scripts/mint/install.sh", "docs/v1-shop-opening-acceptance.md"}
 if not required.issubset(files):
     raise SystemExit("Required installation files missing")
 def allowed(name):
@@ -18,6 +23,8 @@ def allowed(name):
         return False
     if p.name.startswith(".env") and p.name not in {".env.example", ".env.local.example"}:
         return False
+    if name == public_key:
+        return True
     if p.suffix.lower() in {".pem", ".key", ".p12", ".pfx", ".dump", ".backup", ".sqlite", ".db"}:
         return False
     return True
