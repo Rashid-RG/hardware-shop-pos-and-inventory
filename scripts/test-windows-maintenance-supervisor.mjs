@@ -168,3 +168,64 @@ await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_
 assert.deepEqual(await resultFiles(),[stageResult.resultName]);
 assert.deepEqual(await readFile(join(stageDestination,stageResult.resultName)),retained);
 console.log('Protected Windows backup stage fixture checks passed.');
+
+
+// Use the compiled executable and actual Windows user token in a disposable
+// installed-runtime layout. No PostgreSQL or Docker data is touched.
+import {realpath} from 'node:fs/promises';
+import {getWindowsProcessSid} from './windows-maintenance-current-identity.mjs';
+import {runVerifiedInstalledWindowsBackup} from './windows-verified-installed-backup.mjs';
+const installedRoot=await realpath(stageRoot);
+const installedRuntime=join(installedRoot,'installer-runtime');
+await mkdir(installedRuntime);
+const nativeRelative='installer-runtime/maintenance-supervisor.exe';
+const installedExe=join(installedRoot,nativeRelative);
+await copyFile(supervisor,installedExe);
+const digest=b=>createHash('sha256').update(b).digest('hex');
+const nativeDigest=digest(await readFile(installedExe));
+const manifestRaw=JSON.stringify({[nativeRelative]:{sha256:nativeDigest,mode:420}});
+await writeFile(join(installedRoot,'PILOT-FILES.json'),manifestRaw);
+const previousLocal=process.env.LOCALAPPDATA;
+try{
+ process.env.LOCALAPPDATA=join(await realpath(dir),'verified-local');
+ const state=join(process.env.LOCALAPPDATA,'RS Nextward','ARS Distributor');
+ await mkdir(state,{recursive:true});
+ const sid=await getWindowsProcessSid();
+ const identity={schema:1,kind:'windows-installation-identity-observation',installation:installedRoot,desktopSid:sid,packageManifestDigest:digest(manifestRaw),applicationTreeDigest:'a'.repeat(64),entryCount:10,runtimeExcluded:true,installationOwnershipCertified:false,applicationRemovalAllowed:false,serviceRemovalAllowed:false,databaseDeletionAllowed:false};
+ const identityPath=join(state,'installation-identity.json');
+ const identityRaw=JSON.stringify(identity);
+ await writeFile(identityPath,identityRaw);
+ const destination=join(await realpath(dir),'verified-recovery');
+ await mkdir(destination);
+ await writeFile(producer,[
+  'param([string]$Destination,[switch]$OutputArchive)',
+  '$ErrorActionPreference="Stop"',
+  '$archive=Join-Path $Destination "ars-hardware_pos-verified-fixture.dump"',
+  '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
+  'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
+ ].join('\r\n'));
+ const invoke=()=>withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
+  runVerifiedInstalledWindowsBackup(session,{root:installedRoot,destination,timeoutMs:15000})
+ );
+ const result=await invoke();
+ assert.equal(result.installationIdentityDigest,digest(identityRaw));
+ assert.equal(result.packageManifestDigest,digest(manifestRaw));
+ assert.equal(result.supervisorSha256,nativeDigest);
+ assert.equal(result.sha256,digest(Buffer.alloc(4096)));
+ for(const field of ['signatureVerified','applicationTreeReverified','applicationRemovalAllowed','databaseDeletionAllowed','activationAllowed','continuousExclusionVerified'])assert.equal(result[field],false);
+ const files=await readdir(destination);
+ const resultRaw=await readFile(join(destination,result.resultName));
+ await writeFile(identityPath,JSON.stringify({...identity,desktopSid:sid==='S-1-5-18'?'S-1-5-19':'S-1-5-18'}));
+ await assert.rejects(invoke(),/identity does not match/);
+ await writeFile(identityPath,identityRaw);
+ const modified=await readFile(installedExe);
+ modified[modified.length-1]^=1;
+ await writeFile(installedExe,modified);
+ await assert.rejects(invoke(),/integrity mismatch/);
+ assert.deepEqual(await readdir(destination),files);
+ assert.deepEqual(await readFile(join(destination,result.resultName)),resultRaw);
+}finally{
+ if(previousLocal===undefined)delete process.env.LOCALAPPDATA;
+ else process.env.LOCALAPPDATA=previousLocal;
+}
+console.log('Verified installed backup coordinator fixture checks passed.');
