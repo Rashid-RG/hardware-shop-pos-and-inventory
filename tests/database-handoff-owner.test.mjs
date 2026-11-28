@@ -285,3 +285,19 @@ test('a running maintenance child stops when a protection check fails',async()=>
  assert.equal(checks,2);
  assert.equal(getEventListeners(fixture.controller.signal,'abort').length,0);
 });
+
+test('Linux maintenance worker receives the retained lock descriptor at fd 3',{skip:process.platform!=='linux'},async()=>{
+ const {open}=await import('node:fs/promises');
+ const directory=await mkdtemp(join(tmpdir(),'ars-maintenance-fd-'));
+ try{
+  const file=await open(join(directory,'lock'),'wx+');
+  try{
+   await file.writeFile('retained lock');
+   const output=await childFixture().run(
+    "const b=Buffer.alloc(13);require('node:fs').readSync(3,b,0,b.length,0);process.stdout.write(b)",
+    {inheritedFd:file.fd}
+   );
+   assert.equal(output,'retained lock');
+  }finally{await file.close();}
+ }finally{await rm(directory,{recursive:true,force:true});}
+});

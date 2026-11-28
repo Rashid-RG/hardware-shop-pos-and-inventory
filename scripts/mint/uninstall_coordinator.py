@@ -42,22 +42,37 @@ def rehearse(confirmation):
     with open_lock(STATE / "maintenance.lock") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         check()
-        subprocess.run([str(STATE / "node"), str(project / "scripts/mint/locked-backup.mjs"),
-                        hold["version"], "--uninstall"], cwd=project, check=True, timeout=1200)
-        check()
-        spec = importlib.util.spec_from_file_location("uninstall_restore", Path(__file__).with_name("test-uninstall-restore-isolated.py"))
-        restore = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(restore)
-        observation = restore._inspect(folder, lock)
-        if observation.get("uninstallId") != uid or observation.get("isolatedRestorePassed") is not True:
-            raise ValueError("Restore observation mismatch.")
-        check()
-        plan = inspect_final(folder, lock)
-        if plan.get("uninstallId") != uid or plan.get("restoreObservationMatched") is not True or any(plan.get(k) is not False for k in FLAGS):
-            raise ValueError("Unexpected review result.")
+        outcome = subprocess.run(
+            [str(STATE / "node"), str(project / "scripts/mint/locked-backup.mjs"),
+             hold["version"], "--uninstall", str(lock.fileno())],
+            cwd=project, check=True, timeout=2250, pass_fds=(lock.fileno(),),
+            capture_output=True, text=True,
+        )
+        if outcome.stdout.splitlines().count("ARS_RECOVERY_REVIEW=" + uid) != 1:
+            raise ValueError("Verified recovery review missing.")
         check()
     return {"schema": 1, "kind": "mint-uninstall-coordinator-rehearsal",
             "uninstallId": uid, "finalReviewMatched": True,
             "maintenanceHoldObserved": True, **{k: False for k in FLAGS}}
 
-# Failures retain recovery files and the maintenance hold.
+def review_under_maintenance(folder, lock):
+    uid = folder.name
+    spec = importlib.util.spec_from_file_location("uninstall_restore", Path(__file__).with_name("test-uninstall-restore-isolated.py"))
+    restore = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(restore)
+    observation = restore._inspect(folder, lock)
+    if observation.get("uninstallId") != uid or observation.get("isolatedRestorePassed") is not True:
+        raise ValueError("Restore observation mismatch.")
+    plan = inspect_final(folder, lock)
+    if plan.get("uninstallId") != uid or plan.get("restoreObservationMatched") is not True or any(plan.get(k) is not False for k in FLAGS):
+        raise ValueError("Unexpected review result.")
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 2:
+        raise SystemExit("Managed recovery folder required.")
+    folder = Path(sys.argv[1])
+    with os.fdopen(3, "a") as lock:
+        review_under_maintenance(folder, lock)
+    print("ARS_RECOVERY_REVIEW=" + folder.name)

@@ -23,7 +23,9 @@ const holdPath=resolve(state,'maintenance-hold.json');
 const holdRaw=evidence(holdPath);
 const hold=JSON.parse(holdRaw);
 const uninstall=process.argv[3]==='--uninstall';
-if(process.argv.length!==(uninstall?4:3)||hold.purpose!==(uninstall?'pre-uninstall backup':'pre-update backup')||hold.previousProject!==project||hold.version!==process.argv[2])throw Error('Matching maintenance hold required.');
+const maintenanceFd=uninstall?Number(process.argv[4]):undefined;
+if(uninstall&&(!Number.isInteger(maintenanceFd)||maintenanceFd<3))throw Error('Inherited maintenance lock required.');
+if(process.argv.length!==(uninstall?5:3)||hold.purpose!==(uninstall?'pre-uninstall backup':'pre-update backup')||hold.previousProject!==project||hold.version!==process.argv[2])throw Error('Matching maintenance hold required.');
 if(uninstall&&(!/^[a-f0-9]{32}$/.test(hold.uninstallId)||hold.applicationRemovalAllowed!==false))throw Error('Non-authorizing uninstall hold required.');
 const shutdownPath=resolve(state,'uninstall-shutdown.json');
 const shutdownRaw=uninstall?evidence(shutdownPath):null;
@@ -71,10 +73,16 @@ try{
   try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
   const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
   await assertActive();
+  if(uninstall){
+   const review=await runMaintenanceChild(scope,'python3',['scripts/mint/uninstall_coordinator.py',folder],{
+    cwd:project,timeoutMs:1200000,maxOutput:65536,inheritedFd:maintenanceFd
+   });
+   if(!review.split(/\r?\n/).includes('ARS_RECOVERY_REVIEW='+hold.uninstallId))throw Error('Final recovery review missing.');
+  }
   return matches[0];
  }));
  if(interruption.signal.aborted)throw Error('Backup interrupted.');
- console.log(message);
+ console.log(uninstall?'ARS_RECOVERY_REVIEW='+hold.uninstallId:message);
  console.log('Application writer lease and existing public table SHARE locks were held during backup.');
 }finally{
  process.off('SIGTERM',interrupt);

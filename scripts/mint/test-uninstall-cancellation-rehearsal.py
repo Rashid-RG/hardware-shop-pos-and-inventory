@@ -90,7 +90,13 @@ class Rehearsal(unittest.TestCase):
                 backup=Mock()
                 final=Mock(return_value={"uninstallId":uid,"restoreObservationMatched":True,
                                          **{k:False for k in coordinator.FLAGS}})
-                backup.side_effect=lambda *args, **kwargs: assert_retained()
+                def protected_pipeline(command, *, pass_fds, **kwargs):
+                    self.assertEqual(pass_fds, (int(command[-1]),))
+                    with coordinator.os.fdopen(coordinator.os.dup(pass_fds[0]), "a") as lock:
+                        assert_retained()
+                        coordinator.review_under_maintenance(state/"uninstall-recovery"/uid, lock)
+                    return Mock(stdout="ARS_RECOVERY_REVIEW="+uid+"\n")
+                backup.side_effect=protected_pipeline
                 def final_stage(folder, lock):
                     assert_retained(folder, lock)
                     return final.return_value
