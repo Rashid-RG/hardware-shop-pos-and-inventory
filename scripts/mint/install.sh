@@ -11,6 +11,18 @@ docker info >/dev/null
 docker compose version >/dev/null
 systemctl --user show-environment >/dev/null
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/mint/desktop_registration.py preflight "$root"
+# Validate the pinned public key and reject existing trust before runtime changes.
+if [[ -f "$root/PILOT-FILES.json" ]]; then
+  python3 - "$root/release-trust/release-signing-public.pem" "$HOME/.local/share/ars-hardware/release-signing-public.pem" <<'PY'
+import base64, hashlib, os, pathlib, sys
+source, target = map(pathlib.Path, sys.argv[1:])
+lines = source.read_text(encoding="ascii").splitlines()
+if len(lines) < 3 or lines[0] != "-----BEGIN PUBLIC KEY-----" or lines[-1] != "-----END PUBLIC KEY-----" or hashlib.sha256(base64.b64decode("".join(lines[1:-1]), validate=True)).hexdigest() != "5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6":
+    raise SystemExit("RS Nextward public key fingerprint mismatch")
+if os.path.lexists(target):
+    raise SystemExit("Existing release trust retained; fresh setup blocked")
+PY
+fi
 # Fresh-install entry point only. Registered installations must use update/recovery tools.
 python3 scripts/mint/runtime-layout.py "$root"
 echo "ARS_SETUP_STAGE 1"
@@ -32,6 +44,18 @@ install -m 600 scripts/mint/startup_guard.py scripts/mint/interrupted_switch.py 
   scripts/mint/trusted-switch-recovery.py "$app/update-tools/"
 if [[ -f "$root/PILOT-FILES.json" ]]; then
   /usr/bin/python3 -E -s -B "$app/update-tools/trusted-switch-recovery.py" install-initial --initial-project "$root"
+  python3 - "$root/release-trust/release-signing-public.pem" "$app/release-signing-public.pem" <<'PY'
+import base64, hashlib, os, pathlib, sys
+source, target = map(pathlib.Path, sys.argv[1:])
+data = source.read_bytes()
+lines = data.decode("ascii").splitlines()
+if len(lines) < 3 or lines[0] != "-----BEGIN PUBLIC KEY-----" or lines[-1] != "-----END PUBLIC KEY-----" or hashlib.sha256(base64.b64decode("".join(lines[1:-1]), validate=True)).hexdigest() != "5585a52128cf936b283116885a9c6f47555827ea1f092e9e82651ef77a0a9fb6":
+    raise SystemExit("RS Nextward public key fingerprint mismatch")
+with os.fdopen(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as stream:
+    stream.write(data)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
 fi
 install -m 644 scripts/mint/ars-hardware.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
