@@ -66,6 +66,14 @@ def review_under_maintenance(folder, lock):
     plan = inspect_final(folder, lock)
     if plan.get("uninstallId") != uid or plan.get("restoreObservationMatched") is not True or any(plan.get(k) is not False for k in FLAGS):
         raise ValueError("Unexpected review result.")
+    digests = plan["evidenceDigests"]
+    return {
+        "uninstallId": uid,
+        "holdDigest": digests["hold"],
+        "shutdownDigest": digests["shutdown"],
+        "metadataDigest": digests["meta"],
+        "receiptDigest": digests["receipt"],
+    }
 
 
 if __name__ == "__main__":
@@ -74,5 +82,5 @@ if __name__ == "__main__":
         raise SystemExit("Managed recovery folder required.")
     folder = Path(sys.argv[1])
     with os.fdopen(3, "a") as lock:
-        review_under_maintenance(folder, lock)
-    print("ARS_RECOVERY_REVIEW=" + folder.name)
+        reviewed = review_under_maintenance(folder, lock)
+    print("ARS_RECOVERY_REVIEW=" + json.dumps(reviewed))

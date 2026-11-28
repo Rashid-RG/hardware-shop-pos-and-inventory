@@ -2,7 +2,7 @@
 import pg from 'pg';
 import {withMaintenanceSession} from '../database-maintenance-session.mjs';
 import {withMaintenanceTableFence} from '../database-maintenance-table-fence.mjs';
-import {readProtectedMaintenanceClusterIdentity} from '../maintenance-cluster-identity.mjs';
+import {assertMaintenanceClusterMatch,readProtectedMaintenanceClusterIdentity} from '../maintenance-cluster-identity.mjs';
 import {runMaintenanceChild} from '../database-maintenance-child.mjs';
 import { readFileSync, realpathSync, lstatSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -69,15 +69,24 @@ try{
   const receipt={schema:1,kind:'mint-maintenance-backup-observation',holdDigest:sha(holdRaw),recoveryDigest:sha(metaRaw),archive:meta.archive,version:hold.version,database:db.database,systemIdentifier:db.systemIdentifier,databaseOid:db.databaseOid,recordedAt:new Date().toISOString(),locksObserved:true,activationAllowed:false,continuousExclusionVerified:false};
   if(uninstall&&sha(evidence(shutdownPath))!==sha(shutdownRaw))throw Error('Shutdown evidence changed.');
   if(uninstall)Object.assign(receipt,{kind:'mint-uninstall-backup-observation',shutdownDigest:sha(shutdownRaw),uninstallId:hold.uninstallId,applicationRemovalAllowed:false,finalUninstallBackupVerified:false});
-  const fd=openSync(resolve(folder,'maintenance-backup-receipt.json'),'wx',0o600);
-  try{writeFileSync(fd,JSON.stringify(receipt)+'\n');fsyncSync(fd);}finally{closeSync(fd);}
+  const receiptPath=resolve(folder,'maintenance-backup-receipt.json');
+  const receiptRaw=Buffer.from(JSON.stringify(receipt)+'\n');
+  const fd=openSync(receiptPath,'wx',0o600);
+  try{writeFileSync(fd,receiptRaw);fsyncSync(fd);}finally{closeSync(fd);}
   const dir=openSync(folder,'r');try{fsyncSync(dir);}finally{closeSync(dir);}
   await assertActive();
   if(uninstall){
    const review=await runMaintenanceChild(scope,'python3',['scripts/mint/uninstall_coordinator.py',folder],{
     cwd:project,timeoutMs:1200000,maxOutput:65536,inheritedFd:maintenanceFd
    });
-   if(!review.split(/\r?\n/).includes('ARS_RECOVERY_REVIEW='+hold.uninstallId))throw Error('Final recovery review missing.');
+   const records=review.split(/\r?\n/).filter(line=>line.startsWith('ARS_RECOVERY_REVIEW='));
+   if(records.length!==1)throw Error('Unique final recovery review required.');
+   const verified=JSON.parse(records[0].slice('ARS_RECOVERY_REVIEW='.length));
+   if(verified.uninstallId!==hold.uninstallId||verified.holdDigest!==sha(holdRaw)||
+      verified.shutdownDigest!==sha(shutdownRaw)||verified.metadataDigest!==sha(metaRaw)||
+      verified.receiptDigest!==sha(receiptRaw)||!evidence(metaPath).equals(metaRaw)||
+      !evidence(receiptPath).equals(receiptRaw))throw Error('Final recovery evidence does not match the protected backup.');
+   assertMaintenanceClusterMatch(db,await readProtectedMaintenanceClusterIdentity(client,scope));
   }
   return matches[0];
  }));
