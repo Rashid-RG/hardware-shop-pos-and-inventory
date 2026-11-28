@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import stat
 import tempfile
 import sys
 
@@ -337,6 +338,29 @@ def view_history(folder,kind):
         details.append("Last verified cloud backup at this attempt: "+str(data.get("verifiedAt") or "None"))
     notice("\n".join(details))
 
+def read_recovery_evidence(path, maximum):
+    """Reject linked, nonregular, replaced or concurrently modified evidence."""
+    if path.resolve(strict=True)!=path:
+        raise ValueError("Linked recovery evidence")
+    def identity(info):
+        return (info.st_dev,info.st_ino,info.st_mode,info.st_size,
+                info.st_mtime_ns,info.st_ctime_ns)
+    before=path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size>maximum:
+        raise ValueError("Invalid recovery evidence")
+    with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK),"rb") as stream:
+        opened=os.fstat(stream.fileno())
+        if identity(before)!=identity(opened):
+            raise ValueError("Recovery evidence replaced")
+        raw=stream.read(maximum+1)
+        after=os.fstat(stream.fileno())
+    if (len(raw)!=before.st_size or len(raw)>maximum or
+        identity(before)!=identity(after) or identity(before)!=identity(path.lstat()) or
+        path.resolve(strict=True)!=path):
+        raise ValueError("Recovery evidence changed")
+    return raw,identity(before)
+
+
 def offline_release_center(project):
     """Offline selection and rollback only; never start a candidate."""
     journal=STATE/"switch-journal.json"
@@ -351,14 +375,14 @@ def offline_release_center(project):
     if os.path.lexists(journal):
         try:
             records={}
+            identities={}
             # Finalization may have archived and removed the live intent
             # before a power loss. Permit only the exact retained archive.
             intent_path=target
             if not os.path.lexists(target):
                 if journal.is_symlink() or not journal.is_file():
                     raise ValueError("Invalid journal")
-                with journal.open("rb") as stream:
-                    preliminary_raw=stream.read(65537)
+                preliminary_raw,_=read_recovery_evidence(journal,65536)
                 if not preliminary_raw or len(preliminary_raw)>65536:
                     raise ValueError("Invalid journal length")
                 preliminary=json.loads(preliminary_raw)
@@ -370,8 +394,7 @@ def offline_release_center(project):
             for name,path in (("journal",journal),("hold",hold),("intent",intent_path)):
                 if path.is_symlink() or not path.is_file():
                     raise ValueError("Invalid recovery record")
-                with path.open("rb") as stream:
-                    raw=stream.read(65537)
+                raw,identities[name]=read_recovery_evidence(path,65536)
                 if not raw or len(raw)>65536:
                     raise ValueError("Invalid recovery record length")
                 records[name]=raw
@@ -402,11 +425,11 @@ def offline_release_center(project):
                 raise ValueError("Unexpected release layout")
             # Bind the selected recovery entry point to this operator review.
             # This is a change detector, not a signed release attestation.
-            with selector.open("rb") as stream:
-                selector_bytes=stream.read(1048577)
-            if len(selector_bytes)>1048576:
-                raise ValueError("Recovery tool exceeds size limit")
-            observed=((journal,records["journal"]),(hold,records["hold"]),(intent_path,records["intent"]),(selector,selector_bytes))
+            selector_bytes,selector_identity=read_recovery_evidence(selector,1048576)
+            observed=((journal,records["journal"],identities["journal"]),
+                      (hold,records["hold"],identities["hold"]),
+                      (intent_path,records["intent"],identities["intent"]),
+                      (selector,selector_bytes,selector_identity))
             phase=data.get("phase")
             if phase in ("backup-verified","switched","offline-rollback-pending"):
                 actions=["Return to previous release"]
@@ -441,12 +464,10 @@ def offline_release_center(project):
     if dialog("--question","--no-markup","--text="+message).returncode==0:
         if observed is not None:
             try:
-                for path,original in observed:
-                    if path.is_symlink() or not path.is_file():
-                        raise ValueError("Invalid recovery record")
-                    with path.open("rb") as stream:
-                        if stream.read(len(original)+1)!=original:
-                            raise ValueError("Recovery evidence changed")
+                for path,original,original_identity in observed:
+                    current,current_identity=read_recovery_evidence(path,len(original))
+                    if current!=original or current_identity!=original_identity:
+                        raise ValueError("Recovery evidence changed")
                 if intent_path!=target and os.path.lexists(target):
                     raise ValueError("Live intent reappeared")
                 if (STATE/"project").resolve(strict=True)!=project or selector.resolve(strict=True)!=selector:

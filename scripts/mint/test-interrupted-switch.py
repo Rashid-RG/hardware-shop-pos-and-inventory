@@ -563,6 +563,28 @@ class RecoveryTests(unittest.TestCase):
                 center.offline_release_center(candidate)
                 run.assert_not_called()
                 notice.assert_called_once()
+    def test_recovery_evidence_reader_rejects_links_and_nonregular_entries(self):
+        spec=importlib.util.spec_from_file_location("update_center",Path(__file__).with_name("update-center.py"))
+        center=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(center)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()
+            evidence=root/"evidence"
+            evidence.write_bytes(b"original")
+            raw,identity=center.read_recovery_evidence(evidence,64)
+            self.assertEqual(raw,b"original")
+            replacement=root/"replacement"
+            replacement.write_bytes(raw)
+            replacement.replace(evidence)
+            self.assertNotEqual(center.read_recovery_evidence(evidence,64)[1],identity)
+            linked=root/"linked"
+            linked.symlink_to(evidence)
+            for invalid in (linked,root):
+                with self.assertRaises(ValueError):
+                    center.read_recovery_evidence(invalid,64)
+            with self.assertRaises(ValueError):
+                center.read_recovery_evidence(evidence,2)
+
     def test_offline_finalization_menu_recovers_archived_intent(self):
         from types import SimpleNamespace
         import hashlib
