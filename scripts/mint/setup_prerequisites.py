@@ -46,7 +46,20 @@ def configure_docker_access(dialog, resume):
     dialog("--info","--no-markup","--text=Docker access configured. Save your work, sign out of Linux Mint and sign back in, then reopen Setup. No ARS database was created.")
     return False
 
+def verify_docker_endpoint():
+    if any(key in os.environ for key in ("DOCKER_HOST","DOCKER_CONTEXT","DOCKER_TLS_VERIFY","DOCKER_CERT_PATH")):
+        raise RuntimeError("Setup requires the local Docker socket without connection overrides.")
+    if shutil.which("docker"):
+        endpoint=subprocess.run(
+            ["docker","context","inspect","--format","{{.Endpoints.docker.Host}}"],
+            check=True,capture_output=True,text=True,timeout=10,
+        ).stdout.strip()
+        if endpoint!="unix:///var/run/docker.sock":
+            raise RuntimeError("Setup requires the standard local Docker socket.")
+
+
 def install_missing(dialog, resume=lambda: None):
+    verify_docker_endpoint()
     if not shutil.which("apt-cache"):
         raise RuntimeError("APT package manager is required.")
     packages=[]
@@ -67,6 +80,9 @@ def install_missing(dialog, resume=lambda: None):
     if shutil.which("docker"):
         if not run_ok(["docker","info"]):
             return configure_docker_access(dialog, resume)
+        result=subprocess.run(["docker","info","--format","{{.OSType}}"],check=True,capture_output=True,text=True,timeout=15)
+        if result.stdout.strip()!="linux":
+            raise RuntimeError("Setup requires Linux containers.")
         if not run_ok(["docker","compose","version"]):
             raise RuntimeError("Existing Docker has no Compose v2. Setup will not mix Docker package providers.")
     else:

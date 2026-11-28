@@ -16,6 +16,7 @@ Get-ChildItem -Path scripts -Recurse -Filter '*.ps1' | ForEach-Object {
 & (Join-Path $PSScriptRoot 'test-windows-prepared-fingerprint.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-identity-probe-bundle.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-setup-destination.ps1')
+& (Join-Path $PSScriptRoot 'test-windows-prerequisite-docker.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-prepare-repair.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-repair-backup-review.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-repair-readiness.ps1')

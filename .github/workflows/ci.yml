@@ -73,6 +73,7 @@ jobs:
           python3 scripts/mint/test-uninstall-cancellation.py
           python3 scripts/mint/test-uninstall-cancellation-rehearsal.py
           python3 scripts/mint/test-setup-ui.py
+          python3 scripts/mint/test-setup-prerequisites.py
           python3 scripts/mint/test-setup-destination.py
           python3 scripts/mint/test-switch-journal.py
           python3 scripts/mint/test-switch-coordinator.py

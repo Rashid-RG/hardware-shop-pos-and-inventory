@@ -11,10 +11,25 @@ function Get-ArsPrerequisitePlan {
   else { $nodeStatus='incompatible' }
  } elseif ($npm) { $nodeStatus='incompatible' }
  $dockerStatus='missing'
- if ($docker) {
+ $dockerOverrides=@('DOCKER_HOST','DOCKER_CONTEXT','DOCKER_TLS_VERIFY','DOCKER_CERT_PATH') | Where-Object {
+  $null -ne [Environment]::GetEnvironmentVariable($_,'Process')
+ }
+ if ($dockerOverrides) { $dockerStatus='unsupported' }
+ if ($docker -and $dockerStatus -ne 'unsupported') {
   $dockerStatus='installed'
-  & docker info --format '{{.OSType}}' 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) { $dockerStatus='ready' }
+  $endpoint=@(& docker context inspect --format '{{.Endpoints.docker.Host}}' 2>$null)
+  if ($LASTEXITCODE -eq 0 -and ($endpoint.Count -ne 1 -or $endpoint[0] -cnotin @('npipe:////./pipe/docker_engine','npipe:////./pipe/dockerDesktopLinuxEngine'))) {
+   $dockerStatus='unsupported'
+  } elseif ($LASTEXITCODE -eq 0) {
+   $os=@(& docker info --format '{{.OSType}}' 2>$null)
+   if ($LASTEXITCODE -eq 0) {
+    $dockerStatus='unsupported'
+    if ($os.Count -eq 1 -and $os[0] -ceq 'linux') {
+     & docker compose version 2>$null | Out-Null
+     if ($LASTEXITCODE -eq 0) { $dockerStatus='ready' }
+    }
+   }
+  }
  }
  [pscustomobject]@{Node=$nodeStatus;Docker=$dockerStatus;WinGet=[bool](Get-Command winget -ErrorAction SilentlyContinue)}
 }
@@ -22,6 +37,7 @@ function Install-ArsMissingPrerequisites {
  $plan=Get-ArsPrerequisitePlan
  if ($plan.Node -eq 'incompatible') { throw 'Existing Node.js is incompatible or incomplete. Setup will not replace it automatically.' }
  if ($plan.Node -eq 'ready' -and $plan.Docker -eq 'ready') { return $true }
+ if ($plan.Docker -eq 'unsupported') { throw 'Setup requires local Docker Desktop in Linux-container mode with Compose v2 and no Docker connection overrides.' }
  if ($plan.Docker -eq 'installed') { throw 'Start the existing Docker Desktop and finish its first-run setup, then reopen Setup.' }
  if (-not $plan.WinGet) { throw 'Windows Package Manager is unavailable. Install Microsoft App Installer, then reopen Setup.' }
  $missing=@()

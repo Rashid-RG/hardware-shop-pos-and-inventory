@@ -10,7 +10,7 @@ This checklist is an acceptance gate, not evidence that the checks have already 
 | Linux Mint | Fresh test installation, desktop shortcut, login, reboot and automatic startup | Pending physical test |
 | Windows | Fresh test installation, launcher, login, reboot and local database persistence | Pending physical test |
 | Billing | Box/Piece mixed sale, price override, insufficient stock rejection before checkout, quotation conversion, credit sale | Pending operator test |
-| A4 printing | Physical single and multipage print, ARS logo, product code, description, U/M, quantities, rate, amount, sales representative, RS Nextward footer | Pending printer test |
+| 24 × 27 cm continuous-feed printing | Physical single and multipage print with correct feed, page numbers and no clipped footer, ARS logo, product code, description, U/M, quantities, rate, amount, sales representative, RS Nextward footer | Pending printer test |
 | Purchasing | PO, import shipment, receiving, landed costs, supplier payment and reconciliation | Pending operator test |
 | Accounts | Customer statements, partial payments, returns, cash shift, partner capital and profit allocation; compare reports to ledger | Pending owner/accountant review |
 | Dependency security | Zero reported vulnerabilities in production and full npm audit for the exact release commit | Passed on 9a0e8ad (#2777); recheck release commit |
@@ -32,7 +32,7 @@ Use a separate test installation and synthetic customer, product and supplier re
 | Custom price with required reason | Correct saved price and audit evidence | |
 | Quotation conversion | Original quantities and rates preserved; no duplicate invoice | |
 | Credit invoice and partial receipt | Customer outstanding and ledger reconcile | |
-| A4 single and multipage invoice | Legible columns, correct totals, approved ARS and RS Nextward artwork | |
+| 24 × 27 cm single and multipage invoice and shareable PDF | Correct page size, legible columns and totals, repeated header and footer, page numbers, no clipping, and approved ARS and RS Nextward artwork | |
 | PDF and Excel export | Both logos, totals and page/worksheet layout checked in actual viewer | |
 | Password recovery | Owner-configured sender delivers usable single-use reset link/code | |
 | Backup with uploaded product image | Encrypted Drive copy downloads and restores to isolated database; image and records match | |
