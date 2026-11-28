@@ -132,6 +132,8 @@ try {
  . (Join-Path $PSScriptRoot 'windows-installation-identity.ps1')
  $state=Join-Path $env:LOCALAPPDATA 'RS Nextward\ARS Distributor'
  [void][IO.Directory]::CreateDirectory($state)
+ . (Join-Path $PSScriptRoot 'windows-install-recovery-tools.ps1')
+ Install-ArsRecoveryTools $root $state
  Write-ArsDesktopRegistration $root $state $desktop $programs
  Write-ArsInstallationIdentity $root $state
  Set-ArsProgress 5 'Setup steps completed.'

@@ -408,6 +408,18 @@ class RecoveryTests(unittest.TestCase):
             with patch.object(selector,"STATE",root), patch.object(selector,"load_intent",return_value=intent), patch.object(intent,"STATE",root), patch.object(intent.os,"geteuid",return_value=1000), patch.object(intent,"load",return_value=proposal), patch.object(intent,"verified_binding",return_value=binding), patch.object(maintenance_backup,"stopped"), patch.object(maintenance_backup,"check_database_clients"):
                 with self.assertRaisesRegex(ValueError,"approval"):
                     selector.select_offline_release(root,"")
+                # Candidate selected, post-switch shutdown or DB verification interrupted.
+                # A durable pre-switch phase must survive with the candidate pointer.
+                with patch.object(maintenance_backup,"stopped",side_effect=[None,OSError("power loss")]):
+                    with self.assertRaisesRegex(OSError,"power loss"):
+                        selector.select_offline_release(root,"SELECT OFFLINE RELEASE")
+                journal=root/"switch-journal.json"
+                self.assertEqual(json.loads(journal.read_text())["phase"],"backup-verified")
+                self.assertEqual((root/"project").resolve(),candidate)
+                self.assertFalse(startup_allowed(root))
+                journal.unlink()
+                (root/"project").unlink()
+                (root/"project").symlink_to(previous)
                 result=selector.select_offline_release(root,"SELECT OFFLINE RELEASE")
             self.assertTrue(result["selected"])
             self.assertFalse(result["startupAllowed"])

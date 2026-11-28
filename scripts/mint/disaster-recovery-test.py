@@ -27,9 +27,9 @@ FINANCIAL_TABLES=("ars_financial_accounts","ars_financial_movements","ars_custom
                   "ars_position_register","ars_supplier_due_dates","ars_invoice_due_dates",
                   "stock_logs","purchase_order_items","ars_receipt_cost_entries")
 
-def financial_checks(container):
+def financial_checks(container, docker=("docker",)):
     def query(sql):
-        return run("docker","exec",container,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",sql,capture_output=True,text=True).stdout.strip()
+        return run(*docker,"exec",container,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",sql,capture_output=True,text=True).stdout.strip()
     counts={}
     missing=[]
     for table in FINANCIAL_TABLES:
@@ -50,16 +50,30 @@ def financial_checks(container):
     return {"ledgerCounts":counts,"missingTables":missing,"restoredTotals":{key:query(sql) for key,sql in checks.items()},
             "sourceReconciled":False,"note":"Restored totals only; no original snapshot comparison or certified accounting reconciliation."}
 
-def rehearse(source):
+def rehearse(source, incident_sha256=None, node=None):
     if os.geteuid()==0:
         raise ValueError("Run as the desktop user.")
     if source.is_symlink() or not source.is_file() or not re.fullmatch(r"ars-[A-Za-z0-9_-]+-(with-uploads|database-only)\.dump",source.name):
         raise ValueError("Select a regular managed ARS backup dump.")
     source=source.resolve(strict=True)
-    project=(STATE/"project").resolve(strict=True)
-    run(str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(source))
+    verifier=Path(__file__).resolve().parent.parent/"verify-backup.mjs"
+    node=node or STATE/"node"
+    docker=("docker",)
+    if incident_sha256 is not None:
+        if not re.fullmatch(r"[a-f0-9]{64}",incident_sha256) or not node.is_absolute():
+            raise ValueError("Verified incident backup digest and Node executable required.")
+        if os.environ.get("DOCKER_HOST") or os.environ.get("DOCKER_CONTEXT"):
+            raise ValueError("Docker endpoint overrides are unavailable in incident recovery.")
+        endpoint=run("docker","context","inspect","--format","{{.Endpoints.docker.Host}}",
+                     capture_output=True,text=True).stdout.strip()
+        if not re.fullmatch(r"unix:///[a-zA-Z0-9_./-]+",endpoint):
+            raise ValueError("A local Unix Docker endpoint is required.")
+        docker=("docker","--host",endpoint)
+    run(str(node),str(verifier),str(source))
     with source.open("rb") as stream:
         digest=hashlib.file_digest(stream,"sha256").hexdigest()
+    if incident_sha256 is not None and digest!=incident_sha256:
+        raise ValueError("Incident archive differs from the verified evidence.")
     upload_checked=False
     if source.name.endswith("-with-uploads.dump") or source.with_name(source.stem+"-uploads.zip").exists():
         with zipfile.ZipFile(source.with_name(source.stem+"-uploads.zip")) as archive:
@@ -68,44 +82,54 @@ def rehearse(source):
         upload_checked=True
     name="ars-recovery-test-"+uuid.uuid4().hex
     image="postgres:16-alpine"
-    run("docker","image","inspect",image,stdout=subprocess.DEVNULL)
+    run(*docker,"image","inspect",image,stdout=subprocess.DEVNULL)
     created=False
     try:
-        run("docker","run","-d","--pull=never","--network","none","--name",name,
+        run(*docker,"run","-d","--pull=never","--network","none","--name",name,
             "--label","com.rsnextward.ars-purpose=disaster-recovery-test",
             "--tmpfs","/var/lib/postgresql/data:rw,mode=0700",
             "-e","POSTGRES_USER=restore_admin","-e","POSTGRES_DB=ars_rehearsal",
             "-e","POSTGRES_PASSWORD="+secrets.token_hex(32),image,stdout=subprocess.DEVNULL)
         created=True
         for _ in range(90):
-            probe=subprocess.run(["docker","exec",name,"pg_isready","-h","127.0.0.1","-U","restore_admin","-d","ars_rehearsal"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+            probe=subprocess.run([*docker,"exec",name,"pg_isready","-h","127.0.0.1","-U","restore_admin","-d","ars_rehearsal"],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
             if probe.returncode==0: break
             time.sleep(2)
         else:
             raise RuntimeError("Isolated recovery database did not become ready.")
-        with source.open("rb") as stream:
-            run("docker","exec","-i",name,"pg_restore","-U","restore_admin","-d","ars_rehearsal","--single-transaction","--exit-on-error","--no-owner","--no-acl",stdin=stream)
+        restore=("pg_restore","-U","restore_admin","-d","ars_rehearsal",
+                 "--single-transaction","--exit-on-error","--no-owner","--no-acl")
+        if incident_sha256 is None:
+            with source.open("rb") as stream:
+                run(*docker,"exec","-i",name,*restore,stdin=stream)
+        else:
+            run(*docker,"cp",str(source),name+":/tmp/incident.dump")
+            copied=run(*docker,"exec",name,"sha256sum","/tmp/incident.dump",
+                       capture_output=True,text=True).stdout.split()
+            if not copied or copied[0]!=incident_sha256:
+                raise ValueError("Copied incident archive checksum mismatch.")
+            run(*docker,"exec",name,*restore,"/tmp/incident.dump")
         counts={}
         for table in TABLES:
-            result=run("docker","exec",name,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",'SELECT count(*) FROM public."'+table+'"',capture_output=True,text=True)
+            result=run(*docker,"exec",name,"psql","-X","-U","restore_admin","-d","ars_rehearsal","-v","ON_ERROR_STOP=1","-Atc",'SELECT count(*) FROM public."'+table+'"',capture_output=True,text=True)
             counts[table]=int(result.stdout.strip())
-        finance=financial_checks(name)
+        finance=financial_checks(name,docker)
         comparison = {"status": "legacy-no-manifest"}
         if "-v2-" in source.stem:
             manifest = json.loads(source.with_suffix(".manifest.json").read_text())
-            actual = fingerprints(psql_command(["docker", "exec", "-i", name], "restore_admin", "ars_rehearsal"))
+            actual = fingerprints(psql_command([*docker, "exec", "-i", name], "restore_admin", "ars_rehearsal"))
             expected = manifest["tables"]
             mismatches = sorted(t for t in actual.keys() | expected.keys() if actual.get(t) != expected.get(t))
             if mismatches:
                 raise ValueError("Restored rows differ from the backup snapshot: " + ", ".join(mismatches))
             comparison = {"status": "matched", "publicTableCount": len(actual)}
-        run(str(STATE/"node"),str(project/"scripts/verify-backup.mjs"),str(source))
+        run(str(node),str(verifier),str(source))
         with source.open("rb") as stream:
             if hashlib.file_digest(stream,"sha256").hexdigest()!=digest:
                 raise ValueError("Backup changed during rehearsal.")
     finally:
         if created:
-            run("docker","rm","-f","-v",name,stdout=subprocess.DEVNULL)
+            run(*docker,"rm","-f","-v",name,stdout=subprocess.DEVNULL)
     reports=STATE/"recovery-reports"
     reports.mkdir(mode=0o700,exist_ok=True)
     if reports.is_symlink(): raise ValueError("Unexpected report directory.")
@@ -121,9 +145,11 @@ if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive",type=Path)
     parser.add_argument("--receipt-json",action="store_true")
+    parser.add_argument("--incident-sha256")
+    parser.add_argument("--node",type=Path)
     args=parser.parse_args()
     try:
-        result=rehearse(args.archive)
+        result=rehearse(args.archive,args.incident_sha256,args.node)
         if args.receipt_json:
             print("ARS_RESTORE_REPORT="+json.dumps(result,separators=(",",":")))
     except (OSError,ValueError,RuntimeError,subprocess.SubprocessError,zipfile.BadZipFile) as error:

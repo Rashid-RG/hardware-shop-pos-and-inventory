@@ -5,19 +5,18 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
-from signed_release_source import ARCHIVE_NAME, MAX_BYTES, verify_signed_source
+from signed_release_source import ARCHIVE_NAME, MAX_BYTES, extract_verified, verify_signed_source
 
 STATE = Path.home() / ".local" / "share" / "ars-hardware"
 TRUST = STATE / "release-signing-public.pem"
 STAGING = STATE / "staged-releases"
-MAX_FILES = 25000
 
 def digest(path):
     h = hashlib.sha256()
@@ -25,31 +24,6 @@ def digest(path):
         for block in iter(lambda: source.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
-
-def extract_verified(archive, target):
-    seen = set()
-    total = 0
-    with tarfile.open(archive, "r:gz") as bundle:
-        for index, member in enumerate(bundle):
-            path = PurePosixPath(member.name)
-            if index >= MAX_FILES or not path.parts or path.is_absolute() or ".." in path.parts:
-                raise ValueError("Unsafe or oversized release archive.")
-            if any(part in (".git", "node_modules", "backups", "uploads", ".env", ".env.local") or part.startswith((".env.", ".ars-release")) for part in path.parts):
-                raise ValueError("Release contains prohibited runtime or private files.")
-            if path in seen or not (member.isdir() or member.isfile()):
-                raise ValueError("Duplicate or unsupported release archive member.")
-            seen.add(path)
-            total += member.size
-            if total > MAX_BYTES:
-                raise ValueError("Release exceeds extraction limit.")
-            dest = target.joinpath(*path.parts)
-            if member.isdir():
-                dest.mkdir(parents=True, exist_ok=True)
-            else:
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with bundle.extractfile(member) as source, dest.open("xb") as out:
-                    shutil.copyfileobj(source, out)
-                dest.chmod(0o700 if member.mode & 0o111 else 0o600)
 
 def verify_package_version(source, version):
     package = json.loads((source / "package.json").read_text(encoding="utf-8"))

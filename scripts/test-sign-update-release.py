@@ -2,12 +2,15 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("release_signer", Path(__file__).with_name("sign-update-release.py"))
 signer = importlib.util.module_from_spec(spec)
@@ -148,10 +151,19 @@ class ReleaseSigningTests(unittest.TestCase):
             package.write_text('{"version":"1.2.3"}')
             helper=project/"scripts/recover.py"
             helper.write_text("original")
+            entry=project/"scripts/writer-loss-restore-runner.mjs"
+            entry.write_text(
+                'import {writeFileSync} from "node:fs";'
+                'import {join} from "node:path";'
+                'if (process.env.NODE_OPTIONS || process.env.NODE_PATH) throw Error("Inherited loader");'
+                'writeFileSync(join(process.argv[2], "observation.txt"), process.argv[3]);')
+            runtime=root/"runtime"
+            runtime.mkdir()
             archive=root/"release.tar.gz"
             with tarfile.open(archive,"w:gz") as bundle:
                 bundle.add(package,arcname="package.json")
                 bundle.add(helper,arcname="scripts/recover.py")
+                bundle.add(entry,arcname="scripts/writer-loss-restore-runner.mjs")
             output=root/"signed"
             signer.sign_release("linux-mint","1.2.3",archive,private,public,output)
             for source,target in (("manifest.json",".ars-release-manifest.json"),("manifest.sig",".ars-release-manifest.sig"),("release.tar.gz",".ars-release.tar.gz")):
@@ -163,10 +175,28 @@ class ReleaseSigningTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"Staged source differs"):
                 verify_publisher_source(project,public)
             helper.write_text("original")
+            recovery_spec=importlib.util.spec_from_file_location(
+                "trusted_incident_restore", Path(__file__).parent/"mint/run-trusted-incident-restore.py")
+            recovery=importlib.util.module_from_spec(recovery_spec)
+            recovery_spec.loader.exec_module(recovery)
+            node=Path(shutil.which("node")).resolve(strict=True)
+            entry.write_text('throw Error("Mutable release entry executed");')
+            confirmation="RUN ISOLATED INCIDENT RESTORE"
+            with self.assertRaisesRegex(ValueError,"confirmation required"):
+                recovery.run(project,runtime,public,node,"")
+            observation=runtime/"observation.txt"
+            self.assertFalse(observation.exists())
+            with patch.dict(os.environ,{"NODE_OPTIONS":"--invalid-option","NODE_PATH":str(project)}):
+                recovery.run(project,runtime,public,node,confirmation)
+            self.assertEqual(observation.read_text(),confirmation)
+            observation.unlink()
             sig=project/".ars-release-manifest.sig"
             sig.write_bytes(b"invalid")
             with self.assertRaises(subprocess.CalledProcessError):
                 verify_publisher_source(project,public)
+            with self.assertRaises(subprocess.CalledProcessError):
+                recovery.run(project,runtime,public,node,confirmation)
+            self.assertFalse(observation.exists())
 
 if __name__ == "__main__":
     unittest.main()

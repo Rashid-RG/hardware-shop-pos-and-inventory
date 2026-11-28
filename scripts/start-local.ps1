@@ -19,7 +19,12 @@ $controlPath=Split-Path -Parent $maintenancePath
 if (Test-Path -LiteralPath $controlPath) {
   $controlItem=Get-Item -LiteralPath $controlPath -Force
   if (-not $controlItem.PSIsContainer -or ($controlItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Invalid desktop control directory.' }
-  $blocking=@(Get-ChildItem -LiteralPath $controlPath -Force | Where-Object { $_.Name -in @('runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json','repair-interrupted.json') })
+  $blocking=@(Get-ChildItem -LiteralPath $controlPath -Force | Where-Object {
+    $_.Name -in @('runtime-activation-interrupted.json','runtime-switch-intent.json','handoff-pending.json',
+      'repair-interrupted.json','maintenance-shutdown.json','activation.json','runtime-switch-journal.json',
+      'runtime-active.json','runtime-previous.json','runtime-failed-candidate.json') -or
+    $_.Name -like 'runtime-switch-pending-*' -or $_.Name -like 'journal-history-*'
+  })
   if ($blocking.Count -gt 0) { throw 'Unresolved update or activation incident. Contact RS Nextward support before restarting.' }
 }
 if (Test-Path -LiteralPath $maintenancePath) {

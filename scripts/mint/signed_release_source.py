@@ -1,11 +1,19 @@
 """Verify the staged source files against the original signed release archive."""
+from contextlib import contextmanager
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
+import re
+import shutil
+import stat
+import subprocess
 import tarfile
+import tempfile
 
 ARCHIVE_NAME = ".ars-release.tar.gz"
 MAX_BYTES = 512 * 1024 * 1024
+MAX_FILES = 25000
 
 
 def verify_signed_source(staged, expected_sha256):
@@ -66,62 +74,106 @@ def verify_signed_source(staged, expected_sha256):
                 raise ValueError("Unexpected staged source entry: " + relative.as_posix())
 
 
-def verify_publisher_source(project, trust_key):
-    """Authenticate retained release source with an independently supplied key.
+def extract_verified(archive, target):
+    seen = set()
+    total = 0
+    with tarfile.open(archive, "r:gz") as bundle:
+        for index, member in enumerate(bundle):
+            path = PurePosixPath(member.name)
+            if index >= MAX_FILES or not path.parts or path.is_absolute() or ".." in path.parts:
+                raise ValueError("Unsafe or oversized release archive.")
+            if any(part in (".git", "node_modules", "backups", "uploads", ".env", ".env.local") or part.startswith((".env.", ".ars-release")) for part in path.parts):
+                raise ValueError("Release contains prohibited runtime or private files.")
+            if path in seen or not (member.isdir() or member.isfile()):
+                raise ValueError("Duplicate or unsupported release archive member.")
+            seen.add(path)
+            total += member.size
+            if total > MAX_BYTES:
+                raise ValueError("Release exceeds extraction limit.")
+            dest = target.joinpath(*path.parts)
+            if member.isdir():
+                dest.mkdir(parents=True, exist_ok=True)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.extractfile(member) as source, dest.open("xb") as out:
+                    shutil.copyfileobj(source, out)
+                dest.chmod(0o700 if member.mode & 0o111 else 0o600)
 
-    This is an observation only; it does not authorize execution. The verifier
-    itself and the supplied public key must come from a trusted installation.
-    """
-    import json
-    import re
-    import stat
-    import subprocess
-    import tempfile
-
-    def snapshot(path, limit):
-        if path.resolve(strict=True) != path:
-            raise ValueError("Linked publisher evidence.")
-        before = path.lstat()
-        if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= limit:
-            raise ValueError("Invalid publisher evidence.")
-        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            raw = stream.read(limit + 1)
-            after = os.fstat(stream.fileno())
+def copy_evidence(path, destination, limit):
+    if path.resolve(strict=True) != path:
+        raise ValueError("Linked publisher evidence.")
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 0 < before.st_size <= limit:
+        raise ValueError("Invalid publisher evidence.")
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
         def identity(s):
             return (s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
-        if not identity(before) == identity(opened) == identity(after) == identity(path.lstat()) or len(raw) != before.st_size:
-            raise ValueError("Publisher evidence changed.")
-        return raw
 
+        if identity(before) != identity(os.fstat(source.fileno())):
+            raise ValueError("Publisher evidence changed.")
+        with destination.open("xb") as target:
+            remaining = before.st_size
+            while remaining:
+                block = source.read(min(remaining, 1024 * 1024))
+                if not block:
+                    raise ValueError("Publisher evidence truncated.")
+                target.write(block)
+                remaining -= len(block)
+        if source.read(1) or identity(before) != identity(os.fstat(source.fileno())) or identity(before) != identity(path.lstat()):
+            raise ValueError("Publisher evidence changed.")
+
+
+@contextmanager
+def publisher_snapshot(project, trust_key):
+    """Yield a private copy extracted from a publisher-authenticated archive."""
     project, trust_key = Path(project), Path(trust_key)
     if project.resolve(strict=True) != project or not project.is_dir():
         raise ValueError("Invalid retained release directory.")
-    manifest = project / ".ars-release-manifest.json"
-    signature = project / ".ars-release-manifest.sig"
-    paths = ((manifest, 65536), (signature, 16384), (trust_key, 65536))
-    values = [snapshot(path, limit) for path, limit in paths]
-    with tempfile.TemporaryDirectory(prefix="ars-publisher-review-") as directory:
-        temporary = Path(directory)
-        for name, raw in zip(("manifest", "signature", "trust"), values):
-            (temporary / name).write_bytes(raw)
-        subprocess.run(["openssl", "dgst", "-sha256", "-verify", str(temporary / "trust"),
-                        "-signature", str(temporary / "signature"), str(temporary / "manifest")],
+    with tempfile.TemporaryDirectory(prefix="ars-publisher-") as directory:
+        work = Path(directory)
+        manifest = work / ".ars-release-manifest.json"
+        signature = work / ".ars-release-manifest.sig"
+        archive = work / ARCHIVE_NAME
+        key = work / "trust.pem"
+        assets = ((project / manifest.name, manifest, 65536),
+                  (project / signature.name, signature, 16384),
+                  (project / archive.name, archive, MAX_BYTES),
+                  (trust_key, key, 65536))
+        for source, destination, maximum in assets:
+            copy_evidence(source, destination, maximum)
+        subprocess.run(["/usr/bin/openssl", "dgst", "-sha256", "-verify", str(key),
+                        "-signature", str(signature), str(manifest)],
                        check=True, capture_output=True, timeout=15)
-    record = json.loads(values[0])
-    version = record.get("version")
-    digest = record.get("sha256")
-    if (record.get("product") != "ARS Distributor" or record.get("platform") != "linux-mint"
-            or not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version)
-            or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)):
-        raise ValueError("Publisher manifest identity mismatch.")
-    verify_signed_source(project, digest)
-    package = json.loads(snapshot(project / "package.json", 1048576))
-    if package.get("version") != version:
-        raise ValueError("Publisher package version mismatch.")
-    if [snapshot(path, limit) for path, limit in paths] != values:
-        raise ValueError("Publisher evidence changed.")
-    return {"version": version, "archiveDigest": digest,
-            "manifestDigest": hashlib.sha256(values[0]).hexdigest(),
-            "publisherSourceVerified": True, "executionAllowed": False,
+        manifest_data = manifest.read_bytes()
+        record = json.loads(manifest_data)
+        version = record.get("version")
+        digest = record.get("sha256")
+        if (record.get("product") != "ARS Distributor" or record.get("platform") != "linux-mint"
+                or not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version)
+                or not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest)):
+            raise ValueError("Publisher manifest identity mismatch.")
+        with archive.open("rb") as payload:
+            if hashlib.file_digest(payload, "sha256").hexdigest() != digest:
+                raise ValueError("Publisher archive mismatch.")
+        clean = work / "source"
+        clean.mkdir()
+        extract_verified(archive, clean)
+        if json.loads((clean / "package.json").read_bytes()).get("version") != version:
+            raise ValueError("Publisher package version mismatch.")
+        yield clean, {"version": version, "archiveDigest": digest,
+                      "manifestDigest": hashlib.sha256(manifest_data).hexdigest()}, assets
+
+
+def verify_publisher_source(project, trust_key):
+    """Review the retained tree from an independently trusted installation."""
+    with publisher_snapshot(project, trust_key) as (_, verified, assets):
+        verify_signed_source(Path(project), verified["archiveDigest"])
+        for original, snapshot, limit in assets:
+            if limit == MAX_BYTES:
+                continue  # The source comparison checks the archive digest.
+            comparison = snapshot.with_suffix(snapshot.suffix + ".recheck")
+            copy_evidence(original, comparison, limit)
+            if comparison.read_bytes() != snapshot.read_bytes():
+                raise ValueError("Publisher evidence changed.")
+    return {**verified, "publisherSourceVerified": True, "executionAllowed": False,
             "startupAllowed": False, "activationAllowed": False, "rollbackAllowed": False}

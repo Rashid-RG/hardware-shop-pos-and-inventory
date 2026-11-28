@@ -15,11 +15,12 @@ export function isolatedContainerArgs(name,password){
 export async function runWindowsIsolatedRestore(root,backup){
  if(process.platform!=='win32'||backup.state!=='archive-integrity-matched'||!/^ars-[A-Za-z0-9_-]+\.dump$/.test(backup.archive)||! /^[a-f0-9]{64}$/.test(backup.archiveSha256))throw Error('Verified Windows backup required.');
 
- const docker=async(args,timeout=900000)=>(await run('docker.exe',args,{timeout,maxBuffer:1048576,windowsHide:true})).stdout.trim();
+ const invokeDocker=async(args,timeout=900000)=>(await run('docker.exe',args,{timeout,maxBuffer:1048576,windowsHide:true})).stdout.trim();
  if(process.env.DOCKER_HOST||process.env.DOCKER_CONTEXT)throw Error('Docker endpoint override not allowed.');
- const context=await docker(['context','show'],5000);
- const endpoint=await docker(['context','inspect',context,'--format','{{.Endpoints.docker.Host}}'],5000);
+ const context=await invokeDocker(['context','show'],5000);
+ const endpoint=await invokeDocker(['context','inspect',context,'--format','{{.Endpoints.docker.Host}}'],5000);
  if(!/^npipe:\/\/\/\/\.\/pipe\/[A-Za-z0-9_-]+$/.test(endpoint))throw Error('Local Docker Desktop endpoint required.');
+ const docker=(args,timeout)=>invokeDocker(['--host',endpoint,...args],timeout);
  const name='ars-incident-test-'+randomUUID().replaceAll('-','');
  const command=isolatedContainerArgs(name,randomBytes(32).toString('hex'));
  let id;

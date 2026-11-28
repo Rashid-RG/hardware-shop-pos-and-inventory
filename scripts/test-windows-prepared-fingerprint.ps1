@@ -37,14 +37,27 @@ try {
     if (-not $rejected) {throw 'Busy recovery file accepted.'}
   } finally {$writer.Dispose()}
   . (Join-Path $PSScriptRoot 'windows-publisher-source.ps1')
+  Add-Type -AssemblyName System.IO.Compression
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $source=Join-Path $root 'publisher-source'
   $sourceScripts=Join-Path $source 'scripts'
   [void][IO.Directory]::CreateDirectory($sourceScripts)
   [IO.File]::WriteAllText((Join-Path $sourceScripts 'recover.ps1'),'original')
   [IO.File]::WriteAllText((Join-Path $source 'package.json'),'{"version":"1.2.3"}')
+  $entry=Join-Path $sourceScripts 'writer-loss-restore-runner.mjs'
+  [IO.File]::WriteAllText($entry,@'
+import {writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+if (process.env.NODE_OPTIONS || process.env.NODE_PATH) throw Error('Inherited loader');
+writeFileSync(join(process.argv[2],'observation.txt'),process.argv[3]);
+'@)
   $archive=Join-Path $root 'release.zip'
-  [IO.Compression.ZipFile]::CreateFromDirectory($source,$archive)
+  $fixtureZip=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Create)
+  try {
+    foreach ($relative in @('package.json','scripts/recover.ps1','scripts/writer-loss-restore-runner.mjs')) {
+      [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($fixtureZip,(Join-Path $source $relative),$relative)
+    }
+  } finally { $fixtureZip.Dispose() }
   $private=Join-Path $root 'private.pem'
   $public=Join-Path $root 'public.pem'
   $openssl=(Get-Command openssl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -65,10 +78,34 @@ try {
   try {$null=Get-ArsPublisherSourceReview $source $public} catch {$rejected=$true}
   if (-not $rejected) {throw 'Modified publisher recovery script accepted.'}
   [IO.File]::WriteAllText((Join-Path $sourceScripts 'recover.ps1'),'original')
+  $runtime=Join-Path $root 'runtime'
+  [void][IO.Directory]::CreateDirectory($runtime)
+  $observation=Join-Path $runtime 'observation.txt'
+  [IO.File]::WriteAllText($entry,'throw Error("Mutable release entry executed");')
+  $confirmation='RUN ISOLATED INCIDENT RESTORE'
+  $rejected=$false
+  try {Invoke-ArsTrustedIncidentRestore $source $runtime $public ''} catch {$rejected=$true}
+  if (-not $rejected -or [IO.File]::Exists($observation)) {throw 'Restore was not gated by confirmation.'}
+  $savedNodeOptions=$env:NODE_OPTIONS
+  $savedNodePath=$env:NODE_PATH
+  try {
+    $env:NODE_OPTIONS='--invalid-option'
+    $env:NODE_PATH=$source
+    Invoke-ArsTrustedIncidentRestore $source $runtime $public $confirmation
+    if ($env:NODE_OPTIONS -cne '--invalid-option' -or $env:NODE_PATH -cne $source) {throw 'Caller environment changed.'}
+  } finally {
+    $env:NODE_OPTIONS=$savedNodeOptions
+    $env:NODE_PATH=$savedNodePath
+  }
+  if ([IO.File]::ReadAllText($observation) -cne $confirmation) {throw 'Signed snapshot did not dispatch.'}
+  [IO.File]::Delete($observation)
   [IO.File]::WriteAllText($signature,'invalid')
   $rejected=$false
   try {$null=Get-ArsPublisherSourceReview $source $public} catch {$rejected=$true}
   if (-not $rejected) {throw 'Invalid publisher signature accepted.'}
+  $rejected=$false
+  try {Invoke-ArsTrustedIncidentRestore $source $runtime $public $confirmation} catch {$rejected=$true}
+  if (-not $rejected -or [IO.File]::Exists($observation)) {throw 'Invalid publisher signature permitted restore.'}
   [IO.File]::WriteAllText((Join-Path $scripts 'helper.pyc'),'unexpected')
   $rejected=$false
   try {$null=Get-ArsRecoveryToolsFingerprint $scripts} catch {$rejected=$true}

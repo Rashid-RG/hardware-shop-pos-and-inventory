@@ -4,7 +4,7 @@ import os from 'node:os';
 
 // A missing directory is normal for fresh installations. Any existing marker,
 // including malformed or unreadable evidence, blocks ordinary startup.
-export function assertNoMaintenanceEvidence(directory: string, names: readonly string[]) {
+export function assertNoMaintenanceEvidence(directory: string, names: readonly string[], pendingName?: RegExp) {
   for (const name of names) {
     try {
       fs.lstatSync(path.join(directory, name));
@@ -14,6 +14,18 @@ export function assertNoMaintenanceEvidence(directory: string, names: readonly s
     }
     throw new Error('Unresolved maintenance evidence. Startup blocked.');
   }
+  if (pendingName) {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new Error('Maintenance evidence cannot be inspected. Startup blocked.');
+    }
+    if (entries.some(name => pendingName.test(name))) {
+      throw new Error('Unresolved maintenance evidence. Startup blocked.');
+    }
+  }
 }
 export function assertOrdinaryStartupAllowed() {
   if (process.platform === 'win32') {
@@ -22,7 +34,8 @@ export function assertOrdinaryStartupAllowed() {
     assertNoMaintenanceEvidence(path.join(base, 'RS Nextward', 'ARS Distributor', 'desktop-control'), [
       'maintenance.json', 'maintenance-shutdown.json', 'activation.json', 'handoff-pending.json',
       'runtime-switch-intent.json', 'runtime-switch-journal.json', 'runtime-active.json', 'repair-interrupted.json',
-    ]);
+      'runtime-activation-interrupted.json', 'runtime-previous.json', 'runtime-failed-candidate.json',
+    ], /^(?:runtime-switch-pending-|journal-history-)/i);
   } else if (process.platform === 'linux') {
     assertNoMaintenanceEvidence(path.join(os.homedir(), '.local', 'share', 'ars-hardware'), [
       'maintenance-hold.json', 'handoff-pending.json', 'runtime-switch-intent.json',

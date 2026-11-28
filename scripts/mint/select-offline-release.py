@@ -53,12 +53,12 @@ def select_offline_release(folder, confirmation):
         journal={"schema":1,"kind":"mint-offline-release-selection","previous":str(previous),"candidate":str(candidate),"phase":"backup-verified","switchId":record["switchId"],"intentDigest":proposal.sha(raw),"maintenanceDigest":binding["maintenanceDigest"],"startupAllowed":False}
         write_journal(STATE,journal)
         switch_pointer(pointer,previous,candidate)
-        journal["phase"]="switched"
-        write_journal(STATE,journal)
         stopped()
         check_database_clients(candidate)
         if proposal.read(target)!=raw or proposal.sha(proposal.read(STATE/"maintenance-hold.json"))!=binding["maintenanceDigest"] or pointer.resolve(strict=True)!=candidate:
             raise ValueError("Offline selection evidence changed; retain startup protection.")
+        journal["phase"]="switched"
+        write_journal(STATE,journal)
         return {"selected":True,"maintenanceRetained":True,"startupAllowed":False,"rollbackAllowed":False,"continuousExclusionVerified":False}
 
 def verify_reviewed_evidence(review, records, active):
@@ -82,10 +82,23 @@ def verify_recovery_tools(previous, binding):
         raise ValueError("Previous recovery tools fingerprint changed.")
     return True
 
-def rollback_offline_release(confirmation, reviewed_evidence=None):
+def check_recovery_database(previous, publisher_digest, installed_recovery=False):
+    from maintenance_backup import check_database_clients
+    if publisher_digest is None and not installed_recovery:
+        check_database_clients(previous)
+        return
+    if publisher_digest is not None:
+        from signed_release_source import verify_signed_source
+        verify_signed_source(previous, publisher_digest)
+    # Resolve Compose from the verified recovery copy.
+    check_database_clients(previous, STATE/"runtime/.env.local",
+                           compose_file=Path(__file__).resolve().with_name("compose.yaml"))
+
+
+def rollback_offline_release(confirmation, reviewed_evidence=None, publisher_digest=None, startup_control_pid=None, *, installed_recovery=False):
     """Reverse offline selection only; never restore SQL or authorize startup."""
     from switch_journal import write_journal, switch_pointer
-    from maintenance_backup import stopped, check_database_clients
+    from maintenance_backup import stopped
     from resume_maintenance import open_lock
     from release_fingerprint import fingerprint
     import tempfile
@@ -129,8 +142,8 @@ def rollback_offline_release(confirmation, reviewed_evidence=None):
             destination=STATE/"runtime"/name
             if destination.is_symlink() or not (previous/name).is_symlink() or (previous/name).resolve(strict=True)!=destination:
                 raise ValueError("Previous runtime mapping changed.")
-        stopped()
-        check_database_clients(previous)
+        stopped(startup_control_pid=startup_control_pid)
+        check_recovery_database(previous, publisher_digest, installed_recovery)
         with tempfile.TemporaryDirectory(prefix="ars-rollback-build-") as temp:
             old=Path(temp)
             for part in ("dist","node_modules"):
@@ -144,8 +157,8 @@ def rollback_offline_release(confirmation, reviewed_evidence=None):
         write_journal(STATE,journal)
         if pointer.resolve(strict=True)==candidate:
             switch_pointer(pointer,candidate,previous)
-        stopped()
-        check_database_clients(previous)
+        stopped(startup_control_pid=startup_control_pid)
+        check_recovery_database(previous, publisher_digest, installed_recovery)
         if pointer.resolve(strict=True)!=previous or proposal.read(target)!=raw or proposal.read(hold)!=hold_raw:
             raise ValueError("Rollback verification failed.")
         verify_recovery_tools(previous,binding)
@@ -153,10 +166,10 @@ def rollback_offline_release(confirmation, reviewed_evidence=None):
         write_journal(STATE,journal)
         return {"previousSelected":True,"maintenanceRetained":True,"startupAllowed":False,"databaseRestored":False}
 
-def finalize_offline_rollback(confirmation, reviewed_evidence=None):
+def finalize_offline_rollback(confirmation, reviewed_evidence=None, publisher_digest=None, *, installed_recovery=False):
     """Archive an offline rollback's blockers; leave ordinary resume separate."""
     from resume_maintenance import open_lock
-    from maintenance_backup import stopped, check_database_clients
+    from maintenance_backup import stopped
     from switch_journal import sync_dir
     from startup_guard import migration_mapping_valid
     import re
@@ -213,7 +226,7 @@ def finalize_offline_rollback(confirmation, reviewed_evidence=None):
                 if os.path.lexists(dest) and proposal.read(dest)!=expected:
                     raise ValueError("Archived rollback evidence mismatch.")
         stopped()
-        check_database_clients(previous)
+        check_recovery_database(previous, publisher_digest, installed_recovery)
         verify_sources()
         for source,dest,expected in entries:
             if not os.path.lexists(dest):
@@ -233,6 +246,7 @@ def finalize_offline_rollback(confirmation, reviewed_evidence=None):
         return {"rollbackFinalized":True,"maintenanceRetained":True,"startupAllowed":False}
 
 if __name__=="__main__":
+    import re
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder",type=Path,nargs="?")
@@ -241,15 +255,27 @@ if __name__=="__main__":
     mode.add_argument("--finalize-rollback",action="store_true")
     parser.add_argument("--confirmation",required=True)
     parser.add_argument("--reviewed-evidence",default=None)
+    trust = parser.add_mutually_exclusive_group()
+    trust.add_argument("--publisher-archive-sha256")
+    trust.add_argument("--installed-recovery", action="store_true")
+    parser.add_argument("--startup-control-pid",type=int)
     args=parser.parse_args()
     try:
         review=json.loads(args.reviewed_evidence) if args.reviewed_evidence is not None else None
         if args.reviewed_evidence is not None and (not isinstance(review,dict) or not (args.finalize_rollback or args.rollback_offline)):
             raise ValueError("Invalid reviewed evidence.")
+        digest=args.publisher_archive_sha256
+        if digest is not None and (not review or not re.fullmatch(r"[a-f0-9]{64}",digest)):
+            raise ValueError("Invalid signed recovery binding.")
+        if args.installed_recovery and not review:
+            raise ValueError("Invalid installed recovery binding.")
+        if args.startup_control_pid is not None and (not args.rollback_offline or (digest is None and not args.installed_recovery)
+                or args.startup_control_pid!=os.getppid()):
+            raise ValueError("Invalid service startup recovery identity.")
         if args.finalize_rollback:
-            print(json.dumps(finalize_offline_rollback(args.confirmation,review)))
+            print(json.dumps(finalize_offline_rollback(args.confirmation,review,digest,installed_recovery=args.installed_recovery)))
         elif args.rollback_offline:
-            print(json.dumps(rollback_offline_release(args.confirmation,review)))
+            print(json.dumps(rollback_offline_release(args.confirmation,review,digest,args.startup_control_pid,installed_recovery=args.installed_recovery)))
         elif args.folder is not None:
             print(json.dumps(select_offline_release(args.folder,args.confirmation)))
         else:

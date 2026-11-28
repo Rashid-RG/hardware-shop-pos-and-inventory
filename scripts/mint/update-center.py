@@ -45,12 +45,17 @@ def select_recovery():
     return root/name if result.returncode==0 and name in folders else None
 
 def execute(project,script,*args):
+    return execute_command(project,["/usr/bin/python3","-E","-s","-B",
+                                    str(project/"scripts/mint"/script),*args])
+
+
+def execute_command(project,command):
     logs=STATE/"update-logs"
     logs.mkdir(mode=0o700,exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix="update-",suffix=".log",dir=logs,delete=False) as log:
         progress=subprocess.Popen(["zenity","--progress","--pulsate","--no-cancel","--title="+TITLE,"--text=Preparing and verifying. Do not shut down this computer."],stdin=subprocess.PIPE)
         try:
-            result=subprocess.run(["python3",str(project/"scripts/mint"/script),*args],cwd=project,stdout=log,stderr=subprocess.STDOUT)
+            result=subprocess.run(command,cwd=project,stdout=log,stderr=subprocess.STDOUT)
         finally:
             if progress.poll() is None: progress.terminate()
             progress.wait()
@@ -58,6 +63,7 @@ def execute(project,script,*args):
         notice(("Operation completed. Live installation remains disabled.\n" + ("Maintenance remains active. Resolve all blocking evidence before resuming billing.\n" if (STATE/"maintenance-hold.json").exists() else ""))+"Local log: "+log.name)
     else:
         notice("Preparation failed. Existing data was not deliberately removed.\nContact RS Nextward with local log: "+log.name,True)
+    return result.returncode==0
 
 def check_signed_feed(project):
     feed_file=STATE/"release-feed-url.txt"
@@ -492,8 +498,45 @@ def offline_release_center(project):
                     for path,original,_ in observed if path!=selector}
             review["activeProject"]=str(project)
             args.extend(["--reviewed-evidence",json.dumps(review,separators=(",",":"))])
-        execute(tool_project,"select-offline-release.py",*args)
+        trusted=(tool_project.is_relative_to(STATE/"staged-releases") or
+                 os.path.lexists(STATE/"update-tools/initial-release") or
+                 any(os.path.lexists(tool_project/name) for name in
+                     (".ars-release-manifest.json",".ars-release-manifest.sig",".ars-release.tar.gz")))
+        if observed is None:
+            if not execute(tool_project,"select-offline-release.py",*args):
+                resume_interrupted_selection()
+        elif trusted:
+            try:
+                command=trusted_switch_command("rollback" if action=="Return to previous release" else "finalize")
+                execute_command(STATE,command+args[1:])
+            except (OSError,ValueError):
+                notice("Installed recovery verification is unavailable. Maintenance remains active.",True)
+        else:
+            execute(tool_project,"select-offline-release.py",*args)
         # Exit this center so subsequent operations re-resolve the active project.
+
+def trusted_switch_command(action):
+    tool=STATE/"update-tools/trusted-switch-recovery.py"
+    if tool.resolve(strict=True)!=tool or not tool.is_file() or tool.stat().st_uid!=os.getuid():
+        raise ValueError("Installed switch recovery is unavailable.")
+    return ["/usr/bin/python3","-E","-s","-B",str(tool),action]
+
+
+def resume_interrupted_selection():
+    journal=STATE/"switch-journal.json"
+    if not os.path.lexists(journal):
+        return False
+    try:
+        raw,_=read_recovery_evidence(journal,65536)
+        state=json.loads(raw)
+        if (state.get("kind")!="mint-offline-release-selection" or
+            state.get("phase") not in ("backup-verified","offline-rollback-pending")):
+            return False
+        command=trusted_switch_command("resume")
+    except (OSError,ValueError,TypeError,AttributeError,RuntimeError):
+        return False
+    return execute_command(STATE,command)
+
 
 def main():
     if os.geteuid()==0:
@@ -503,7 +546,8 @@ def main():
         while True:
             project=(STATE/"project").resolve(strict=True)
             if os.path.lexists(STATE/"switch-journal.json"):
-                offline_release_center(project)
+                if not resume_interrupted_selection():
+                    offline_release_center(project)
                 return
             choice=dialog("--list","--no-markup","--text="+status(project),"--column=Action","--width=640","--height=420",
                           "Check for signed updates","Prepare signed release","Prepare online recovery backup","Test isolated database restoration","Test software compatibility","View activation readiness","Activation Review Center","Offline Release Center","Runtime Migration Center","Stop POS and prepare protected backup","Cancel maintenance and resume POS","Rehearse disaster recovery","Google Drive backup setup","Download encrypted Drive backup","View cloud backup status","View backup history","View recovery reports","Open Recovery Center","Register healthy database identity","Open local recovery archive folder","Close")

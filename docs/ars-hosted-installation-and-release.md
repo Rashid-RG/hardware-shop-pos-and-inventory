@@ -156,3 +156,39 @@ After the server is live and approved:
 - [ ] Controlled one-instance deployment verified.
 - [ ] Actual A4 invoice printing and slow-PC staff acceptance.
 - [ ] Explicit owner approval for business release.
+
+## Rehearse an interrupted writer’s restore from signed release tools
+
+Run these commands from a known-good tools installation kept outside the release
+under review. Use an independently provisioned `release-signing-public.pem` in
+the ARS per-user state directory. The selected release must retain its signed
+manifest, signature and archive. Use a release that includes the incident
+restore command.
+
+- Windows PowerShell
+
+  ```powershell
+  & "$env:LOCALAPPDATA\RS Nextward\ARS Distributor\update-tools\run-windows-trusted-incident-restore.ps1" -Project '<absolute signed release path>' -Runtime '<absolute operational data path>' -Confirmation 'RUN ISOLATED INCIDENT RESTORE'
+  ```
+
+- Linux Mint
+
+  ```bash
+  /usr/bin/python3 -E -s -B "$HOME/.local/share/ars-hardware/update-tools/run-trusted-incident-restore.py" '<absolute signed release path>' --confirmation 'RUN ISOLATED INCIDENT RESTORE'
+  ```
+
+The command verifies the publisher signature and archive checksum, then runs the
+restore worker from a private extraction. It requires an incident-bound backup and
+a local Docker engine with the PostgreSQL image already installed. A successful
+test writes an isolated-restore receipt. Operational recovery and POS startup
+remain separate approvals.
+
+
+On Linux Mint, the installed service and Update Center retry an offline switch
+interrupted before post-switch validation. The first update can recover using
+the tools saved by the original setup wizard. A previous release from the update
+feed requires its signed manifest, signature and archive. Recovery checks the
+journal, maintenance hold and release identity before returning the project
+pointer to the previous release. Billing stays stopped until an operator
+finalizes the rollback and resumes the POS. A fully selected offline candidate
+requires an explicit rollback decision.

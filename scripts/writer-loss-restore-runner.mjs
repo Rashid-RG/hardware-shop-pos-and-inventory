@@ -1,8 +1,8 @@
 // Cross-platform explicit incident rehearsal; never restores the operational database.
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {join,resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {isAbsolute,join,resolve} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 import {open,lstat,realpath} from 'node:fs/promises';
 import {verifyIncidentBackup} from './writer-loss-backup.mjs';
 import {runWindowsIsolatedRestore} from './writer-loss-windows-restore.mjs';
@@ -16,6 +16,7 @@ export function receiptFromReport(report,backup){
 }
 export async function runIncidentRestore(runtimeRoot,confirmation){
  if(!['linux','win32'].includes(process.platform)||confirmation!=='RUN ISOLATED INCIDENT RESTORE')throw Error('Explicit restore-test confirmation required.');
+ if(typeof runtimeRoot!=='string'||!isAbsolute(runtimeRoot))throw Error('An absolute incident runtime is required.');
  const root=resolve(runtimeRoot);
  const backup=await verifyIncidentBackup(root);
  if(backup.state!=='archive-integrity-matched')throw Error('Verified incident archive required.');
@@ -32,7 +33,7 @@ export async function runIncidentRestore(runtimeRoot,confirmation){
   if(process.platform==='win32'){
    report=await runWindowsIsolatedRestore(root,backup);
   }else{
-  const {stdout}=await run('python3',[fileURLToPath(new URL('./mint/disaster-recovery-test.py',import.meta.url)),join(root,'backups',backup.archive),'--receipt-json'],{timeout:3600000,maxBuffer:4*1024*1024});
+  const {stdout}=await run('/usr/bin/python3',['-E','-s','-B',fileURLToPath(new URL('./mint/disaster-recovery-test.py',import.meta.url)),join(root,'backups',backup.archive),'--receipt-json','--incident-sha256',backup.archiveSha256,'--node',process.execPath],{maxBuffer:4*1024*1024});
   const lines=stdout.split(/\r?\n/).filter(x=>x.startsWith('ARS_RESTORE_REPORT='));
   if(lines.length!==1)throw Error('Restore report unavailable.');
   report=JSON.parse(lines[0].slice('ARS_RESTORE_REPORT='.length));
@@ -45,4 +46,16 @@ export async function runIncidentRestore(runtimeRoot,confirmation){
   if(process.platform!=='win32'){const dir=await open(folder,'r');try{await dir.sync();}finally{await dir.close();}}
   return {receiptRecorded:true,restoreTestReportedPassed:true,startupAllowed:false,recoveryAllowed:false};
  }finally{await lock.close();}
+}
+
+
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+ try{
+  if(process.argv.length!==4)throw Error('Expected incident runtime and explicit confirmation.');
+  const result=await runIncidentRestore(process.argv[2],process.argv[3]);
+  console.log(JSON.stringify(result));
+ }catch(error){
+  console.error(error.message);
+  process.exitCode=1;
+ }
 }

@@ -14,22 +14,31 @@ from switch_journal import sync_dir
 STATE=Path.home()/".local/share/ars-hardware"
 UNIT="ars-hardware.service"
 
-def stopped():
-    result=subprocess.run(["systemctl","--user","show",UNIT,"--property=ActiveState,SubState,MainPID"],check=True,capture_output=True,text=True,timeout=15)
+def stopped(*, startup_control_pid=None):
+    properties="ActiveState,SubState,MainPID"
+    if startup_control_pid is not None:
+        properties+=",ControlPID"
+    result=subprocess.run(["systemctl","--user","show",UNIT,"--property="+properties],check=True,capture_output=True,text=True,timeout=15)
     values=dict(line.split("=",1) for line in result.stdout.splitlines() if "=" in line)
-    if values.get("ActiveState")!="inactive" or values.get("SubState")!="dead" or values.get("MainPID")!="0":
+    inactive=values.get("ActiveState")=="inactive" and values.get("SubState")=="dead"
+    # Our own ExecCondition can inspect a stopped writer before systemd starts
+    # ExecStartPre. No other activating service state is accepted.
+    own_condition=(startup_control_pid is not None and values.get("ActiveState")=="activating"
+                   and values.get("SubState")=="condition" and values.get("ControlPID")==str(startup_control_pid))
+    if values.get("MainPID")!="0" or not (inactive or own_condition):
         raise RuntimeError("POS service is not confirmed stopped.")
     with socket.socket() as probe:
         probe.settimeout(1)
         if probe.connect_ex(("127.0.0.1",3000))==0:
             raise RuntimeError("Another process is listening on the POS port.")
 
-def check_database_clients(project, env_file=None):
+def check_database_clients(project, env_file=None, *, compose_file=None):
     # Observational check only: do not terminate sessions or change PostgreSQL settings.
     config=Path(env_file) if env_file is not None else Path(project)/".env.local"
     if not config.is_absolute() or not config.is_file():
         raise ValueError("Valid absolute database configuration required.")
-    cmd=["docker","compose","-p","ars-mint","--env-file",str(config),"-f","scripts/mint/compose.yaml","exec","-T","postgres","psql","-X","-U","ars","-d","hardware_pos_ars","-v","ON_ERROR_STOP=1","-Atc",
+    compose_file=compose_file or "scripts/mint/compose.yaml"
+    cmd=["docker","compose","-p","ars-mint","--env-file",str(config),"-f",str(compose_file),"exec","-T","postgres","psql","-X","-U","ars","-d","hardware_pos_ars","-v","ON_ERROR_STOP=1","-Atc",
          "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND backend_type='client backend'"]
     result=subprocess.run(cmd,cwd=project,check=True,capture_output=True,text=True,timeout=30)
     if result.stdout.strip()!="0":

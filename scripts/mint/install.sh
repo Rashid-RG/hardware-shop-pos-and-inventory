@@ -27,7 +27,12 @@ ln -sfnT "$root" "$app/project"
 ln -sfnT "$(command -v node)" "$app/node"
 # Keep the guard outside release folders so it survives a pointer switch.
 mkdir -p "$app/update-tools"
-install -m 600 scripts/mint/startup_guard.py scripts/mint/interrupted_switch.py "$app/update-tools/"
+install -m 600 scripts/mint/startup_guard.py scripts/mint/interrupted_switch.py \
+  scripts/mint/signed_release_source.py scripts/mint/run-trusted-incident-restore.py \
+  scripts/mint/trusted-switch-recovery.py "$app/update-tools/"
+if [[ -f "$root/PILOT-FILES.json" ]]; then
+  /usr/bin/python3 -E -s -B "$app/update-tools/trusted-switch-recovery.py" install-initial --initial-project "$root"
+fi
 install -m 644 scripts/mint/ars-hardware.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable ars-hardware.service
@@ -49,12 +54,12 @@ for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
         stream.write(entry)
     target.chmod(0o755)
 PY
-python3 - "$app/project/scripts/mint/update-center.py" "$desktop" <<'PY'
+python3 - "$app/update-tools/trusted-switch-recovery.py" "$desktop" <<'PY'
 from pathlib import Path
 import sys
 script, desktop = sys.argv[1:]
 arg = ''.join('\\' + c if c in '"`$\\' else c for c in script).replace('\\', '\\\\').replace('%', '%%')
-entry = f'[Desktop Entry]\nType=Application\nName=RS Nextward Update Center\nExec=python3 "{arg}"\nIcon=system-software-update\nTerminal=false\nCategories=System;\n'
+entry = f'[Desktop Entry]\nType=Application\nName=RS Nextward Update Center\nExec=/usr/bin/python3 -E -s -B "{arg}" update-center\nIcon=system-software-update\nTerminal=false\nCategories=System;\n'
 for folder in [Path.home()/'.local/share/applications', Path(desktop)]:
     target = folder/'ars-update-center.desktop'
     with target.open("x") as stream:
