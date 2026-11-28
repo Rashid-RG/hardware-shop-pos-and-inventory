@@ -111,3 +111,7 @@ Run `powershell -NoProfile -File scripts/verify-windows-staged-release.ps1 -Vers
 ## Opening decision
 
 Do not label the system commercial-ready until physical Windows startup, actual A4 printing, user permissions, backup/restore, and end-to-end sales reconciliation have been checked and signed off. All automated CI tests passing is necessary but not sufficient.
+
+### Prepare a signed update bundle
+
+On the release workstation, run `python3 scripts/sign-update-release.py --platform windows --version VERSION --archive PACKAGE.zip --private-key PRIVATE.pem --public-key TRUST.pem --output NEW_DIRECTORY`. For Mint, use `--platform linux-mint` and a compatible `.tar.gz` release archive. The output contains the release archive, manifest, and detached signature. Use the public trust key already provisioned on customer machines to verify the bundle. Keep the private key on the release workstation. Signing an update bundle does not sign the Windows installer executable.
