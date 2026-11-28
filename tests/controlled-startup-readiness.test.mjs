@@ -86,3 +86,54 @@ test('protected startup wait retries 503 but fails immediately on wrong identity
   assert.equal(requests,1);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 });
+
+
+test('protected startup wait rejects sustained unavailability and preserves cancellation',async()=>{
+ const {createServer}=await import('node:http');
+ const {waitForInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ const {performance}=await import('node:perf_hooks');
+ let requests=0,checks=0;
+ const server=createServer((_req,res)=>{requests++;res.statusCode=503;res.end();});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const options={port:server.address().port,timeoutMs:350,intervalMs:20,assertActive:async()=>{checks++;}};
+  const started=performance.now();
+  await assert.rejects(waitForInstalledRelease('1.2.3',4123,options),/deadline exceeded/);
+  assert.ok(performance.now()-started>=300);
+  assert.ok(requests>=1);
+  assert.ok(checks>=2);
+  const controller=new AbortController();
+  const pending=waitForInstalledRelease('1.2.3',4123,{...options,timeoutMs:5000,signal:controller.signal,assertActive:async()=>{controller.abort();}});
+  await assert.rejects(pending,/cancelled/);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('readiness success cannot override protection loss during final check',async()=>{
+ const {createServer}=await import('node:http');
+ const {waitForInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ let requests=0,checks=0;
+ const server=createServer((_req,res)=>{
+  requests++;
+  res.end(JSON.stringify({ok:true,status:'ready',database:'reachable',sourceOfTruth:'normalized',buildVersion:'1.2.3',processId:4123}));
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  await assert.rejects(waitForInstalledRelease('1.2.3',4123,{port:server.address().port,timeoutMs:3000,assertActive:async()=>{
+   if(++checks===2)throw Error('Protection lost after readiness');
+  }}),/Protection lost after readiness/);
+  assert.equal(requests,1);assert.equal(checks,2);
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
+
+test('readiness rejects a response body that stalls after headers',async()=>{
+ const {createServer}=await import('node:http');
+ const {verifyInstalledRelease}=await import('../scripts/verify-installed-release-readiness.mjs');
+ const server=createServer((_req,res)=>{
+  res.writeHead(200,{'Content-Type':'application/json'});
+  res.write('{"ok":true,');
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  await assert.rejects(verifyInstalledRelease('1.2.3',4123,server.address().port,{timeoutMs:200}));
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
