@@ -113,5 +113,84 @@ class CoordinatorTests(unittest.TestCase):
             self.assertEqual((root / "project").resolve(), root / "new")
             self.assertEqual(json.loads((root / "switch-journal.json").read_text())["phase"], "manual-recovery-required")
 
+
+    def test_http_readiness_failure_rolls_back_and_verifies_previous_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / ".ars-switch-test").touch()
+            data = root / "business-data"
+            data.write_text("historical invoices")
+            verifier = Path(__file__).resolve().parent.parent / "verify-installed-release-readiness.mjs"
+            for release, version in (("old", "1.0.0"), ("new", "9.9.9")):
+                server = root / release / "dist/server.cjs"
+                server.parent.mkdir(parents=True)
+                # Bind an ephemeral loopback port. The candidate deliberately
+                # reports a different build from the expected signed version.
+                server.write_text(
+                    "const http=require('node:http'),fs=require('node:fs');"
+                    "const server=http.createServer((req,res)=>res.end(JSON.stringify("
+                    "{ok:true,status:'ready',database:'reachable',sourceOfTruth:'normalized',"
+                    "buildVersion:" + json.dumps(version) + ",processId:process.pid})));"
+                    "server.listen(0,'127.0.0.1',()=>fs.writeFileSync("
+                    + json.dumps(str(root / "endpoint")) +
+                    ",JSON.stringify({pid:process.pid,port:server.address().port})));"
+                )
+            (root / "project").symlink_to(root / "old")
+
+            class HttpService(ProcessService):
+                def __init__(self, root):
+                    super().__init__(root)
+                    self.observed = []
+
+                def ready(self):
+                    import time
+                    expected = "1.0.0" if (self.root / "project").resolve() == self.root / "old" else "1.0.1"
+                    endpoint = self.root / "endpoint"
+                    for _ in range(250):
+                        if self.stopped():
+                            return False
+                        try:
+                            record = json.loads(endpoint.read_text())
+                            if record["pid"] == self.process.pid:
+                                break
+                        except (OSError, ValueError, KeyError):
+                            pass
+                        time.sleep(0.02)
+                    else:
+                        return False
+                    # Exercise the shared real HTTP verifier rather than
+                    # trusting the fixture's port marker as readiness evidence.
+                    code = (
+                        "import {waitForInstalledRelease} from " + json.dumps(verifier.as_uri()) + ";"
+                        "await waitForInstalledRelease(process.argv[1],Number(process.argv[2]),"
+                        "{port:Number(process.argv[3]),timeoutMs:2000,intervalMs:20,"
+                        "assertActive:async()=>{process.kill(Number(process.argv[2]),0);}});"
+                    )
+                    result = subprocess.run(
+                        ["node", "--input-type=module", "-e", code, expected,
+                         str(self.process.pid), str(record["port"])],
+                        capture_output=True, timeout=8
+                    )
+                    self.observed.append((expected, self.process.pid, result.returncode))
+                    return result.returncode == 0 and not self.stopped()
+
+            service = HttpService(root)
+            try:
+                service.start()
+                self.assertTrue(service.ready())
+                initial_pid = service.process.pid
+                self.assertEqual(simulate_switch(root, service, lambda: True), "rolled-back")
+                self.assertEqual((root / "project").resolve(), root / "old")
+                self.assertEqual(data.read_text(), "historical invoices")
+                self.assertEqual([item[0] for item in service.observed], ["1.0.0", "1.0.1", "1.0.0"])
+                self.assertEqual(service.observed[0][2], 0)
+                self.assertNotEqual(service.observed[1][2], 0)
+                self.assertEqual(service.observed[2][2], 0)
+                self.assertNotEqual(service.process.pid, initial_pid)
+                self.assertEqual(json.loads((root / "switch-journal.json").read_text())["phase"], "rolled-back")
+                self.assertFalse(startup_allowed(root))
+            finally:
+                service.stop()
+
 if __name__=="__main__":
     unittest.main()
