@@ -93,7 +93,7 @@ function Test-ArsUninstallRestore([string]$project,[string]$folder) {
   $meta=$raw.meta
   if ($meta.schema -ne 1 -or $meta.kind -cne 'windows-final-uninstall-backup' -or $meta.uninstallId -cne $id -or $raw.hold.uninstallId -cne $id -or $meta.previousProject -ine $project -or $meta.holdDigest -cne $digests.hold -or $meta.shutdownDigest -cne $digests.proof) {throw 'Recovery identity mismatch.'}
   foreach ($flag in @('restoreTestPassed','finalUninstallBackupVerified','applicationRemovalAllowed','databaseDeletionAllowed','continuousExclusionVerified')) {if ($meta.$flag -isnot [bool] -or $meta.$flag) {throw 'Unexpected authorization.'}}
-  if ($meta.archive -cnotmatch '^ars-hardware_pos-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$') {throw 'Invalid archive name.'}
+  if ($meta.archive -cnotmatch '^ars-hardware_pos(?:_ars)?-[0-9]{8}-[0-9]{6}-[0-9]{3}-[a-f0-9]{32}-with-uploads\.dump$') {throw 'Invalid archive name.'}
   $archive=Join-Path $folder $meta.archive
   $manifestPath=Join-Path $folder 'uninstall-table-manifest.json'
   $members=@(Get-ArsUninstallArchiveMembers $archive)+@($manifestPath)
