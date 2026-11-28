@@ -142,12 +142,17 @@ await mkdir(stageDestination);
 await copyFile(fileURLToPath(new URL('./windows-maintenance-backup-worker.ps1',import.meta.url)),join(stageScripts,'windows-maintenance-backup-worker.ps1'));
 const producer=join(stageScripts,'backup-local-postgres.ps1');
 await writeFile(producer,[
- 'param([string]$Destination,[switch]$OutputArchive)',
+ 'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)',
  '$ErrorActionPreference="Stop"',
+ 'if (-not $PreserveExistingArchives) { throw "Protected retention required" }',
  '$archive=Join-Path $Destination "ars-hardware_pos-ci-fixture.dump"',
  '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
  'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
 ].join('\r\n'));
+const oldArchive=join(stageDestination,'ars-hardware_pos-old-fixture.dump');
+const oldChecksum=oldArchive+'.sha256';
+await writeFile(oldArchive,'retained recovery archive');
+await writeFile(oldChecksum,'retained checksum evidence');
 const stageDb=new FixtureDatabase();
 const stageResult=await withMaintenanceSession(stageDb,'hardware_pos_ci',session=>
  runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
@@ -157,11 +162,13 @@ assert.equal(stageResult.sha256,createHash('sha256').update(Buffer.alloc(4096)).
 assert.match(stageResult.resultDigest,/^[a-f0-9]{64}$/);
 for(const field of ['applicationRemovalAllowed','databaseDeletionAllowed','activationAllowed','continuousExclusionVerified'])assert.equal(stageResult[field],false);
 assert.equal(stageDb.closed,true);
+assert.equal(await readFile(oldArchive,'utf8'),'retained recovery archive');
+assert.equal(await readFile(oldChecksum,'utf8'),'retained checksum evidence');
 const resultFiles=async()=>(await readdir(stageDestination)).filter(name=>name.startsWith('maintenance-result-'));
 assert.deepEqual(await resultFiles(),[stageResult.resultName]);
 const retained=await readFile(join(stageDestination,stageResult.resultName));
 // A failed producer must not publish a second result or remove existing evidence.
-await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive)\r\nthrow "Fixture backup failure"');
+await writeFile(producer,'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)\r\nthrow "Fixture backup failure"');
 await assert.rejects(withMaintenanceSession(new FixtureDatabase(),'hardware_pos_ci',session=>
  runProtectedWindowsBackup(session,{root:stageRoot,destination:stageDestination,supervisor,timeoutMs:15000})
 ),/Native maintenance worker did not complete/);
@@ -198,8 +205,9 @@ try{
  const destination=join(await realpath(dir),'verified-recovery');
  await mkdir(destination);
  await writeFile(producer,[
-  'param([string]$Destination,[switch]$OutputArchive)',
+  'param([string]$Destination,[switch]$OutputArchive,[switch]$PreserveExistingArchives)',
   '$ErrorActionPreference="Stop"',
+ 'if (-not $PreserveExistingArchives) { throw "Protected retention required" }',
   '$archive=Join-Path $Destination "ars-hardware_pos-verified-fixture.dump"',
   '[IO.File]::WriteAllBytes($archive,(New-Object byte[] 4096))',
   'if ($OutputArchive) { Write-Output ("ARS_ARCHIVE="+$archive) }'
