@@ -218,3 +218,24 @@ try {Get-ArsDockerClusterIdentity 'hardware_pos_ci'|Out-Null} catch {
 }
 if (-not $blocked) {throw 'Unsupported Docker source accepted.'}
 Write-Host 'Docker cluster identity parser and early guard checks passed.'
+
+
+# Verify combined identity matching independently of live Docker.
+foreach ($database in @('hardware_pos','hardware_pos_ars')) {
+ $expected=[pscustomobject]@{database=$database;systemIdentifier='18446744073709551615';databaseOid='4294967295'}
+ $actual=[pscustomobject]@{database=$database;systemIdentifier=$expected.systemIdentifier;databaseOid=$expected.databaseOid;containerId=('a'*64)}
+ Assert-ArsDockerClusterMatch $expected $actual
+ foreach ($key in @('database','systemIdentifier','databaseOid','containerId')) {
+  $bad=$actual|ConvertTo-Json|ConvertFrom-Json
+  $bad.$key=if ($key -eq 'database') {if ($database -ceq 'hardware_pos') {'hardware_pos_ars'} else {'hardware_pos'}} elseif ($key -eq 'containerId') {'invalid'} else {'1'}
+  $blocked=$false
+  try {Assert-ArsDockerClusterMatch $expected $bad} catch {$blocked=$true}
+  if (-not $blocked) {throw "Mismatched cluster evidence accepted: $key"}
+ }
+ $bad=$actual|ConvertTo-Json|ConvertFrom-Json
+ $bad.databaseOid=1
+ $blocked=$false
+ try {Assert-ArsDockerClusterMatch $expected $bad} catch {$blocked=$true}
+ if (-not $blocked) {throw 'Numeric cluster evidence accepted.'}
+}
+Write-Host 'Protected session and Docker cluster identity matching checks passed.'
